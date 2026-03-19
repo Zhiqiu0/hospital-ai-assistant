@@ -58,7 +58,7 @@ medassist/
 cd backend
 pip install -r requirements.txt
 python init_db.py
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8010
 
 # 3. 启动前端
 cd frontend
@@ -69,8 +69,8 @@ npm run dev
 ## 访问地址
 
 - 前端：http://localhost:5174
-- 后端API：http://localhost:8000
-- API文档：http://localhost:8000/docs
+- 后端API：http://localhost:8010
+- API文档：http://localhost:8010/docs
 
 ## 当前状态说明
 

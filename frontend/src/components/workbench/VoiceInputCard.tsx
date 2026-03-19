@@ -1,0 +1,360 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Button, Card, Input, List, Space, Tag, Typography, message } from 'antd'
+import {
+  AudioOutlined,
+  PauseCircleOutlined,
+  RobotOutlined,
+  DeleteOutlined,
+  FileTextOutlined,
+  SaveOutlined,
+} from '@ant-design/icons'
+import { InquiryData, useWorkbenchStore } from '@/store/workbenchStore'
+import api from '@/services/api'
+
+const { TextArea } = Input
+const { Text } = Typography
+
+type VoiceInputCardProps = {
+  visitType: 'outpatient' | 'inpatient'
+  getFormValues: () => Record<string, any>
+  onApplyInquiry: (patch: Partial<InquiryData>) => void
+}
+
+type DialogueItem = {
+  speaker: 'doctor' | 'patient' | 'uncertain'
+  text: string
+}
+
+const SPEAKER_META: Record<string, { color: string; label: string }> = {
+  doctor: { color: 'blue', label: '医生' },
+  patient: { color: 'green', label: '患者' },
+  uncertain: { color: 'orange', label: '待确认' },
+}
+
+export default function VoiceInputCard({ visitType, getFormValues, onApplyInquiry }: VoiceInputCardProps) {
+  const {
+    inquiry,
+    currentPatient,
+    currentEncounterId,
+    recordContent,
+    setRecordContent,
+  } = useWorkbenchStore()
+
+  const recognitionRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<any>(null)
+  const mediaChunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+  const transcriptRef = useRef('')
+
+  const [speechSupported] = useState(() => typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))
+  const [recordingSupported] = useState(() => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined')
+  const [listening, setListening] = useState(false)
+  const [uploadingAudio, setUploadingAudio] = useState(false)
+  const [structuring, setStructuring] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [transcriptId, setTranscriptId] = useState<string | null>(null)
+  const [transcript, setTranscript] = useState('')
+  const [interimText, setInterimText] = useState('')
+  const [summary, setSummary] = useState('')
+  const [speakerDialogue, setSpeakerDialogue] = useState<DialogueItem[]>([])
+
+  const fullTranscript = useMemo(() => {
+    const merged = [transcript.trim(), interimText.trim()].filter(Boolean).join('\n')
+    return merged.trim()
+  }, [transcript, interimText])
+
+  useEffect(() => {
+    transcriptRef.current = fullTranscript
+  }, [fullTranscript])
+
+  useEffect(() => {
+    const restoreLatestVoice = async () => {
+      if (!currentEncounterId) {
+        setTranscript('')
+        setInterimText('')
+        setSummary('')
+        setSpeakerDialogue([])
+        setTranscriptId(null)
+        return
+      }
+      setRestoring(true)
+      try {
+        const snapshot: any = await api.get(`/encounters/${currentEncounterId}/workspace`)
+        const latest = snapshot?.latest_voice_record
+        if (latest) {
+          setTranscript(latest.raw_transcript || '')
+          setSummary(latest.transcript_summary || '')
+          setSpeakerDialogue(Array.isArray(latest.speaker_dialogue) ? latest.speaker_dialogue : [])
+          setTranscriptId(latest.id || null)
+        } else {
+          setTranscript('')
+          setSummary('')
+          setSpeakerDialogue([])
+          setTranscriptId(null)
+        }
+      } catch {
+        setTranscript('')
+        setSummary('')
+        setSpeakerDialogue([])
+        setTranscriptId(null)
+      } finally {
+        setRestoring(false)
+      }
+    }
+
+    restoreLatestVoice()
+  }, [currentEncounterId])
+
+  const stopTracks = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+  }
+
+  const uploadAudioBlob = async (blob: Blob, transcriptText: string) => {
+    if (!blob.size) return
+    setUploadingAudio(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', blob, `voice-record-${Date.now()}.webm`)
+      if (currentEncounterId) formData.append('encounter_id', currentEncounterId)
+      formData.append('visit_type', visitType)
+      formData.append('transcript', transcriptText)
+      const data: any = await api.post('/ai/voice-records/upload', formData)
+      if (data?.voice_record_id) setTranscriptId(data.voice_record_id)
+      message.success('原始语音已保存')
+    } catch {
+      message.error('原始语音保存失败')
+    } finally {
+      setUploadingAudio(false)
+    }
+  }
+
+  const stopListening = () => {
+    recognitionRef.current?.stop?.()
+    recognitionRef.current = null
+
+    const mediaRecorder = mediaRecorderRef.current
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop()
+    } else {
+      stopTracks()
+    }
+
+    mediaRecorderRef.current = null
+    setListening(false)
+    setInterimText('')
+  }
+
+  const startListening = async () => {
+    if (!recordingSupported) {
+      message.warning('当前浏览器不支持录音保存，建议使用最新版 Chrome / Edge')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaChunksRef.current = []
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) mediaChunksRef.current.push(event.data)
+      }
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(mediaChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' })
+        mediaChunksRef.current = []
+        stopTracks()
+        await uploadAudioBlob(blob, transcriptRef.current)
+      }
+      mediaRecorder.start()
+      mediaRecorderRef.current = mediaRecorder
+
+      if (speechSupported) {
+        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        const recognition = new RecognitionCtor()
+        recognition.lang = 'zh-CN'
+        recognition.continuous = true
+        recognition.interimResults = true
+
+        recognition.onresult = (event: any) => {
+          let finalText = ''
+          let interim = ''
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const text = event.results[i][0]?.transcript || ''
+            if (event.results[i].isFinal) {
+              finalText += text
+            } else {
+              interim += text
+            }
+          }
+          if (finalText.trim()) {
+            setTranscript((prev) => [prev, finalText.trim()].filter(Boolean).join('\n'))
+          }
+          setInterimText(interim.trim())
+        }
+
+        recognition.onerror = () => {
+          setListening(false)
+          setInterimText('')
+          message.error('语音识别中断，请重试')
+        }
+
+        recognition.onend = () => {
+          recognitionRef.current = null
+          setListening(false)
+          setInterimText('')
+        }
+
+        recognition.start()
+        recognitionRef.current = recognition
+      } else {
+        message.info('浏览器不支持实时转写，但会继续录音保存，你也可以手动补充转写文本')
+      }
+
+      setListening(true)
+      message.success('已开始语音录入')
+    } catch {
+      stopTracks()
+      message.error('无法访问麦克风，请检查浏览器权限')
+    }
+  }
+
+  const handleStructure = async () => {
+    if (listening) {
+      message.warning('请先停止当前录音，再进行 AI 整理')
+      return
+    }
+    if (!fullTranscript) {
+      message.warning('请先进行语音录入或粘贴转写内容')
+      return
+    }
+
+    setStructuring(true)
+    try {
+      const data: any = await api.post('/ai/voice-structure', {
+        transcript: fullTranscript,
+        transcript_id: transcriptId,
+        visit_type: visitType,
+        patient_name: currentPatient?.name || '',
+        patient_gender: currentPatient?.gender || '',
+        patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
+        existing_inquiry: { ...inquiry, ...getFormValues() },
+      })
+
+      const patch = (data?.inquiry || {}) as Partial<InquiryData>
+      onApplyInquiry(patch)
+      setSummary(data?.transcript_summary || '')
+      setSpeakerDialogue(Array.isArray(data?.speaker_dialogue) ? data.speaker_dialogue : [])
+      setTranscriptId(data?.transcript_id || transcriptId)
+
+      if (data?.draft_record?.trim()) {
+        setRecordContent(data.draft_record)
+      }
+      message.success('已根据语音内容整理问诊并生成病历草稿')
+    } catch {
+      message.error('语音整理失败，请重试')
+    } finally {
+      setStructuring(false)
+    }
+  }
+
+  return (
+    <Card
+      size="small"
+      style={{ marginBottom: 12, borderRadius: 10, background: '#f8fbff', borderColor: '#dbeafe' }}
+      bodyStyle={{ padding: 12 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Space size={8}>
+          <Tag color="blue" style={{ marginRight: 0 }}>语音录入</Tag>
+          <Text style={{ fontSize: 12, color: '#475569' }}>保存原始录音与转写，并让 AI 识别对话结构</Text>
+        </Space>
+        <Space size={6}>
+          {restoring && <Tag color="processing">恢复中</Tag>}
+          {uploadingAudio && <Tag color="purple">保存原语音</Tag>}
+          {listening && <Tag color="red">录音中</Tag>}
+        </Space>
+      </div>
+
+      {(!speechSupported || !recordingSupported) && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message="当前浏览器能力有限，建议使用最新版 Chrome / Edge；若不支持实时转写，仍可手动粘贴转写文本再点 AI 整理。"
+        />
+      )}
+
+      <Space wrap style={{ marginBottom: 10 }}>
+        <Button type="primary" icon={<AudioOutlined />} onClick={startListening} disabled={listening}>
+          开始录音
+        </Button>
+        <Button icon={<PauseCircleOutlined />} onClick={stopListening} disabled={!listening}>
+          停止并保存
+        </Button>
+        <Button icon={<RobotOutlined />} loading={structuring} onClick={handleStructure}>
+          AI分析并整理
+        </Button>
+        <Button icon={<DeleteOutlined />} onClick={() => { stopListening(); setTranscript(''); setSummary(''); setSpeakerDialogue([]); setTranscriptId(null) }}>
+          清空
+        </Button>
+      </Space>
+
+      <TextArea
+        rows={6}
+        value={fullTranscript}
+        onChange={(e) => {
+          setTranscript(e.target.value)
+          setInterimText('')
+        }}
+        placeholder="这里会实时显示语音转写内容，也支持手动粘贴第三方 ASR 的转写文本"
+        style={{ borderRadius: 8, marginBottom: 8 }}
+      />
+
+      {summary && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<FileTextOutlined />}
+          message="本段对话摘要"
+          description={summary}
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
+      {speakerDialogue.length > 0 && (
+        <Card size="small" style={{ marginBottom: 8, borderRadius: 8, background: '#fff' }} bodyStyle={{ padding: 10 }}>
+          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tag color="cyan" style={{ marginRight: 0 }}>角色分析</Tag>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>AI 会尽量区分医生与患者；不确定内容会单独标记</Text>
+          </div>
+          <List
+            size="small"
+            dataSource={speakerDialogue}
+            renderItem={(item) => (
+              <List.Item style={{ padding: '6px 0', borderBlockEnd: '1px solid #f1f5f9' }}>
+                <Space align="start">
+                  <Tag color={SPEAKER_META[item.speaker]?.color || 'default'} style={{ marginRight: 0 }}>
+                    {SPEAKER_META[item.speaker]?.label || '待确认'}
+                  </Tag>
+                  <Text style={{ fontSize: 12 }}>{item.text}</Text>
+                </Space>
+              </List.Item>
+            )}
+          />
+        </Card>
+      )}
+
+      <Text style={{ fontSize: 12, color: '#64748b' }}>
+        语音原文会在后台保存；AI整理后会自动回填问诊字段，并把生成的病历草稿写入中间编辑区。当前病历内容{recordContent ? '将被新的语音草稿覆盖' : '会自动生成在编辑区'}。
+      </Text>
+      {transcriptId && (
+        <div style={{ marginTop: 6 }}>
+          <Text style={{ fontSize: 11, color: '#94a3b8' }}>
+            <SaveOutlined style={{ marginRight: 4 }} />已保存语音记录：{transcriptId.slice(-8)}
+          </Text>
+        </div>
+      )}
+    </Card>
+  )
+}

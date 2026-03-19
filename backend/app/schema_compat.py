@@ -4,7 +4,7 @@ from app.database import Base, engine
 
 
 async def apply_schema_compatibility() -> None:
-    from app.models import audit_log, config, encounter, medical_record, patient, user  # noqa: F401
+    from app.models import audit_log, config, encounter, medical_record, patient, user, voice_record  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

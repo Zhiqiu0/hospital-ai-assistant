@@ -454,6 +454,44 @@ data: {"type":"done"}
 }
 ```
 
+### 6.10 语音转写整理
+
+`POST /ai/voice-structure`
+
+说明：
+
+- 前端负责实时语音转写（浏览器 `SpeechRecognition` / `webkitSpeechRecognition`）
+- 后端负责将转写文本整理为结构化问诊信息，并生成病历草稿
+
+请求示例：
+
+```json
+{
+  "transcript": "患者诉发热3天，伴咳嗽咳痰，无药物过敏史",
+  "visit_type": "outpatient",
+  "patient_name": "张三",
+  "patient_gender": "male",
+  "patient_age": "35",
+  "existing_inquiry": {
+    "chief_complaint": "",
+    "history_present_illness": ""
+  }
+}
+```
+
+响应示例：
+
+```json
+{
+  "transcript_summary": "患者因发热伴咳嗽3天就诊。",
+  "inquiry": {
+    "chief_complaint": "发热伴咳嗽3天",
+    "history_present_illness": "3天前出现发热，伴咳嗽咳痰。"
+  },
+  "draft_record": "【主诉】发热伴咳嗽3天\n\n【现病史】..."
+}
+```
+
 ---
 
 ## 七、质控问题模块 `/qc-issues`

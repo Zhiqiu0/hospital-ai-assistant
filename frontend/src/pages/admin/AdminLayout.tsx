@@ -16,6 +16,7 @@ import RecordsPage from './RecordsPage'
 import TokenUsagePage from './TokenUsagePage'
 import PatientsPage from './PatientsPage'
 import AuditLogsPage from './AuditLogsPage'
+import ModelConfigsPage from './ModelConfigsPage'
 
 const { Sider, Content } = Layout
 const ROLE_MAP: Record<string, string> = {
@@ -42,6 +43,7 @@ export default function AdminLayout() {
     { key: '/admin/departments', icon: <ApartmentOutlined />, label: '科室管理' },
     { key: '/admin/qc-rules', icon: <SafetyOutlined />, label: '质控规则' },
     { key: '/admin/prompts', icon: <RobotOutlined />, label: 'Prompt 管理' },
+    { key: '/admin/model-configs', icon: <RobotOutlined />, label: '模型配置' },
     { key: '/admin/stats', icon: <BarChartOutlined />, label: '数据统计' },
     { key: '/admin/records', icon: <FileTextOutlined />, label: '病历管理' },
     { key: '/admin/patients', icon: <TeamOutlined />, label: '患者档案' },
@@ -166,6 +168,7 @@ export default function AdminLayout() {
             <Route path="/departments" element={<DepartmentsPage />} />
             <Route path="/qc-rules" element={<QCRulesPage />} />
             <Route path="/prompts" element={<PromptsPage />} />
+            <Route path="/model-configs" element={<ModelConfigsPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/patients" element={<PatientsPage />} />

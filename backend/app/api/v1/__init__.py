@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api.v1 import auth, patients, encounters, medical_records, qc, ai
-from app.api.v1.admin import users, departments, qc_rules, prompts, stats, records as admin_records, audit_logs
+from app.api.v1.admin import users, departments, qc_rules, prompts, stats, records as admin_records, audit_logs, model_configs
 
 router = APIRouter()
 
@@ -19,3 +19,4 @@ router.include_router(prompts.router, prefix="/admin/prompts", tags=["管理-Pro
 router.include_router(stats.router, prefix="/admin/stats", tags=["管理-统计"])
 router.include_router(admin_records.router, prefix="/admin/records", tags=["管理-病历"])
 router.include_router(audit_logs.router, prefix="/admin/audit-logs", tags=["管理-审计日志"])
+router.include_router(model_configs.router, prefix="/admin/model-configs", tags=["管理-模型配置"])

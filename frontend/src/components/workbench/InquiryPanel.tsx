@@ -3,6 +3,7 @@ import { Form, Input, Button, message, Divider } from 'antd'
 import { SaveOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
+import VoiceInputCard from './VoiceInputCard'
 
 const { TextArea } = Input
 
@@ -44,6 +45,24 @@ export default function InquiryPanel() {
     message.success({ content: '问诊信息已保存', duration: 1.5 })
   }
 
+  const applyVoiceInquiry = (patch: any) => {
+    const nextValues = { ...form.getFieldsValue(), ...patch }
+    form.setFieldsValue(nextValues)
+    const data = {
+      chief_complaint: nextValues.chief_complaint || '',
+      history_present_illness: nextValues.history_present_illness || '',
+      past_history: nextValues.past_history || '',
+      allergy_history: nextValues.allergy_history || '',
+      personal_history: nextValues.personal_history || '',
+      physical_exam: nextValues.physical_exam || '',
+      initial_impression: nextValues.initial_impression || '',
+    }
+    setInquiry(data)
+    if (currentEncounterId) {
+      api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
+    }
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Panel header */}
@@ -60,6 +79,11 @@ export default function InquiryPanel() {
       {/* Form */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
         <Form form={form} layout="vertical" size="small" onFinish={onSave}>
+          <VoiceInputCard
+            visitType="outpatient"
+            getFormValues={() => form.getFieldsValue()}
+            onApplyInquiry={applyVoiceInquiry}
+          />
 
           <Form.Item
             style={fieldStyle}

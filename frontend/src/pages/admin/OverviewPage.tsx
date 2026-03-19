@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { label: '患者档案', path: '/admin/patients', color: '#0891b2', bg: '#ecfeff' },
   { label: '质控规则', path: '/admin/qc-rules', color: '#d97706', bg: '#fffbeb' },
   { label: 'Prompt 管理', path: '/admin/prompts', color: '#7c3aed', bg: '#f5f3ff' },
+  { label: '模型配置', path: '/admin/model-configs', color: '#0f766e', bg: '#ecfeff' },
   { label: '数据统计', path: '/admin/stats', color: '#64748b', bg: '#f8fafc' },
   { label: '操作日志', path: '/admin/audit-logs', color: '#7c3aed', bg: '#f5f3ff' },
 ]

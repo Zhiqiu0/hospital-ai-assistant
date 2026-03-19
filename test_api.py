@@ -1,6 +1,7 @@
-import json, subprocess
-
+import json
+import os
 import urllib.request
+from urllib.parse import urlencode
 req = urllib.request.Request(
     'http://localhost:8000/api/v1/auth/login',
     data=b'{"username":"admin","password":"admin123456"}',
@@ -10,9 +11,7 @@ req = urllib.request.Request(
 with urllib.request.urlopen(req) as resp:
     token = json.load(resp)['access_token']
 
-BASE = 'http://localhost:8000/api/v1'
-ENC_ID = 'a7e7b0b2-685c-463e-88b3-54a833feb63a'
-auth = f'Authorization: Bearer {token}'
+BASE = os.getenv('MEDASSIST_API_BASE', 'http://localhost:8010/api/v1')
 
 import urllib.error
 
@@ -36,7 +35,19 @@ def curl_get(path): return api('GET', path)
 def curl_put(path, body): return api('PUT', path, body)
 def curl_post(path, body): return api('POST', path, body)
 
+
+encounter = curl_post('/encounters/quick-start', {
+    'patient_name': 'API Test Patient',
+    'gender': 'male',
+    'age': 35,
+    'phone': '13900007777',
+    'visit_type': 'outpatient',
+})
+ENC_ID = encounter.get('encounter_id')
+
 results = []
+
+results.append(('快速建档', '✅ ' + ENC_ID if ENC_ID else '❌ ' + str(encounter)[:100]))
 
 # 1. Save inquiry
 r = curl_put(f'/encounters/{ENC_ID}/inquiry', {
@@ -59,15 +70,22 @@ results.append(('管理员-用户列表', f'✅ total={r.get("total")}' if 'tota
 
 # 4. Departments
 r = curl_get('/admin/departments')
-results.append(('科室列表', f'✅ {len(r)} depts' if isinstance(r, list) else '❌ ' + str(r)[:100]))
+dept_items = r.get('items', r) if isinstance(r, dict) else r
+results.append(('科室列表', f'✅ {len(dept_items)} depts' if isinstance(dept_items, list) else '❌ ' + str(r)[:100]))
 
 # 5. QC rules
 r = curl_get('/admin/qc-rules')
-results.append(('质控规则', f'✅ {len(r)} rules' if isinstance(r, list) else '❌ ' + str(r)[:100]))
+rule_items = r.get('items', r) if isinstance(r, dict) else r
+results.append(('质控规则', f'✅ {len(rule_items)} rules' if isinstance(rule_items, list) else '❌ ' + str(r)[:100]))
 
 # 6. Prompts
 r = curl_get('/admin/prompts')
-results.append(('Prompt模板', f'✅ {len(r)} prompts' if isinstance(r, list) else '❌ ' + str(r)[:100]))
+prompt_items = r.get('items', r) if isinstance(r, dict) else r
+results.append(('Prompt模板', f'✅ {len(prompt_items)} prompts' if isinstance(prompt_items, list) else '❌ ' + str(r)[:100]))
+
+# 6.1 Model configs
+r = curl_get('/admin/model-configs')
+results.append(('模型配置', f'✅ {len(r)} scenes' if isinstance(r, list) else '❌ ' + str(r)[:100]))
 
 # 7. Stats overview
 r = curl_get('/admin/stats/overview')
@@ -81,8 +99,8 @@ results.append(('管理员-病历管理', f'✅ total={r.get("total")}' if 'tota
 r = curl_get('/admin/stats/token-usage')
 results.append(('Token用量', '✅ keys=' + str(list(r.keys())[:4]) if isinstance(r, dict) and '_raw' not in r else '❌ ' + str(r)[:100]))
 
-# 10. check-username (no auth needed)
-r = api('GET', '/auth/check-username?username=admin')
+# 10. check-username
+r = curl_get('/auth/check-username?' + urlencode({'username': 'admin'}))
 results.append(('check-username', '✅ exists=' + str(r.get('exists')) if 'exists' in r else '❌ ' + str(r)[:100]))
 
 # 11. AI quick-qc
@@ -96,6 +114,16 @@ results.append(('检查建议', '✅ ' + str(len(r.get('suggestions', []))) + ' 
 # 13. Diagnosis suggestion
 r = curl_post('/ai/diagnosis-suggestion', {'chief_complaint': '头痛', 'history_present_illness': '3天头痛'})
 results.append(('诊断建议', '✅ ' + str(len(r.get('diagnoses', []))) + ' diagnoses' if 'diagnoses' in r else '❌ ' + str(r)[:100]))
+
+# 14. Voice structuring
+r = curl_post('/ai/voice-structure', {
+    'transcript': '医生问，哪里不舒服。患者说反复发热三天，伴咳嗽咳痰，无胸痛，无药物过敏史，既往否认高血压糖尿病。',
+    'visit_type': 'outpatient',
+    'patient_name': 'API Test Patient',
+    'patient_gender': 'male',
+    'patient_age': '35',
+})
+results.append(('语音整理', '✅ has inquiry+draft' if isinstance(r, dict) and 'inquiry' in r and 'draft_record' in r else '❌ ' + str(r)[:100]))
 
 print('\n' + '='*50)
 print('  API 测试结果')

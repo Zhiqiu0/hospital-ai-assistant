@@ -3,6 +3,7 @@ import { Form, Input, Button, message, Divider, Select, Slider, Tag } from 'antd
 import { SaveOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
+import VoiceInputCard from './VoiceInputCard'
 
 const { TextArea } = Input
 
@@ -106,6 +107,58 @@ export default function InpatientInquiryPanel() {
 
   const painMarks = { 0: '0', 2: '2', 4: '4', 6: '轻中', 8: '重', 10: '10' }
 
+  const applyVoiceInquiry = (patch: any) => {
+    const nextValues = { ...form.getFieldsValue(), ...patch }
+    form.setFieldsValue({
+      ...nextValues,
+      pain_assessment: nextValues.pain_assessment ? Number(nextValues.pain_assessment) : 0,
+      admission_diagnosis: nextValues.admission_diagnosis || nextValues.initial_impression,
+    })
+
+    const painScore = nextValues.pain_assessment ?? 0
+    const extraNotes = [
+      nextValues.history_informant ? `【病史陈述者】${nextValues.history_informant}` : '',
+      nextValues.marital_history ? `【婚育史】${nextValues.marital_history}` : '',
+      patientGender === 'female' && nextValues.menstrual_history ? `【月经史】${nextValues.menstrual_history}` : '',
+      nextValues.family_history ? `【家族史】${nextValues.family_history}` : '',
+      nextValues.current_medications ? `【当前用药】${nextValues.current_medications}` : '',
+      `【疼痛评分】NRS ${painScore}分`,
+      nextValues.vte_risk ? `【VTE风险】${nextValues.vte_risk}` : '',
+      nextValues.nutrition_assessment ? `【营养评估】${nextValues.nutrition_assessment}` : '',
+      nextValues.psychology_assessment ? `【心理评估】${nextValues.psychology_assessment}` : '',
+      nextValues.rehabilitation_assessment ? `【康复评估】${nextValues.rehabilitation_assessment}` : '',
+      nextValues.religion_belief ? `【宗教信仰】${nextValues.religion_belief}` : '',
+      nextValues.auxiliary_exam ? `【辅助检查（入院前）】${nextValues.auxiliary_exam}` : '',
+    ].filter(Boolean).join('\n')
+
+    const data = {
+      chief_complaint: nextValues.chief_complaint || '',
+      history_present_illness: nextValues.history_present_illness || '',
+      past_history: nextValues.past_history || '',
+      allergy_history: nextValues.allergy_history || '',
+      personal_history: (nextValues.personal_history || '') + (extraNotes ? '\n' + extraNotes : ''),
+      physical_exam: nextValues.physical_exam || '',
+      initial_impression: nextValues.admission_diagnosis || '',
+      history_informant: nextValues.history_informant || '',
+      marital_history: nextValues.marital_history || '',
+      menstrual_history: nextValues.menstrual_history || '',
+      family_history: nextValues.family_history || '',
+      current_medications: nextValues.current_medications || '',
+      rehabilitation_assessment: nextValues.rehabilitation_assessment || '',
+      religion_belief: nextValues.religion_belief || '',
+      pain_assessment: String(painScore),
+      vte_risk: nextValues.vte_risk || '',
+      nutrition_assessment: nextValues.nutrition_assessment || '',
+      psychology_assessment: nextValues.psychology_assessment || '',
+      auxiliary_exam: nextValues.auxiliary_exam || '',
+      admission_diagnosis: nextValues.admission_diagnosis || '',
+    }
+    setInquiry(data)
+    if (currentEncounterId) {
+      api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
+    }
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
@@ -125,6 +178,11 @@ export default function InpatientInquiryPanel() {
       {/* Form */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
         <Form form={form} layout="vertical" size="small" onFinish={onSave}>
+          <VoiceInputCard
+            visitType="inpatient"
+            getFormValues={() => form.getFieldsValue()}
+            onApplyInquiry={applyVoiceInquiry}
+          />
 
           {/* ── 病史陈述者 ── */}
           <Form.Item style={fieldStyle} name="history_informant"

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from app.database import get_db
 from app.core.security import require_admin
@@ -19,6 +19,8 @@ SCENE_DEFAULTS = [
 
 
 class ModelConfigUpdate(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     model_name: str
     temperature: float
     max_tokens: int

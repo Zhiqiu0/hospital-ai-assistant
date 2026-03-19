@@ -30,6 +30,7 @@ Thumbs.db
 # 日志
 *.log
 logs/
+backend/uploads/
 
 # 数据库迁移临时文件
 *.pyc

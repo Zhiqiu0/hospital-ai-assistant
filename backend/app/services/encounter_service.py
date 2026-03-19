@@ -3,6 +3,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
+from app.models.voice_record import VoiceRecord
 from app.schemas.encounter import EncounterCreate, InquiryInputUpdate
 from fastapi import HTTPException
 
@@ -122,6 +123,13 @@ class EncounterService:
             })
 
         active_record = record_items[0] if record_items else None
+        voice_result = await self.db.execute(
+            select(VoiceRecord)
+            .where(VoiceRecord.encounter_id == encounter_id)
+            .order_by(desc(VoiceRecord.updated_at), desc(VoiceRecord.created_at))
+            .limit(1)
+        )
+        latest_voice = voice_result.scalar_one_or_none()
         patient = encounter.patient
         patient_age = None
         if patient and patient.birth_date:
@@ -165,6 +173,14 @@ class EncounterService:
             } if inquiry else None,
             "active_record": active_record,
             "records": record_items,
+            "latest_voice_record": {
+                "id": latest_voice.id,
+                "status": latest_voice.status,
+                "raw_transcript": latest_voice.raw_transcript or "",
+                "transcript_summary": latest_voice.transcript_summary or "",
+                "speaker_dialogue": latest_voice.get_speaker_dialogue(),
+                "draft_record": latest_voice.draft_record or "",
+            } if latest_voice else None,
         }
 
     async def save_inquiry(self, encounter_id: str, data: InquiryInputUpdate):
