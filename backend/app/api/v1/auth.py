@@ -1,0 +1,50 @@
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+from app.schemas.auth import LoginRequest, TokenResponse
+from app.services.auth_service import AuthService
+from app.services.audit_service import log_action
+
+router = APIRouter()
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
+    service = AuthService(db)
+    result = await service.login(request.username, request.password)
+    if not result:
+        detail = await service.get_login_error(request.username, request.password)
+        await log_action(
+            action="login",
+            user_name=request.username,
+            detail=f"登录失败：{detail or '账号或密码错误'}",
+            ip_address=http_request.client.host if http_request.client else None,
+            status="error",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=detail or "登录失败",
+        )
+    await log_action(
+        action="login",
+        user_id=result.get("user", {}).get("id") if isinstance(result, dict) else None,
+        user_name=request.username,
+        detail="登录成功",
+        ip_address=http_request.client.host if http_request.client else None,
+    )
+    return result
+
+
+@router.post("/logout")
+async def logout():
+    return {"message": "已登出"}
+
+
+@router.get("/check-username")
+async def check_username(username: str, db: AsyncSession = Depends(get_db)):
+    service = AuthService(db)
+    exists = await service.check_username_exists(username)
+    return {
+        "exists": exists,
+        "message": "账号存在" if exists else "账号不存在",
+    }

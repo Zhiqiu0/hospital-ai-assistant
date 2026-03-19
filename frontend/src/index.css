@@ -1,0 +1,240 @@
+/* ─── Reset ──────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ─── CSS Variables ──────────────────────────────────── */
+:root {
+  --primary:        #2563eb;
+  --primary-dark:   #1d4ed8;
+  --primary-light:  #eff6ff;
+  --primary-border: #bfdbfe;
+  --green:          #059669;
+  --green-light:    #ecfdf5;
+  --green-border:   #a7f3d0;
+
+  --surface:        #ffffff;
+  --surface-2:      #f8fafc;
+  --surface-3:      #f1f5f9;
+  --bg:             #eef2f7;
+
+  --border:         #e2e8f0;
+  --border-subtle:  #f1f5f9;
+
+  --text-1:         #0f172a;
+  --text-2:         #334155;
+  --text-3:         #64748b;
+  --text-4:         #94a3b8;
+
+  --shadow-xs:  0 1px 2px rgba(0,0,0,0.05);
+  --shadow-sm:  0 1px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg:  0 8px 24px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.05);
+
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+}
+
+/* ─── Base ───────────────────────────────────────────── */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+               'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--bg);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+#root { height: 100vh; }
+
+/* ─── Scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* ─── Text selection ─────────────────────────────────── */
+::selection {
+  background: rgba(37, 99, 235, 0.15);
+  color: var(--text-1);
+}
+
+/* ─── Focus rings ────────────────────────────────────── */
+.ant-input:focus,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused,
+.ant-select-focused .ant-select-selector {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+.ant-input-textarea:focus-within textarea {
+  box-shadow: none !important;
+}
+
+/* ─── Buttons ────────────────────────────────────────── */
+.ant-btn {
+  transition: all 0.18s ease !important;
+  font-weight: 500 !important;
+}
+.ant-btn:hover { transform: translateY(-1px); }
+.ant-btn:active { transform: translateY(0); }
+.ant-btn-primary:not(:disabled):hover {
+  box-shadow: 0 4px 12px rgba(37,99,235,0.35) !important;
+}
+
+/* ─── Cards ──────────────────────────────────────────── */
+.ant-card {
+  box-shadow: var(--shadow-sm) !important;
+  border-color: var(--border) !important;
+  transition: box-shadow 0.2s ease !important;
+}
+.ant-card:hover {
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* ─── Table ──────────────────────────────────────────── */
+.ant-table-thead > tr > th {
+  background: var(--surface-2) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  color: var(--text-3) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 2px solid var(--border) !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background: var(--primary-light) !important;
+}
+
+/* ─── Form Labels ────────────────────────────────────── */
+.ant-form-item-label > label {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--text-3) !important;
+}
+
+/* ─── Tabs ───────────────────────────────────────────── */
+.ant-tabs-tab {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--text-3) !important;
+  padding: 10px 4px !important;
+}
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--primary) !important;
+  font-weight: 600 !important;
+}
+.ant-tabs-ink-bar {
+  height: 2px !important;
+  border-radius: 2px !important;
+}
+
+/* ─── Modal ──────────────────────────────────────────── */
+.ant-modal-content {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.ant-modal-header {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+  padding: 20px 24px 16px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+/* ─── Drawer ─────────────────────────────────────────── */
+.ant-drawer-content-wrapper {
+  box-shadow: var(--shadow-lg) !important;
+}
+.ant-drawer-header {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 16px 20px !important;
+}
+
+/* ─── Tags ───────────────────────────────────────────── */
+.ant-tag {
+  border-radius: 20px !important;
+  font-weight: 500 !important;
+  font-size: 11px !important;
+  padding: 1px 8px !important;
+}
+
+/* ─── Select ─────────────────────────────────────────── */
+.ant-select-selector {
+  transition: all 0.18s ease !important;
+}
+
+/* ─── Alert ──────────────────────────────────────────── */
+.ant-alert {
+  border-radius: var(--radius-md) !important;
+}
+
+/* ─── Slider ─────────────────────────────────────────── */
+.ant-slider-track { border-radius: 10px !important; }
+.ant-slider-handle {
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.2) !important;
+}
+
+/* ─── Input ──────────────────────────────────────────── */
+.ant-input,
+.ant-input-affix-wrapper {
+  transition: border-color 0.18s, box-shadow 0.18s !important;
+}
+.ant-input:hover,
+.ant-input-affix-wrapper:hover {
+  border-color: #93c5fd !important;
+}
+
+/* ─── List ───────────────────────────────────────────── */
+.ant-list-item {
+  transition: background 0.15s ease !important;
+}
+.ant-list-item:hover {
+  background: var(--surface-2) !important;
+}
+
+/* ─── Workbench panel sections ───────────────────────── */
+.panel-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  background: linear-gradient(90deg, var(--primary-light), transparent);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--primary);
+  margin-bottom: 10px;
+  margin-top: 4px;
+  letter-spacing: 0.5px;
+  text-transform: none;
+}
+
+/* ─── Skeleton / loading shimmer ─────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #f0f4f8 25%, #e8edf3 50%, #f0f4f8 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ─── Fade-in animation ──────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeInUp 0.22s ease both; }
+
+/* ─── Popconfirm / Tooltip ───────────────────────────── */
+.ant-popover-inner {
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.ant-tooltip-inner {
+  border-radius: var(--radius-sm) !important;
+  font-size: 12px !important;
+}
