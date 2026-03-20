@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 export interface InquiryData {
   chief_complaint: string
@@ -102,7 +103,9 @@ const defaultInquiry: InquiryData = {
   admission_diagnosis: '',
 }
 
-export const useWorkbenchStore = create<WorkbenchState>((set) => ({
+export const useWorkbenchStore = create<WorkbenchState>()(
+  persist(
+  (set) => ({
   inquiry: defaultInquiry,
   inquirySavedAt: 0,
   recordContent: '',
@@ -160,4 +163,18 @@ export const useWorkbenchStore = create<WorkbenchState>((set) => ({
     isFinal: false,
     finalizedAt: null,
   }),
-}))
+  }),
+  {
+    name: 'medassist-workbench',
+    partialize: (state) => ({
+      inquiry: state.inquiry,
+      inquirySavedAt: state.inquirySavedAt,
+      recordContent: state.recordContent,
+      recordType: state.recordType,
+      currentPatient: state.currentPatient,
+      currentEncounterId: state.currentEncounterId,
+      isFinal: state.isFinal,
+      finalizedAt: state.finalizedAt,
+    }),
+  }
+))

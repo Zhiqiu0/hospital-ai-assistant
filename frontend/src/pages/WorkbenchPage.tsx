@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty } from 'antd'
-import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined } from '@ant-design/icons'
+import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined, PrinterOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
@@ -11,6 +11,40 @@ import api from '@/services/api'
 
 const { Header, Content } = Layout
 const { Text } = Typography
+
+const RECORD_TYPE_LABEL_PRINT: Record<string, string> = {
+  outpatient: '门诊病历', admission_note: '入院记录', first_course_record: '首次病程记录',
+  course_record: '日常病程记录', senior_round: '上级查房记录', discharge_record: '出院记录',
+}
+
+function printRecord(record: any) {
+  const typeLabel = RECORD_TYPE_LABEL_PRINT[record.record_type] || record.record_type
+  const patientDesc = [
+    record.patient_name,
+    record.patient_gender === 'male' ? '男' : record.patient_gender === 'female' ? '女' : '',
+    record.patient_age ? `${record.patient_age}岁` : '',
+  ].filter(Boolean).join(' · ')
+  const signedAt = record.submitted_at ? new Date(record.submitted_at).toLocaleString('zh-CN') : ''
+  const formatted = (record.content || '').replace(/\n/g, '<br>')
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>${typeLabel} - ${patientDesc}</title>
+<style>
+  body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
+  h2 { text-align: center; font-size: 20px; margin-bottom: 4px; }
+  .meta { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
+  .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: right; }
+  @media print { body { padding: 20px 32px; } }
+</style></head><body>
+<h2>${typeLabel}</h2>
+<div class="meta">${patientDesc}${signedAt ? `&nbsp;&nbsp;|&nbsp;&nbsp;签发时间：${signedAt}` : ''}</div>
+<div class="content">${formatted}</div>
+<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
+<script>window.onload = function() { window.print(); }<\/script>
+</body></html>`
+  const w = window.open('', '_blank')
+  if (w) { w.document.write(html); w.document.close() }
+}
 
 export default function WorkbenchPage() {
   const navigate = useNavigate()
@@ -504,7 +538,12 @@ export default function WorkbenchPage() {
         }
         open={!!viewRecord}
         onCancel={() => setViewRecord(null)}
-        footer={<Button onClick={() => setViewRecord(null)}>关闭</Button>}
+        footer={
+          <Space>
+            <Button icon={<PrinterOutlined />} onClick={() => printRecord(viewRecord)}>打印 / 导出PDF</Button>
+            <Button type="primary" onClick={() => setViewRecord(null)}>关闭</Button>
+          </Space>
+        }
         width={680}
       >
         <div style={{

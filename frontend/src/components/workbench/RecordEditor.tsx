@@ -1,12 +1,43 @@
 import { useRef, useState } from 'react'
 import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio } from 'antd'
-import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined } from '@ant-design/icons'
+import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
 
 const { Text } = Typography
 const { TextArea } = Input
+
+const RECORD_TYPE_LABEL: Record<string, string> = {
+  outpatient: '门诊病历', admission_note: '入院记录', first_course_record: '首次病程记录',
+  course_record: '日常病程记录', senior_round: '上级查房记录', discharge_record: '出院记录',
+}
+
+function printRecord(content: string, patient: any, recordType: string, signedAt: string | null) {
+  const patientDesc = patient
+    ? [patient.name, patient.gender === 'male' ? '男' : patient.gender === 'female' ? '女' : '', patient.age ? `${patient.age}岁` : ''].filter(Boolean).join(' · ')
+    : '未知患者'
+  const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
+  const formatted = content.replace(/\n/g, '<br>')
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>${typeLabel} - ${patientDesc}</title>
+<style>
+  body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
+  h2 { text-align: center; font-size: 20px; margin-bottom: 4px; }
+  .meta { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
+  .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: right; }
+  @media print { body { padding: 20px 32px; } }
+</style></head><body>
+<h2>${typeLabel}</h2>
+<div class="meta">${patientDesc}${signedAt ? `&nbsp;&nbsp;|&nbsp;&nbsp;签发时间：${signedAt}` : ''}</div>
+<div class="content">${formatted}</div>
+<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
+<script>window.onload = function() { window.print(); }<\/script>
+</body></html>`
+  const w = window.open('', '_blank')
+  if (w) { w.document.write(html); w.document.close() }
+}
 
 export default function RecordEditor() {
   const {
@@ -310,13 +341,19 @@ export default function RecordEditor() {
         </div>
       ) : isFinal ? (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '6px 16px', flexShrink: 0,
           background: '#f0fdf4', borderBottom: '1px solid #bbf7d0',
-          color: '#065f46', fontSize: 12, fontWeight: 500,
         }}>
-          <CheckOutlined style={{ fontSize: 12 }} />
-          <span>病历已签发，不可修改</span>
+          <Space size={6}>
+            <CheckOutlined style={{ fontSize: 12, color: '#065f46' }} />
+            <span style={{ color: '#065f46', fontSize: 12, fontWeight: 500 }}>病历已签发，不可修改</span>
+          </Space>
+          <Button
+            size="small" icon={<PrinterOutlined />}
+            onClick={() => printRecord(recordContent, currentPatient, recordType, finalizedAt)}
+            style={{ borderRadius: 6, fontSize: 12, height: 26, color: '#065f46', borderColor: '#86efac', background: '#fff' }}
+          >打印</Button>
         </div>
       ) : (
         <div style={{
