@@ -609,14 +609,16 @@ async def get_voice_audio(
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         user_id = payload.get("sub")
+        role = payload.get("role", "doctor")
         if not user_id:
             raise HTTPException(status_code=401, detail="无效 token")
     except JWTError:
         raise HTTPException(status_code=401, detail="无效 token")
 
-    result = await db.execute(
-        select(VoiceRecord).where(VoiceRecord.id == voice_record_id, VoiceRecord.doctor_id == user_id)
-    )
+    query = select(VoiceRecord).where(VoiceRecord.id == voice_record_id)
+    if role not in ("admin", "super_admin"):
+        query = query.where(VoiceRecord.doctor_id == user_id)
+    result = await db.execute(query)
     record = result.scalar_one_or_none()
     if not record or not record.audio_file_path:
         raise HTTPException(status_code=404, detail="音频文件不存在")

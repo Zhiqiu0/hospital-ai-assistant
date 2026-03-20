@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.allowed_origins.split(",")]
 
     class Config:
-        env_file = "../.env"
+        env_file = ("../.env", ".env")
         case_sensitive = False
 
 

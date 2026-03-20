@@ -22,7 +22,7 @@ class AuthService:
             return None
 
         token = create_access_token(
-            {"sub": user.id},
+            {"sub": user.id, "role": user.role},
             expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
         )
 
