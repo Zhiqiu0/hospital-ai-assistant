@@ -3,9 +3,9 @@ AI 快捷接口 - 无需预建接诊记录，直接从问诊信息流式生成�
 """
 import json
 from pathlib import Path
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi import UploadFile, File, Form, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, cast
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -515,21 +515,22 @@ async def upload_voice_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    upload_dir = Path(__file__).resolve().parents[3] / "uploads" / "voice_records"
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    # 按接诊 ID 分目录存储，便于归档和清理
+    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    rel_dir = Path("voice_records") / (encounter_id or "no_encounter")
+    (uploads_root / rel_dir).mkdir(parents=True, exist_ok=True)
 
     suffix = Path(file.filename or "recording.webm").suffix or ".webm"
     file_name = f"{generate_uuid()}{suffix}"
-    file_path = upload_dir / file_name
-    content = await file.read()
-    file_path.write_bytes(content)
+    rel_path = rel_dir / file_name          # 存相对路径，跨机器不失效
+    (uploads_root / rel_path).write_bytes(await file.read())
 
     record = VoiceRecord(
         encounter_id=encounter_id,
         doctor_id=current_user.id,
         visit_type=visit_type or "outpatient",
         raw_transcript=transcript or "",
-        audio_file_path=str(file_path),
+        audio_file_path=str(rel_path),      # 存相对路径
         mime_type=file.content_type or "application/octet-stream",
         status="uploaded",
     )
@@ -541,6 +542,39 @@ async def upload_voice_record(
         "status": record.status,
         "has_audio": True,
     }
+
+
+@router.get("/voice-records/{voice_record_id}/audio")
+async def get_voice_audio(
+    voice_record_id: str,
+    token: str = Query(..., description="JWT token for auth"),
+    db: AsyncSession = Depends(get_db),
+):
+    """播放音频文件，通过 query param 传 token（audio 标签不支持自定义 header）"""
+    from app.core.security import settings
+    from jose import JWTError, jwt
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="无效 token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="无效 token")
+
+    result = await db.execute(
+        select(VoiceRecord).where(VoiceRecord.id == voice_record_id, VoiceRecord.doctor_id == user_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record or not record.audio_file_path:
+        raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    audio_path = uploads_root / record.audio_file_path   # 相对路径拼成绝对路径
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="音频文件已被清理")
+
+    mime = record.mime_type or "audio/webm"
+    return FileResponse(audio_path, media_type=mime, filename=audio_path.name)
 
 
 @router.post("/voice-structure")
@@ -582,7 +616,7 @@ async def voice_structure(
     ]
 
     try:
-        result = await llm_client.chat_json(
+        result = await llm_client.chat_json_stream(
             messages,
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
@@ -853,7 +887,7 @@ async def inquiry_suggestions(
     ]
     try:
         model_options = await _get_model_options(db, "inquiry")
-        result = await llm_client.chat_json(
+        result = await llm_client.chat_json_stream(
             messages,
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
@@ -922,7 +956,7 @@ async def exam_suggestions(
     messages = [{"role": "user", "content": prompt}]
     try:
         model_options = await _get_model_options(db, "exam")
-        result = await llm_client.chat_json(
+        result = await llm_client.chat_json_stream(
             messages,
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
@@ -1119,7 +1153,7 @@ async def diagnosis_suggestion(
     ]
     try:
         model_options = await _get_model_options(db, "inquiry")
-        result = await llm_client.chat_json(
+        result = await llm_client.chat_json_stream(
             messages,
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
@@ -1221,7 +1255,7 @@ async def quick_qc(
     messages = [{"role": "user", "content": prompt}]
     try:
         model_options = await _get_model_options(db, "qc")
-        result = await llm_client.chat_json(
+        result = await llm_client.chat_json_stream(
             messages,
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
@@ -1240,8 +1274,9 @@ async def quick_qc(
             if extra_completeness or insurance_issues:
                 result["pass"] = False
         return result
-    except Exception:
+    except Exception as e:
+        err_msg = f"{type(e).__name__}: {str(e)[:200]}"
         fallback = rule_issues + insurance_issues
         if fallback:
-            return {"issues": fallback, "summary": "LLM质控分析失败，已返回规则引擎结果", "pass": False}
-        return {"issues": [], "summary": "质控分析失败，请重试", "pass": False}
+            return {"issues": fallback, "summary": f"LLM质控分析失败（{err_msg}），已返回规则引擎结果", "pass": False}
+        return {"issues": [], "summary": f"质控分析失败：{err_msg}", "pass": False}

@@ -1,6 +1,7 @@
 import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.llm_client import llm_client
+from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
 from app.models.medical_record import RecordVersion, AITask
 from app.schemas.medical_record import RecordGenerateRequest, RecordContinueRequest, RecordPolishRequest
@@ -75,7 +76,13 @@ class RecordGenService:
         await self.db.commit()
 
         try:
-            result = await llm_client.chat_json([{"role": "user", "content": prompt}])
+            opts = await get_model_options(self.db, "generate")
+            result = await llm_client.chat_json_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=opts["temperature"],
+                max_tokens=opts["max_tokens"],
+                model_name=opts["model_name"],
+            )
             new_version_no = record.current_version + 1
             version = RecordVersion(
                 medical_record_id=record_id,
@@ -105,7 +112,13 @@ class RecordGenService:
 已有内容：{json.dumps(request.current_content, ensure_ascii=False)}
 请仅输出续写内容，不重复已有部分，保持书面医学语言。"""
         try:
-            content = await llm_client.chat([{"role": "user", "content": prompt}])
+            opts = await get_model_options(self.db, "generate")
+            content = await llm_client.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=opts["temperature"],
+                max_tokens=opts["max_tokens"],
+                model_name=opts["model_name"],
+            )
             data = json.dumps({"type": "done", "field": request.target_field, "content": content}, ensure_ascii=False)
             yield f"data: {data}\n\n"
         except Exception as e:
@@ -115,7 +128,13 @@ class RecordGenService:
         content_str = json.dumps(request.content, ensure_ascii=False)
         prompt = POLISH_PROMPT.format(content=content_str)
         try:
-            result = await llm_client.chat_json([{"role": "user", "content": prompt}])
+            opts = await get_model_options(self.db, "polish")
+            result = await llm_client.chat_json_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=opts["temperature"],
+                max_tokens=opts["max_tokens"],
+                model_name=opts["model_name"],
+            )
             data = json.dumps({"type": "done", "content": result}, ensure_ascii=False)
             yield f"data: {data}\n\n"
         except Exception as e:

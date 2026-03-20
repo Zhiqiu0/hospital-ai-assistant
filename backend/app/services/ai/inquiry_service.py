@@ -1,6 +1,7 @@
 import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.llm_client import llm_client
+from app.services.ai.model_options import get_model_options
 from app.schemas.ai_suggestion import InquirySuggestionRequest
 
 
@@ -48,7 +49,13 @@ class InquiryService:
         messages = [{"role": "user", "content": prompt}]
 
         try:
-            result = await llm_client.chat_json(messages)
+            opts = await get_model_options(self.db, "inquiry")
+            result = await llm_client.chat_json_stream(
+                messages,
+                temperature=opts["temperature"],
+                max_tokens=opts["max_tokens"],
+                model_name=opts["model_name"],
+            )
             suggestions = result.get("suggestions", [])
             for suggestion in suggestions:
                 data = json.dumps({"type": "suggestion", **suggestion}, ensure_ascii=False)

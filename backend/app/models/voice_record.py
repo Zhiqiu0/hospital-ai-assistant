@@ -2,7 +2,7 @@ import json
 from typing import Optional
 
 from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import TimestampMixin, generate_uuid
@@ -24,6 +24,8 @@ class VoiceRecord(Base, TimestampMixin):
     structured_inquiry: Mapped[Optional[str]] = mapped_column(Text)
     draft_record: Mapped[Optional[str]] = mapped_column(Text)
 
+    doctor: Mapped[Optional["User"]] = relationship(foreign_keys=[doctor_id])
+
     def get_speaker_dialogue(self) -> list:
         if not self.speaker_dialogue:
             return []
@@ -39,3 +41,6 @@ class VoiceRecord(Base, TimestampMixin):
             return json.loads(self.structured_inquiry)
         except Exception:
             return {}
+
+
+from app.models.user import User

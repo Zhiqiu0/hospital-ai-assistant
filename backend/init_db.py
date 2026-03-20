@@ -9,7 +9,9 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.database import engine, Base
-from app.models import user, patient, encounter, medical_record, config, audit_log  # noqa: trigger model registration
+from app.models import user, patient, encounter, medical_record, config, audit_log  # noqa
+from app.models.voice_record import VoiceRecord  # noqa  – voice_records 表
+# config.py 已包含 ModelConfig（model_configs 表）和 QCRule、PromptTemplate
 from app.core.security import hash_password
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text

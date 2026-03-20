@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import {
   UserOutlined, ApartmentOutlined, SafetyOutlined,
   RobotOutlined, BarChartOutlined, HomeOutlined, LogoutOutlined,
-  MedicineBoxOutlined, FileTextOutlined, ThunderboltOutlined, TeamOutlined, AuditOutlined,
+  MedicineBoxOutlined, FileTextOutlined, ThunderboltOutlined, TeamOutlined, AuditOutlined, AudioOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import OverviewPage from './OverviewPage'
@@ -17,6 +17,7 @@ import TokenUsagePage from './TokenUsagePage'
 import PatientsPage from './PatientsPage'
 import AuditLogsPage from './AuditLogsPage'
 import ModelConfigsPage from './ModelConfigsPage'
+import VoiceRecordsPage from './VoiceRecordsPage'
 
 const { Sider, Content } = Layout
 const ROLE_MAP: Record<string, string> = {
@@ -49,6 +50,7 @@ export default function AdminLayout() {
     { key: '/admin/patients', icon: <TeamOutlined />, label: '患者档案' },
     { key: '/admin/audit-logs', icon: <AuditOutlined />, label: '操作日志' },
     { key: '/admin/token-usage', icon: <ThunderboltOutlined />, label: 'Token 用量' },
+    { key: '/admin/voice-records', icon: <AudioOutlined />, label: '语音记录' },
   ]
 
   const selectedKey = menuItems.slice().reverse().find(
@@ -174,6 +176,7 @@ export default function AdminLayout() {
             <Route path="/patients" element={<PatientsPage />} />
             <Route path="/audit-logs" element={<AuditLogsPage />} />
             <Route path="/token-usage" element={<TokenUsagePage />} />
+            <Route path="/voice-records" element={<VoiceRecordsPage />} />
           </Routes>
         </Content>
       </Layout>

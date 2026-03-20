@@ -9,6 +9,7 @@ import {
   SaveOutlined,
 } from '@ant-design/icons'
 import { InquiryData, useWorkbenchStore } from '@/store/workbenchStore'
+import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
 
 const { TextArea } = Input
@@ -39,6 +40,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
     recordContent,
     setRecordContent,
   } = useWorkbenchStore()
+  const { token } = useAuthStore()
 
   const recognitionRef = useRef<any>(null)
   const mediaRecorderRef = useRef<any>(null)
@@ -349,10 +351,25 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
         语音原文会在后台保存；AI整理后会自动回填问诊字段，并把生成的病历草稿写入中间编辑区。当前病历内容{recordContent ? '将被新的语音草稿覆盖' : '会自动生成在编辑区'}。
       </Text>
       {transcriptId && (
-        <div style={{ marginTop: 6 }}>
-          <Text style={{ fontSize: 11, color: '#94a3b8' }}>
-            <SaveOutlined style={{ marginRight: 4 }} />已保存语音记录：{transcriptId.slice(-8)}
-          </Text>
+        <div style={{ marginTop: 8 }}>
+          <div style={{
+            background: '#f1f5f9',
+            borderRadius: 8,
+            padding: '8px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+            <SaveOutlined style={{ color: '#64748b', fontSize: 13, flexShrink: 0 }} />
+            <Text style={{ fontSize: 12, color: '#475569', flexShrink: 0 }}>
+              录音 #{transcriptId.slice(-6).toUpperCase()}
+            </Text>
+            <audio
+              controls
+              src={`/api/v1/ai/voice-records/${transcriptId}/audio?token=${token}`}
+              style={{ flex: 1, height: 32, minWidth: 0 }}
+            />
+          </div>
         </div>
       )}
     </Card>

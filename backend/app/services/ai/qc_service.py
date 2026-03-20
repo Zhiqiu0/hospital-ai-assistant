@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.services.ai.llm_client import llm_client
+from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
 from app.models.medical_record import QCIssue, AITask, RecordVersion
 from app.services.rule_engine.completeness_rules import check_completeness
@@ -76,7 +77,13 @@ class QCService:
         try:
             content_str = json.dumps(content, ensure_ascii=False)
             prompt = QC_LOGIC_PROMPT.format(content=content_str)
-            llm_result = await llm_client.chat_json([{"role": "user", "content": prompt}])
+            opts = await get_model_options(self.db, "qc")
+            llm_result = await llm_client.chat_json_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=opts["temperature"],
+                max_tokens=opts["max_tokens"],
+                model_name=opts["model_name"],
+            )
             for issue_data in llm_result.get("issues", []):
                 issue = QCIssue(
                     ai_task_id=task.id,
