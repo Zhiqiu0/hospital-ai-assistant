@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.security import get_current_user
 from app.database import get_db
-from app.models.medical_record import AITask
+from app.models.medical_record import AITask, QCIssue, MedicalRecord
 from app.models.config import PromptTemplate, ModelConfig
 from app.models.voice_record import VoiceRecord
 from app.services.ai.llm_client import llm_client
@@ -21,11 +21,13 @@ from app.services.rule_engine.insurance_rules import check_insurance_risk
 from app.models.base import generate_uuid
 
 
-async def _log_task(task_type: str, token_input: int = 0, token_output: int = 0):
-    """Log an AI task call to the ai_tasks table using its own DB session."""
+async def _log_task(task_type: str, token_input: int = 0, token_output: int = 0) -> str:
+    """Log an AI task call to the ai_tasks table using its own DB session. Returns the task id."""
     from app.database import AsyncSessionLocal
+    task_id = generate_uuid()
     async with AsyncSessionLocal() as db:
         task = AITask(
+            id=task_id,
             task_type=task_type,
             status='done',
             token_input=token_input,
@@ -33,6 +35,43 @@ async def _log_task(task_type: str, token_input: int = 0, token_output: int = 0)
             model_name=llm_client.model,
         )
         db.add(task)
+        try:
+            await db.commit()
+        except Exception:
+            pass
+    return task_id
+
+
+async def _save_qc_issues(task_id: str, issues: list[dict], encounter_id: Optional[str] = None) -> None:
+    """Persist QC issues to the qc_issues table. Runs in its own DB session."""
+    if not issues:
+        return
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        # Try to find a MedicalRecord for the encounter
+        medical_record_id: Optional[str] = None
+        if encounter_id:
+            result = await db.execute(
+                select(MedicalRecord)
+                .where(MedicalRecord.encounter_id == encounter_id)
+                .order_by(MedicalRecord.created_at.desc())
+                .limit(1)
+            )
+            rec = result.scalar_one_or_none()
+            if rec:
+                medical_record_id = rec.id
+        for issue in issues:
+            qc = QCIssue(
+                ai_task_id=task_id,
+                medical_record_id=medical_record_id,
+                issue_type=issue.get("issue_type") or "quality",
+                risk_level=issue.get("risk_level") or "medium",
+                field_name=issue.get("field_name"),
+                issue_description=issue.get("issue_description") or "",
+                suggestion=issue.get("suggestion"),
+                source="ai" if not issue.get("issue_type") else "rule",
+            )
+            db.add(qc)
         try:
             await db.commit()
         except Exception:
@@ -1012,6 +1051,7 @@ class QuickQCRequest(BaseModel):
     past_history: Optional[str] = ""
     allergy_history: Optional[str] = ""
     physical_exam: Optional[str] = ""
+    encounter_id: Optional[str] = None
 
 
 QC_PROMPT = """你是病历质控专家，依据《浙江省住院病历质量检查评分表（2021版）》对病历进行全面质控评分。
@@ -1294,9 +1334,9 @@ async def quick_qc(
             model_name=model_options["model_name"],
         )
         usage = llm_client._last_usage
-        await _log_task("qc",
-                        token_input=usage.prompt_tokens if usage else 0,
-                        token_output=usage.completion_tokens if usage else 0)
+        task_id = await _log_task("qc",
+                                   token_input=usage.prompt_tokens if usage else 0,
+                                   token_output=usage.completion_tokens if usage else 0)
         # Merge rule-based issues (prepend, deduplicate by field_name for completeness;
         # insurance issues always included since they target content not fields)
         if rule_issues or insurance_issues:
@@ -1305,6 +1345,7 @@ async def quick_qc(
             result["issues"] = extra_completeness + insurance_issues + result.get("issues", [])
             if extra_completeness or insurance_issues:
                 result["pass"] = False
+        await _save_qc_issues(task_id, result.get("issues", []), encounter_id=req.encounter_id)
         return result
     except Exception as e:
         err_msg = f"{type(e).__name__}: {str(e)[:200]}"

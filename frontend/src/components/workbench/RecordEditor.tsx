@@ -16,7 +16,7 @@ export default function RecordEditor() {
     setGenerating, setPolishing, setQCing, setQCResult,
     isFinal, finalizedAt, setFinal,
     qcIssues, qcPass,
-    currentPatient,
+    currentPatient, currentEncounterId,
   } = useWorkbenchStore()
   const { token } = useAuthStore()
   const abortRef = useRef<AbortController | null>(null)
@@ -109,9 +109,11 @@ export default function RecordEditor() {
   const handleContinue = async () => {
     if (!recordContent.trim()) { message.warning('请先输入部分病历内容，再使用续写'); return }
     setIsContinuing(true)
+    const originalContent = recordContent
+    setRecordContent(originalContent.trimEnd() + '\n\n')
     try {
       await streamSSE('/api/v1/ai/quick-continue', {
-        current_content: recordContent,
+        current_content: originalContent,
         ...inquiry,
         record_type: recordType,
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
@@ -132,6 +134,7 @@ export default function RecordEditor() {
         past_history: inquiry.past_history || '',
         allergy_history: inquiry.allergy_history || '',
         physical_exam: inquiry.physical_exam || '',
+        encounter_id: currentEncounterId || undefined,
       })
       setQCResult(result.issues || [], result.summary || '', result.pass ?? false)
       if (result.pass) {

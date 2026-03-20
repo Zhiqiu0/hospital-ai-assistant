@@ -42,7 +42,7 @@ class QCIssue(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     ai_task_id: Mapped[str] = mapped_column(ForeignKey("ai_tasks.id"), nullable=False)
-    medical_record_id: Mapped[str] = mapped_column(ForeignKey("medical_records.id"), nullable=False)
+    medical_record_id: Mapped[Optional[str]] = mapped_column(ForeignKey("medical_records.id"), nullable=True)
     record_version_no: Mapped[Optional[int]] = mapped_column(Integer)
     issue_type: Mapped[str] = mapped_column(String(30), nullable=False)
     risk_level: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -54,7 +54,7 @@ class QCIssue(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    record: Mapped[MedicalRecord] = relationship(back_populates="qc_issues")
+    record: Mapped[Optional["MedicalRecord"]] = relationship(back_populates="qc_issues")
 
 
 class AITask(Base):

@@ -77,6 +77,17 @@ async def migrate():
             print(f"    voice_records.audio_file_path - SKIP ({e})")
         print()
 
+        # 5. qc_issues.medical_record_id 改为可为空（快速质控无需关联病历记录）
+        print("[5] qc_issues.medical_record_id 改为可为空...")
+        try:
+            await conn.execute(text(
+                "ALTER TABLE qc_issues ALTER COLUMN medical_record_id DROP NOT NULL"
+            ))
+            print("    qc_issues.medical_record_id - OK")
+        except Exception as e:
+            print(f"    qc_issues.medical_record_id - SKIP ({e})")
+        print()
+
     print("=== 迁移完成 ===")
 
 
