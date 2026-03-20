@@ -80,6 +80,19 @@ class QuickGenerateRequest(BaseModel):
     patient_name: Optional[str] = ""
     patient_gender: Optional[str] = ""
     patient_age: Optional[str] = ""
+    # Inpatient-specific assessment fields
+    history_informant: Optional[str] = ""
+    marital_history: Optional[str] = ""
+    menstrual_history: Optional[str] = ""
+    family_history: Optional[str] = ""
+    current_medications: Optional[str] = ""
+    pain_assessment: Optional[str] = ""
+    vte_risk: Optional[str] = ""
+    nutrition_assessment: Optional[str] = ""
+    psychology_assessment: Optional[str] = ""
+    rehabilitation_assessment: Optional[str] = ""
+    religion_belief: Optional[str] = ""
+    auxiliary_exam: Optional[str] = ""
 
 
 class VoiceStructureRequest(BaseModel):
@@ -242,9 +255,10 @@ ADMISSION_NOTE_PROMPT = """你是临床病历书写专家。根据以下问诊�
 现病史：{history_present_illness}
 既往史：{past_history}
 过敏史/用药史：{allergy_history}
-个人史/附加信息：{personal_history}
+个人史：{personal_history}
 体格检查：{physical_exam}
 入院诊断：{initial_impression}
+专项评估数据：{assessment_info}
 
 请直接输出入院记录全文（不要JSON），严格包含以下所有章节：
 
@@ -659,6 +673,23 @@ async def quick_generate(
     db_prompt = await _get_active_prompt(db, record_type)
     template = db_prompt or _PROMPT_MAP.get(record_type, OUTPATIENT_GENERATE_PROMPT)
     model_options = await _get_model_options(db, "generate")
+    # Build assessment_info string from inpatient-specific fields
+    pain_score = req.pain_assessment or "0"
+    assessment_parts = [
+        f"病史陈述者：{req.history_informant}" if req.history_informant else "",
+        f"婚育史：{req.marital_history}" if req.marital_history else "",
+        f"月经史：{req.menstrual_history}" if req.menstrual_history else "",
+        f"家族史：{req.family_history}" if req.family_history else "",
+        f"当前用药：{req.current_medications}" if req.current_medications else "",
+        f"疼痛评分（NRS）：{pain_score}分",
+        f"VTE风险：{req.vte_risk}" if req.vte_risk else "",
+        f"营养评估：{req.nutrition_assessment}" if req.nutrition_assessment else "",
+        f"心理评估：{req.psychology_assessment}" if req.psychology_assessment else "",
+        f"康复需求：{req.rehabilitation_assessment}" if req.rehabilitation_assessment else "",
+        f"宗教信仰/饮食禁忌：{req.religion_belief}" if req.religion_belief else "",
+        f"入院前辅助检查：{req.auxiliary_exam}" if req.auxiliary_exam else "",
+    ]
+    assessment_info = "\n".join(p for p in assessment_parts if p) or "未提供"
     prompt = template.format(
         chief_complaint=req.chief_complaint or "未提供",
         history_present_illness=req.history_present_illness or "未提供",
@@ -670,6 +701,7 @@ async def quick_generate(
         patient_name=req.patient_name or "患者",
         patient_gender=req.patient_gender or "未知",
         patient_age=req.patient_age or "未知",
+        assessment_info=assessment_info,
     )
     return StreamingResponse(_stream_text(prompt, task_type="generate", model_options=model_options), media_type="text/event-stream")
 

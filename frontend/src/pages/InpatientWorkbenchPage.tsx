@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty } from 'antd'
 import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -25,6 +25,12 @@ export default function InpatientWorkbenchPage() {
   const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
   const { currentPatient, currentEncounterId, setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset } = useWorkbenchStore()
+
+  // Default to admission_note on the inpatient page
+  useEffect(() => {
+    setRecordType('admission_note')
+  }, [])
+
   const [modalOpen, setModalOpen] = useState(false)
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
@@ -126,6 +132,7 @@ export default function InpatientWorkbenchPage() {
         admission_condition: values.admission_condition || undefined,
       })
       reset()
+      setRecordType('admission_note')
       setCurrentEncounter(
         { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: values.age },
         res.encounter_id

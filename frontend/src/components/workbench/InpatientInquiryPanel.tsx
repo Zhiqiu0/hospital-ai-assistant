@@ -61,27 +61,13 @@ export default function InpatientInquiryPanel() {
 
   const onSave = async (values: any) => {
     const painScore = values.pain_assessment ?? 0
-    const extraNotes = [
-      values.history_informant ? `【病史陈述者】${values.history_informant}` : '',
-      values.marital_history ? `【婚育史】${values.marital_history}` : '',
-      patientGender === 'female' && values.menstrual_history ? `【月经史】${values.menstrual_history}` : '',
-      values.family_history ? `【家族史】${values.family_history}` : '',
-      values.current_medications ? `【当前用药】${values.current_medications}` : '',
-      `【疼痛评分】NRS ${painScore}分`,
-      values.vte_risk ? `【VTE风险】${values.vte_risk}` : '',
-      values.nutrition_assessment ? `【营养评估】${values.nutrition_assessment}` : '',
-      values.psychology_assessment ? `【心理评估】${values.psychology_assessment}` : '',
-      values.rehabilitation_assessment ? `【康复评估】${values.rehabilitation_assessment}` : '',
-      values.religion_belief ? `【宗教信仰】${values.religion_belief}` : '',
-      values.auxiliary_exam ? `【辅助检查（入院前）】${values.auxiliary_exam}` : '',
-    ].filter(Boolean).join('\n')
 
     const inquiryData = {
       chief_complaint: values.chief_complaint || '',
       history_present_illness: values.history_present_illness || '',
       past_history: values.past_history || '',
       allergy_history: values.allergy_history || '',
-      personal_history: (values.personal_history || '') + (extraNotes ? '\n' + extraNotes : ''),
+      personal_history: values.personal_history || '',
       physical_exam: values.physical_exam || '',
       initial_impression: values.admission_diagnosis || '',
       history_informant: values.history_informant || '',
@@ -116,27 +102,13 @@ export default function InpatientInquiryPanel() {
     })
 
     const painScore = nextValues.pain_assessment ?? 0
-    const extraNotes = [
-      nextValues.history_informant ? `【病史陈述者】${nextValues.history_informant}` : '',
-      nextValues.marital_history ? `【婚育史】${nextValues.marital_history}` : '',
-      patientGender === 'female' && nextValues.menstrual_history ? `【月经史】${nextValues.menstrual_history}` : '',
-      nextValues.family_history ? `【家族史】${nextValues.family_history}` : '',
-      nextValues.current_medications ? `【当前用药】${nextValues.current_medications}` : '',
-      `【疼痛评分】NRS ${painScore}分`,
-      nextValues.vte_risk ? `【VTE风险】${nextValues.vte_risk}` : '',
-      nextValues.nutrition_assessment ? `【营养评估】${nextValues.nutrition_assessment}` : '',
-      nextValues.psychology_assessment ? `【心理评估】${nextValues.psychology_assessment}` : '',
-      nextValues.rehabilitation_assessment ? `【康复评估】${nextValues.rehabilitation_assessment}` : '',
-      nextValues.religion_belief ? `【宗教信仰】${nextValues.religion_belief}` : '',
-      nextValues.auxiliary_exam ? `【辅助检查（入院前）】${nextValues.auxiliary_exam}` : '',
-    ].filter(Boolean).join('\n')
 
     const data = {
       chief_complaint: nextValues.chief_complaint || '',
       history_present_illness: nextValues.history_present_illness || '',
       past_history: nextValues.past_history || '',
       allergy_history: nextValues.allergy_history || '',
-      personal_history: (nextValues.personal_history || '') + (extraNotes ? '\n' + extraNotes : ''),
+      personal_history: nextValues.personal_history || '',
       physical_exam: nextValues.physical_exam || '',
       initial_impression: nextValues.admission_diagnosis || '',
       history_informant: nextValues.history_informant || '',

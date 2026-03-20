@@ -127,15 +127,16 @@ export default function UsersPage() {
         onOk={() => form.submit()}
         okText="确认"
         cancelText="取消"
+        destroyOnClose
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
           {!editUser && (
             <>
               <Form.Item label="用户名" name="username" rules={[{ required: true }]}>
-                <Input placeholder="登录用户名" />
+                <Input placeholder="登录用户名" autoComplete="off" />
               </Form.Item>
               <Form.Item label="密码" name="password" rules={[{ required: true, min: 6 }]}>
-                <Input.Password placeholder="至少6位" />
+                <Input.Password placeholder="至少6位" autoComplete="new-password" />
               </Form.Item>
             </>
           )}

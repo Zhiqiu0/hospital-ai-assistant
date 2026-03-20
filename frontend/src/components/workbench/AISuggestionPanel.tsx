@@ -56,6 +56,46 @@ async function fetchInquirySuggestions(chiefComplaint: string, history: string, 
   }))
 }
 
+// Map field_name to Chinese section header in the record
+const FIELD_TO_SECTION: Record<string, string> = {
+  chief_complaint: '【主诉】',
+  history_present_illness: '【现病史】',
+  past_history: '【既往史】',
+  allergy_history: '【过敏史】',
+  personal_history: '【个人史】',
+  physical_exam: '【体格检查】',
+  initial_diagnosis: '【初步诊断】',
+  initial_impression: '【初步诊断】',
+  auxiliary_exam: '【辅助检查】',
+  marital_history: '【婚育史】',
+  family_history: '【家族史】',
+}
+
+// Replace a section in the record content, or append if not found
+function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
+  const header = FIELD_TO_SECTION[fieldName]
+  if (!header || !content) return content ? content + '\n\n' + fixText : fixText
+
+  // Find all section headers (【...】) positions to know section boundaries
+  const sectionPattern = /【[^】]+】/g
+  const matches: Array<{ index: number; header: string }> = []
+  let m: RegExpExecArray | null
+  while ((m = sectionPattern.exec(content)) !== null) {
+    matches.push({ index: m.index, header: m[0] })
+  }
+
+  const targetIdx = matches.findIndex(s => s.header === header)
+  if (targetIdx === -1) {
+    // Section not found — append
+    return content + '\n\n' + header + '\n' + fixText
+  }
+
+  const start = matches[targetIdx].index
+  const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
+  const newSection = header + '\n' + fixText
+  return content.slice(0, start) + newSection + '\n' + content.slice(end).trimStart()
+}
+
 export default function AISuggestionPanel() {
   const {
     inquiry, inquirySavedAt,
@@ -63,7 +103,7 @@ export default function AISuggestionPanel() {
     examSuggestions, isExamLoading,
     setExamSuggestions, setExamLoading,
     appendInquiryNote, setInitialImpression,
-    recordContent, appendToRecord,
+    recordContent, setRecordContent,
   } = useWorkbenchStore()
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -546,7 +586,8 @@ export default function AISuggestionPanel() {
                             type="primary"
                             icon={<EditOutlined />}
                             onClick={() => {
-                              appendToRecord(fixTexts[idx] || '')
+                              const fix = fixTexts[idx] || ''
+                              setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
                               message.success('已写入病历')
                             }}
                             style={{ fontSize: 12, borderRadius: 6 }}
