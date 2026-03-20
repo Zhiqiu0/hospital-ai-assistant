@@ -57,6 +57,7 @@ async function fetchInquirySuggestions(chiefComplaint: string, history: string, 
 }
 
 // Map field_name to Chinese section header in the record
+// Supports both English keys (from AI suggestions) and Chinese keys (from QC API)
 const FIELD_TO_SECTION: Record<string, string> = {
   chief_complaint: '【主诉】',
   history_present_illness: '【现病史】',
@@ -69,6 +70,23 @@ const FIELD_TO_SECTION: Record<string, string> = {
   auxiliary_exam: '【辅助检查】',
   marital_history: '【婚育史】',
   family_history: '【家族史】',
+  // Chinese keys returned by QC API
+  '主诉': '【主诉】',
+  '现病史': '【现病史】',
+  '既往史': '【既往史】',
+  '过敏史': '【过敏史】',
+  '个人史': '【个人史】',
+  '个人史/婚育史/月经史/家族史': '【个人史】',
+  '婚育史': '【婚育史】',
+  '月经史': '【月经史】',
+  '家族史': '【家族史】',
+  '体格检查': '【体格检查】',
+  '初步诊断': '【初步诊断】',
+  '入院诊断': '【入院诊断】',
+  '诊断': '【入院诊断】',
+  '辅助检查': '【辅助检查（入院前）】',
+  '辅助检查（入院前）': '【辅助检查（入院前）】',
+  '专项评估': '【专项评估】',
 }
 
 // Replace a section in the record content, or append if not found
