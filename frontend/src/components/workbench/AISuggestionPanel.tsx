@@ -2,8 +2,9 @@ import { useEffect, useState, useCallback } from 'react'
 import { Tabs, Button, Typography, Empty, Badge, Spin, Alert, List, Tag, message, Divider, Tooltip, Input } from 'antd'
 import {
   QuestionCircleOutlined, ExperimentOutlined, SafetyOutlined,
-  PlusOutlined, CheckOutlined, BulbOutlined, ArrowRightOutlined, EditOutlined,
+  PlusOutlined, CheckOutlined, BulbOutlined, ArrowRightOutlined, EditOutlined, FileTextOutlined,
 } from '@ant-design/icons'
+import LabReportTab from './LabReportTab'
 import { useWorkbenchStore, QCIssue, ExamSuggestion, GradeScore } from '@/store/workbenchStore'
 import api from '@/services/api'
 
@@ -700,6 +701,11 @@ export default function AISuggestionPanel() {
               )}
             </div>
           ),
+        },
+        {
+          key: 'lab',
+          label: <span><FileTextOutlined style={{ marginRight: 4 }} />检验报告</span>,
+          children: <LabReportTab />,
         },
       ]}
     />

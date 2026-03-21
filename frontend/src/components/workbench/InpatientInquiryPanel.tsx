@@ -6,6 +6,7 @@ import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
 import VitalSignsInput from './VitalSignsInput'
 import LabOrderPopover from './LabOrderPopover'
+import LabReportUploadButton from './LabReportUploadButton'
 
 const { TextArea } = Input
 
@@ -94,12 +95,24 @@ export default function InpatientInquiryPanel() {
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
     }
-    // 自动同步体格检查到已有病历
-    if (recordContent && inquiryData.physical_exam) {
-      const updated = recordContent.replace(
-        /【体格检查】\n[\s\S]*?(?=\n【|\n$|$)/,
-        `【体格检查】\n${inquiryData.physical_exam}`
-      )
+    // 自动同步所有字段到已有病历对应段落
+    if (recordContent) {
+      const fieldMap: [string, string][] = [
+        ['【主诉】', inquiryData.chief_complaint],
+        ['【现病史】', inquiryData.history_present_illness],
+        ['【既往史】', inquiryData.past_history],
+        ['【体格检查】', inquiryData.physical_exam],
+        ['【辅助检查】', inquiryData.auxiliary_exam || ''],
+        ['【入院诊断】', inquiryData.admission_diagnosis || ''],
+      ]
+      let updated = recordContent
+      for (const [header, value] of fieldMap) {
+        if (!value) continue
+        updated = updated.replace(
+          new RegExp(`${header}\\n[\\s\\S]*?(?=\\n【|$)`),
+          `${header}\n${value}`
+        )
+      }
       if (updated !== recordContent) setRecordContent(updated)
     }
     message.success({ content: '入院问诊信息已保存', duration: 1.5 })
@@ -113,10 +126,28 @@ export default function InpatientInquiryPanel() {
     const current = form.getFieldValue('physical_exam') || ''
     const lines = current.split('\n')
     const firstLine = lines[0] || ''
-    const isVitalLine = /^T:|^P:|^BP:|^SpO/.test(firstLine)
+    const isVitalLine = /^(T:|P:|R:|BP:|SpO|身高:|体重:)/.test(firstLine)
+
+    let mergedLine: string
+    if (isVitalLine) {
+      const getKey = (s: string) => s.split(':')[0]
+      const existingParts = firstLine.split(/\s{2,}/).filter(Boolean)
+      const newParts = vitalText.split(/\s{2,}/).filter(Boolean)
+      const result = [...existingParts]
+      for (const part of newParts) {
+        const key = getKey(part)
+        const idx = result.findIndex(p => getKey(p) === key)
+        if (idx >= 0) result[idx] = part
+        else result.push(part)
+      }
+      mergedLine = result.join('  ')
+    } else {
+      mergedLine = vitalText
+    }
+
     const newVal = isVitalLine
-      ? [vitalText, ...lines.slice(1)].join('\n')
-      : vitalText + (current ? '\n' + current : '')
+      ? [mergedLine, ...lines.slice(1)].join('\n')
+      : mergedLine + (current ? '\n' + current : '')
     form.setFieldValue('physical_exam', newVal)
     setIsDirty(true)
   }
@@ -378,7 +409,10 @@ export default function InpatientInquiryPanel() {
             label={
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                 <span style={labelStyle}>辅助检查（入院前）</span>
-                <LabOrderPopover onInsert={handleLabInsert} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <LabReportUploadButton onInsert={handleLabInsert} />
+                  <LabOrderPopover onInsert={handleLabInsert} />
+                </div>
               </div>
             }
           >
