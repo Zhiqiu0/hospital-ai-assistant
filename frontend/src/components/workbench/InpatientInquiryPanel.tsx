@@ -4,6 +4,8 @@ import { SaveOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
+import VitalSignsInput from './VitalSignsInput'
+import LabOrderPopover from './LabOrderPopover'
 
 const { TextArea } = Input
 
@@ -92,6 +94,25 @@ export default function InpatientInquiryPanel() {
   }
 
   const painMarks = { 0: '0', 2: '2', 4: '4', 6: '轻中', 8: '重', 10: '10' }
+
+  const handleVitalFill = (vitalText: string) => {
+    const current = form.getFieldValue('physical_exam') || ''
+    const lines = current.split('\n')
+    const firstLine = lines[0] || ''
+    const isVitalLine = /^T:|^P:|^BP:|^SpO/.test(firstLine)
+    const newVal = isVitalLine
+      ? [vitalText, ...lines.slice(1)].join('\n')
+      : vitalText + (current ? '\n' + current : '')
+    form.setFieldValue('physical_exam', newVal)
+    setInquiry({ ...inquiry, physical_exam: newVal })
+  }
+
+  const handleLabInsert = (text: string) => {
+    const current = form.getFieldValue('auxiliary_exam') || ''
+    const newVal = current ? current + '\n' + text : text
+    form.setFieldValue('auxiliary_exam', newVal)
+    setInquiry({ ...inquiry, auxiliary_exam: newVal })
+  }
 
   const applyVoiceInquiry = (patch: any) => {
     const nextValues = { ...form.getFieldsValue(), ...patch }
@@ -316,6 +337,8 @@ export default function InpatientInquiryPanel() {
           {/* ── 五、体格检查与辅助检查 ── */}
           <div style={sectionStyle}>五、体格检查与辅助检查</div>
 
+          <VitalSignsInput onFill={handleVitalFill} />
+
           <Form.Item style={fieldStyle} name="physical_exam"
             label={<span style={labelStyle}>体格检查 <span style={{ color: '#ef4444', fontSize: 10 }}>（需含各系统，缺项扣分）</span></span>}>
             <TextArea rows={10} placeholder={[
@@ -334,8 +357,16 @@ export default function InpatientInquiryPanel() {
               style={{ borderRadius: 6, fontSize: 12, resize: 'vertical', fontFamily: 'monospace' }} />
           </Form.Item>
 
-          <Form.Item style={fieldStyle} name="auxiliary_exam"
-            label={<span style={labelStyle}>辅助检查（入院前）</span>}>
+          <Form.Item
+            style={fieldStyle}
+            name="auxiliary_exam"
+            label={
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <span style={labelStyle}>辅助检查（入院前）</span>
+                <LabOrderPopover onInsert={handleLabInsert} />
+              </div>
+            }
+          >
             <TextArea rows={3} placeholder="记录入院前与本次疾病相关的主要检查及结果；他院检查须注明机构名称和检查时间"
               style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>

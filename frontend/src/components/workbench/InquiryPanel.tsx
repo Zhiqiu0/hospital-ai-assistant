@@ -4,6 +4,8 @@ import { SaveOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
+import VitalSignsInput from './VitalSignsInput'
+import LabOrderPopover from './LabOrderPopover'
 
 const { TextArea } = Input
 
@@ -21,24 +23,28 @@ const labelStyle: React.CSSProperties = {
 
 export default function InquiryPanel() {
   const [form] = Form.useForm()
-  const { inquiry, setInquiry, currentEncounterId } = useWorkbenchStore()
+  const { inquiry, setInquiry, currentEncounterId, currentPatient } = useWorkbenchStore()
+  const isFemale = currentPatient?.gender === 'female'
 
   useEffect(() => {
     form.setFieldsValue(inquiry)
   }, [form, inquiry, currentEncounterId])
 
+  const buildData = (values: any) => ({
+    chief_complaint: values.chief_complaint || '',
+    history_present_illness: values.history_present_illness || '',
+    past_history: values.past_history || '',
+    allergy_history: values.allergy_history || '',
+    personal_history: values.personal_history || '',
+    menstrual_history: values.menstrual_history || '',
+    physical_exam: values.physical_exam || '',
+    auxiliary_exam: values.auxiliary_exam || '',
+    initial_impression: values.initial_impression || '',
+  })
+
   const onSave = async (values: any) => {
-    const data = {
-      chief_complaint: values.chief_complaint || '',
-      history_present_illness: values.history_present_illness || '',
-      past_history: values.past_history || '',
-      allergy_history: values.allergy_history || '',
-      personal_history: values.personal_history || '',
-      physical_exam: values.physical_exam || '',
-      initial_impression: values.initial_impression || '',
-    }
+    const data = buildData(values)
     setInquiry(data)
-    // Persist to DB if an encounter is active
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
     }
@@ -48,19 +54,31 @@ export default function InquiryPanel() {
   const applyVoiceInquiry = (patch: any) => {
     const nextValues = { ...form.getFieldsValue(), ...patch }
     form.setFieldsValue(nextValues)
-    const data = {
-      chief_complaint: nextValues.chief_complaint || '',
-      history_present_illness: nextValues.history_present_illness || '',
-      past_history: nextValues.past_history || '',
-      allergy_history: nextValues.allergy_history || '',
-      personal_history: nextValues.personal_history || '',
-      physical_exam: nextValues.physical_exam || '',
-      initial_impression: nextValues.initial_impression || '',
-    }
+    const data = buildData(nextValues)
     setInquiry(data)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
     }
+  }
+
+  const handleVitalFill = (vitalText: string) => {
+    const current = form.getFieldValue('physical_exam') || ''
+    // Replace first line if it looks like a prior vital signs line, otherwise prepend
+    const lines = current.split('\n')
+    const firstLine = lines[0] || ''
+    const isVitalLine = /^T:|^P:|^BP:|^SpO/.test(firstLine)
+    const newVal = isVitalLine
+      ? [vitalText, ...lines.slice(1)].join('\n')
+      : vitalText + (current ? '\n' + current : '')
+    form.setFieldValue('physical_exam', newVal)
+    setInquiry({ ...inquiry, physical_exam: newVal })
+  }
+
+  const handleLabInsert = (text: string) => {
+    const current = form.getFieldValue('auxiliary_exam') || ''
+    const newVal = current ? current + '\n' + text : text
+    form.setFieldValue('auxiliary_exam', newVal)
+    setInquiry({ ...inquiry, auxiliary_exam: newVal })
   }
 
   return (
@@ -120,11 +138,35 @@ export default function InquiryPanel() {
             <TextArea rows={2} placeholder="吸烟、饮酒、职业、婚育史..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>
 
+          {isFemale && (
+            <Form.Item style={fieldStyle} name="menstrual_history"
+              label={<span style={labelStyle}>月经史</span>}>
+              <TextArea rows={2} placeholder="初潮年龄、周期、末次月经时间、经量、痛经情况..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
+            </Form.Item>
+          )}
+
           <Divider style={{ margin: '8px 0 12px', borderColor: '#f1f5f9' }} />
+
+          {/* Vital signs quick input */}
+          <VitalSignsInput onFill={handleVitalFill} />
 
           <Form.Item style={fieldStyle} name="physical_exam"
             label={<span style={labelStyle}>体格检查</span>}>
-            <TextArea rows={3} placeholder="生命体征、各系统体检结果..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
+            <TextArea rows={4} placeholder="生命体征、各系统体检结果..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
+          </Form.Item>
+
+          {/* Auxiliary exam with lab order button */}
+          <Form.Item
+            style={fieldStyle}
+            name="auxiliary_exam"
+            label={
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <span style={labelStyle}>辅助检查</span>
+                <LabOrderPopover onInsert={handleLabInsert} />
+              </div>
+            }
+          >
+            <TextArea rows={3} placeholder="已有检查结果，或点击「快速开单」添加拟行检查..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0 }} name="initial_impression"
