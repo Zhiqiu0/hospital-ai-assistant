@@ -23,7 +23,7 @@ const labelStyle: React.CSSProperties = {
 
 export default function InquiryPanel() {
   const [form] = Form.useForm()
-  const { inquiry, setInquiry, currentEncounterId, currentPatient } = useWorkbenchStore()
+  const { inquiry, setInquiry, currentEncounterId, currentPatient, recordContent, setRecordContent } = useWorkbenchStore()
   const isFemale = currentPatient?.gender === 'female'
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -51,6 +51,14 @@ export default function InquiryPanel() {
     setInquiry(data)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
+    }
+    // 自动同步体格检查到已有病历
+    if (recordContent && data.physical_exam) {
+      const updated = recordContent.replace(
+        /【体格检查】\n[\s\S]*?(?=\n【|\n$|$)/,
+        `【体格检查】\n${data.physical_exam}`
+      )
+      if (updated !== recordContent) setRecordContent(updated)
     }
     message.success({ content: '问诊信息已保存', duration: 1.5 })
     setIsDirty(false)

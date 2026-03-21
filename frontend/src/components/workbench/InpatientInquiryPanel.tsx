@@ -33,7 +33,7 @@ const fieldStyle = { marginBottom: 12 }
 
 export default function InpatientInquiryPanel() {
   const [form] = Form.useForm()
-  const { inquiry, currentPatient, setInquiry, currentEncounterId } = useWorkbenchStore()
+  const { inquiry, currentPatient, setInquiry, currentEncounterId, recordContent, setRecordContent } = useWorkbenchStore()
   const [patientGender, setPatientGender] = useState<string>('unknown')
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -93,6 +93,14 @@ export default function InpatientInquiryPanel() {
     setInquiry(inquiryData)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
+    }
+    // 自动同步体格检查到已有病历
+    if (recordContent && inquiryData.physical_exam) {
+      const updated = recordContent.replace(
+        /【体格检查】\n[\s\S]*?(?=\n【|\n$|$)/,
+        `【体格检查】\n${inquiryData.physical_exam}`
+      )
+      if (updated !== recordContent) setRecordContent(updated)
     }
     message.success({ content: '入院问诊信息已保存', duration: 1.5 })
     setIsDirty(false)
