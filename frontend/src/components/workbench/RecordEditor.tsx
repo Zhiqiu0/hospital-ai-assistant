@@ -11,6 +11,7 @@ const { TextArea } = Input
 const RECORD_TYPE_LABEL: Record<string, string> = {
   outpatient: '门诊病历', admission_note: '入院记录', first_course_record: '首次病程记录',
   course_record: '日常病程记录', senior_round: '上级查房记录', discharge_record: '出院记录',
+  pre_op_summary: '术前小结', op_record: '手术记录', post_op_record: '术后病程记录',
 }
 
 function printRecord(content: string, patient: any, recordType: string, signedAt: string | null) {
@@ -160,15 +161,35 @@ export default function RecordEditor() {
       const result: any = await api.post('/ai/quick-qc', {
         content: recordContent,
         record_type: recordType,
+        // 基础问诊字段
         chief_complaint: inquiry.chief_complaint || '',
         history_present_illness: inquiry.history_present_illness || '',
         past_history: inquiry.past_history || '',
         allergy_history: inquiry.allergy_history || '',
         physical_exam: inquiry.physical_exam || '',
+        // 住院专项字段（用于规则引擎）
+        marital_history: inquiry.marital_history || '',
+        family_history: inquiry.family_history || '',
+        pain_assessment: inquiry.pain_assessment || '',
+        vte_risk: inquiry.vte_risk || '',
+        nutrition_assessment: inquiry.nutrition_assessment || '',
+        psychology_assessment: inquiry.psychology_assessment || '',
+        rehabilitation_assessment: inquiry.rehabilitation_assessment || '',
+        current_medications: inquiry.current_medications || '',
+        religion_belief: inquiry.religion_belief || '',
+        auxiliary_exam: inquiry.auxiliary_exam || '',
+        admission_diagnosis: inquiry.admission_diagnosis || '',
         encounter_id: currentEncounterId || undefined,
       })
-      setQCResult(result.issues || [], result.summary || '', result.pass ?? false)
-      if (result.pass) {
+      const gradeScore = (result.grade_score != null)
+        ? { grade_score: result.grade_score, grade_level: result.grade_level, strengths: result.strengths }
+        : null
+      setQCResult(result.issues || [], result.summary || '', result.pass ?? false, gradeScore)
+      if (result.grade_level === '甲级') {
+        message.success(`质控通过！预估评分 ${result.grade_score} 分，达到甲级病历标准`)
+      } else if (result.grade_score != null) {
+        message.warning(`预估评分 ${result.grade_score} 分（${result.grade_level}），发现 ${(result.issues || []).length} 个问题，请查看右侧质控提示`)
+      } else if (result.pass) {
         message.success('质控通过！')
       } else {
         message.warning(`发现 ${(result.issues || []).length} 个问题，请查看右侧质控提示`)
@@ -217,14 +238,19 @@ export default function RecordEditor() {
             value={recordType}
             onChange={setRecordType}
             size="small"
-            style={{ width: 116 }}
+            style={{ width: 120 }}
             options={[
               { value: 'outpatient', label: '门诊病历' },
-              { value: 'admission_note', label: '入院记录' },
-              { value: 'first_course_record', label: '首次病程' },
-              { value: 'course_record', label: '日常病程' },
-              { value: 'senior_round', label: '上级查房' },
-              { value: 'discharge_record', label: '出院记录' },
+              { label: '─── 住院病历 ───', options: [
+                { value: 'admission_note', label: '入院记录' },
+                { value: 'first_course_record', label: '首次病程' },
+                { value: 'course_record', label: '日常病程' },
+                { value: 'senior_round', label: '上级查房' },
+                { value: 'pre_op_summary', label: '术前小结' },
+                { value: 'op_record', label: '手术记录' },
+                { value: 'post_op_record', label: '术后病程' },
+                { value: 'discharge_record', label: '出院记录' },
+              ]},
             ]}
           />
         </Space>

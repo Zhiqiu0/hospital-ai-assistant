@@ -33,6 +33,12 @@ export interface QCIssue {
   score_impact?: string
 }
 
+export interface GradeScore {
+  grade_score: number          // 0-100
+  grade_level: '甲级' | '乙级' | '丙级'
+  strengths?: string[]
+}
+
 export interface ExamSuggestion {
   exam_name: string
   category: 'basic' | 'differential' | 'high_risk'
@@ -57,6 +63,7 @@ interface WorkbenchState {
   qcIssues: QCIssue[]
   qcSummary: string
   qcPass: boolean | null
+  gradeScore: GradeScore | null
   examSuggestions: ExamSuggestion[]
   isExamLoading: boolean
   currentPatient: PatientInfo | null
@@ -67,7 +74,7 @@ interface WorkbenchState {
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setQCing: (v: boolean) => void
-  setQCResult: (issues: QCIssue[], summary: string, pass: boolean) => void
+  setQCResult: (issues: QCIssue[], summary: string, pass: boolean, gradeScore?: GradeScore | null) => void
   setExamSuggestions: (items: ExamSuggestion[]) => void
   setExamLoading: (v: boolean) => void
   isFinal: boolean
@@ -116,6 +123,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   qcIssues: [],
   qcSummary: '',
   qcPass: null,
+  gradeScore: null,
   examSuggestions: [],
   isExamLoading: false,
   currentPatient: null,
@@ -128,7 +136,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   setGenerating: (v) => set({ isGenerating: v }),
   setPolishing: (v) => set({ isPolishing: v }),
   setQCing: (v) => set({ isQCing: v }),
-  setQCResult: (issues, summary, pass) => set({ qcIssues: issues, qcSummary: summary, qcPass: pass }),
+  setQCResult: (issues, summary, pass, gradeScore = null) => set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore }),
   setExamSuggestions: (items) => set({ examSuggestions: items }),
   setExamLoading: (v) => set({ isExamLoading: v }),
   setFinal: (v) => set({ isFinal: v, finalizedAt: v ? new Date().toLocaleString('zh-CN') : null }),
@@ -157,6 +165,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     qcIssues: [],
     qcSummary: '',
     qcPass: null,
+    gradeScore: null,
     examSuggestions: [],
     currentPatient: null,
     currentEncounterId: null,

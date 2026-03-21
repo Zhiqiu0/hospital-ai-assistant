@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Typography, Tag, Alert, Spin } from 'antd'
-import { WalletOutlined, ApiOutlined, ArrowUpOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Row, Col, Card, Statistic, Table, Typography, Tag, Alert, Spin, Badge } from 'antd'
+import { WalletOutlined, ApiOutlined, ArrowUpOutlined, ThunderboltOutlined, PictureOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
 const { Title, Text } = Typography
@@ -11,6 +11,7 @@ const TASK_TYPE_MAP: Record<string, string> = {
   qc: 'AI质控',
   inquiry: '追问建议',
   exam: '检查建议',
+  pacs: 'PACS影像分析',
 }
 
 export default function TokenUsagePage() {
@@ -28,6 +29,7 @@ export default function TokenUsagePage() {
   if (loading) return <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>
 
   const balance = data?.balance
+  const aliyun = data?.aliyun_status
   const totalTokens = (data?.total_input_tokens ?? 0) + (data?.total_output_tokens ?? 0)
   const todayTokens = (data?.today_input_tokens ?? 0) + (data?.today_output_tokens ?? 0)
 
@@ -55,96 +57,124 @@ export default function TokenUsagePage() {
     <div>
       <Title level={4} style={{ marginBottom: 8 }}>Token 用量 & 账户余额</Title>
       <Text type="secondary" style={{ fontSize: 12 }}>
-        余额数据来自 DeepSeek 官方 API（实时），Token 统计来自本地调用记录
+        余额数据来自各 AI 服务官方 API（实时），Token 统计来自本地调用记录
       </Text>
 
       {error && <Alert type="error" message={error} style={{ marginTop: 12 }} />}
 
-      {/* 余额卡片 */}
-      <Card
-        title={<span><WalletOutlined style={{ marginRight: 6 }} />DeepSeek 账户余额</span>}
-        style={{ marginTop: 16 }}
-        extra={
-          balance
-            ? <Tag color="success">连接正常</Tag>
-            : <Tag color="error">获取失败（网络或Key问题）</Tag>
-        }
-      >
-        {balance ? (
-          <Row gutter={24}>
-            <Col>
-              <Statistic
-                title="可用余额"
-                value={parseFloat(balance.total_balance ?? '0')}
-                precision={2}
-                prefix="¥"
-                suffix="CNY"
-                valueStyle={{ color: '#52c41a', fontSize: 32, fontWeight: 700 }}
-              />
-            </Col>
-            <Col>
-              <Statistic
-                title="充值余额"
-                value={parseFloat(balance.topped_up_balance ?? '0')}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ fontSize: 24 }}
-              />
-            </Col>
-            <Col>
-              <Statistic
-                title="赠送余额"
-                value={parseFloat(balance.granted_balance ?? '0')}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ fontSize: 24, color: '#1677ff' }}
-              />
-            </Col>
-          </Row>
-        ) : (
-          <Text type="secondary">无法获取余额，请检查 DEEPSEEK_API_KEY 配置</Text>
-        )}
-      </Card>
+      {/* 账户余额卡片 */}
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        {/* DeepSeek 余额 */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={<span><WalletOutlined style={{ marginRight: 6 }} />DeepSeek 账户余额</span>}
+            extra={balance ? <Tag color="success">连接正常</Tag> : <Tag color="error">获取失败</Tag>}
+          >
+            {balance ? (
+              <Row gutter={24}>
+                <Col>
+                  <Statistic
+                    title="可用余额"
+                    value={parseFloat(balance.total_balance ?? '0')}
+                    precision={2} prefix="¥" suffix="CNY"
+                    valueStyle={{ color: '#52c41a', fontSize: 28, fontWeight: 700 }}
+                  />
+                </Col>
+                <Col>
+                  <Statistic title="充值余额" value={parseFloat(balance.topped_up_balance ?? '0')}
+                    precision={2} prefix="¥" valueStyle={{ fontSize: 22 }} />
+                </Col>
+                <Col>
+                  <Statistic title="赠送余额" value={parseFloat(balance.granted_balance ?? '0')}
+                    precision={2} prefix="¥" valueStyle={{ fontSize: 22, color: '#1677ff' }} />
+                </Col>
+              </Row>
+            ) : (
+              <Text type="secondary">无法获取余额，请检查 DEEPSEEK_API_KEY 配置</Text>
+            )}
+          </Card>
+        </Col>
+
+        {/* 阿里云通义千问 */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={<span><PictureOutlined style={{ marginRight: 6 }} />阿里云通义千问（PACS 影像分析）</span>}
+            extra={aliyun?.connected ? <Tag color="success">连接正常</Tag> : <Tag color="warning">待验证</Tag>}
+          >
+            {aliyun?.balance ? (
+              <Row gutter={24}>
+                <Col>
+                  <Statistic
+                    title="账户可用余额"
+                    value={parseFloat(aliyun.balance.available_amount ?? '0')}
+                    precision={2} prefix="¥" suffix={aliyun.balance.currency ?? 'CNY'}
+                    valueStyle={{ color: '#fa8c16', fontSize: 28, fontWeight: 700 }}
+                  />
+                </Col>
+                <Col>
+                  <Statistic title="现金余额"
+                    value={parseFloat(aliyun.balance.available_cash_amount ?? '0')}
+                    precision={2} prefix="¥" valueStyle={{ fontSize: 22 }} />
+                </Col>
+                <Col>
+                  <Statistic title="信用额度"
+                    value={parseFloat(aliyun.balance.credit_amount ?? '0')}
+                    precision={2} prefix="¥" valueStyle={{ fontSize: 22, color: '#1677ff' }} />
+                </Col>
+              </Row>
+            ) : (
+              <Row gutter={24} align="middle">
+                <Col>
+                  <div style={{ marginBottom: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>当前模型</Text>
+                    <div style={{ fontWeight: 700, fontSize: 18, color: '#fa8c16' }}>
+                      {aliyun?.model ?? 'qwen-vl-plus'}
+                    </div>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>用途</Text>
+                    <div style={{ fontSize: 14 }}>PACS 影像 AI 辅助分析（开发中）</div>
+                  </div>
+                </Col>
+                <Col flex={1} style={{ textAlign: 'right' }}>
+                  <Badge
+                    status={aliyun?.connected ? 'success' : 'default'}
+                    text={<Text style={{ fontSize: 13 }}>{aliyun?.connected ? 'API 可用' : (aliyun?.error ?? '未检测')}</Text>}
+                  />
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#8c8c8c' }}>
+                    {aliyun?.balance_error ?? '未配置 AccessKey，无法查询余额'}
+                  </div>
+                </Col>
+              </Row>
+            )}
+          </Card>
+        </Col>
+      </Row>
 
       {/* Token 消耗统计 */}
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="累计调用次数"
-              value={data?.total_calls ?? 0}
-              prefix={<ApiOutlined />}
-              valueStyle={{ color: '#1677ff' }}
-            />
+            <Statistic title="累计调用次数" value={data?.total_calls ?? 0}
+              prefix={<ApiOutlined />} valueStyle={{ color: '#1677ff' }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="累计消耗 Tokens"
-              value={totalTokens}
-              prefix={<ThunderboltOutlined />}
-              valueStyle={{ color: '#722ed1' }}
-            />
+            <Statistic title="累计消耗 Tokens" value={totalTokens}
+              prefix={<ThunderboltOutlined />} valueStyle={{ color: '#722ed1' }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="今日消耗 Tokens"
-              value={todayTokens}
-              prefix={<ArrowUpOutlined />}
-              valueStyle={{ color: '#fa8c16' }}
-            />
+            <Statistic title="今日消耗 Tokens" value={todayTokens}
+              prefix={<ArrowUpOutlined />} valueStyle={{ color: '#fa8c16' }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="今日输出 Tokens"
-              value={data?.today_output_tokens ?? 0}
-              valueStyle={{ color: '#13c2c2' }}
-            />
+            <Statistic title="今日输出 Tokens" value={data?.today_output_tokens ?? 0}
+              valueStyle={{ color: '#13c2c2' }} />
           </Card>
         </Col>
       </Row>

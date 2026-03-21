@@ -148,6 +148,57 @@ async def token_usage(
     except Exception:
         pass
 
+    # 1b. 阿里云：连接检测 + AccessKey 余额查询
+    aliyun_status = {"connected": False, "model": settings.aliyun_model, "error": None, "balance": None}
+    if settings.aliyun_api_key:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{settings.aliyun_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.aliyun_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.aliyun_model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                )
+                if resp.status_code == 200:
+                    aliyun_status["connected"] = True
+                else:
+                    aliyun_status["error"] = f"HTTP {resp.status_code}"
+        except Exception as e:
+            aliyun_status["error"] = str(e)
+    else:
+        aliyun_status["error"] = "未配置 ALIYUN_API_KEY"
+
+    # 阿里云账户余额（需要 AccessKey）
+    if settings.alibaba_access_key_id and settings.alibaba_access_key_secret:
+        try:
+            import asyncio
+            from alibabacloud_bssopenapi20171214 import client as bss_client
+            from alibabacloud_tea_openapi import models as open_api_models
+            bss_config = open_api_models.Config(
+                access_key_id=settings.alibaba_access_key_id,
+                access_key_secret=settings.alibaba_access_key_secret,
+                endpoint="business.aliyuncs.com",
+            )
+            bss = bss_client.Client(bss_config)
+            bal_resp = await asyncio.get_event_loop().run_in_executor(
+                None, bss.query_account_balance
+            )
+            d = bal_resp.body.data
+            aliyun_status["balance"] = {
+                "available_amount": d.available_amount,
+                "available_cash_amount": d.available_cash_amount,
+                "credit_amount": d.credit_amount,
+                "currency": d.currency,
+            }
+        except Exception as e:
+            aliyun_status["balance_error"] = str(e)
+
     # 2. 从本地 ai_tasks 表统计 token 消耗
     total_input = await db.execute(select(func.coalesce(func.sum(AITask.token_input), 0)))
     total_output = await db.execute(select(func.coalesce(func.sum(AITask.token_output), 0)))
@@ -187,6 +238,7 @@ async def token_usage(
 
     return {
         "balance": balance_info,
+        "aliyun_status": aliyun_status,
         "total_input_tokens": total_input.scalar(),
         "total_output_tokens": total_output.scalar(),
         "total_calls": total_calls.scalar(),

@@ -8,14 +8,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.5.1",
+    "@cornerstonejs/core": "^4.20.0",
+    "@cornerstonejs/tools": "^4.20.0",
+    "antd": "^5.21.0",
+    "axios": "^1.7.7",
+    "dayjs": "^1.11.13",
+    "dicom-parser": "^1.8.21",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.27.0",
-    "antd": "^5.21.0",
-    "@ant-design/icons": "^5.5.1",
-    "axios": "^1.7.7",
-    "zustand": "^5.0.0",
-    "dayjs": "^1.11.13"
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",

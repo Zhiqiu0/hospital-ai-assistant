@@ -3,11 +3,13 @@ import { Form, Input, Button, message } from 'antd'
 import { UserOutlined, LockOutlined, MedicineBoxOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setAuth, setSystemType } = useAuthStore()
+  const resetWorkbench = useWorkbenchStore((s) => s.reset)
   const [selectedSystem, setSelectedSystem] = useState<'outpatient' | 'inpatient'>('outpatient')
 
   const resolveLoginErrorMessage = async (username: string, error: any) => {
@@ -24,11 +26,14 @@ export default function LoginPage() {
   const onFinish = async (values: { username: string; password: string }) => {
     try {
       const res: any = await api.post('/auth/login', values)
+      resetWorkbench()
       setAuth(res.access_token, res.user)
       setSystemType(selectedSystem)
       const adminRoles = ['super_admin', 'hospital_admin', 'dept_admin']
       if (adminRoles.includes(res.user.role)) {
         navigate('/admin')
+      } else if (res.user.role === 'radiologist') {
+        navigate('/pacs')
       } else {
         navigate(selectedSystem === 'inpatient' ? '/inpatient' : '/workbench')
       }

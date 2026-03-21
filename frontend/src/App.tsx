@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
 import InpatientWorkbenchPage from '@/pages/InpatientWorkbenchPage'
+import PacsWorkbenchPage from '@/pages/PacsWorkbenchPage'
 import AdminLayout from '@/pages/admin/AdminLayout'
 import { useAuthStore } from '@/store/authStore'
 
@@ -23,6 +24,7 @@ function RootRedirect() {
   const { token, user, systemType } = useAuthStore()
   if (!token) return <Navigate to="/login" replace />
   if (user && ADMIN_ROLES.includes(user.role)) return <Navigate to="/admin" replace />
+  if (user?.role === 'radiologist') return <Navigate to="/pacs" replace />
   return <Navigate to={systemType === 'inpatient' ? '/inpatient' : '/workbench'} replace />
 }
 
@@ -33,6 +35,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/workbench" element={<PrivateRoute><WorkbenchPage /></PrivateRoute>} />
         <Route path="/inpatient" element={<PrivateRoute><InpatientWorkbenchPage /></PrivateRoute>} />
+        <Route path="/pacs" element={<PrivateRoute><PacsWorkbenchPage /></PrivateRoute>} />
         <Route path="/admin/*" element={<AdminRoute><AdminLayout /></AdminRoute>} />
         <Route path="/" element={<RootRedirect />} />
       </Routes>

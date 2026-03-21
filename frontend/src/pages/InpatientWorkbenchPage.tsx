@@ -1,12 +1,13 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty } from 'antd'
-import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined } from '@ant-design/icons'
+import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined, CameraOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
+import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import api from '@/services/api'
 
 const { Header, Content } = Layout
@@ -32,6 +33,7 @@ export default function InpatientWorkbenchPage() {
   }, [])
 
   const [modalOpen, setModalOpen] = useState(false)
+  const [imagingOpen, setImagingOpen] = useState(false)
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
 
@@ -109,6 +111,7 @@ export default function InpatientWorkbenchPage() {
   }
 
   const handleLogout = () => {
+    reset()
     clearAuth()
     navigate('/login')
   }
@@ -258,6 +261,15 @@ export default function InpatientWorkbenchPage() {
             style={{ color: 'var(--text-3)', fontSize: 12, borderRadius: 8 }}
           >
             历史病历
+          </Button>
+          <Button
+            icon={<CameraOutlined />}
+            size="small"
+            type="text"
+            onClick={() => setImagingOpen(true)}
+            style={{ color: '#7c3aed', fontSize: 12, borderRadius: 8 }}
+          >
+            影像分析
           </Button>
           <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'var(--border)' }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 8, background: 'var(--surface-2)' }}>
@@ -658,6 +670,8 @@ export default function InpatientWorkbenchPage() {
           <Text style={{ fontSize: 12, color: '#166534' }}>已签发病历 · 不可修改</Text>
         </div>
       </Modal>
+
+      <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />
     </Layout>
   )
 }

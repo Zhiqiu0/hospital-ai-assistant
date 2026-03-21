@@ -6,6 +6,7 @@ import {
   MedicineBoxOutlined, FileTextOutlined, ThunderboltOutlined, TeamOutlined, AuditOutlined, AudioOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
+import { useWorkbenchStore } from '@/store/workbenchStore'
 import OverviewPage from './OverviewPage'
 import UsersPage from './UsersPage'
 import DepartmentsPage from './DepartmentsPage'
@@ -32,8 +33,10 @@ export default function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, clearAuth } = useAuthStore()
+  const resetWorkbench = useWorkbenchStore((s) => s.reset)
 
   const handleLogout = () => {
+    resetWorkbench()
     clearAuth()
     navigate('/login')
   }
