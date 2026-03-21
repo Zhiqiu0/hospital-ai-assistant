@@ -86,9 +86,14 @@ export default function InpatientWorkbenchPage() {
         setInquiry(snapshot.inquiry)
       }
       if (snapshot.active_record) {
+        if (snapshot.active_record.status === 'submitted') {
+          setResumeOpen(false)
+          message.warning('该接诊病历已签发，不可修改，请在「历史病历」中查看')
+          return
+        }
         setRecordType(snapshot.active_record.record_type || 'admission_note')
         setRecordContent(snapshot.active_record.content || '')
-        setFinal(snapshot.active_record.status === 'submitted')
+        setFinal(false)
       } else {
         setRecordType('admission_note')
         setRecordContent('')

@@ -45,7 +45,7 @@ export default function RecordEditor() {
     isGenerating, isPolishing, isQCing,
     setRecordContent, setRecordType,
     setGenerating, setPolishing, setQCing, setQCResult,
-    isFinal, finalizedAt, setFinal,
+    isFinal, finalizedAt, reset,
     qcIssues, qcPass,
     currentPatient, currentEncounterId,
   } = useWorkbenchStore()
@@ -432,9 +432,9 @@ export default function RecordEditor() {
                   content: recordContent,
                 })
 
-                setFinal(true)
-                message.success('病历已签发并保存到数据库')
+                message.success('病历已签发，可在「历史病历」中查看或打印')
                 setFinalModalOpen(false)
+                reset()
                 setConfirmed(false)
                 setPatientNameInput('')
                 setPatientGenderInput('')
