@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Form, Input, Button, message, Divider } from 'antd'
-import { SaveOutlined } from '@ant-design/icons'
+import { SaveOutlined, CheckOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
@@ -25,9 +25,12 @@ export default function InquiryPanel() {
   const [form] = Form.useForm()
   const { inquiry, setInquiry, currentEncounterId, currentPatient } = useWorkbenchStore()
   const isFemale = currentPatient?.gender === 'female'
+  const [isDirty, setIsDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     form.setFieldsValue(inquiry)
+    setIsDirty(false)
   }, [form, inquiry, currentEncounterId])
 
   const buildData = (values: any) => ({
@@ -43,12 +46,15 @@ export default function InquiryPanel() {
   })
 
   const onSave = async (values: any) => {
+    setSaving(true)
     const data = buildData(values)
     setInquiry(data)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
     }
     message.success({ content: '问诊信息已保存', duration: 1.5 })
+    setIsDirty(false)
+    setSaving(false)
   }
 
   const applyVoiceInquiry = (patch: any) => {
@@ -59,11 +65,11 @@ export default function InquiryPanel() {
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
     }
+    setIsDirty(false)
   }
 
   const handleVitalFill = (vitalText: string) => {
     const current = form.getFieldValue('physical_exam') || ''
-    // Replace first line if it looks like a prior vital signs line, otherwise prepend
     const lines = current.split('\n')
     const firstLine = lines[0] || ''
     const isVitalLine = /^T:|^P:|^BP:|^SpO/.test(firstLine)
@@ -71,14 +77,14 @@ export default function InquiryPanel() {
       ? [vitalText, ...lines.slice(1)].join('\n')
       : vitalText + (current ? '\n' + current : '')
     form.setFieldValue('physical_exam', newVal)
-    setInquiry({ ...inquiry, physical_exam: newVal })
+    setIsDirty(true)
   }
 
   const handleLabInsert = (text: string) => {
     const current = form.getFieldValue('auxiliary_exam') || ''
     const newVal = current ? current + '\n' + text : text
     form.setFieldValue('auxiliary_exam', newVal)
-    setInquiry({ ...inquiry, auxiliary_exam: newVal })
+    setIsDirty(true)
   }
 
   return (
@@ -96,7 +102,7 @@ export default function InquiryPanel() {
 
       {/* Form */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-        <Form form={form} layout="vertical" size="small" onFinish={onSave}>
+        <Form form={form} layout="vertical" size="small" onFinish={onSave} onValuesChange={() => setIsDirty(true)}>
           <VoiceInputCard
             visitType="outpatient"
             getFormValues={() => form.getFieldsValue()}
@@ -185,16 +191,22 @@ export default function InquiryPanel() {
       }}>
         <Button
           type="primary"
-          icon={<SaveOutlined />}
+          icon={isDirty ? <SaveOutlined /> : <CheckOutlined />}
           block
+          disabled={!isDirty}
+          loading={saving}
           onClick={() => form.submit()}
           style={{
             borderRadius: 8, height: 36, fontWeight: 600,
-            background: 'linear-gradient(135deg, #2563eb, #3b82f6)',
+            background: isDirty
+              ? 'linear-gradient(135deg, #2563eb, #3b82f6)'
+              : '#86efac',
             border: 'none',
+            color: isDirty ? '#fff' : '#166534',
+            transition: 'all 0.3s',
           }}
         >
-          保存问诊信息
+          {isDirty ? '保存问诊信息' : '已保存 ✓'}
         </Button>
       </div>
     </div>

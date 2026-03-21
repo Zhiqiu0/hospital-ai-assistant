@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Form, Input, Button, message, Divider, Select, Slider, Tag } from 'antd'
-import { SaveOutlined } from '@ant-design/icons'
+import { SaveOutlined, CheckOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
@@ -35,6 +35,8 @@ export default function InpatientInquiryPanel() {
   const [form] = Form.useForm()
   const { inquiry, currentPatient, setInquiry, currentEncounterId } = useWorkbenchStore()
   const [patientGender, setPatientGender] = useState<string>('unknown')
+  const [isDirty, setIsDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     form.setFieldsValue({
@@ -59,9 +61,11 @@ export default function InpatientInquiryPanel() {
       admission_diagnosis: inquiry.admission_diagnosis || inquiry.initial_impression,
     })
     setPatientGender(currentPatient?.gender || 'unknown')
+    setIsDirty(false)
   }, [form, inquiry, currentEncounterId, currentPatient?.gender])
 
   const onSave = async (values: any) => {
+    setSaving(true)
     const painScore = values.pain_assessment ?? 0
 
     const inquiryData = {
@@ -91,6 +95,8 @@ export default function InpatientInquiryPanel() {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
     }
     message.success({ content: '入院问诊信息已保存', duration: 1.5 })
+    setIsDirty(false)
+    setSaving(false)
   }
 
   const painMarks = { 0: '0', 2: '2', 4: '4', 6: '轻中', 8: '重', 10: '10' }
@@ -104,14 +110,14 @@ export default function InpatientInquiryPanel() {
       ? [vitalText, ...lines.slice(1)].join('\n')
       : vitalText + (current ? '\n' + current : '')
     form.setFieldValue('physical_exam', newVal)
-    setInquiry({ ...inquiry, physical_exam: newVal })
+    setIsDirty(true)
   }
 
   const handleLabInsert = (text: string) => {
     const current = form.getFieldValue('auxiliary_exam') || ''
     const newVal = current ? current + '\n' + text : text
     form.setFieldValue('auxiliary_exam', newVal)
-    setInquiry({ ...inquiry, auxiliary_exam: newVal })
+    setIsDirty(true)
   }
 
   const applyVoiceInquiry = (patch: any) => {
@@ -150,6 +156,7 @@ export default function InpatientInquiryPanel() {
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
     }
+    setIsDirty(false)
   }
 
   return (
@@ -170,7 +177,7 @@ export default function InpatientInquiryPanel() {
 
       {/* Form */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-        <Form form={form} layout="vertical" size="small" onFinish={onSave}>
+        <Form form={form} layout="vertical" size="small" onFinish={onSave} onValuesChange={() => setIsDirty(true)}>
           <VoiceInputCard
             visitType="inpatient"
             getFormValues={() => form.getFieldsValue()}
@@ -394,16 +401,22 @@ export default function InpatientInquiryPanel() {
       }}>
         <Button
           type="primary"
-          icon={<SaveOutlined />}
+          icon={isDirty ? <SaveOutlined /> : <CheckOutlined />}
           block
+          disabled={!isDirty}
+          loading={saving}
           onClick={() => form.submit()}
           style={{
             borderRadius: 8, height: 36, fontWeight: 600,
-            background: 'linear-gradient(135deg, #0369a1, #0ea5e9)',
+            background: isDirty
+              ? 'linear-gradient(135deg, #0369a1, #0ea5e9)'
+              : '#86efac',
             border: 'none',
+            color: isDirty ? '#fff' : '#166534',
+            transition: 'all 0.3s',
           }}
         >
-          保存入院问诊信息
+          {isDirty ? '保存入院问诊信息' : '已保存 ✓'}
         </Button>
       </div>
     </div>
