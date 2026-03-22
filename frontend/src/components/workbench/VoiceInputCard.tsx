@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Input, List, Space, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Input, List, Modal, Space, Tag, Typography, message } from 'antd'
 import {
   AudioOutlined,
   PauseCircleOutlined,
@@ -56,6 +56,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
   const [restoring, setRestoring] = useState(false)
   const [transcriptId, setTranscriptId] = useState<string | null>(null)
   const [transcript, setTranscript] = useState('')
+  const [lastAnalyzedTranscript, setLastAnalyzedTranscript] = useState('')
   const [interimText, setInterimText] = useState('')
   const [summary, setSummary] = useState('')
   const [speakerDialogue, setSpeakerDialogue] = useState<DialogueItem[]>([])
@@ -195,13 +196,25 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
           setInterimText(interim.trim())
         }
 
-        recognition.onerror = () => {
+        recognition.onerror = (event: any) => {
+          if (event.error === 'no-speech') return // 静音超时，忽略，让 onend 自动重启
+          recognitionRef.current = null
           setListening(false)
           setInterimText('')
           message.error('语音识别中断，请重试')
         }
 
         recognition.onend = () => {
+          if (recognitionRef.current === recognition) {
+            // 意外中断（网络超时、静音等）—— 重启保持连续录音
+            try {
+              recognition.start()
+              return
+            } catch {
+              // 重启失败，真正停止
+            }
+          }
+          // 主动调用 stopListening() 后 recognitionRef.current 已为 null，正常收尾
           recognitionRef.current = null
           setListening(false)
           setInterimText('')
@@ -221,16 +234,14 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
     }
   }
 
-  const handleStructure = async () => {
-    if (listening) {
-      message.warning('请先停止当前录音，再进行 AI 整理')
-      return
+  const handleContinueRecording = async () => {
+    if (transcript.trim()) {
+      setTranscript(prev => prev.trimEnd() + '\n--- 续录 ---\n')
     }
-    if (!fullTranscript) {
-      message.warning('请先进行语音录入或粘贴转写内容')
-      return
-    }
+    startListening()
+  }
 
+  const doStructure = async () => {
     setStructuring(true)
     try {
       const data: any = await api.post('/ai/voice-structure', {
@@ -244,10 +255,15 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       })
 
       const patch = (data?.inquiry || {}) as Partial<InquiryData>
-      onApplyInquiry(patch)
+      // 只应用非空字段，防止覆盖已有问诊内容
+      const filteredPatch = Object.fromEntries(
+        Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+      ) as Partial<InquiryData>
+      onApplyInquiry(filteredPatch)
       setSummary(data?.transcript_summary || '')
       setSpeakerDialogue(Array.isArray(data?.speaker_dialogue) ? data.speaker_dialogue : [])
       setTranscriptId(data?.transcript_id || transcriptId)
+      setLastAnalyzedTranscript(fullTranscript)
 
       if (data?.draft_record?.trim()) {
         setRecordContent(data.draft_record)
@@ -258,6 +274,28 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
     } finally {
       setStructuring(false)
     }
+  }
+
+  const handleStructure = () => {
+    if (listening) {
+      message.warning('请先停止当前录音，再进行 AI 整理')
+      return
+    }
+    if (!fullTranscript) {
+      message.warning('请先进行语音录入或粘贴转写内容')
+      return
+    }
+    if (lastAnalyzedTranscript && lastAnalyzedTranscript === fullTranscript) {
+      Modal.confirm({
+        title: '转写内容未变化',
+        content: '当前转写与上次分析完全相同，重新分析将覆盖已有问诊内容和病历草稿，确认继续？',
+        okText: '确认重新分析',
+        cancelText: '取消',
+        onOk: doStructure,
+      })
+      return
+    }
+    doStructure()
   }
 
   return (
@@ -288,18 +326,59 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       )}
 
       <Space wrap style={{ marginBottom: 10 }}>
-        <Button type="primary" icon={<AudioOutlined />} onClick={startListening} disabled={listening}>
-          开始录音
-        </Button>
-        <Button icon={<PauseCircleOutlined />} onClick={stopListening} disabled={!listening}>
-          停止并保存
-        </Button>
-        <Button icon={<RobotOutlined />} loading={structuring} onClick={handleStructure}>
-          AI分析并整理
-        </Button>
-        <Button icon={<DeleteOutlined />} onClick={() => { stopListening(); setTranscript(''); setSummary(''); setSpeakerDialogue([]); setTranscriptId(null) }}>
-          清空
-        </Button>
+        {listening ? (
+          /* 录音中：只显示停止按钮 */
+          <Button
+            danger
+            type="primary"
+            icon={<PauseCircleOutlined />}
+            onClick={stopListening}
+            style={{ borderRadius: 6 }}
+          >
+            停止录音
+          </Button>
+        ) : fullTranscript ? (
+          /* 有内容、未录音：继续录音 + AI整理 + 清空 */
+          <>
+            <Button
+              icon={<AudioOutlined />}
+              onClick={handleContinueRecording}
+              style={{ borderRadius: 6 }}
+            >
+              继续录音
+            </Button>
+            <Button
+              type="primary"
+              icon={<RobotOutlined />}
+              loading={structuring}
+              onClick={handleStructure}
+              style={{
+                borderRadius: 6,
+                background: lastAnalyzedTranscript === fullTranscript ? '#0ea5e9' : '#7c3aed',
+                borderColor: lastAnalyzedTranscript === fullTranscript ? '#0ea5e9' : '#7c3aed',
+              }}
+            >
+              {lastAnalyzedTranscript === fullTranscript ? '重新分析' : 'AI分析并整理'}
+            </Button>
+            <Button
+              icon={<DeleteOutlined />}
+              onClick={() => { setTranscript(''); setSummary(''); setSpeakerDialogue([]); setTranscriptId(null) }}
+              style={{ borderRadius: 6 }}
+            >
+              清空重录
+            </Button>
+          </>
+        ) : (
+          /* 初始状态：只显示开始录音 */
+          <Button
+            type="primary"
+            icon={<AudioOutlined />}
+            onClick={startListening}
+            style={{ borderRadius: 6 }}
+          >
+            开始录音
+          </Button>
+        )}
       </Space>
 
       <TextArea

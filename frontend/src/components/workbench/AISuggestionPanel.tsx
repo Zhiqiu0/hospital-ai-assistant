@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Tabs, Button, Typography, Empty, Badge, Spin, Alert, List, Tag, message, Divider, Tooltip, Input } from 'antd'
 import {
   QuestionCircleOutlined, ExperimentOutlined, SafetyOutlined,
@@ -201,6 +201,13 @@ export default function AISuggestionPanel() {
     recordContent, setRecordContent,
   } = useWorkbenchStore()
 
+  const lastInquirySuggestKey = useRef(
+    [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression].join('|')
+  )
+  const lastExamSuggestKey = useRef(
+    [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression].join('|')
+  )
+
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -225,6 +232,9 @@ export default function AISuggestionPanel() {
   useEffect(() => {
     if (!inquirySavedAt) return
     if (!inquiry.chief_complaint.trim()) { setSuggestions([]); return }
+    const key = `${inquiry.chief_complaint}|${inquiry.history_present_illness}|${inquiry.initial_impression}`
+    if (key === lastInquirySuggestKey.current) return
+    lastInquirySuggestKey.current = key
     let cancelled = false
     setLoading(true)
     fetchInquirySuggestions(
@@ -314,6 +324,9 @@ export default function AISuggestionPanel() {
   useEffect(() => {
     if (!inquirySavedAt) return
     if (!inquiry.chief_complaint.trim()) { setExamSuggestions([]); return }
+    const key = `${inquiry.chief_complaint}|${inquiry.history_present_illness}|${inquiry.initial_impression}`
+    if (key === lastExamSuggestKey.current) return
+    lastExamSuggestKey.current = key
     let cancelled = false
     setExamLoading(true)
     api.post('/ai/exam-suggestions', {
