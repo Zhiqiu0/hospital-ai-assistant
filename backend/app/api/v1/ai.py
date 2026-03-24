@@ -2,7 +2,10 @@
 AI 快捷接口 - 无需预建接诊记录，直接从问诊信息流式生成病历
 """
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, Query
 from fastapi import UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
@@ -37,8 +40,8 @@ async def _log_task(task_type: str, token_input: int = 0, token_output: int = 0)
         db.add(task)
         try:
             await db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"_log_task db commit failed: {e}")
     return task_id
 
 
@@ -74,8 +77,8 @@ async def _save_qc_issues(task_id: str, issues: list[dict], encounter_id: Option
             db.add(qc)
         try:
             await db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"_save_qc_issues db commit failed: {e}")
 
 
 async def _get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
@@ -694,7 +697,8 @@ async def voice_structure(
             "inquiry": result.get("inquiry", {}),
             "draft_record": result.get("draft_record", ""),
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"analyze_voice failed: {e}", exc_info=True)
         return {"transcript_id": req.transcript_id, "transcript_summary": "", "speaker_dialogue": [], "inquiry": {}, "draft_record": ""}
 
 
@@ -974,7 +978,8 @@ async def inquiry_suggestions(
                         token_input=usage.prompt_tokens if usage else 0,
                         token_output=usage.completion_tokens if usage else 0)
         return result
-    except Exception:
+    except Exception as e:
+        logger.error(f"inquiry_suggestions failed: {e}", exc_info=True)
         return {"suggestions": []}
 
 
@@ -1043,7 +1048,8 @@ async def exam_suggestions(
                         token_input=usage.prompt_tokens if usage else 0,
                         token_output=usage.completion_tokens if usage else 0)
         return result
-    except Exception:
+    except Exception as e:
+        logger.error(f"exam_suggestions failed: {e}", exc_info=True)
         return {"suggestions": []}
 
 
@@ -1440,7 +1446,8 @@ async def diagnosis_suggestion(
                         token_input=usage.prompt_tokens if usage else 0,
                         token_output=usage.completion_tokens if usage else 0)
         return result
-    except Exception:
+    except Exception as e:
+        logger.error(f"diagnosis_suggestion failed: {e}", exc_info=True)
         return {"diagnoses": []}
 
 
@@ -1501,7 +1508,8 @@ async def qc_fix(
                         token_input=usage.prompt_tokens if usage else 0,
                         token_output=usage.completion_tokens if usage else 0)
         return {"fix_text": content.strip()}
-    except Exception:
+    except Exception as e:
+        logger.error(f"qc_fix failed: {e}", exc_info=True)
         return {"fix_text": req.suggestion or ""}
 
 

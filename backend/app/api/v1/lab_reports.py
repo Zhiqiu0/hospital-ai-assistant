@@ -1,8 +1,11 @@
 import base64
 import io
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -60,7 +63,8 @@ def _extract_pdf_text(content: bytes) -> Optional[str]:
         doc = fitz.open(stream=content, filetype="pdf")
         text = "\n".join(doc[i].get_text() for i in range(len(doc))).strip()
         return text if len(text) > 80 else None
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_extract_pdf_text failed: {e}")
         return None
 
 
@@ -80,8 +84,8 @@ async def _parse_text_with_llm(raw_text: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"_parse_text_with_llm failed: {e}", exc_info=True)
     return None
 
 
@@ -109,8 +113,8 @@ async def _ocr_image(content: bytes, mime_type: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"_ocr_image failed: {e}", exc_info=True)
     return None
 
 
@@ -127,7 +131,8 @@ async def _ocr_pdf_as_images(content: bytes) -> Optional[str]:
             if text:
                 results.append(text)
         return "\n\n---\n\n".join(results) if results else None
-    except Exception:
+    except Exception as e:
+        logger.error(f"_ocr_pdf_as_images failed: {e}", exc_info=True)
         return None
 
 
