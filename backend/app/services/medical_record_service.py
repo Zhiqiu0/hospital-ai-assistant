@@ -29,7 +29,14 @@ class MedicalRecordService:
         return record
 
     async def save_content(self, record_id: str, data: RecordContentUpdate, user_id: str):
-        record = await self.get_by_id(record_id)
+        result = await self.db.execute(
+            select(MedicalRecord).where(MedicalRecord.id == record_id).with_for_update()
+        )
+        record = result.scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail="病历不存在")
+        if record.status == "submitted":
+            raise HTTPException(status_code=403, detail="病历已签发，不可修改")
         new_version_no = record.current_version + 1
         version = RecordVersion(
             medical_record_id=record_id,
@@ -42,16 +49,16 @@ class MedicalRecordService:
         record.current_version = new_version_no
         record.status = "editing"
         await self.db.commit()
-        return {"message": "保存成功", "version_no": new_version_no}
+        return {"ok": True, "version_no": new_version_no}
 
     async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str) -> MedicalRecord:
         """签发时快速创建或更新病历记录"""
-        # Check if a record already exists for this encounter+type
+        # Check if a record already exists for this encounter+type (加锁防并发重复签发)
         result = await self.db.execute(
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
                 MedicalRecord.record_type == record_type,
-            )
+            ).with_for_update()
         )
         record = result.scalar_one_or_none()
         if not record:

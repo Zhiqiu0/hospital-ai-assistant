@@ -1,15 +1,23 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.auth import LoginRequest, TokenResponse
 from app.services.auth_service import AuthService
 from app.services.audit_service import log_action
+from app.config import settings
+
+_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
+    from app.core.rate_limit import login_limiter
+    login_limiter.check(http_request)
     service = AuthService(db)
     result = await service.login(request.username, request.password)
     if not result:
@@ -36,8 +44,25 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
 
 
 @router.post("/logout")
-async def logout():
-    return {"message": "已登出"}
+async def logout(
+    token: str = Depends(_oauth2),
+    db: AsyncSession = Depends(get_db),
+):
+    if token:
+        try:
+            payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                from app.models.revoked_token import RevokedToken
+                db.add(RevokedToken(
+                    jti=jti,
+                    expires_at=datetime.utcfromtimestamp(exp),
+                ))
+                await db.commit()
+        except JWTError:
+            pass
+    return {"ok": True}
 
 
 @router.get("/check-username")

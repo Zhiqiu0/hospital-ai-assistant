@@ -171,13 +171,16 @@ async def upload_study(
     content = await file.read()
     archive_path.write_bytes(content)
 
-    # 解压
-    SEVENZIP_PATHS = [
-        r"C:\Program Files\7-Zip\7z.exe",
-        r"D:\Software\Tool\isTools8\i4Tools8\x64\files\patchtools\7z-64\7z.exe",
-        r"D:\Software\Tool\leidian\LDPlayer9\7za.exe",
-    ]
-    sevenzip_exe = next((p for p in SEVENZIP_PATHS if os.path.exists(p)), None)
+    # 解压 —— 优先 PATH，再 fallback 常见安装位置
+    sevenzip_exe = shutil.which("7z") or shutil.which("7za")
+    if not sevenzip_exe:
+        _fallback_paths = [
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe",
+            "/usr/bin/7z",
+            "/usr/local/bin/7z",
+        ]
+        sevenzip_exe = next((p for p in _fallback_paths if os.path.exists(p)), None)
     dicom_dir_str = str(study_dir / "dicom")
     try:
         if is_rar:
@@ -285,6 +288,8 @@ async def get_thumbnail(
     ww: Optional[float] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(400, "非法文件名")
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
@@ -339,6 +344,8 @@ async def get_dicom_file(
     filename: str,
     db: AsyncSession = Depends(get_db),
 ):
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(400, "非法文件名")
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")

@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -148,15 +149,19 @@ async def upload_lab_report(
 
     content = await file.read()
 
-    # 保存文件
+    # 保存文件（校验 encounter_id 防路径穿越）
     uploads_root = Path(__file__).resolve().parents[3] / "uploads"
-    rel_dir = Path("lab_reports") / (encounter_id or "no_encounter")
-    (uploads_root / rel_dir).mkdir(parents=True, exist_ok=True)
+    safe_eid = re.sub(r"[^a-zA-Z0-9_-]", "", encounter_id or "") or "no_encounter"
+    rel_dir = Path("lab_reports") / safe_eid
+    dest_dir = (uploads_root / rel_dir).resolve()
+    if not str(dest_dir).startswith(str(uploads_root.resolve())):
+        raise HTTPException(400, "非法路径")
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = Path(file.filename or "report").suffix or ".pdf"
     file_name = f"{generate_uuid()}{suffix}"
     rel_path = rel_dir / file_name
-    (uploads_root / rel_path).write_bytes(content)
+    (dest_dir / file_name).write_bytes(content)
 
     # 创建数据库记录
     report = LabReport(

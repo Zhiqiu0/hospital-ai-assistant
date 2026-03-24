@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi import UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -107,7 +107,12 @@ async def _get_model_options(db: AsyncSession, scene: str) -> dict:
         "max_tokens": config.max_tokens if config else 4096,
     }
 
-router = APIRouter()
+from app.core.rate_limit import ai_limiter
+
+def _ai_rate_limit(request: Request):
+    ai_limiter.check(request)
+
+router = APIRouter(dependencies=[Depends(_ai_rate_limit)])
 
 
 class QuickGenerateRequest(BaseModel):

@@ -24,8 +24,10 @@ class PatientService:
             result = await self.db.execute(select(Patient).where(Patient.id_card == id_card))
             patient = result.scalar_one_or_none()
 
-        if not patient and phone:
-            result = await self.db.execute(select(Patient).where(Patient.phone == phone))
+        if not patient and phone and name:
+            result = await self.db.execute(
+                select(Patient).where(Patient.phone == phone, Patient.name == name)
+            )
             patient = result.scalar_one_or_none()
 
         if not patient and name and birth_date:

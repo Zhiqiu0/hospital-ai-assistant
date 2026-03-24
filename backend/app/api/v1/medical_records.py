@@ -46,7 +46,7 @@ async def quick_save_record(
         resource_id=record.id,
         detail=f"签发病历，类型：{data.record_type}，接诊ID：{data.encounter_id}",
     )
-    return {"record_id": record.id, "message": "病历已保存"}
+    return {"ok": True, "record_id": record.id}
 
 
 @router.get("/my")

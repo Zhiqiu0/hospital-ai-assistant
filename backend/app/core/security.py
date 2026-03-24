@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -5,6 +6,7 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.database import get_db
 from app.config import settings
 
@@ -23,7 +25,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 
 
@@ -43,6 +45,14 @@ async def get_current_user(
             raise credentials_exception
     except JWTError:
         raise credentials_exception
+
+    # 检查 token 是否已被吊销
+    jti = payload.get("jti")
+    if jti:
+        from app.models.revoked_token import RevokedToken
+        revoked = await db.get(RevokedToken, jti)
+        if revoked:
+            raise credentials_exception
 
     from app.services.user_service import UserService
     service = UserService(db)

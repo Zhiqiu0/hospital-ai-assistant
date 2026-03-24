@@ -18,4 +18,4 @@ class QCIssueService:
             from datetime import datetime
             issue.resolved_at = datetime.now()
         await self.db.commit()
-        return {"message": "更新成功"}
+        return {"ok": True}

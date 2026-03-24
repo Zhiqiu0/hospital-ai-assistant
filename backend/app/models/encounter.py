@@ -1,9 +1,13 @@
 from sqlalchemy import String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import mapped_column, Mapped, relationship
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from datetime import datetime
 from app.database import Base
 from app.models.base import TimestampMixin, generate_uuid
+
+if TYPE_CHECKING:
+    from app.models.patient import Patient
+    from app.models.medical_record import MedicalRecord
 
 
 class Encounter(Base, TimestampMixin):
@@ -60,5 +64,3 @@ class InquiryInput(Base, TimestampMixin):
     encounter: Mapped[Encounter] = relationship(back_populates="inquiry_inputs")
 
 
-from app.models.patient import Patient
-from app.models.medical_record import MedicalRecord

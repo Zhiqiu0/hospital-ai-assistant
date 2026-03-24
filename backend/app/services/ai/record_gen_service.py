@@ -58,6 +58,9 @@ class RecordGenService:
 
     async def stream_generate(self, record_id: str, request: RecordGenerateRequest, user_id: str):
         record = await self.record_service.get_by_id(record_id)
+        if record.status == "submitted":
+            yield f"data: {json.dumps({'type': 'error', 'message': '病历已签发，不可修改'}, ensure_ascii=False)}\n\n"
+            return
         inquiry = request.inquiry_input
         record_type_cn = RECORD_TYPE_MAP.get(record.record_type, "门诊")
 

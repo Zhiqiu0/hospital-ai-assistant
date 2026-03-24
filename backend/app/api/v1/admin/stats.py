@@ -7,7 +7,7 @@ from app.models.encounter import Encounter
 from app.models.medical_record import AITask, QCIssue
 from app.models.user import Department, User
 from app.config import settings
-from datetime import date
+from datetime import date, datetime, timedelta
 import httpx
 
 router = APIRouter()
@@ -89,13 +89,14 @@ async def usage_stats(
     ]
 
     # 近7日每日接诊趋势
-    from sqlalchemy import text as sa_text
-    daily_result = await db.execute(sa_text("""
-        SELECT DATE(visited_at) as day, COUNT(*) as cnt
-        FROM encounters
-        WHERE visited_at >= NOW() - INTERVAL '7 days'
-        GROUP BY day ORDER BY day
-    """))
+    seven_days_ago = datetime.now() - timedelta(days=7)
+    day_col = cast(Encounter.visited_at, Date)
+    daily_result = await db.execute(
+        select(day_col.label("day"), func.count().label("cnt"))
+        .where(Encounter.visited_at >= seven_days_ago)
+        .group_by(day_col)
+        .order_by(day_col)
+    )
     daily = [{"date": str(row.day), "count": row.cnt} for row in daily_result]
 
     return {"by_department": items, "daily_trend": daily}
