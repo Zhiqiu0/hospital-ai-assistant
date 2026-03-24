@@ -125,16 +125,18 @@ export default function RecordEditor() {
   const handleSupplement = async () => {
     if (!qcIssues.length) { message.warning('请先执行 AI 质控'); return }
     setIsSupplementing(true)
+    const original = recordContent
+    setRecordContent('')
     try {
       await streamSSE('/api/v1/ai/quick-supplement', {
-        current_content: recordContent,
+        current_content: original,
         qc_issues: qcIssues,
         ...inquiry,
         record_type: recordType,
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
-      message.success('补全完成，已追加到病历末尾')
+      message.success('补全完成')
     } catch (e: any) {
-      if (e.name !== 'AbortError') message.error('补全失败，请重试')
+      if (e.name !== 'AbortError') { message.error('补全失败，请重试'); setRecordContent(original) }
     } finally { setIsSupplementing(false) }
   }
 

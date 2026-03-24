@@ -258,6 +258,7 @@ OUTPATIENT_GENERATE_PROMPT = """你是一名专业的临床病历书写助手。
 过敏史：{allergy_history}
 个人史：{personal_history}
 体格检查：{physical_exam}
+辅助检查（真实数据，若有则原样写入病历，不得编造数值）：{auxiliary_exam}
 初步印象：{initial_impression}
 
 请直接输出病历文本（不要JSON）：
@@ -275,7 +276,10 @@ OUTPATIENT_GENERATE_PROMPT = """你是一名专业的临床病历书写助手。
 （个人史及生活习惯）
 
 【体格检查】
-（体格检查结果）
+（体格检查结果，未提供则写"未查"）
+
+【辅助检查】
+（若有真实检查数据则如实写入；若无则写"未见异常"或"暂无"，不得编造数值）
 
 【初步诊断】
 （规范中文诊断，主要诊断放首位）
@@ -781,30 +785,35 @@ class SupplementRequest(BaseModel):
     past_history: Optional[str] = ""
     allergy_history: Optional[str] = ""
     physical_exam: Optional[str] = ""
+    auxiliary_exam: Optional[str] = ""
     initial_impression: Optional[str] = ""
     record_type: Optional[str] = "outpatient"
 
 
-SUPPLEMENT_PROMPT = """你是临床病历书写专家。根据质控发现的缺失项，为病历补充缺失内容。
+SUPPLEMENT_PROMPT = """你是临床病历书写专家。根据质控发现的缺失项，对病历进行修正，输出完整的修正后病历。
 
 病历类型：{record_type}
 
-问诊信息（参考）：
+问诊信息（参考，请严格使用这些真实数据，不得编造）：
 主诉：{chief_complaint}
 现病史：{history_present_illness}
 既往史：{past_history}
 过敏史：{allergy_history}
 体格检查：{physical_exam}
+辅助检查（真实数据，必须原样使用，不得自行编造检验数值）：{auxiliary_exam}
 初步印象：{initial_impression}
 
 当前病历内容：
 {current_content}
 
-质控发现的问题（需要补充的内容）：
+质控发现的问题（需要修复的内容）：
 {qc_issues}
 
-请根据问诊信息，只针对上述质控问题中缺失的内容进行补充。
-输出格式：直接输出补充内容（带字段标题，如【既往史】），不要重复已有内容，不要编造未提及的信息。"""
+请输出**完整的修正后病历**（替换"未提供"占位符，补充缺失章节）。
+要求：
+1. 保留已有内容，只修改缺失或标注"未提供"的字段
+2. 辅助检查如有真实数据则直接使用，不得编造检验数值
+3. 输出完整病历正文，不加说明前缀"""
 
 
 @router.post("/quick-supplement")
@@ -831,8 +840,9 @@ async def quick_supplement(
         past_history=req.past_history or "未提供",
         allergy_history=req.allergy_history or "未提供",
         physical_exam=req.physical_exam or "未提供",
+        auxiliary_exam=req.auxiliary_exam or "无",
         initial_impression=req.initial_impression or "未提供",
-        current_content=req.current_content[:1200] if req.current_content else "（空）",
+        current_content=req.current_content[:1500] if req.current_content else "（空）",
         qc_issues=issues_text,
     )
     model_options = await _get_model_options(db, "generate")

@@ -5,8 +5,6 @@ import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
 import VitalSignsInput from './VitalSignsInput'
-import LabOrderPopover from './LabOrderPopover'
-import LabReportUploadButton from './LabReportUploadButton'
 
 const { TextArea } = Input
 
@@ -29,10 +27,19 @@ export default function InquiryPanel() {
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // 切换接诊时重置表单
   useEffect(() => {
     form.setFieldsValue(inquiry)
     setIsDirty(false)
-  }, [form, inquiry, currentEncounterId])
+  }, [form, currentEncounterId])
+
+  // 外部更新 auxiliary_exam（如检验报告Tab插入）时同步到表单，不影响 dirty 状态
+  useEffect(() => {
+    const current = form.getFieldValue('auxiliary_exam') || ''
+    if (inquiry.auxiliary_exam !== current) {
+      form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
+    }
+  }, [inquiry.auxiliary_exam])
 
   const buildData = (values: any) => ({
     chief_complaint: values.chief_complaint || '',
@@ -66,10 +73,20 @@ export default function InquiryPanel() {
       let updated = recordContent
       for (const [header, value] of fieldMap) {
         if (!value) continue
-        updated = updated.replace(
-          new RegExp(`${header}\\n[\\s\\S]*?(?=\\n【|$)`),
-          `${header}\n${value}`
-        )
+        if (updated.includes(header)) {
+          // 章节已存在 → 替换内容
+          updated = updated.replace(
+            new RegExp(`${header}\\n[\\s\\S]*?(?=\\n【|$)`),
+            `${header}\n${value}`
+          )
+        } else if (header === '【辅助检查】') {
+          // 辅助检查章节不存在 → 插入到【初步诊断】前，或追加到末尾
+          if (updated.includes('【初步诊断】')) {
+            updated = updated.replace('【初步诊断】', `【辅助检查】\n${value}\n\n【初步诊断】`)
+          } else {
+            updated = updated.trimEnd() + `\n\n【辅助检查】\n${value}`
+          }
+        }
       }
       if (updated !== recordContent) setRecordContent(updated)
     }
@@ -120,12 +137,6 @@ export default function InquiryPanel() {
     setIsDirty(true)
   }
 
-  const handleLabInsert = (text: string) => {
-    const current = form.getFieldValue('auxiliary_exam') || ''
-    const newVal = current ? current + '\n' + text : text
-    form.setFieldValue('auxiliary_exam', newVal)
-    setIsDirty(true)
-  }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -201,21 +212,12 @@ export default function InquiryPanel() {
             <TextArea rows={4} placeholder="生命体征、各系统体检结果..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>
 
-          {/* Auxiliary exam with lab order button */}
           <Form.Item
             style={fieldStyle}
             name="auxiliary_exam"
-            label={
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                <span style={labelStyle}>辅助检查</span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <LabReportUploadButton onInsert={handleLabInsert} />
-                  <LabOrderPopover onInsert={handleLabInsert} />
-                </div>
-              </div>
-            }
+            label={<span style={labelStyle}>辅助检查</span>}
           >
-            <TextArea rows={3} placeholder="已有检查结果，或点击「快速开单」添加拟行检查..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
+            <TextArea rows={3} placeholder="已有检查结果，或在右侧「检验报告」Tab 上传报告后插入..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0 }} name="initial_impression"
