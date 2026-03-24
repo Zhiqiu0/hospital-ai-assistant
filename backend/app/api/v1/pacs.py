@@ -27,7 +27,10 @@ from sqlalchemy import select
 from app.core.security import get_current_user
 from app.database import get_db
 from app.models.imaging import ImagingStudy, ImagingReport
+from app.models.encounter import Encounter
 from app.config import settings
+
+PRIVILEGED_ROLES = {"radiologist", "admin", "super_admin"}
 
 router = APIRouter()
 
@@ -515,6 +518,17 @@ async def get_patient_reports(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # 普通医生只能访问自己有 encounter 的患者
+    if getattr(current_user, "role", "doctor") not in PRIVILEGED_ROLES:
+        enc = await db.execute(
+            select(Encounter.id).where(
+                Encounter.patient_id == patient_id,
+                Encounter.doctor_id == current_user.id,
+            ).limit(1)
+        )
+        if not enc.scalar_one_or_none():
+            raise HTTPException(403, "无权访问该患者影像资料")
+
     result = await db.execute(
         select(ImagingStudy, ImagingReport)
         .join(ImagingReport, ImagingReport.study_id == ImagingStudy.id, isouter=True)
@@ -607,6 +621,10 @@ async def list_studies(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # 只有放射科医生和管理员可查看全部影像列表
+    if getattr(current_user, "role", "doctor") not in PRIVILEGED_ROLES:
+        raise HTTPException(403, "仅放射科医生可访问影像列表")
+
     q = select(ImagingStudy).order_by(ImagingStudy.created_at.desc())
     if status:
         q = q.where(ImagingStudy.status == status)
