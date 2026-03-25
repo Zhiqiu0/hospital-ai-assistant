@@ -1,8 +1,13 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.api.v1 import router as api_v1_router
 from app.schema_compat import apply_schema_compatibility
+from app.core.logging_config import setup_logging
+
+setup_logging(log_level=getattr(settings, "log_level", "INFO"))
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="MediScribe 临床接诊智能助手",
@@ -27,6 +32,7 @@ app.include_router(api_v1_router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def startup_event():
+    logger.info("MedAssist 后端启动")
     await apply_schema_compatibility()
 
 

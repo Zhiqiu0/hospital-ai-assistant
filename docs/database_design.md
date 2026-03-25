@@ -1,6 +1,6 @@
 # 数据库设计文档
 
-> 数据库：PostgreSQL 16 | 更新日期：2026-03-18
+> 数据库：PostgreSQL 16 | 更新日期：2026-03-25
 
 ---
 
@@ -22,7 +22,12 @@ qc_rules             质控规则配置表
 prompt_templates     Prompt模板表
 model_configs        模型配置表
 record_templates     病历模板表
-operation_logs       操作日志表
+audit_logs           操作审计日志表
+voice_records        语音录入记录表
+lab_reports          检验报告上传表
+imaging_studies      影像检查表（PACS）
+imaging_reports      影像报告表（PACS）
+revoked_tokens       已吊销 Token 表（Logout 黑名单）
 ```
 
 ---
@@ -33,14 +38,21 @@ operation_logs       操作日志表
 departments  ←─────── users
                          │
 patients ───────── encounters ───── inquiry_inputs
-                         │
-                    medical_records
-                         │
-                    record_versions ←── ai_tasks
-                                           │
-                                   inquiry_suggestions
-                                   exam_suggestions
-                                   qc_issues
+    │                    │
+    │               medical_records
+    │                    │
+    │               record_versions ←── ai_tasks
+    │                                       │
+    │                               inquiry_suggestions
+    │                               exam_suggestions
+    │                               qc_issues
+    │
+    ├── lab_reports         （检验报告上传，OCR 解析）
+    └── imaging_studies ─── imaging_reports   （PACS 影像）
+
+voice_records              （语音录入，关联 encounter）
+audit_logs                 （操作审计，关联 user/patient）
+revoked_tokens             （Logout JWT 黑名单）
 ```
 
 ---
@@ -88,7 +100,7 @@ CREATE TABLE users (
 );
 
 COMMENT ON TABLE users IS '用户表，包含医生和各级管理员';
-COMMENT ON COLUMN users.role IS 'super_admin/hospital_admin/dept_admin/doctor/qc_viewer';
+COMMENT ON COLUMN users.role IS 'super_admin/hospital_admin/dept_admin/doctor/radiologist/qc_viewer';
 
 -- ============================================================
 -- 3. 患者表
@@ -480,3 +492,99 @@ CREATE INDEX idx_operation_logs_created ON operation_logs(created_at);
 4. 默认模型配置（DeepSeek-V3）
 
 详见 `scripts/init_data.sql`
+
+---
+
+## 六、后续新增表（2026-03-25）
+
+```sql
+-- ============================================================
+-- 17. 语音录入记录表
+-- ============================================================
+CREATE TABLE voice_records (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    encounter_id    UUID REFERENCES encounters(id),
+    doctor_id       UUID NOT NULL REFERENCES users(id),
+    audio_file_path VARCHAR(300),                       -- 录音文件相对路径
+    transcript      TEXT,                              -- ASR 转写文本
+    structured      JSONB,                             -- AI 结构化后的问诊字段
+    duration_sec    INTEGER,                           -- 录音时长（秒）
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 18. 检验报告上传表
+-- ============================================================
+CREATE TABLE lab_reports (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    encounter_id      UUID REFERENCES encounters(id),
+    patient_id        UUID NOT NULL REFERENCES patients(id),
+    uploader_id       UUID NOT NULL REFERENCES users(id),
+    original_filename VARCHAR(255),                    -- 原始文件名
+    file_path         VARCHAR(500),                    -- 相对存储路径
+    file_type         VARCHAR(10),                     -- pdf / jpg / png
+    ocr_text          TEXT,                            -- OCR 解析全文
+    report_type       VARCHAR(100),                    -- 解析出的报告类型
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 19. 影像检查表（PACS）
+-- ============================================================
+CREATE TABLE imaging_studies (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id         UUID NOT NULL REFERENCES patients(id),
+    uploaded_by        UUID NOT NULL REFERENCES users(id),
+    modality           VARCHAR(20),                    -- CT / MRI / XR 等
+    body_part          VARCHAR(50),
+    series_description VARCHAR(200),
+    total_frames       INTEGER DEFAULT 0,
+    storage_dir        TEXT,                           -- DICOM 文件存储目录
+    status             VARCHAR(20) DEFAULT 'pending'
+                       CHECK (status IN ('pending','analyzed','published')),
+    created_at         TIMESTAMP DEFAULT NOW(),
+    updated_at         TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 20. 影像报告表（PACS）
+-- ============================================================
+CREATE TABLE imaging_reports (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    study_id        UUID NOT NULL REFERENCES imaging_studies(id),
+    radiologist_id  UUID REFERENCES users(id),
+    selected_frames TEXT[],                            -- 选中分析的帧文件名
+    ai_analysis     TEXT,                              -- AI 分析结果（Markdown）
+    final_report    TEXT,                              -- 医生审核后的最终报告
+    is_published    BOOLEAN DEFAULT FALSE,
+    published_at    TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 21. 审计日志表
+-- ============================================================
+CREATE TABLE audit_logs (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID REFERENCES users(id),
+    user_name      VARCHAR(50),
+    user_role      VARCHAR(30),
+    action         VARCHAR(50) NOT NULL,
+    resource_type  VARCHAR(30),
+    resource_id    VARCHAR(100),
+    detail         TEXT,
+    ip_address     VARCHAR(50),
+    status         VARCHAR(20) DEFAULT 'success',
+    created_at     TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 22. 已吊销 Token 表（Logout 黑名单）
+-- ============================================================
+CREATE TABLE revoked_tokens (
+    jti         VARCHAR(36) PRIMARY KEY,               -- JWT ID (uuid)
+    expires_at  TIMESTAMP NOT NULL,                    -- Token 过期时间
+    revoked_at  TIMESTAMP DEFAULT NOW()
+);
+```
