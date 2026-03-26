@@ -37,8 +37,6 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
     inquiry,
     currentPatient,
     currentEncounterId,
-    recordContent,
-    setRecordContent,
   } = useWorkbenchStore()
   const { token } = useAuthStore()
 
@@ -265,10 +263,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       setTranscriptId(data?.transcript_id || transcriptId)
       setLastAnalyzedTranscript(fullTranscript)
 
-      if (data?.draft_record?.trim()) {
-        setRecordContent(data.draft_record)
-      }
-      message.success('已根据语音内容整理问诊并生成病历草稿')
+      message.success('已根据语音内容整理问诊字段，保存后将同步到病历')
     } catch {
       message.error('语音整理失败，请重试')
     } finally {
@@ -310,7 +305,6 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
           <Text style={{ fontSize: 12, color: '#475569' }}>保存原始录音与转写，并让 AI 识别对话结构</Text>
         </Space>
         <Space size={6}>
-          {restoring && <Tag color="processing">恢复中</Tag>}
           {uploadingAudio && <Tag color="purple">保存原语音</Tag>}
           {listening && <Tag color="red">录音中</Tag>}
         </Space>
@@ -427,7 +421,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       )}
 
       <Text style={{ fontSize: 12, color: '#64748b' }}>
-        语音原文会在后台保存；AI整理后会自动回填问诊字段，并把生成的病历草稿写入中间编辑区。当前病历内容{recordContent ? '将被新的语音草稿覆盖' : '会自动生成在编辑区'}。
+        语音原文会在后台保存；AI整理后会自动回填问诊字段，点击「保存问诊信息」后同步到病历编辑区。
       </Text>
       {transcriptId && (
         <div style={{ marginTop: 8 }}>

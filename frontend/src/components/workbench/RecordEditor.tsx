@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
-import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio } from 'antd'
-import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined } from '@ant-design/icons'
+import { useRef, useState, useEffect } from 'react'
+import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Dropdown } from 'antd'
+import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
@@ -46,13 +46,16 @@ export default function RecordEditor() {
     isGenerating, isPolishing, isQCing,
     setRecordContent, setRecordType,
     setGenerating, setPolishing, setQCing, setQCResult,
+    setInquiry,
     isFinal, finalizedAt, reset,
     qcIssues, qcPass,
     currentPatient, currentEncounterId,
+    pendingGenerate, setPendingGenerate,
   } = useWorkbenchStore()
   const { token } = useAuthStore()
   const abortRef = useRef<AbortController | null>(null)
 
+  const [generateConfirmOpen, setGenerateConfirmOpen] = useState(false)
   const [finalModalOpen, setFinalModalOpen] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -91,6 +94,31 @@ export default function RecordEditor() {
     }
   }
 
+  // 生成完成后，把病历各段落解析回左侧问诊字段，确保左右一致
+  const syncGeneratedRecordToInquiry = (content: string) => {
+    const result: Record<string, string> = {}
+    const pattern = /【([^】]+)】[^\S\n]*\n?([\s\S]*?)(?=\n【|$)/g
+    let m: RegExpExecArray | null
+    while ((m = pattern.exec(content)) !== null) {
+      const text = m[2].trim()
+      if (!text) continue
+      switch (m[1]) {
+        case '主诉': result.chief_complaint = text; break
+        case '现病史': result.history_present_illness = text; break
+        case '既往史': result.past_history = text; break
+        case '过敏史': result.allergy_history = text; break
+        case '个人史': result.personal_history = text; break
+        case '月经史': result.menstrual_history = text; break
+        case '体格检查': result.physical_exam = text; break
+        case '辅助检查': result.auxiliary_exam = text; break
+        case '初步诊断': result.initial_impression = text; break
+      }
+    }
+    if (Object.keys(result).length > 0) {
+      setInquiry({ ...useWorkbenchStore.getState().inquiry, ...result })
+    }
+  }
+
   const handleGenerate = async () => {
     if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
     setGenerating(true)
@@ -103,10 +131,25 @@ export default function RecordEditor() {
         patient_gender: currentPatient?.gender || patientGenderInput || '',
         patient_age: currentPatient?.age != null ? String(currentPatient.age) : patientAgeInput || '',
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
+      // 生成完成后同步回左侧字段
+      syncGeneratedRecordToInquiry(useWorkbenchStore.getState().recordContent)
     } catch (e: any) {
       if (e.name !== 'AbortError') message.error('生成失败，请重试')
     } finally { setGenerating(false) }
   }
+
+  // 组件卸载时中断正在进行的 SSE 请求
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
+
+  // 问诊保存且病历为空时自动触发生成
+  useEffect(() => {
+    if (pendingGenerate) {
+      setPendingGenerate(false)
+      handleGenerate()
+    }
+  }, [pendingGenerate])
 
   const handlePolish = async () => {
     if (!recordContent.trim()) { message.warning('病历内容为空，无法润色'); return }
@@ -265,7 +308,14 @@ export default function RecordEditor() {
             type="primary"
             size="small"
             loading={isGenerating}
-            onClick={handleGenerate}
+            onClick={() => {
+              if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
+              if (recordContent.trim()) {
+                setGenerateConfirmOpen(true)
+              } else {
+                handleGenerate()
+              }
+            }}
             disabled={isFinal}
             style={{
               borderRadius: 8, fontWeight: 600, fontSize: 13, height: 30, paddingInline: 14,
@@ -280,27 +330,36 @@ export default function RecordEditor() {
           {/* Separator */}
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
 
-          {/* Secondary actions */}
-          <Button
-            icon={<PlusOutlined />}
-            size="small"
-            loading={isContinuing}
-            onClick={handleContinue}
+          {/* Secondary actions: ··· dropdown */}
+          <Dropdown
             disabled={isFinal}
-            style={{ borderRadius: 8, fontSize: 12, height: 30 }}
+            menu={{
+              items: [
+                {
+                  key: 'continue',
+                  icon: <PlusOutlined />,
+                  label: '续写',
+                  onClick: handleContinue,
+                },
+                {
+                  key: 'polish',
+                  icon: <EditOutlined />,
+                  label: '润色',
+                  onClick: handlePolish,
+                },
+              ],
+            }}
+            trigger={['click']}
           >
-            续写
-          </Button>
-          <Button
-            icon={<EditOutlined />}
-            size="small"
-            loading={isPolishing}
-            onClick={handlePolish}
-            disabled={isFinal}
-            style={{ borderRadius: 8, fontSize: 12, height: 30 }}
-          >
-            润色
-          </Button>
+            <Button
+              size="small"
+              disabled={isFinal}
+              loading={isContinuing || isPolishing}
+              style={{ borderRadius: 8, fontSize: 12, height: 30 }}
+            >
+              更多 <EllipsisOutlined />
+            </Button>
+          </Dropdown>
 
           {/* Separator */}
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
@@ -385,12 +444,11 @@ export default function RecordEditor() {
         </div>
       ) : (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '6px 16px', flexShrink: 0,
-          background: '#fffbeb', borderBottom: '1px solid #fde68a',
-          color: '#92400e', fontSize: 12,
+          display: 'flex', alignItems: 'center', gap: 4,
+          padding: '3px 14px', flexShrink: 0,
+          borderBottom: '1px solid var(--border-subtle)',
+          color: '#b0bec5', fontSize: 11,
         }}>
-          <span style={{ fontSize: 13 }}>⚠</span>
           <span>AI 生成内容仅供参考，请医生审核后使用</span>
         </div>
       )}
@@ -415,6 +473,22 @@ export default function RecordEditor() {
         variant="borderless"
       />
 
+      {/* Generate overwrite confirmation modal */}
+      <Modal
+        title="覆盖现有内容？"
+        open={generateConfirmOpen}
+        onCancel={() => setGenerateConfirmOpen(false)}
+        onOk={() => { setGenerateConfirmOpen(false); handleGenerate() }}
+        okText="确认覆盖"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        width={380}
+      >
+        <p style={{ color: '#475569', fontSize: 14, margin: 0 }}>
+          病历编辑区已有内容，点击「确认覆盖」将清空并重新生成，该操作不可撤销。
+        </p>
+      </Modal>
+
       {/* Final record modal */}
       <Modal
         title="出具最终病历"
@@ -428,7 +502,7 @@ export default function RecordEditor() {
           <Button
             key="confirm"
             type="primary"
-            disabled={!confirmed || saving || (!useWorkbenchStore.getState().currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
+            disabled={!confirmed || saving || (!currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
             loading={saving}
             icon={<CheckOutlined />}
             onClick={async () => {
@@ -504,7 +578,7 @@ export default function RecordEditor() {
         )}
 
         {/* Patient info — only when no encounter */}
-        {!useWorkbenchStore.getState().currentEncounterId && (
+        {!currentEncounterId && (
           <div style={{
             margin: '10px 0 4px',
             padding: '12px 14px',

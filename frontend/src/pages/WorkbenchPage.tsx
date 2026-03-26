@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty } from 'antd'
+import { useState, useCallback, useEffect } from 'react'
+import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty, Tabs } from 'antd'
 import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined, PrinterOutlined, CameraOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -8,6 +8,7 @@ import InquiryPanel from '@/components/workbench/InquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
+import LabReportTab from '@/components/workbench/LabReportTab'
 import api from '@/services/api'
 
 const { Header, Content } = Layout
@@ -51,6 +52,11 @@ export default function WorkbenchPage() {
   const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
   const { currentPatient, currentEncounterId, setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset } = useWorkbenchStore()
+  // 无接诊时清空残留数据（含切换/结束接诊后 currentEncounterId 变为 null 的情况）
+  useEffect(() => {
+    if (!currentEncounterId) reset()
+  }, [currentEncounterId])
+
   const [modalOpen, setModalOpen] = useState(false)
   const [imagingOpen, setImagingOpen] = useState(false)
   const [form] = Form.useForm()
@@ -159,6 +165,9 @@ export default function WorkbenchPage() {
       message.success(`已为「${res.patient.name}」开始接诊`)
       setModalOpen(false)
       form.resetFields()
+      if (values.visit_type === 'inpatient') {
+        navigate('/inpatient')
+      }
     } catch {
       message.error('创建接诊失败，请重试')
     } finally {
@@ -307,17 +316,44 @@ export default function WorkbenchPage() {
 
       {/* Content */}
       <Content style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10 }}>
-        {/* Left: Inquiry */}
+        {/* Left: Inquiry + Lab Reports */}
         <div style={{
-          width: 300,
+          width: 320,
           background: '#fff',
           borderRadius: 12,
           border: '1px solid var(--border)',
-          overflow: 'auto',
+          overflow: 'hidden',
           flexShrink: 0,
           boxShadow: 'var(--shadow-sm)',
+          display: 'flex',
+          flexDirection: 'column',
         }}>
-          <InquiryPanel />
+          <Tabs
+            defaultActiveKey="inquiry"
+            size="small"
+            style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+            tabBarStyle={{ padding: '0 12px', marginBottom: 0, flexShrink: 0 }}
+            items={[
+              {
+                key: 'inquiry',
+                label: '问诊信息',
+                children: (
+                  <div style={{ height: 'calc(100vh - 116px)' }}>
+                    <InquiryPanel />
+                  </div>
+                ),
+              },
+              {
+                key: 'lab',
+                label: '检验报告',
+                children: (
+                  <div style={{ height: 'calc(100vh - 116px)' }}>
+                    <LabReportTab />
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
 
         {/* Center: Record editor */}
@@ -325,13 +361,13 @@ export default function WorkbenchPage() {
           <RecordEditor />
         </div>
 
-        {/* Right: AI suggestions */}
+        {/* Right: AI suggestions only */}
         <div style={{
-          width: 364,
+          width: 320,
           background: '#fff',
           borderRadius: 12,
           border: '1px solid var(--border)',
-          overflow: 'auto',
+          overflow: 'hidden',
           flexShrink: 0,
           boxShadow: 'var(--shadow-sm)',
         }}>

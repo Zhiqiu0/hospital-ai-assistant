@@ -1,9 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button, Input, Tooltip } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 
+export interface ParsedVitals {
+  t?: string; p?: string; r?: string
+  bpS?: string; bpD?: string; spo2?: string
+  h?: string; w?: string
+}
+
 interface Props {
   onFill: (vitalText: string) => void
+  parsedVitals?: ParsedVitals
 }
 
 const inputStyle: React.CSSProperties = {
@@ -13,7 +20,7 @@ const inputStyle: React.CSSProperties = {
   padding: '2px 4px',
 }
 
-export default function VitalSignsInput({ onFill }: Props) {
+export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
   const [t, setT] = useState('')
   const [p, setP] = useState('')
   const [r, setR] = useState('')
@@ -22,6 +29,19 @@ export default function VitalSignsInput({ onFill }: Props) {
   const [spo2, setSpo2] = useState('')
   const [h, setH] = useState('')
   const [w, setW] = useState('')
+
+  // 语音AI解析后回填生命体征字段
+  useEffect(() => {
+    if (!parsedVitals) return
+    if (parsedVitals.t !== undefined) setT(parsedVitals.t)
+    if (parsedVitals.p !== undefined) setP(parsedVitals.p)
+    if (parsedVitals.r !== undefined) setR(parsedVitals.r)
+    if (parsedVitals.bpS !== undefined) setBpS(parsedVitals.bpS)
+    if (parsedVitals.bpD !== undefined) setBpD(parsedVitals.bpD)
+    if (parsedVitals.spo2 !== undefined) setSpo2(parsedVitals.spo2)
+    if (parsedVitals.h !== undefined) setH(parsedVitals.h)
+    if (parsedVitals.w !== undefined) setW(parsedVitals.w)
+  }, [parsedVitals])
 
   const handleFill = () => {
     const parts: string[] = []

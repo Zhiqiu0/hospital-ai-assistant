@@ -2,9 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Tabs, Button, Typography, Empty, Badge, Spin, Alert, List, Tag, message, Divider, Tooltip, Input } from 'antd'
 import {
   QuestionCircleOutlined, ExperimentOutlined, SafetyOutlined,
-  PlusOutlined, CheckOutlined, BulbOutlined, ArrowRightOutlined, EditOutlined, FileTextOutlined,
+  PlusOutlined, CheckOutlined, BulbOutlined, ArrowRightOutlined, EditOutlined,
 } from '@ant-design/icons'
-import LabReportTab from './LabReportTab'
 import { useWorkbenchStore, QCIssue, ExamSuggestion, GradeScore } from '@/store/workbenchStore'
 import api from '@/services/api'
 
@@ -193,12 +192,13 @@ function writeSectionToRecord(content: string, fieldName: string, fixText: strin
 
 export default function AISuggestionPanel() {
   const {
-    inquiry, inquirySavedAt,
+    inquiry,
     qcIssues, qcSummary, qcPass, gradeScore,
     examSuggestions, isExamLoading,
     setExamSuggestions, setExamLoading,
     appendInquiryNote, setInitialImpression,
     recordContent, setRecordContent,
+    currentEncounterId,
   } = useWorkbenchStore()
 
   const lastInquirySuggestKey = useRef(
@@ -228,34 +228,35 @@ export default function AISuggestionPanel() {
     setFixTexts(init)
   }, [qcIssues])
 
-  // Fetch inquiry suggestions whenever inquiry is saved (inquirySavedAt changes)
-  useEffect(() => {
-    if (!inquirySavedAt) return
-    if (!inquiry.chief_complaint.trim()) { setSuggestions([]); return }
+  const handleLoadSuggestions = useCallback(async () => {
+    if (!inquiry.chief_complaint.trim()) { message.warning('请先填写主诉'); return }
     const key = `${inquiry.chief_complaint}|${inquiry.history_present_illness}|${inquiry.initial_impression}`
-    if (key === lastInquirySuggestKey.current) return
     lastInquirySuggestKey.current = key
-    let cancelled = false
     setLoading(true)
-    fetchInquirySuggestions(
-      inquiry.chief_complaint,
-      inquiry.history_present_illness,
-      inquiry.initial_impression,
-    ).then((items) => {
-      if (!cancelled) setSuggestions(items)
-    }).catch(() => {
-      if (!cancelled) setSuggestions([])
-    }).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [inquirySavedAt])
+    try {
+      const items = await fetchInquirySuggestions(
+        inquiry.chief_complaint,
+        inquiry.history_present_illness,
+        inquiry.initial_impression,
+      )
+      setSuggestions(items)
+    } catch {
+      setSuggestions([])
+    } finally {
+      setLoading(false)
+    }
+  }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   // Reset diagnoses when chief_complaint changes
   useEffect(() => {
     setDiagnoses([])
     setAppliedDiagnosis(null)
   }, [inquiry.chief_complaint])
+
+  // 切换接诊时清空检查建议（避免上一个患者的建议残留）
+  useEffect(() => {
+    setExamSuggestions([])
+  }, [currentEncounterId])
 
   const handleLoadMore = useCallback(async () => {
     if (!inquiry.chief_complaint.trim()) return
@@ -282,7 +283,7 @@ export default function AISuggestionPanel() {
           ? s.selectedOptions.filter((o) => o !== option)
           : [...s.selectedOptions, option]
         if (!already) {
-          appendInquiryNote(`${questionText}：${option}`)
+          appendInquiryNote(option)
           message.success({ content: '已记录到现病史', duration: 1.2 })
         }
         return { ...s, selectedOptions: newSelected }
@@ -320,28 +321,24 @@ export default function AISuggestionPanel() {
     message.success({ content: `已写入初步印象：${name}`, duration: 2 })
   }
 
-  // Fetch exam suggestions whenever inquiry is saved
-  useEffect(() => {
-    if (!inquirySavedAt) return
-    if (!inquiry.chief_complaint.trim()) { setExamSuggestions([]); return }
+  const handleLoadExamSuggestions = useCallback(async () => {
+    if (!inquiry.chief_complaint.trim()) { message.warning('请先填写主诉'); return }
     const key = `${inquiry.chief_complaint}|${inquiry.history_present_illness}|${inquiry.initial_impression}`
-    if (key === lastExamSuggestKey.current) return
     lastExamSuggestKey.current = key
-    let cancelled = false
     setExamLoading(true)
-    api.post('/ai/exam-suggestions', {
-      chief_complaint: inquiry.chief_complaint,
-      history_present_illness: inquiry.history_present_illness,
-      initial_impression: inquiry.initial_impression,
-    }).then((data: any) => {
-      if (!cancelled) setExamSuggestions(data.suggestions || [])
-    }).catch(() => {
-      if (!cancelled) setExamSuggestions([])
-    }).finally(() => {
-      if (!cancelled) setExamLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [inquirySavedAt])
+    try {
+      const data: any = await api.post('/ai/exam-suggestions', {
+        chief_complaint: inquiry.chief_complaint,
+        history_present_illness: inquiry.history_present_illness,
+        initial_impression: inquiry.initial_impression,
+      })
+      setExamSuggestions(data.suggestions || [])
+    } catch {
+      setExamSuggestions([])
+    } finally {
+      setExamLoading(false)
+    }
+  }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   // QC AI fix handler
   const handleAIFix = async (item: QCIssue, idx: number) => {
@@ -389,11 +386,21 @@ export default function AISuggestionPanel() {
                   <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>AI 分析中...</div>
                 </div>
               ) : suggestions.length === 0 ? (
-                <Empty
-                  description={<span style={{ fontSize: 13, color: '#94a3b8' }}>{inquiry.chief_complaint.trim() ? '暂无追问建议' : '输入主诉后自动生成追问建议'}</span>}
-                  style={{ marginTop: 40 }}
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
+                <div style={{ textAlign: 'center', marginTop: 40 }}>
+                  <Empty
+                    description={<span style={{ fontSize: 13, color: '#94a3b8' }}>保存问诊信息后，点击下方按钮生成追问建议</span>}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<QuestionCircleOutlined />}
+                    onClick={handleLoadSuggestions}
+                    disabled={!inquiry.chief_complaint.trim()}
+                    style={{ marginTop: 12, borderRadius: 8 }}
+                  >
+                    生成追问建议
+                  </Button>
+                </div>
               ) : (
                 <>
                   {suggestions.map((item, idx) => (
@@ -496,6 +503,9 @@ export default function AISuggestionPanel() {
                       marginBottom: 10,
                     }}>
                       已回答 <Text strong style={{ color: '#2563eb' }}>{answeredCount}</Text> 个问题，点击下方获取 AI 诊断建议
+                      <div style={{ marginTop: 4, color: '#22c55e', fontSize: 11 }}>
+                        ✓ 已记录到现病史，点左侧「保存问诊信息」可同步到病历
+                      </div>
                     </div>
                   )}
 
@@ -583,11 +593,21 @@ export default function AISuggestionPanel() {
                   <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>AI 分析中...</div>
                 </div>
               ) : examSuggestions.length === 0 ? (
-                <Empty
-                  description={<span style={{ fontSize: 13, color: '#94a3b8' }}>{inquiry.chief_complaint.trim() ? '暂无检查建议' : '输入问诊信息后自动获取'}</span>}
-                  style={{ marginTop: 40 }}
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
+                <div style={{ textAlign: 'center', marginTop: 40 }}>
+                  <Empty
+                    description={<span style={{ fontSize: 13, color: '#94a3b8' }}>保存问诊信息后，点击下方按钮获取检查建议</span>}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<ExperimentOutlined />}
+                    onClick={handleLoadExamSuggestions}
+                    disabled={!inquiry.chief_complaint.trim()}
+                    style={{ marginTop: 12, borderRadius: 8 }}
+                  >
+                    生成检查建议
+                  </Button>
+                </div>
               ) : (
                 <List
                   dataSource={examSuggestions}
@@ -714,11 +734,6 @@ export default function AISuggestionPanel() {
               )}
             </div>
           ),
-        },
-        {
-          key: 'lab',
-          label: <span><FileTextOutlined style={{ marginRight: 4 }} />检验报告</span>,
-          children: <LabReportTab />,
         },
       ]}
     />

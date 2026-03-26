@@ -34,11 +34,16 @@ const fieldStyle = { marginBottom: 12 }
 
 export default function InpatientInquiryPanel() {
   const [form] = Form.useForm()
-  const { inquiry, currentPatient, setInquiry, currentEncounterId, recordContent, setRecordContent } = useWorkbenchStore()
+  const {
+    inquiry, inquirySavedAt, currentPatient,
+    setInquiry, updateInquiryFields, setPendingGenerate,
+    currentEncounterId, recordContent, setRecordContent,
+  } = useWorkbenchStore()
   const [patientGender, setPatientGender] = useState<string>('unknown')
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // 切换接诊 / setInquiry（含一键生成 parse-back）时全量同步表单
   useEffect(() => {
     form.setFieldsValue({
       chief_complaint: inquiry.chief_complaint,
@@ -63,7 +68,26 @@ export default function InpatientInquiryPanel() {
     })
     setPatientGender(currentPatient?.gender || 'unknown')
     setIsDirty(false)
-  }, [form, inquiry, currentEncounterId, currentPatient?.gender])
+  }, [form, currentEncounterId, inquirySavedAt])
+
+  // 追问建议 appendInquiryNote 修改现病史时同步表单 + 激活保存按钮
+  useEffect(() => {
+    const current = form.getFieldValue('history_present_illness') || ''
+    if (inquiry.history_present_illness !== current) {
+      form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
+      setIsDirty(true)
+    }
+  }, [inquiry.history_present_illness])
+
+  // 诊断建议写入 initial_impression 时同步 admission_diagnosis 字段
+  useEffect(() => {
+    const current = form.getFieldValue('admission_diagnosis') || ''
+    const newVal = inquiry.admission_diagnosis || inquiry.initial_impression || ''
+    if (newVal !== current) {
+      form.setFieldValue('admission_diagnosis', newVal)
+      setIsDirty(true)
+    }
+  }, [inquiry.initial_impression])
 
   const onSave = async (values: any) => {
     setSaving(true)
@@ -91,30 +115,81 @@ export default function InpatientInquiryPanel() {
       auxiliary_exam: values.auxiliary_exam || '',
       admission_diagnosis: values.admission_diagnosis || '',
     }
+
+    // 找出本次修改的字段
+    const changedFields = new Set<string>()
+    const fieldKeys = [
+      'chief_complaint', 'history_present_illness', 'past_history', 'allergy_history',
+      'personal_history', 'physical_exam', 'history_informant', 'marital_history',
+      'menstrual_history', 'family_history', 'current_medications', 'rehabilitation_assessment',
+      'religion_belief', 'pain_assessment', 'vte_risk', 'nutrition_assessment',
+      'psychology_assessment', 'auxiliary_exam', 'admission_diagnosis', 'initial_impression',
+    ] as const
+    for (const key of fieldKeys) {
+      const val = (inquiryData[key as keyof typeof inquiryData] ?? '') as string
+      if (val && val !== ((inquiry[key as keyof typeof inquiry] ?? '') as string)) {
+        changedFields.add(key)
+      }
+    }
+
     setInquiry(inquiryData)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
     }
-    // 自动同步所有字段到已有病历对应段落
+
+    // 只同步本次修改的字段到病历对应段落
     if (recordContent) {
-      const fieldMap: [string, string][] = [
-        ['【主诉】', inquiryData.chief_complaint],
-        ['【现病史】', inquiryData.history_present_illness],
-        ['【既往史】', inquiryData.past_history],
-        ['【体格检查】', inquiryData.physical_exam],
-        ['【辅助检查】', inquiryData.auxiliary_exam || ''],
-        ['【入院诊断】', inquiryData.admission_diagnosis || ''],
-      ]
-      let updated = recordContent
-      for (const [header, value] of fieldMap) {
-        if (!value) continue
-        updated = updated.replace(
-          new RegExp(`${header}\\n[\\s\\S]*?(?=\\n【|$)`),
+      const escReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const replaceSection = (content: string, header: string, value: string) =>
+        content.replace(
+          new RegExp(`${escReg(header)}[^\\S\\n]*\\n?[\\s\\S]*?(?=\\n【|$)`),
           `${header}\n${value}`
         )
+
+      const fieldMap: [string, string, string | string[]][] = [
+        ['【主诉】', inquiryData.chief_complaint, 'chief_complaint'],
+        ['【现病史】', inquiryData.history_present_illness, 'history_present_illness'],
+        ['【既往史】', inquiryData.past_history, 'past_history'],
+        ['【个人史】', inquiryData.personal_history, 'personal_history'],
+        ['【婚育史】', inquiryData.marital_history || '', 'marital_history'],
+        ['【月经史】', inquiryData.menstrual_history || '', 'menstrual_history'],
+        ['【家族史】', inquiryData.family_history || '', 'family_history'],
+        ['【体格检查】', inquiryData.physical_exam, 'physical_exam'],
+        ['【辅助检查（入院前）】', inquiryData.auxiliary_exam || '', 'auxiliary_exam'],
+        ['【入院诊断】', inquiryData.admission_diagnosis || '', ['admission_diagnosis', 'initial_impression']],
+      ]
+
+      const assessmentKeys = ['current_medications', 'pain_assessment', 'rehabilitation_assessment',
+        'psychology_assessment', 'nutrition_assessment', 'vte_risk', 'religion_belief']
+      const assessmentChanged = assessmentKeys.some(k => changedFields.has(k))
+      const assessmentText = [
+        inquiryData.current_medications ? `· 当前用药：${inquiryData.current_medications}` : '',
+        `· 疼痛评估（NRS评分）：${inquiryData.pain_assessment || '0'}分`,
+        inquiryData.rehabilitation_assessment ? `· 康复需求：${inquiryData.rehabilitation_assessment}` : '',
+        inquiryData.psychology_assessment ? `· 心理状态：${inquiryData.psychology_assessment}` : '',
+        inquiryData.nutrition_assessment ? `· 营养风险：${inquiryData.nutrition_assessment}` : '',
+        inquiryData.vte_risk ? `· VTE风险：${inquiryData.vte_risk}` : '',
+        inquiryData.religion_belief ? `· 宗教信仰/饮食禁忌：${inquiryData.religion_belief}` : '',
+      ].filter(Boolean).join('\n')
+
+      let updated = recordContent
+      for (const [header, value, keys] of fieldMap) {
+        const keyArr = Array.isArray(keys) ? keys : [keys]
+        if (!keyArr.some(k => changedFields.has(k))) continue
+        if (!value || !updated.includes(header)) continue
+        updated = replaceSection(updated, header, value)
+      }
+      if (assessmentChanged && assessmentText && updated.includes('【专项评估】')) {
+        updated = replaceSection(updated, '【专项评估】', assessmentText)
       }
       if (updated !== recordContent) setRecordContent(updated)
     }
+
+    // 病历为空时自动触发生成
+    if (!recordContent.trim() && inquiryData.chief_complaint) {
+      setPendingGenerate(true)
+    }
+
     message.success({ content: '入院问诊信息已保存', duration: 1.5 })
     setIsDirty(false)
     setSaving(false)
@@ -191,11 +266,8 @@ export default function InpatientInquiryPanel() {
       auxiliary_exam: nextValues.auxiliary_exam || '',
       admission_diagnosis: nextValues.admission_diagnosis || '',
     }
-    setInquiry(data)
-    if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
-    }
-    setIsDirty(false)
+    updateInquiryFields(data)  // 不更新 inquirySavedAt，不触发全量表单同步
+    setIsDirty(true)  // 医生需手动保存才同步到病历
   }
 
   return (

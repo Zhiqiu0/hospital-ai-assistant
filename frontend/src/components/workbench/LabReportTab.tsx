@@ -67,7 +67,10 @@ export default function LabReportTab() {
     }
   }
 
-  useEffect(() => { fetchReports() }, [currentEncounterId])
+  useEffect(() => {
+    fetchReports()
+    setInsertedIds(new Set())  // 切换接诊时重置已插入标记
+  }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {
     const duplicate = reports.find(r => r.original_filename === file.name)

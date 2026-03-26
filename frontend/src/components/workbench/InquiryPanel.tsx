@@ -4,7 +4,7 @@ import { SaveOutlined, CheckOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
-import VitalSignsInput from './VitalSignsInput'
+import VitalSignsInput, { ParsedVitals } from './VitalSignsInput'
 
 const { TextArea } = Input
 
@@ -22,24 +22,60 @@ const labelStyle: React.CSSProperties = {
 
 export default function InquiryPanel() {
   const [form] = Form.useForm()
-  const { inquiry, setInquiry, currentEncounterId, currentPatient, recordContent, setRecordContent } = useWorkbenchStore()
+  const { inquiry, setInquiry, updateInquiryFields, currentEncounterId, currentPatient, recordContent, setRecordContent, setPendingGenerate, inquirySavedAt } = useWorkbenchStore()
   const isFemale = currentPatient?.gender === 'female'
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [parsedVitals, setParsedVitals] = useState<ParsedVitals | undefined>(undefined)
 
-  // 切换接诊时重置表单
+  const parseVitalsFromText = (text: string): ParsedVitals => {
+    const v: ParsedVitals = {}
+    const tM = text.match(/(?:体温|T)[:\s：]*(\d+\.?\d*)\s*℃/i)
+    if (tM) v.t = tM[1]
+    const pM = text.match(/(?:脉搏|P)[:\s：]*(\d+)\s*次/i)
+    if (pM) v.p = pM[1]
+    const rM = text.match(/(?:呼吸|R)[:\s：]*(\d+)\s*次/i)
+    if (rM) v.r = rM[1]
+    const bpM = text.match(/(?:血压|BP)[:\s：]*(\d+)\s*\/\s*(\d+)/i)
+    if (bpM) { v.bpS = bpM[1]; v.bpD = bpM[2] }
+    const spo2M = text.match(/SpO[₂2][:\s：]*(\d+)\s*%/i)
+    if (spo2M) v.spo2 = spo2M[1]
+    const hM = text.match(/身高[:\s：]*(\d+\.?\d*)\s*cm/i)
+    if (hM) v.h = hM[1]
+    const wM = text.match(/体重[:\s：]*(\d+\.?\d*)\s*kg/i)
+    if (wM) v.w = wM[1]
+    return v
+  }
+
+  // 切换接诊时、或 reset 后（inquirySavedAt 归零）同步表单
   useEffect(() => {
     form.setFieldsValue(inquiry)
     setIsDirty(false)
-  }, [form, currentEncounterId])
+  }, [form, currentEncounterId, inquirySavedAt])
 
-  // 外部更新 auxiliary_exam（如检验报告Tab插入）时同步到表单，不影响 dirty 状态
+  // 外部更新某些字段时同步到表单（如检验报告插入、建议面板回填），不影响 dirty 状态
   useEffect(() => {
     const current = form.getFieldValue('auxiliary_exam') || ''
     if (inquiry.auxiliary_exam !== current) {
       form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
     }
   }, [inquiry.auxiliary_exam])
+
+  useEffect(() => {
+    const current = form.getFieldValue('history_present_illness') || ''
+    if (inquiry.history_present_illness !== current) {
+      form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
+      setIsDirty(true)
+    }
+  }, [inquiry.history_present_illness])
+
+  useEffect(() => {
+    const current = form.getFieldValue('initial_impression') || ''
+    if (inquiry.initial_impression !== current) {
+      form.setFieldValue('initial_impression', inquiry.initial_impression || '')
+      setIsDirty(true)
+    }
+  }, [inquiry.initial_impression])
 
   const buildData = (values: any) => ({
     chief_complaint: values.chief_complaint || '',
@@ -56,27 +92,61 @@ export default function InquiryPanel() {
   const onSave = async (values: any) => {
     setSaving(true)
     const data = buildData(values)
-    setInquiry(data)
-    if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
+
+    // 找出本次修改的字段
+    const changedFields: Record<string, string> = {}
+    const fieldKeys: (keyof typeof data)[] = [
+      'chief_complaint', 'history_present_illness', 'past_history',
+      'allergy_history', 'personal_history', 'menstrual_history',
+      'physical_exam', 'auxiliary_exam', 'initial_impression',
+    ]
+    for (const key of fieldKeys) {
+      const val = (data[key] ?? '') as string
+      if (val && val !== (inquiry[key] ?? '')) changedFields[key] = val
     }
-    // 自动同步所有字段到已有病历对应段落
+
+    // 病历为空时跳过规范化，直接走一键生成（避免双重AI调用）
+    const isFirstGeneration = !recordContent.trim()
+
+    // AI 规范化修改过的字段（仅在病历已有内容时执行，避免和一键生成重复）
+    let normalizedData = { ...data }
+    if (!isFirstGeneration && Object.keys(changedFields).length > 0) {
+      try {
+        const res: any = await api.post('/ai/normalize-fields', { fields: changedFields })
+        if (res?.fields) {
+          normalizedData = { ...data, ...res.fields }
+          // 把规范化后的值更新到表单显示
+          form.setFieldsValue(res.fields)
+        }
+      } catch { /* 失败时用原值，不阻塞保存 */ }
+    }
+
+    setInquiry(normalizedData)
+    if (currentEncounterId) {
+      api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
+    }
+    // 只同步本次实际修改的字段到病历对应段落
     if (recordContent) {
-      const fieldMap: [string, string][] = [
-        ['【主诉】', data.chief_complaint],
-        ['【现病史】', data.history_present_illness],
-        ['【既往史】', data.past_history],
-        ['【体格检查】', data.physical_exam],
-        ['【辅助检查】', data.auxiliary_exam || ''],
-        ['【初步诊断】', data.initial_impression],
+      const fieldMap: [string, string, keyof typeof normalizedData][] = [
+        ['【主诉】', normalizedData.chief_complaint, 'chief_complaint'],
+        ['【现病史】', normalizedData.history_present_illness, 'history_present_illness'],
+        ['【既往史】', normalizedData.past_history, 'past_history'],
+        ['【过敏史】', normalizedData.allergy_history || '', 'allergy_history'],
+        ['【个人史】', normalizedData.personal_history || '', 'personal_history'],
+        ['【月经史】', normalizedData.menstrual_history || '', 'menstrual_history'],
+        ['【体格检查】', normalizedData.physical_exam, 'physical_exam'],
+        ['【辅助检查】', normalizedData.auxiliary_exam || '', 'auxiliary_exam'],
+        ['【初步诊断】', normalizedData.initial_impression, 'initial_impression'],
       ]
       let updated = recordContent
-      for (const [header, value] of fieldMap) {
+      for (const [header, value, fieldKey] of fieldMap) {
+        // 跳过未修改的字段，避免覆盖医生在病历里的手动编辑
+        if (!changedFields[fieldKey]) continue
         if (!value) continue
         if (updated.includes(header)) {
           // 章节已存在 → 替换内容
           updated = updated.replace(
-            new RegExp(`${header}\\n[\\s\\S]*?(?=\\n【|$)`),
+            new RegExp(`${header}[^\\S\\n]*\\n?[\\s\\S]*?(?=\\n【|$)`),
             `${header}\n${value}`
           )
         } else if (header === '【辅助检查】') {
@@ -90,6 +160,10 @@ export default function InquiryPanel() {
       }
       if (updated !== recordContent) setRecordContent(updated)
     }
+    // 病历为空时自动触发生成
+    if (!recordContent.trim() && data.chief_complaint) {
+      setPendingGenerate(true)
+    }
     message.success({ content: '问诊信息已保存', duration: 1.5 })
     setIsDirty(false)
     setSaving(false)
@@ -98,12 +172,11 @@ export default function InquiryPanel() {
   const applyVoiceInquiry = (patch: any) => {
     const nextValues = { ...form.getFieldsValue(), ...patch }
     form.setFieldsValue(nextValues)
-    const data = buildData(nextValues)
-    setInquiry(data)
-    if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, data).catch(() => {})
+    updateInquiryFields(buildData(nextValues))  // 不更新 inquirySavedAt，不触发 AI 建议
+    if (patch.physical_exam) {
+      setParsedVitals(parseVitalsFromText(patch.physical_exam))
     }
-    setIsDirty(false)
+    setIsDirty(true)  // 需要手动点保存才同步到病历
   }
 
   const handleVitalFill = (vitalText: string) => {
@@ -205,7 +278,7 @@ export default function InquiryPanel() {
           <Divider style={{ margin: '8px 0 12px', borderColor: '#f1f5f9' }} />
 
           {/* Vital signs quick input */}
-          <VitalSignsInput onFill={handleVitalFill} />
+          <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
 
           <Form.Item style={fieldStyle} name="physical_exam"
             label={<span style={labelStyle}>体格检查</span>}>
@@ -217,7 +290,7 @@ export default function InquiryPanel() {
             name="auxiliary_exam"
             label={<span style={labelStyle}>辅助检查</span>}
           >
-            <TextArea rows={3} placeholder="已有检查结果，或在右侧「检验报告」Tab 上传报告后插入..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
+            <TextArea rows={3} placeholder="已有检查结果，或切换到上方「检验报告」Tab 上传报告后插入..." style={{ borderRadius: 6, fontSize: 13, resize: 'none' }} />
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0 }} name="initial_impression"
@@ -251,7 +324,7 @@ export default function InquiryPanel() {
             transition: 'all 0.3s',
           }}
         >
-          {isDirty ? '保存问诊信息' : '已保存 ✓'}
+          {isDirty ? '保存问诊信息' : '已保存'}
         </Button>
       </div>
     </div>

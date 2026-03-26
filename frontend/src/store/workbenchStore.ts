@@ -69,6 +69,7 @@ interface WorkbenchState {
   currentPatient: PatientInfo | null
   currentEncounterId: string | null
   setInquiry: (data: InquiryData) => void
+  updateInquiryFields: (data: InquiryData) => void
   setRecordContent: (content: string) => void
   setRecordType: (type: string) => void
   setGenerating: (v: boolean) => void
@@ -77,6 +78,8 @@ interface WorkbenchState {
   setQCResult: (issues: QCIssue[], summary: string, pass: boolean, gradeScore?: GradeScore | null) => void
   setExamSuggestions: (items: ExamSuggestion[]) => void
   setExamLoading: (v: boolean) => void
+  pendingGenerate: boolean
+  setPendingGenerate: (v: boolean) => void
   isFinal: boolean
   finalizedAt: string | null
   setFinal: (v: boolean) => void
@@ -128,9 +131,12 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   isExamLoading: false,
   currentPatient: null,
   currentEncounterId: null,
+  pendingGenerate: false,
+  setPendingGenerate: (v) => set({ pendingGenerate: v }),
   isFinal: false,
   finalizedAt: null,
   setInquiry: (data) => set({ inquiry: data, inquirySavedAt: Date.now() }),
+  updateInquiryFields: (data) => set({ inquiry: data }),
   setRecordContent: (content) => set({ recordContent: content }),
   setRecordType: (type) => set({ recordType: type }),
   setGenerating: (v) => set({ isGenerating: v }),
@@ -184,6 +190,10 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       currentEncounterId: state.currentEncounterId,
       isFinal: state.isFinal,
       finalizedAt: state.finalizedAt,
+      qcIssues: state.qcIssues,
+      qcSummary: state.qcSummary,
+      qcPass: state.qcPass,
+      gradeScore: state.gradeScore,
     }),
   }
 ))
