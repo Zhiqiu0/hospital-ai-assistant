@@ -35,6 +35,26 @@ class InquiryInputUpdate(BaseModel):
     psychology_assessment: Optional[str] = None
     auxiliary_exam: Optional[str] = None
     admission_diagnosis: Optional[str] = None
+    # 门诊中医四诊
+    tcm_inspection: Optional[str] = None
+    tcm_auscultation: Optional[str] = None
+    tongue_coating: Optional[str] = None
+    pulse_condition: Optional[str] = None
+    # 门诊诊断细化
+    western_diagnosis: Optional[str] = None
+    tcm_disease_diagnosis: Optional[str] = None
+    tcm_syndrome_diagnosis: Optional[str] = None
+    # 治疗意见
+    treatment_method: Optional[str] = None
+    treatment_plan: Optional[str] = None
+    followup_advice: Optional[str] = None
+    precautions: Optional[str] = None
+    # 急诊附加
+    observation_notes: Optional[str] = None
+    patient_disposition: Optional[str] = None
+    # 时间
+    visit_time: Optional[str] = None
+    onset_time: Optional[str] = None
 
 
 class EncounterResponse(BaseModel):

@@ -23,6 +23,26 @@ async def apply_schema_compatibility() -> None:
             "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS psychology_assessment TEXT",
             "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS auxiliary_exam TEXT",
             "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS admission_diagnosis TEXT",
+            # 门诊中医四诊
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS tcm_inspection TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS tcm_auscultation TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS tongue_coating TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS pulse_condition TEXT",
+            # 门诊诊断细化
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS western_diagnosis TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS tcm_disease_diagnosis TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS tcm_syndrome_diagnosis TEXT",
+            # 治疗意见
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS treatment_method TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS treatment_plan TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS followup_advice TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS precautions TEXT",
+            # 急诊附加
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS observation_notes TEXT",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS patient_disposition TEXT",
+            # 时间
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS visit_time VARCHAR(30)",
+            "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS onset_time VARCHAR(50)",
         ]
 
         for statement in statements:

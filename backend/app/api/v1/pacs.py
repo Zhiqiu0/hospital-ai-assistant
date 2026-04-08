@@ -567,16 +567,34 @@ async def analyze_image(
     image_type: str = Form(default=""),
     current_user=Depends(get_current_user),
 ):
-    """临床医生上传 JPG/PNG，直接送千问分析，返回结构化报告"""
-    allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    """临床医生上传 JPG/PNG/DCM，直接送千问分析，返回结构化报告"""
+    allowed_img = {"image/jpeg", "image/png", "image/webp", "image/gif"}
     content_type = file.content_type or ""
     filename = file.filename or ""
-    if content_type not in allowed and not any(filename.lower().endswith(e) for e in [".jpg", ".jpeg", ".png", ".webp"]):
-        raise HTTPException(400, "请上传 JPG/PNG 格式图片")
+    is_dcm = filename.lower().endswith(".dcm") or content_type in {"application/dicom", "application/octet-stream"}
 
-    img_bytes = await file.read()
+    if not is_dcm and content_type not in allowed_img and not any(filename.lower().endswith(e) for e in [".jpg", ".jpeg", ".png", ".webp"]):
+        raise HTTPException(400, "请上传 JPG/PNG/WebP 或 DCM 格式文件")
+
+    raw_bytes = await file.read()
+
+    if is_dcm:
+        # DCM → JPEG（含窗宽窗位处理）
+        try:
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(suffix=".dcm", delete=False) as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = tmp.name
+            img_bytes = _dcm_to_jpeg_bytes(tmp_path)
+            os.unlink(tmp_path)
+        except Exception as e:
+            raise HTTPException(400, f"DCM 文件解析失败: {e}")
+        mime = "image/jpeg"
+    else:
+        img_bytes = raw_bytes
+        mime = content_type if content_type in allowed_img else "image/jpeg"
+
     b64 = base64.b64encode(img_bytes).decode()
-    mime = content_type if content_type in allowed else "image/jpeg"
 
     hint = f"（{image_type}）" if image_type else ""
     prompt = f"""你是一位经验丰富的放射科医生。请对以下医学影像{hint}进行专业分析。

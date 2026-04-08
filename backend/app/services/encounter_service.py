@@ -169,8 +169,27 @@ class EncounterService:
                 "psychology_assessment": inquiry.psychology_assessment or "",
                 "auxiliary_exam": inquiry.auxiliary_exam or "",
                 "admission_diagnosis": inquiry.admission_diagnosis or "",
+                "tcm_inspection": inquiry.tcm_inspection or "",
+                "tcm_auscultation": inquiry.tcm_auscultation or "",
+                "tongue_coating": inquiry.tongue_coating or "",
+                "pulse_condition": inquiry.pulse_condition or "",
+                "western_diagnosis": inquiry.western_diagnosis or "",
+                "tcm_disease_diagnosis": inquiry.tcm_disease_diagnosis or "",
+                "tcm_syndrome_diagnosis": inquiry.tcm_syndrome_diagnosis or "",
+                "treatment_method": inquiry.treatment_method or "",
+                "treatment_plan": inquiry.treatment_plan or "",
+                "followup_advice": inquiry.followup_advice or "",
+                "precautions": inquiry.precautions or "",
+                "observation_notes": inquiry.observation_notes or "",
+                "patient_disposition": inquiry.patient_disposition or "",
+                # 就诊时间：有记录用记录，否则从 encounter.visited_at 预填
+                "visit_time": inquiry.visit_time or (
+                    encounter.visited_at.strftime("%Y-%m-%d %H:%M") if encounter.visited_at else ""
+                ),
+                "onset_time": inquiry.onset_time or "",
                 "version": inquiry.version,
             } if inquiry else None,
+            "is_first_visit": encounter.is_first_visit,
             "active_record": active_record,
             "records": record_items,
             "latest_voice_record": {

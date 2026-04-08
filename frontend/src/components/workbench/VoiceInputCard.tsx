@@ -122,7 +122,13 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       formData.append('transcript', transcriptText)
       const data: any = await api.post('/ai/voice-records/upload', formData)
       if (data?.voice_record_id) setTranscriptId(data.voice_record_id)
-      message.success('原始语音已保存')
+      // 若后端返回了云端转写结果，且本地转写为空，则使用云端结果
+      if (data?.transcript && !transcriptText.trim()) {
+        setTranscript(data.transcript)
+        message.success('语音已保存，云端转写完成')
+      } else {
+        message.success('原始语音已保存')
+      }
     } catch {
       message.error('原始语音保存失败')
     } finally {
@@ -305,7 +311,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
           <Text style={{ fontSize: 12, color: '#475569' }}>保存原始录音与转写，并让 AI 识别对话结构</Text>
         </Space>
         <Space size={6}>
-          {uploadingAudio && <Tag color="purple">保存原语音</Tag>}
+          {uploadingAudio && <Tag color="purple">上传并转写中...</Tag>}
           {listening && <Tag color="red">录音中</Tag>}
         </Space>
       </div>

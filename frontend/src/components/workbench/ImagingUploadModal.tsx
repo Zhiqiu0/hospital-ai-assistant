@@ -37,16 +37,20 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const allowed = ['image/jpeg', 'image/png', 'image/webp']
-    if (!allowed.includes(file.type)) {
-      message.error('仅支持 JPG / PNG / WebP 格式')
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+    const isDcm = file.name.toLowerCase().endsWith('.dcm')
+    if (!isDcm && !allowedTypes.includes(file.type)) {
+      message.error('仅支持 JPG / PNG / WebP / DCM 格式')
       return
     }
     setSelectedFile(file)
     setAnalysisResult('')
     setInserted(false)
-    const url = URL.createObjectURL(file)
-    setPreviewUrl(url)
+    if (isDcm) {
+      setPreviewUrl(null) // 浏览器无法直接预览 DCM
+    } else {
+      setPreviewUrl(URL.createObjectURL(file))
+    }
   }
 
   const handleAnalyze = async () => {
@@ -126,26 +130,30 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,.dcm"
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
-        {previewUrl ? (
+        {selectedFile ? (
           <div>
-            <img
-              src={previewUrl}
-              alt="preview"
-              style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 8, marginBottom: 8 }}
-            />
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt="preview"
+                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 8, marginBottom: 8 }}
+              />
+            ) : (
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🩻</div>
+            )}
             <div style={{ fontSize: 12, color: '#7c3aed' }}>
-              {selectedFile?.name} · 点击重新选择
+              {selectedFile.name} · 点击重新选择
             </div>
           </div>
         ) : (
           <div>
             <UploadOutlined style={{ fontSize: 32, color: '#9ca3af', marginBottom: 8 }} />
             <div style={{ fontSize: 14, color: '#6b7280' }}>点击上传影像图片</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>支持 JPG / PNG / WebP</div>
+            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>支持 JPG / PNG / WebP / DCM</div>
           </div>
         )}
       </div>

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, message, Avatar, Divider, Drawer, List, Badge, Empty, Tabs } from 'antd'
+import { Layout, Button, Typography, Space, Tag, Modal, Form, Input, Select, Radio, DatePicker, message, Avatar, Divider, Drawer, List, Badge, Empty, Tabs } from 'antd'
+import dayjs from 'dayjs'
 import { LogoutOutlined, UserOutlined, PlusOutlined, MedicineBoxOutlined, HistoryOutlined, FileTextOutlined, EyeOutlined, CheckOutlined, ReloadOutlined, ManOutlined, WomanOutlined, PrinterOutlined, CameraOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -48,14 +49,31 @@ function printRecord(record: any) {
   if (w) { w.document.write(html); w.document.close() }
 }
 
-export default function WorkbenchPage() {
+interface WorkbenchPageProps {
+  mode?: 'outpatient' | 'emergency'
+}
+
+export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProps) {
+  const isEmergency = mode === 'emergency'
+  const accentColor = isEmergency ? '#dc2626' : '#2563eb'
+  const accentLight = isEmergency ? '#ef4444' : '#3b82f6'
+  const accentLighter = isEmergency ? '#fca5a5' : '#60a5fa'
   const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
-  const { currentPatient, currentEncounterId, setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset } = useWorkbenchStore()
+  const { currentPatient, currentEncounterId, setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset, setVisitMeta } = useWorkbenchStore()
   // 无接诊时清空残留数据（含切换/结束接诊后 currentEncounterId 变为 null 的情况）
   useEffect(() => {
     if (!currentEncounterId) reset()
   }, [currentEncounterId])
+
+  // 切换门诊/急诊页面时同步 visitType 到 store
+  useEffect(() => {
+    const defaultType = isEmergency ? 'emergency' : 'outpatient'
+    const { currentVisitType, isFirstVisit } = useWorkbenchStore.getState()
+    if (currentVisitType !== defaultType) {
+      setVisitMeta(isFirstVisit, defaultType)
+    }
+  }, [isEmergency])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [imagingOpen, setImagingOpen] = useState(false)
@@ -118,6 +136,7 @@ export default function WorkbenchPage() {
       if (snapshot.inquiry) {
         setInquiry(snapshot.inquiry)
       }
+      setVisitMeta(snapshot.is_first_visit !== false, snapshot.visit_type || 'outpatient')
       if (snapshot.active_record) {
         if (snapshot.active_record.status === 'submitted') {
           setResumeOpen(false)
@@ -150,18 +169,29 @@ export default function WorkbenchPage() {
   const handleNewEncounter = async (values: any) => {
     setLoading(true)
     try {
+      const isFirstVisit = values.visit_nature !== 'revisit'
+      const birthDateStr = values.birth_date ? values.birth_date.format('YYYY-MM-DD') : undefined
+      const computedAge = values.birth_date ? dayjs().diff(values.birth_date, 'year') : undefined
       const res: any = await api.post('/encounters/quick-start', {
         patient_name: values.patient_name,
         gender: values.gender || 'unknown',
-        age: values.age ? Number(values.age) : undefined,
+        birth_date: birthDateStr,
+        age: computedAge,
         phone: values.phone || undefined,
         visit_type: values.visit_type || 'outpatient',
+        is_first_visit: isFirstVisit,
+        ethnicity: values.ethnicity || undefined,
+        marital_status: values.marital_status || undefined,
+        occupation: values.occupation || undefined,
+        workplace: values.workplace || undefined,
+        address: values.address || undefined,
       })
       reset()
       setCurrentEncounter(
-        { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: values.age },
+        { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: computedAge },
         res.encounter_id
       )
+      setVisitMeta(isFirstVisit, values.visit_type || 'outpatient')
       message.success(`已为「${res.patient.name}」开始接诊`)
       setModalOpen(false)
       form.resetFields()
@@ -194,7 +224,7 @@ export default function WorkbenchPage() {
         {/* Top accent stripe */}
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, height: 3,
-          background: 'linear-gradient(90deg, #2563eb, #3b82f6, #60a5fa)',
+          background: `linear-gradient(90deg, ${accentColor}, ${accentLight}, ${accentLighter})`,
           borderRadius: '0 0 2px 2px',
         }} />
 
@@ -202,16 +232,18 @@ export default function WorkbenchPage() {
         <Space size={10}>
           <div style={{
             width: 32, height: 32, borderRadius: 9,
-            background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+            background: `linear-gradient(135deg, ${accentColor}, ${accentLight})`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 2px 8px rgba(37,99,235,0.35)',
+            boxShadow: `0 2px 8px ${isEmergency ? 'rgba(220,38,38,0.35)' : 'rgba(37,99,235,0.35)'}`,
           }}>
             <MedicineBoxOutlined style={{ color: '#fff', fontSize: 16 }} />
           </div>
           <Text strong style={{ fontSize: 16, color: 'var(--text-1)', letterSpacing: '-0.4px' }}>
             MediScribe
           </Text>
-          <Tag color="blue" style={{ margin: 0, borderRadius: 20 }}>门诊部</Tag>
+          <Tag color={isEmergency ? 'red' : 'blue'} style={{ margin: 0, borderRadius: 20 }}>
+            {isEmergency ? '急诊部' : '门诊部'}
+          </Tag>
         </Space>
 
         {/* Patient info (center) */}
@@ -289,11 +321,19 @@ export default function WorkbenchPage() {
           >
             影像分析
           </Button>
+          <Button
+            size="small"
+            type="text"
+            onClick={() => navigate(isEmergency ? '/workbench' : '/emergency')}
+            style={{ color: isEmergency ? '#2563eb' : '#dc2626', fontSize: 12, borderRadius: 8, fontWeight: 500 }}
+          >
+            切换至{isEmergency ? '门诊' : '急诊'}
+          </Button>
           <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'var(--border)' }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 8, background: 'var(--surface-2)' }}>
             <Avatar
               size={26}
-              style={{ background: 'linear-gradient(135deg, #2563eb, #60a5fa)', fontSize: 11, flexShrink: 0 }}
+              style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentLighter})`, fontSize: 11, flexShrink: 0 }}
             >
               {user?.real_name?.[0]}
             </Avatar>
@@ -381,7 +421,7 @@ export default function WorkbenchPage() {
           <Space>
             <div style={{
               width: 28, height: 28, borderRadius: 8,
-              background: 'linear-gradient(135deg, #2563eb, #3b82f6)',
+              background: `linear-gradient(135deg, ${accentColor}, ${accentLight})`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <UserOutlined style={{ color: '#fff', fontSize: 13 }} />
@@ -394,7 +434,7 @@ export default function WorkbenchPage() {
         onOk={() => form.submit()}
         confirmLoading={loading}
         okText="开始接诊"
-        width={440}
+        width={520}
       >
         <Form form={form} layout="vertical" onFinish={handleNewEncounter} style={{ marginTop: 20 }}>
           <Form.Item name="patient_name" label="患者姓名" rules={[{ required: true, message: '请输入患者姓名' }]}>
@@ -408,20 +448,61 @@ export default function WorkbenchPage() {
                 <Select.Option value="unknown">未知</Select.Option>
               </Select>
             </Form.Item>
-            <Form.Item name="age" label="年龄" style={{ flex: 1 }}>
-              <Input type="number" placeholder="岁" min={0} max={150} suffix="岁" />
+            <Form.Item name="birth_date" label="出生日期" style={{ flex: 2 }} rules={[{ required: true, message: '请选择出生日期' }]}>
+              <DatePicker
+                placeholder="请选择出生日期"
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD"
+                disabledDate={(d) => d && d.isAfter(dayjs())}
+              />
             </Form.Item>
           </div>
-          <Form.Item name="phone" label="联系电话">
-            <Input placeholder="选填" />
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="ethnicity" label="民族" style={{ flex: 1 }} rules={[{ required: true, message: '请选择民族' }]}>
+              <Select placeholder="请选择民族" showSearch>
+                {['汉族','满族','回族','苗族','维吾尔族','土家族','彝族','蒙古族','藏族','壮族','布依族','侗族','瑶族','白族','朝鲜族','哈尼族','黎族','哈萨克族','傣族','畲族'].map(e => (
+                  <Select.Option key={e} value={e}>{e}</Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            <Form.Item name="marital_status" label="婚姻状况" style={{ flex: 1 }} rules={[{ required: true, message: '请选择婚姻状况' }]}>
+              <Select placeholder="请选择">
+                <Select.Option value="未婚">未婚</Select.Option>
+                <Select.Option value="已婚">已婚</Select.Option>
+                <Select.Option value="离异">离异</Select.Option>
+                <Select.Option value="丧偶">丧偶</Select.Option>
+              </Select>
+            </Form.Item>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="occupation" label="职业" style={{ flex: 1 }} rules={[{ required: true, message: '请输入职业' }]}>
+              <Input placeholder="请输入职业" />
+            </Form.Item>
+            <Form.Item name="phone" label="联系电话" style={{ flex: 1 }}>
+              <Input placeholder="选填" />
+            </Form.Item>
+          </div>
+          <Form.Item name="workplace" label="工作单位" rules={[{ required: true, message: '请输入工作单位' }]}>
+            <Input placeholder="请输入工作单位（无业/退休可填无）" />
           </Form.Item>
-          <Form.Item name="visit_type" label="就诊类型" initialValue="outpatient">
-            <Select>
-              <Select.Option value="outpatient">门诊</Select.Option>
-              <Select.Option value="inpatient">住院</Select.Option>
-              <Select.Option value="emergency">急诊</Select.Option>
-            </Select>
+          <Form.Item name="address" label="住址" rules={[{ required: true, message: '请输入住址' }]}>
+            <Input placeholder="请输入住址" />
           </Form.Item>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="visit_type" label="就诊类型" initialValue={isEmergency ? 'emergency' : 'outpatient'} style={{ flex: 1 }}>
+              <Select>
+                <Select.Option value="outpatient">门诊</Select.Option>
+                <Select.Option value="inpatient">住院</Select.Option>
+                <Select.Option value="emergency">急诊</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item name="visit_nature" label="就诊性质" initialValue="first" style={{ flex: 1 }}>
+              <Radio.Group buttonStyle="solid" optionType="button" size="small">
+                <Radio.Button value="first">初诊</Radio.Button>
+                <Radio.Button value="revisit">复诊</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+          </div>
         </Form>
       </Modal>
 

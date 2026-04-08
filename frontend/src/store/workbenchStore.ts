@@ -22,6 +22,26 @@ export interface InquiryData {
   psychology_assessment?: string
   auxiliary_exam?: string
   admission_diagnosis?: string
+  // 门诊中医四诊
+  tcm_inspection?: string
+  tcm_auscultation?: string
+  tongue_coating?: string
+  pulse_condition?: string
+  // 门诊诊断细化
+  western_diagnosis?: string
+  tcm_disease_diagnosis?: string
+  tcm_syndrome_diagnosis?: string
+  // 治疗意见
+  treatment_method?: string
+  treatment_plan?: string
+  followup_advice?: string
+  precautions?: string
+  // 急诊附加
+  observation_notes?: string
+  patient_disposition?: string
+  // 时间
+  visit_time?: string
+  onset_time?: string
 }
 
 export interface QCIssue {
@@ -57,6 +77,8 @@ interface WorkbenchState {
   inquirySavedAt: number
   recordContent: string
   recordType: string
+  isFirstVisit: boolean
+  currentVisitType: string   // 'outpatient' | 'emergency' | 'inpatient'
   isGenerating: boolean
   isPolishing: boolean
   isQCing: boolean
@@ -70,6 +92,7 @@ interface WorkbenchState {
   currentEncounterId: string | null
   setInquiry: (data: InquiryData) => void
   updateInquiryFields: (data: InquiryData) => void
+  setVisitMeta: (isFirstVisit: boolean, visitType: string) => void
   setRecordContent: (content: string) => void
   setRecordType: (type: string) => void
   setGenerating: (v: boolean) => void
@@ -111,6 +134,21 @@ const defaultInquiry: InquiryData = {
   psychology_assessment: '',
   auxiliary_exam: '',
   admission_diagnosis: '',
+  tcm_inspection: '',
+  tcm_auscultation: '',
+  tongue_coating: '',
+  pulse_condition: '',
+  western_diagnosis: '',
+  tcm_disease_diagnosis: '',
+  tcm_syndrome_diagnosis: '',
+  treatment_method: '',
+  treatment_plan: '',
+  followup_advice: '',
+  precautions: '',
+  observation_notes: '',
+  patient_disposition: '',
+  visit_time: '',
+  onset_time: '',
 }
 
 export const useWorkbenchStore = create<WorkbenchState>()(
@@ -120,6 +158,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   inquirySavedAt: 0,
   recordContent: '',
   recordType: 'outpatient',
+  isFirstVisit: true,
+  currentVisitType: 'outpatient',
   isGenerating: false,
   isPolishing: false,
   isQCing: false,
@@ -135,6 +175,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   setPendingGenerate: (v) => set({ pendingGenerate: v }),
   isFinal: false,
   finalizedAt: null,
+  setVisitMeta: (isFirstVisit, visitType) => set({ isFirstVisit, currentVisitType: visitType }),
   setInquiry: (data) => set({ inquiry: data, inquirySavedAt: Date.now() }),
   updateInquiryFields: (data) => set({ inquiry: data }),
   setRecordContent: (content) => set({ recordContent: content }),
@@ -168,6 +209,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     inquirySavedAt: 0,
     recordContent: '',
     recordType: 'outpatient',
+    isFirstVisit: true,
+    currentVisitType: 'outpatient',
     qcIssues: [],
     qcSummary: '',
     qcPass: null,
@@ -186,6 +229,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       inquirySavedAt: state.inquirySavedAt,
       recordContent: state.recordContent,
       recordType: state.recordType,
+      isFirstVisit: state.isFirstVisit,
+      currentVisitType: state.currentVisitType,
       currentPatient: state.currentPatient,
       currentEncounterId: state.currentEncounterId,
       isFinal: state.isFinal,

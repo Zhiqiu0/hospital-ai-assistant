@@ -6,6 +6,7 @@ const apiProxyTarget = process.env.MEDASSIST_API_PROXY_TARGET || 'http://localho
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
     port: 5174,
     strictPort: true,
     proxy: {

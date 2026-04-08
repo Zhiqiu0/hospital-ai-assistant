@@ -59,6 +59,26 @@ class InquiryInput(Base, TimestampMixin):
     psychology_assessment: Mapped[Optional[str]] = mapped_column(Text)
     auxiliary_exam: Mapped[Optional[str]] = mapped_column(Text)
     admission_diagnosis: Mapped[Optional[str]] = mapped_column(Text)
+    # 门诊中医四诊
+    tcm_inspection: Mapped[Optional[str]] = mapped_column(Text)        # 望诊（神色形态）
+    tcm_auscultation: Mapped[Optional[str]] = mapped_column(Text)      # 闻诊（声音气味）
+    tongue_coating: Mapped[Optional[str]] = mapped_column(Text)        # 舌象（舌质、舌苔）
+    pulse_condition: Mapped[Optional[str]] = mapped_column(Text)       # 脉象
+    # 门诊诊断细化
+    western_diagnosis: Mapped[Optional[str]] = mapped_column(Text)     # 西医诊断
+    tcm_disease_diagnosis: Mapped[Optional[str]] = mapped_column(Text) # 中医疾病诊断
+    tcm_syndrome_diagnosis: Mapped[Optional[str]] = mapped_column(Text)# 中医证候诊断
+    # 治疗意见
+    treatment_method: Mapped[Optional[str]] = mapped_column(Text)      # 治则治法
+    treatment_plan: Mapped[Optional[str]] = mapped_column(Text)        # 处理意见
+    followup_advice: Mapped[Optional[str]] = mapped_column(Text)       # 复诊建议
+    precautions: Mapped[Optional[str]] = mapped_column(Text)           # 注意事项
+    # 急诊附加
+    observation_notes: Mapped[Optional[str]] = mapped_column(Text)     # 留观记录
+    patient_disposition: Mapped[Optional[str]] = mapped_column(Text)   # 患者去向
+    # 时间
+    visit_time: Mapped[Optional[str]] = mapped_column(String(30))      # 就诊时间（阿拉伯数字24小时制）
+    onset_time: Mapped[Optional[str]] = mapped_column(String(50))      # 病发时间
     version: Mapped[int] = mapped_column(default=1)
 
     encounter: Mapped[Encounter] = relationship(back_populates="inquiry_inputs")

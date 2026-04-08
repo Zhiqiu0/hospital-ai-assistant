@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
+import EmergencyWorkbenchPage from '@/pages/EmergencyWorkbenchPage'
 import InpatientWorkbenchPage from '@/pages/InpatientWorkbenchPage'
 import PacsWorkbenchPage from '@/pages/PacsWorkbenchPage'
 import AdminLayout from '@/pages/admin/AdminLayout'
@@ -25,7 +26,9 @@ function RootRedirect() {
   if (!token) return <Navigate to="/login" replace />
   if (user && ADMIN_ROLES.includes(user.role)) return <Navigate to="/admin" replace />
   if (user?.role === 'radiologist') return <Navigate to="/pacs" replace />
-  return <Navigate to={systemType === 'inpatient' ? '/inpatient' : '/workbench'} replace />
+  if (systemType === 'inpatient') return <Navigate to="/inpatient" replace />
+  if (systemType === 'emergency') return <Navigate to="/emergency" replace />
+  return <Navigate to="/workbench" replace />
 }
 
 export default function App() {
@@ -34,6 +37,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/workbench" element={<PrivateRoute><WorkbenchPage /></PrivateRoute>} />
+        <Route path="/emergency" element={<PrivateRoute><EmergencyWorkbenchPage /></PrivateRoute>} />
         <Route path="/inpatient" element={<PrivateRoute><InpatientWorkbenchPage /></PrivateRoute>} />
         <Route path="/pacs" element={<PrivateRoute><PacsWorkbenchPage /></PrivateRoute>} />
         <Route path="/admin/*" element={<AdminRoute><AdminLayout /></AdminRoute>} />

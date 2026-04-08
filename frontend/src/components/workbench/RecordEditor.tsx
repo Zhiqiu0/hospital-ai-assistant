@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Dropdown } from 'antd'
-import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined } from '@ant-design/icons'
+import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined, FileWordOutlined, StopOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
@@ -40,6 +40,36 @@ function printRecord(content: string, patient: any, recordType: string, signedAt
   if (w) { w.document.write(html); w.document.close() }
 }
 
+function exportWordDoc(content: string, patient: any, recordType: string, signedAt: string | null) {
+  const patientDesc = patient
+    ? [patient.name, patient.gender === 'male' ? '男' : patient.gender === 'female' ? '女' : '', patient.age ? `${patient.age}岁` : ''].filter(Boolean).join(' · ')
+    : '未知患者'
+  const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
+  const paragraphs = content.split('\n').map(line => {
+    const isSectionHeader = /^【[^】]+】/.test(line.trim())
+    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return isSectionHeader
+      ? `<p style="font-weight:bold;margin:12pt 0 4pt;">${escaped}</p>`
+      : `<p style="margin:2pt 0;">${escaped || '&nbsp;'}</p>`
+  }).join('')
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${typeLabel}</title>
+<style>body{font-family:'宋体',serif;font-size:12pt;line-height:1.8;margin:2cm;}h1{text-align:center;font-size:16pt;}</style>
+</head><body>
+<h1>${typeLabel}</h1>
+<p style="text-align:center;color:#666;margin-bottom:16pt;">${patientDesc}${signedAt ? `　|　签发时间：${signedAt}` : ''}</p>
+${paragraphs}
+<p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>
+</body></html>`
+  const blob = new Blob(['\ufeff' + html], { type: 'application/msword;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${typeLabel}_${patient?.name || '未知患者'}.doc`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function RecordEditor() {
   const {
     inquiry, recordContent, recordType,
@@ -48,7 +78,7 @@ export default function RecordEditor() {
     setGenerating, setPolishing, setQCing, setQCResult,
     setInquiry,
     isFinal, finalizedAt, reset,
-    qcIssues, qcPass,
+    qcIssues, qcPass, gradeScore,
     currentPatient, currentEncounterId,
     pendingGenerate, setPendingGenerate,
   } = useWorkbenchStore()
@@ -121,8 +151,30 @@ export default function RecordEditor() {
 
   const handleGenerate = async () => {
     if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
+    // 检查中医必填字段，空字段会导致AI生成"待明确"等无效内容
+    const tcmMissing: string[] = []
+    if (!inquiry.tongue_coating?.trim()) tcmMissing.push('舌象')
+    if (!inquiry.pulse_condition?.trim()) tcmMissing.push('脉象')
+    if (!inquiry.tcm_disease_diagnosis?.trim()) tcmMissing.push('中医疾病诊断')
+    if (!inquiry.tcm_syndrome_diagnosis?.trim()) tcmMissing.push('中医证候诊断')
+    if (!inquiry.treatment_method?.trim()) tcmMissing.push('治则治法')
+    if (tcmMissing.length > 0) {
+      Modal.confirm({
+        title: '中医必填字段未填写',
+        content: `以下字段为空，AI将无法生成有效内容，病历中会出现"[未填写，需补充]"占位符：\n\n${tcmMissing.map(f => `• ${f}`).join('\n')}\n\n建议先在左侧填写完整后再生成，或确认继续生成后手动补充。`,
+        okText: '继续生成',
+        cancelText: '返回填写',
+        onOk: () => _doGenerate(),
+      })
+      return
+    }
+    _doGenerate()
+  }
+
+  const _doGenerate = async () => {
     setGenerating(true)
     setRecordContent('')
+    const { isFirstVisit, currentVisitType } = useWorkbenchStore.getState()
     try {
       await streamSSE('/api/v1/ai/quick-generate', {
         ...inquiry,
@@ -130,6 +182,10 @@ export default function RecordEditor() {
         patient_name: currentPatient?.name || patientNameInput || '',
         patient_gender: currentPatient?.gender || patientGenderInput || '',
         patient_age: currentPatient?.age != null ? String(currentPatient.age) : patientAgeInput || '',
+        is_first_visit: isFirstVisit,
+        visit_type_detail: currentVisitType,
+        visit_time: inquiry.visit_time || '',
+        onset_time: inquiry.onset_time || '',
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
       // 生成完成后同步回左侧字段
       syncGeneratedRecordToInquiry(useWorkbenchStore.getState().recordContent)
@@ -224,6 +280,18 @@ export default function RecordEditor() {
         religion_belief: inquiry.religion_belief || '',
         auxiliary_exam: inquiry.auxiliary_exam || '',
         admission_diagnosis: inquiry.admission_diagnosis || '',
+        // 中医四诊及治疗字段（用于中医强制规则）
+        tcm_inspection: inquiry.tcm_inspection || '',
+        tcm_auscultation: inquiry.tcm_auscultation || '',
+        tongue_coating: inquiry.tongue_coating || '',
+        pulse_condition: inquiry.pulse_condition || '',
+        tcm_disease_diagnosis: inquiry.tcm_disease_diagnosis || '',
+        tcm_syndrome_diagnosis: inquiry.tcm_syndrome_diagnosis || '',
+        treatment_method: inquiry.treatment_method || '',
+        treatment_plan: inquiry.treatment_plan || '',
+        followup_advice: inquiry.followup_advice || '',
+        is_first_visit: useWorkbenchStore.getState().isFirstVisit,
+        onset_time: inquiry.onset_time || '',
         encounter_id: currentEncounterId || undefined,
       })
       const gradeScore = (result.grade_score != null)
@@ -347,6 +415,14 @@ export default function RecordEditor() {
                   label: '润色',
                   onClick: handlePolish,
                 },
+                { type: 'divider' },
+                {
+                  key: 'word',
+                  icon: <FileWordOutlined />,
+                  label: '导出 Word',
+                  disabled: !recordContent.trim(),
+                  onClick: () => exportWordDoc(recordContent, currentPatient, recordType, finalizedAt),
+                },
               ],
             }}
             trigger={['click']}
@@ -399,17 +475,30 @@ export default function RecordEditor() {
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
 
           <Button
-            icon={<FileDoneOutlined />}
+            icon={gradeScore && gradeScore.grade_score < 100 ? <StopOutlined /> : <FileDoneOutlined />}
             size="small"
             disabled={!recordContent.trim()}
-            onClick={() => { setConfirmed(false); setFinalModalOpen(true) }}
+            onClick={() => {
+              if (gradeScore && gradeScore.grade_score < 100) {
+                Modal.warning({
+                  title: `评分不足，无法提交（当前 ${gradeScore.grade_score} 分）`,
+                  content: `正式出具病历要求质控评分达到 100 分满分，当前评分 ${gradeScore.grade_score} 分（${gradeScore.grade_level}）。请修复右侧质控提示中的所有问题后重新评分，达到满分后方可出具正式病历。`,
+                  okText: '知道了，去修改',
+                  width: 460,
+                })
+                return
+              }
+              setConfirmed(false)
+              setFinalModalOpen(true)
+            }}
             style={{
               borderRadius: 8, fontSize: 12, height: 30,
-              color: '#065f46', borderColor: '#6ee7b7',
-              background: '#f0fdf4',
+              color: gradeScore && gradeScore.grade_score < 100 ? '#dc2626' : '#065f46',
+              borderColor: gradeScore && gradeScore.grade_score < 100 ? '#fca5a5' : '#6ee7b7',
+              background: gradeScore && gradeScore.grade_score < 100 ? '#fff5f5' : '#f0fdf4',
             }}
           >
-            出具最终病历
+            {gradeScore && gradeScore.grade_score < 100 ? `低分拦截(${gradeScore.grade_score}分)` : '出具最终病历'}
           </Button>
         </Space>
       </div>
@@ -502,7 +591,7 @@ export default function RecordEditor() {
           <Button
             key="confirm"
             type="primary"
-            disabled={!confirmed || saving || (!currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
+            disabled={!confirmed || saving || (gradeScore != null && gradeScore.grade_score < 100) || (!currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
             loading={saving}
             icon={<CheckOutlined />}
             onClick={async () => {
@@ -553,7 +642,15 @@ export default function RecordEditor() {
         ]}
       >
         {/* QC status alert */}
-        {qcPass === false && qcIssues.length > 0 ? (
+        {gradeScore && gradeScore.grade_score < 100 ? (
+          <Alert
+            type="error"
+            showIcon
+            message={`评分不足，无法正式提交（${gradeScore.grade_score} 分，${gradeScore.grade_level}）`}
+            description="正式出具病历要求质控评分达到 100 分满分，请修复所有质控问题后重新评分。"
+            style={{ marginBottom: 4 }}
+          />
+        ) : qcPass === false && qcIssues.length > 0 ? (
           <Alert
             type="warning"
             showIcon
