@@ -165,6 +165,33 @@ const FIELD_TO_SECTION: Record<string, string> = {
   '专项评估': '【专项评估】',
 }
 
+// Map English field_name keys to Chinese display labels
+const FIELD_NAME_LABEL: Record<string, string> = {
+  chief_complaint: '主诉',
+  history_present_illness: '现病史',
+  past_history: '既往史',
+  allergy_history: '过敏史',
+  personal_history: '个人史',
+  physical_exam: '体格检查',
+  initial_diagnosis: '初步诊断',
+  initial_impression: '初步诊断',
+  auxiliary_exam: '辅助检查',
+  marital_history: '婚育史',
+  family_history: '家族史',
+  tcm_inspection: '望诊',
+  tcm_auscultation: '闻诊',
+  tongue_coating: '舌象',
+  pulse_condition: '脉象',
+  tcm_disease_diagnosis: '中医疾病诊断',
+  tcm_syndrome_diagnosis: '中医证候诊断',
+  treatment_method: '治则治法',
+  treatment_plan: '处理意见',
+  western_diagnosis: '西医诊断',
+  followup_advice: '复诊建议',
+  precautions: '注意事项',
+  admission_diagnosis: '入院诊断',
+}
+
 // Replace a section in the record content, or append if not found
 function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
   const header = FIELD_TO_SECTION[fieldName]
@@ -681,7 +708,7 @@ export default function AISuggestionPanel() {
                             </Tag>
                           )}
                           {item.field_name && (
-                            <Text type="secondary" style={{ fontSize: 11 }}>{item.field_name}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{FIELD_NAME_LABEL[item.field_name] || item.field_name}</Text>
                           )}
                           {item.score_impact && (
                             <Text style={{ fontSize: 10, color: '#ef4444', marginLeft: 'auto' }}>{item.score_impact}</Text>

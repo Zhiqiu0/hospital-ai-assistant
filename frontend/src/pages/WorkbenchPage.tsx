@@ -293,7 +293,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         </div>
 
         {/* Right: user actions */}
-        <Space size={4}>
+        <Space size={4} style={{ flexShrink: 0 }}>
           <Button
             icon={<ReloadOutlined />}
             size="small"
@@ -441,8 +441,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
             <Input placeholder="请输入患者姓名" size="large" />
           </Form.Item>
           <div style={{ display: 'flex', gap: 12 }}>
-            <Form.Item name="gender" label="性别" style={{ flex: 1 }}>
-              <Select placeholder="选择性别" allowClear>
+            <Form.Item name="gender" label="性别" style={{ flex: 1 }} rules={[{ required: true, message: '请选择性别' }]}>
+              <Select placeholder="选择性别">
                 <Select.Option value="male">男</Select.Option>
                 <Select.Option value="female">女</Select.Option>
                 <Select.Option value="unknown">未知</Select.Option>

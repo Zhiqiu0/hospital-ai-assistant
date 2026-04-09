@@ -34,3 +34,7 @@ backend/uploads/
 
 # 数据库迁移临时文件
 *.pyc
+
+# 本地启动脚本
+start-backend.bat
+start-frontend.bat

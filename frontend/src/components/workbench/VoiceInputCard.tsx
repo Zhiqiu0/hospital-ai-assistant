@@ -362,7 +362,28 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
             </Button>
             <Button
               icon={<DeleteOutlined />}
-              onClick={() => { setTranscript(''); setSummary(''); setSpeakerDialogue([]); setTranscriptId(null) }}
+              onClick={() => {
+                Modal.confirm({
+                  title: '确认清空重录？',
+                  content: '将删除此段录音及转写内容，删除后不可恢复。',
+                  okText: '确认删除',
+                  okType: 'danger',
+                  cancelText: '取消',
+                  onOk: async () => {
+                    if (transcriptId) {
+                      try {
+                        await api.delete(`/ai/voice-records/${transcriptId}`)
+                      } catch {
+                        // 静默处理，即使后端删除失败也清空前端
+                      }
+                    }
+                    setTranscript('')
+                    setSummary('')
+                    setSpeakerDialogue([])
+                    setTranscriptId(null)
+                  },
+                })
+              }}
               style={{ borderRadius: 6 }}
             >
               清空重录

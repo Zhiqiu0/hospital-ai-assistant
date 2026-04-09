@@ -16,6 +16,9 @@ openai==1.51.0
 python-dotenv==1.0.1
 alibabacloud-bssopenapi20171214
 pymupdf
+numpy
+pydicom
+Pillow
 
 # 测试依赖
 pytest>=9.0

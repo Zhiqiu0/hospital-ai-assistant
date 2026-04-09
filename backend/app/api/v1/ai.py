@@ -748,6 +748,35 @@ async def get_voice_audio(
     return FileResponse(audio_path, media_type=mime, filename=audio_path.name)
 
 
+@router.delete("/voice-records/{voice_record_id}")
+async def delete_voice_record(
+    voice_record_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """删除语音记录及音频文件（仅本人可删除）"""
+    result = await db.execute(
+        select(VoiceRecord).where(
+            VoiceRecord.id == voice_record_id,
+            VoiceRecord.doctor_id == current_user.id,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="语音记录不存在")
+
+    # 删除磁盘上的音频文件
+    if record.audio_file_path:
+        uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+        audio_path = uploads_root / record.audio_file_path
+        if audio_path.exists():
+            audio_path.unlink()
+
+    await db.delete(record)
+    await db.commit()
+    return {"success": True}
+
+
 @router.post("/voice-structure")
 async def voice_structure(
     req: VoiceStructureRequest,
