@@ -88,6 +88,8 @@ interface WorkbenchState {
   gradeScore: GradeScore | null
   examSuggestions: ExamSuggestion[]
   isExamLoading: boolean
+  inquirySuggestions: any[]
+  setInquirySuggestions: (items: any[]) => void
   currentPatient: PatientInfo | null
   currentEncounterId: string | null
   setInquiry: (data: InquiryData) => void
@@ -169,6 +171,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   gradeScore: null,
   examSuggestions: [],
   isExamLoading: false,
+  inquirySuggestions: [],
+  setInquirySuggestions: (items) => set({ inquirySuggestions: items }),
   currentPatient: null,
   currentEncounterId: null,
   pendingGenerate: false,
@@ -216,6 +220,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     qcPass: null,
     gradeScore: null,
     examSuggestions: [],
+    inquirySuggestions: [],
     currentPatient: null,
     currentEncounterId: null,
     isFinal: false,
@@ -239,6 +244,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       qcSummary: state.qcSummary,
       qcPass: state.qcPass,
       gradeScore: state.gradeScore,
+      examSuggestions: state.examSuggestions,
+      inquirySuggestions: state.inquirySuggestions,
     }),
   }
 ))

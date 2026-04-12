@@ -223,6 +223,7 @@ export default function AISuggestionPanel() {
     qcIssues, qcSummary, qcPass, gradeScore,
     examSuggestions, isExamLoading,
     setExamSuggestions, setExamLoading,
+    inquirySuggestions, setInquirySuggestions,
     appendInquiryNote, setInitialImpression,
     recordContent, setRecordContent,
     currentEncounterId,
@@ -235,7 +236,10 @@ export default function AISuggestionPanel() {
     [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression].join('|')
   )
 
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const suggestions = inquirySuggestions as Suggestion[]
+  const setSuggestions = (v: Suggestion[] | ((prev: Suggestion[]) => Suggestion[])) => {
+    setInquirySuggestions(typeof v === 'function' ? v(inquirySuggestions as Suggestion[]) : v)
+  }
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
 
