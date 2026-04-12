@@ -165,6 +165,53 @@ const FIELD_TO_SECTION: Record<string, string> = {
   '专项评估': '【专项评估】',
 }
 
+// Map field_name (English or Chinese) to the corresponding inquiry store key
+const FIELD_TO_INQUIRY_KEY: Record<string, string> = {
+  chief_complaint: 'chief_complaint',
+  history_present_illness: 'history_present_illness',
+  past_history: 'past_history',
+  allergy_history: 'allergy_history',
+  personal_history: 'personal_history',
+  physical_exam: 'physical_exam',
+  initial_diagnosis: 'initial_diagnosis',
+  initial_impression: 'initial_impression',
+  auxiliary_exam: 'auxiliary_exam',
+  marital_history: 'marital_history',
+  family_history: 'family_history',
+  tcm_inspection: 'tcm_inspection',
+  tcm_auscultation: 'tcm_auscultation',
+  tongue_coating: 'tongue_coating',
+  pulse_condition: 'pulse_condition',
+  tcm_disease_diagnosis: 'tcm_disease_diagnosis',
+  tcm_syndrome_diagnosis: 'tcm_syndrome_diagnosis',
+  treatment_method: 'treatment_method',
+  treatment_plan: 'treatment_plan',
+  western_diagnosis: 'western_diagnosis',
+  followup_advice: 'followup_advice',
+  precautions: 'precautions',
+  admission_diagnosis: 'admission_diagnosis',
+  // Chinese keys returned by QC API
+  '主诉': 'chief_complaint',
+  '现病史': 'history_present_illness',
+  '既往史': 'past_history',
+  '过敏史': 'allergy_history',
+  '个人史': 'personal_history',
+  '婚育史': 'marital_history',
+  '月经史': 'menstrual_history',
+  '家族史': 'family_history',
+  '体格检查': 'physical_exam',
+  '初步诊断': 'initial_diagnosis',
+  '入院诊断': 'admission_diagnosis',
+  '诊断': 'initial_diagnosis',
+  '辅助检查': 'auxiliary_exam',
+  '中医证候诊断': 'tcm_syndrome_diagnosis',
+  '中医疾病诊断': 'tcm_disease_diagnosis',
+  '治则治法': 'treatment_method',
+  '处理意见': 'treatment_plan',
+  '舌象': 'tongue_coating',
+  '脉象': 'pulse_condition',
+}
+
 // Map English field_name keys to Chinese display labels
 const FIELD_NAME_LABEL: Record<string, string> = {
   chief_complaint: '主诉',
@@ -226,6 +273,7 @@ export default function AISuggestionPanel() {
     inquirySuggestions, setInquirySuggestions,
     appendInquiryNote, setInitialImpression,
     recordContent, setRecordContent,
+    setInquiry,
     currentEncounterId,
   } = useWorkbenchStore()
 
@@ -752,6 +800,11 @@ export default function AISuggestionPanel() {
                             onClick={() => {
                               const fix = fixTexts[idx] || ''
                               setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
+                              // 同步回 inquiry store，避免下次AI质控仍报同一字段缺失
+                              const inquiryKey = FIELD_TO_INQUIRY_KEY[item.field_name]
+                              if (inquiryKey) {
+                                setInquiry({ ...inquiry, [inquiryKey]: fix })
+                              }
                               message.success('已写入病历')
                             }}
                             style={{ fontSize: 12, borderRadius: 6 }}
