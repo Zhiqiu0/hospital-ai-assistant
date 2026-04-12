@@ -61,10 +61,10 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
   const { currentPatient, currentEncounterId, setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset, setVisitMeta } = useWorkbenchStore()
-  // 无接诊时清空残留数据（含切换/结束接诊后 currentEncounterId 变为 null 的情况）
+  // 无接诊时清空残留数据（仅在页面初次挂载时执行，避免新建接诊时的竞态问题）
   useEffect(() => {
     if (!currentEncounterId) reset()
-  }, [currentEncounterId])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 切换门诊/急诊页面时同步 visitType 到 store
   useEffect(() => {
