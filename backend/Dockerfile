@@ -9,6 +9,7 @@ RUN sed -i 's/deb.debian.org/mirrors.tencentyun.com/g' /etc/apt/sources.list.d/d
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

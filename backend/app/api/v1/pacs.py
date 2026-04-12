@@ -174,12 +174,16 @@ async def upload_study(
     # 解压 —— 优先 PATH，再 fallback 常见安装位置
     sevenzip_exe = shutil.which("7z") or shutil.which("7za")
     if not sevenzip_exe:
+        import glob as _glob
         _fallback_paths = [
             r"C:\Program Files\7-Zip\7z.exe",
             r"C:\Program Files (x86)\7-Zip\7z.exe",
             "/usr/bin/7z",
             "/usr/local/bin/7z",
         ]
+        # 自动搜索 Windows 各盘符下的 7-Zip
+        for _drive in "CDEF":
+            _fallback_paths += _glob.glob(rf"{_drive}:\**\7-Zip\7z.exe", recursive=True)[:1]
         sevenzip_exe = next((p for p in _fallback_paths if os.path.exists(p)), None)
     dicom_dir_str = str(study_dir / "dicom")
     try:
