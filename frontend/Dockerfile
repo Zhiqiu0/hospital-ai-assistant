@@ -3,7 +3,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --registry=https://mirrors.tencentyun.com/npm/
 
 COPY . .
 RUN npm run build
