@@ -65,7 +65,7 @@ export default function InquiryPanel() {
   useEffect(() => {
     form.setFieldsValue({
       ...inquiry,
-      visit_time: inquiry.visit_time ? dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm') : null,
+      visit_time: inquiry.visit_time ? dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm') : dayjs(),
       onset_time: inquiry.onset_time ? dayjs(inquiry.onset_time, 'YYYY-MM-DD HH:mm') : null,
     })
     setIsDirty(false)

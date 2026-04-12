@@ -744,6 +744,7 @@ export default function AISuggestionPanel() {
                             size="small"
                             type="primary"
                             icon={<EditOutlined />}
+                            disabled={!fixTexts[idx]?.trim()}
                             onClick={() => {
                               const fix = fixTexts[idx] || ''
                               setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))

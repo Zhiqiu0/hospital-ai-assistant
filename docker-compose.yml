@@ -31,7 +31,7 @@ services:
       ALIYUN_API_KEY: ${ALIYUN_API_KEY:-}
       APP_ENV: production
       APP_DEBUG: "false"
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://mediscribe.cn,http://localhost}
     volumes:
       - uploads_data:/app/uploads
     ports:
@@ -44,6 +44,9 @@ services:
       - backend
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
 volumes:
   postgres_data:

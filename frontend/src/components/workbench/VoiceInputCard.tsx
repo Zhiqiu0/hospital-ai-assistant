@@ -157,6 +157,10 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       message.warning('当前浏览器不支持录音保存，建议使用最新版 Chrome / Edge')
       return
     }
+    if (!currentEncounterId) {
+      message.warning('请先新建接诊，再开始语音录入')
+      return
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -201,7 +205,9 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
         }
 
         recognition.onerror = (event: any) => {
-          if (event.error === 'no-speech') return // 静音超时，忽略，让 onend 自动重启
+          // 这些错误是暂时性的（蓝牙切换/网络抖动/静音），让 onend 自动重启
+          if (['no-speech', 'network', 'audio-capture', 'aborted'].includes(event.error)) return
+          // 真正的权限错误才停止
           recognitionRef.current = null
           setListening(false)
           setInterimText('')

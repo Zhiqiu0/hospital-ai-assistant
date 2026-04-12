@@ -151,13 +151,15 @@ export default function RecordEditor() {
 
   const handleGenerate = async () => {
     if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
-    // 检查中医必填字段，空字段会导致AI生成"待明确"等无效内容
+    // 仅首次生成时检查中医必填字段（已有病历内容说明用户已知情）
     const tcmMissing: string[] = []
-    if (!inquiry.tongue_coating?.trim()) tcmMissing.push('舌象')
-    if (!inquiry.pulse_condition?.trim()) tcmMissing.push('脉象')
-    if (!inquiry.tcm_disease_diagnosis?.trim()) tcmMissing.push('中医疾病诊断')
-    if (!inquiry.tcm_syndrome_diagnosis?.trim()) tcmMissing.push('中医证候诊断')
-    if (!inquiry.treatment_method?.trim()) tcmMissing.push('治则治法')
+    if (!recordContent.trim()) {
+      if (!inquiry.tongue_coating?.trim()) tcmMissing.push('舌象')
+      if (!inquiry.pulse_condition?.trim()) tcmMissing.push('脉象')
+      if (!inquiry.tcm_disease_diagnosis?.trim()) tcmMissing.push('中医疾病诊断')
+      if (!inquiry.tcm_syndrome_diagnosis?.trim()) tcmMissing.push('中医证候诊断')
+      if (!inquiry.treatment_method?.trim()) tcmMissing.push('治则治法')
+    }
     if (tcmMissing.length > 0) {
       Modal.confirm({
         title: '中医必填字段未填写',
