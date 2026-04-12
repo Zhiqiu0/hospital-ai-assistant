@@ -139,7 +139,20 @@ export default function RecordEditor() {
         case '过敏史': result.allergy_history = text; break
         case '个人史': result.personal_history = text; break
         case '月经史': result.menstrual_history = text; break
-        case '体格检查': result.physical_exam = text; break
+        case '体格检查': {
+          // 过滤掉中医四诊行（舌象/脉象/望诊/闻诊），只保留一般体检内容
+          const filteredLines = text.split('\n').filter(line => {
+            const trimmed = line.trim()
+            return !trimmed.match(/^(望诊|闻诊|切诊[··]?舌象|切诊[··]?脉象|舌象|脉象)[：:]/u)
+              && !trimmed.match(/^其余阳性体征[：:]/u)
+          })
+          // 如果有"其余阳性体征：xxx"这行，提取其内容
+          const physicalLine = text.split('\n').find(l => l.trim().match(/^其余阳性体征[：:]/u))
+          const physicalContent = physicalLine ? physicalLine.replace(/^其余阳性体征[：:]\s*/u, '').trim() : ''
+          const otherLines = filteredLines.join('\n').trim()
+          result.physical_exam = [physicalContent, otherLines].filter(Boolean).join('\n').trim()
+          break
+        }
         case '辅助检查': result.auxiliary_exam = text; break
         case '初步诊断': result.initial_impression = text; break
       }

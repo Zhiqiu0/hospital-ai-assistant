@@ -34,6 +34,7 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://mediscribe.cn,http://localhost}
     volumes:
       - uploads_data:/app/uploads
+      - /app/logs:/app/logs
     ports:
       - "8010:8010"
 
