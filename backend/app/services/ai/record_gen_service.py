@@ -57,7 +57,7 @@ class RecordGenService:
         self.record_service = MedicalRecordService(db)
 
     async def stream_generate(self, record_id: str, request: RecordGenerateRequest, user_id: str):
-        record = await self.record_service.get_by_id(record_id)
+        record = await self.record_service.get_by_id(record_id, doctor_id=user_id)
         if record.status == "submitted":
             yield f"data: {json.dumps({'type': 'error', 'message': '病历已签发，不可修改'}, ensure_ascii=False)}\n\n"
             return

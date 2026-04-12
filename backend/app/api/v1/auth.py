@@ -17,7 +17,8 @@ router = APIRouter()
 @router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
     from app.core.rate_limit import login_limiter
-    login_limiter.check(http_request)
+    # 按用户名限速：防爆破单个账号，不影响同网段其他医生
+    login_limiter.check(http_request, key_override=f"login:{request.username}")
     service = AuthService(db)
     result = await service.login(request.username, request.password)
     if not result:

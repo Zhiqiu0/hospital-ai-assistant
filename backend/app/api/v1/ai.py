@@ -665,6 +665,9 @@ async def upload_voice_record(
             import httpx as _httpx
             audio_b64 = base64.b64encode(audio_bytes).decode()
             suffix = Path(file.filename or "recording.webm").suffix.lstrip(".") or "webm"
+            # m4a 需要用 mp4 MIME 类型，API 不识别 audio/m4a
+            _mime_map = {"m4a": "mp4", "mp3": "mpeg"}
+            audio_mime = f"audio/{_mime_map.get(suffix, suffix)}"
             async with _httpx.AsyncClient(timeout=90) as _client:
                 _resp = await _client.post(
                     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
@@ -673,7 +676,7 @@ async def upload_voice_record(
                         "model": "qwen-audio-turbo",
                         "input": {
                             "messages": [{"role": "user", "content": [
-                                {"audio": f"data:audio/{suffix};base64,{audio_b64}"},
+                                {"audio": f"data:{audio_mime};base64,{audio_b64}"},
                                 {"text": "请转录这段中文医患录音，只输出转录文字，不添加任何解释或标注。"},
                             ]}]
                         },

@@ -21,7 +21,19 @@ class MedicalRecordService:
         await self.db.refresh(record)
         return record
 
-    async def get_by_id(self, record_id: str) -> MedicalRecord:
+    async def get_by_id(self, record_id: str, doctor_id: str | None = None) -> MedicalRecord:
+        """获取病历。若传入 doctor_id 则同时校验归属权（接诊医生必须匹配）。"""
+        from app.models.encounter import Encounter
+        if doctor_id:
+            result = await self.db.execute(
+                select(MedicalRecord)
+                .join(Encounter, Encounter.id == MedicalRecord.encounter_id)
+                .where(MedicalRecord.id == record_id, Encounter.doctor_id == doctor_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                raise HTTPException(status_code=403, detail="病历不存在或无权访问")
+            return record
         result = await self.db.execute(select(MedicalRecord).where(MedicalRecord.id == record_id))
         record = result.scalar_one_or_none()
         if not record:
@@ -29,12 +41,16 @@ class MedicalRecordService:
         return record
 
     async def save_content(self, record_id: str, data: RecordContentUpdate, user_id: str):
+        from app.models.encounter import Encounter
         result = await self.db.execute(
-            select(MedicalRecord).where(MedicalRecord.id == record_id).with_for_update()
+            select(MedicalRecord)
+            .join(Encounter, Encounter.id == MedicalRecord.encounter_id)
+            .where(MedicalRecord.id == record_id, Encounter.doctor_id == user_id)
+            .with_for_update()
         )
         record = result.scalar_one_or_none()
         if not record:
-            raise HTTPException(status_code=404, detail="病历不存在")
+            raise HTTPException(status_code=403, detail="病历不存在或无权修改")
         if record.status == "submitted":
             raise HTTPException(status_code=403, detail="病历已签发，不可修改")
         new_version_no = record.current_version + 1

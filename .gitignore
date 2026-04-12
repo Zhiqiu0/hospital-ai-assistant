@@ -35,6 +35,19 @@ backend/uploads/
 # 数据库迁移临时文件
 *.pyc
 
-# 本地启动脚本
+# 本地启动脚本（Windows 开发用，服务器不需要）
 start-backend.bat
 start-frontend.bat
+setup.bat
+
+# Claude Code 本地配置
+.claude/
+.mcp.json.bak
+.playwright-mcp/
+
+# 截图与临时文档
+*.png
+dialog_snap.md
+
+# 测试脚本（本地用）
+test_isolation.py

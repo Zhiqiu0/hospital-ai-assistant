@@ -78,7 +78,7 @@ async def get_record(
     current_user=Depends(get_current_user),
 ):
     service = MedicalRecordService(db)
-    return await service.get_by_id(record_id)
+    return await service.get_by_id(record_id, doctor_id=current_user.id)
 
 
 @router.post("/{record_id}/generate")
@@ -88,6 +88,7 @@ async def generate_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # stream_generate 内部已通过 get_by_id(doctor_id=user_id) 校验归属
     service = RecordGenService(db)
     return StreamingResponse(
         service.stream_generate(record_id, request, current_user.id),
@@ -102,6 +103,9 @@ async def continue_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # stream_continue 不读取病历，先在此校验归属
+    rec_service = MedicalRecordService(db)
+    await rec_service.get_by_id(record_id, doctor_id=current_user.id)
     service = RecordGenService(db)
     return StreamingResponse(
         service.stream_continue(record_id, request, current_user.id),
@@ -116,6 +120,9 @@ async def polish_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # stream_polish 不读取病历，先在此校验归属
+    rec_service = MedicalRecordService(db)
+    await rec_service.get_by_id(record_id, doctor_id=current_user.id)
     service = RecordGenService(db)
     return StreamingResponse(
         service.stream_polish(record_id, request, current_user.id),
@@ -141,6 +148,8 @@ async def get_record_versions(
     current_user=Depends(get_current_user),
 ):
     service = MedicalRecordService(db)
+    # 先校验归属权，再读版本列表
+    await service.get_by_id(record_id, doctor_id=current_user.id)
     return await service.get_versions(record_id)
 
 
@@ -150,6 +159,9 @@ async def scan_qc(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # 先校验归属权
+    rec_service = MedicalRecordService(db)
+    await rec_service.get_by_id(record_id, doctor_id=current_user.id)
     from app.services.ai.qc_service import QCService
     service = QCService(db)
     return await service.scan(record_id)

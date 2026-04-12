@@ -17,8 +17,9 @@ class RateLimiter:
         ip = request.client.host if request.client else "unknown"
         return f"{ip}:{extra}"
 
-    def check(self, request: Request, extra: str = ""):
-        key = self._get_key(request, extra)
+    def check(self, request: Request, extra: str = "", key_override: str = ""):
+        """key_override 非空时直接用该值作为限速 key（如按用户名限速）。"""
+        key = key_override if key_override else self._get_key(request, extra)
         now = datetime.now()
         cutoff = now - self.window
         self._store[key] = [t for t in self._store[key] if t > cutoff]
@@ -26,14 +27,14 @@ class RateLimiter:
             retry_after = int(self.window.total_seconds())
             raise HTTPException(
                 status_code=429,
-                detail=f"请求过于频繁，请 {retry_after // 60} 分钟后重试",
+                detail=f"登录失败次数过多，请 {retry_after // 60} 分钟后重试",
                 headers={"Retry-After": str(retry_after)},
             )
         self._store[key].append(now)
 
 
-# 登录接口：5 次 / 5 分钟（防爆破）
-login_limiter = RateLimiter(max_calls=5, window=timedelta(minutes=5))
+# 登录接口：按用户名限速 5 次 / 3 分钟（防爆破，不影响同 IP 其他用户）
+login_limiter = RateLimiter(max_calls=5, window=timedelta(minutes=3))
 
 # AI 接口：30 次 / 分钟（防滥用）
 ai_limiter = RateLimiter(max_calls=30, window=timedelta(minutes=1))
