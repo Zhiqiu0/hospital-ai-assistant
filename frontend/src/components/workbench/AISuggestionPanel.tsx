@@ -15,6 +15,7 @@ interface Suggestion {
   priority: 'high' | 'medium' | 'low'
   is_red_flag: boolean
   category: string
+  option_type: 'single' | 'multi'
   options: string[]
   selectedOptions: string[]
 }
@@ -127,6 +128,7 @@ async function fetchInquirySuggestions(chiefComplaint: string, history: string, 
   return (data.suggestions || []).map((s: any, idx: number) => ({
     ...s,
     id: `${Date.now()}-${idx}`,
+    option_type: s.option_type === 'single' ? 'single' : 'multi',
     options: s.options || [],
     selectedOptions: [],
   }))
@@ -377,7 +379,9 @@ export default function AISuggestionPanel() {
         const already = s.selectedOptions.includes(option)
         const newSelected = already
           ? s.selectedOptions.filter((o) => o !== option)
-          : [...s.selectedOptions, option]
+          : s.option_type === 'single'
+            ? [option]  // single: 替换掉之前的选择
+            : [...s.selectedOptions, option]
         if (!already) {
           appendInquiryNote(option)
           message.success({ content: '已记录到现病史', duration: 1.2 })
@@ -522,11 +526,12 @@ export default function AISuggestionPanel() {
                         {item.text}
                       </Text>
 
-                      {/* Answer options - 支持多选 */}
+                      {/* Answer options - single/multi 自适应 */}
                       {item.options.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {item.options.map((opt) => {
                             const isSelected = item.selectedOptions.includes(opt)
+                            const isSingle = item.option_type === 'single'
                             return (
                               <Button
                                 key={opt}
@@ -536,12 +541,12 @@ export default function AISuggestionPanel() {
                                 style={{
                                   fontSize: 12, height: 'auto',
                                   padding: '4px 10px',
-                                  borderRadius: 16,
+                                  borderRadius: isSingle ? 4 : 16,
                                   whiteSpace: 'normal',
                                   lineHeight: 1.4,
                                   ...(isSelected ? {
-                                    background: '#2563eb',
-                                    borderColor: '#2563eb',
+                                    background: isSingle ? '#7c3aed' : '#2563eb',
+                                    borderColor: isSingle ? '#7c3aed' : '#2563eb',
                                   } : {
                                     borderColor: '#e2e8f0',
                                     color: '#374151',
