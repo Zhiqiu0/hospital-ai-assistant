@@ -190,6 +190,14 @@ const FIELD_TO_INQUIRY_KEY: Record<string, string> = {
   followup_advice: 'followup_advice',
   precautions: 'precautions',
   admission_diagnosis: 'admission_diagnosis',
+  pain_assessment: 'pain_assessment',
+  vte_risk: 'vte_risk',
+  nutrition_assessment: 'nutrition_assessment',
+  psychology_assessment: 'psychology_assessment',
+  rehabilitation_assessment: 'rehabilitation_assessment',
+  current_medications: 'current_medications',
+  religion_belief: 'religion_belief',
+  onset_time: 'onset_time',
   // Chinese keys returned by QC API
   '主诉': 'chief_complaint',
   '现病史': 'history_present_illness',
@@ -210,6 +218,15 @@ const FIELD_TO_INQUIRY_KEY: Record<string, string> = {
   '处理意见': 'treatment_plan',
   '舌象': 'tongue_coating',
   '脉象': 'pulse_condition',
+  '疼痛评估': 'pain_assessment',
+  'VTE风险评估': 'vte_risk',
+  '营养评估': 'nutrition_assessment',
+  '心理评估': 'psychology_assessment',
+  '康复评估': 'rehabilitation_assessment',
+  '当前用药': 'current_medications',
+  '用药情况': 'current_medications',
+  '宗教信仰': 'religion_belief',
+  '起病时间': 'onset_time',
 }
 
 // Map English field_name keys to Chinese display labels
