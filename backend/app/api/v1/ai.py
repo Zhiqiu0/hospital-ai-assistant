@@ -25,6 +25,13 @@ from app.services.rule_engine.insurance_rules import check_insurance_risk
 from app.models.base import generate_uuid
 
 
+def _safe_format(template: str, **kwargs) -> str:
+    """Safely format a template with user-provided values.
+    Escapes { and } in values to prevent KeyError when content contains curly braces."""
+    safe_kwargs = {k: str(v).replace("{", "{{").replace("}", "}}") for k, v in kwargs.items()}
+    return template.format(**safe_kwargs)
+
+
 async def _log_task(task_type: str, token_input: int = 0, token_output: int = 0) -> str:
     """Log an AI task call to the ai_tasks table using its own DB session. Returns the task id."""
     from app.database import AsyncSessionLocal
@@ -619,14 +626,18 @@ async def _stream_text(prompt: str, task_type: str = "generate", model_options: 
     yield "data: {\"type\":\"start\"}\n\n"
     messages = [{"role": "user", "content": prompt}]
     options = model_options or {}
-    async for chunk in llm_client.stream(
-        messages,
-        temperature=options.get("temperature", 0.3),
-        max_tokens=options.get("max_tokens", 4096),
-        model_name=options.get("model_name"),
-    ):
-        payload = json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False)
-        yield f"data: {payload}\n\n"
+    try:
+        async for chunk in llm_client.stream(
+            messages,
+            temperature=options.get("temperature", 0.3),
+            max_tokens=options.get("max_tokens", 4096),
+            model_name=options.get("model_name"),
+        ):
+            payload = json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+    except Exception as e:
+        logger.error(f"_stream_text LLM error: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
     yield f"data: {{\"type\":\"done\"}}\n\n"
     # Log token usage after stream completes (uses its own DB session)
     usage = llm_client._last_usage
@@ -1095,7 +1106,7 @@ async def quick_polish(
     db_prompt = await _get_active_prompt(db, "polish")
     template = db_prompt or POLISH_PROMPT
     model_options = await _get_model_options(db, "polish")
-    prompt = template.format(content=req.content)
+    prompt = _safe_format(template, content=req.content)
     return StreamingResponse(_stream_text(prompt, task_type="polish", model_options=model_options), media_type="text/event-stream")
 
 
@@ -1146,7 +1157,8 @@ async def inquiry_suggestions(
 ):
     db_prompt = await _get_active_prompt(db, "inquiry")
     template = db_prompt or INQUIRY_SUGGESTIONS_PROMPT
-    prompt = template.format(
+    prompt = _safe_format(
+        template,
         chief_complaint=req.chief_complaint or "未填写",
         history=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "暂未填写",
@@ -1228,7 +1240,8 @@ async def exam_suggestions(
 ):
     db_prompt = await _get_active_prompt(db, "exam")
     template = db_prompt or EXAM_SUGGESTIONS_PROMPT
-    prompt = template.format(
+    prompt = _safe_format(
+        template,
         chief_complaint=req.chief_complaint or "未填写",
         history_present_illness=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "未填写",
@@ -1649,7 +1662,8 @@ async def diagnosis_suggestion(
         for item in (req.inquiry_answers or [])
     ) or "（暂无追问记录）"
 
-    prompt = DIAGNOSIS_SUGGESTION_PROMPT.format(
+    prompt = _safe_format(
+        DIAGNOSIS_SUGGESTION_PROMPT,
         chief_complaint=req.chief_complaint or "未填写",
         history=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "未填写",
@@ -1715,7 +1729,8 @@ async def qc_fix(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    prompt = QC_FIX_PROMPT.format(
+    prompt = _safe_format(
+        QC_FIX_PROMPT,
         field_name=req.field_name or "未知字段",
         issue_description=req.issue_description or "",
         suggestion=req.suggestion or "",
@@ -1852,7 +1867,7 @@ async def quick_qc(
     record_type_label = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
     db_prompt = await _get_active_prompt(db, "qc")
     template = db_prompt or QC_PROMPT
-    prompt = template.format(record_type=record_type_label, content=req.content)
+    prompt = _safe_format(template, record_type=record_type_label, content=req.content)
     messages = [{"role": "user", "content": prompt}]
     try:
         model_options = await _get_model_options(db, "qc")
