@@ -5,9 +5,6 @@ class Settings(BaseSettings):
     # 数据库
     database_url: str
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-
     # JWT
     secret_key: str
     access_token_expire_minutes: int = 1440
@@ -29,8 +26,7 @@ class Settings(BaseSettings):
     # 应用
     app_env: str = "development"
     app_debug: bool = True
-    app_port: int = 8000
-    allowed_origins: str = "http://localhost:5174,http://localhost:5173,http://localhost:3000"
+    allowed_origins: str = "http://localhost:5174"
 
     @property
     def origins_list(self) -> list[str]:

@@ -46,10 +46,10 @@ async def init():
         # 创建默认管理员
         admin_id = "00000000-0000-0000-0000-000000000001"
         pwd_hash = hash_password("admin123456")
-        await session.execute(text(f"""
+        await session.execute(text("""
             INSERT INTO users (id, username, password_hash, real_name, role, is_active, created_at, updated_at)
-            VALUES ('{admin_id}', 'admin', '{pwd_hash}', '系统管理员', 'super_admin', true, NOW(), NOW())
-        """))
+            VALUES (:id, 'admin', :pwd, '系统管理员', 'super_admin', true, NOW(), NOW())
+        """), {"id": admin_id, "pwd": pwd_hash})
 
         # 创建测试医生账号
         dept_result = await session.execute(
@@ -57,10 +57,10 @@ async def init():
         )
         dept_id = dept_result.scalar()
         doctor_pwd = hash_password("doctor123")
-        await session.execute(text(f"""
+        await session.execute(text("""
             INSERT INTO users (id, username, password_hash, real_name, role, department_id, employee_no, is_active, created_at, updated_at)
-            VALUES (gen_random_uuid(), 'doctor01', '{doctor_pwd}', '张医生', 'doctor', '{dept_id}', 'EMP001', true, NOW(), NOW())
-        """))
+            VALUES (gen_random_uuid(), 'doctor01', :pwd, '张医生', 'doctor', :dept_id, 'EMP001', true, NOW(), NOW())
+        """), {"pwd": doctor_pwd, "dept_id": dept_id})
 
         # 插入默认质控规则
         await session.execute(text("""

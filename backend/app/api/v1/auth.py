@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -58,7 +58,7 @@ async def logout(
                 from app.models.revoked_token import RevokedToken
                 db.add(RevokedToken(
                     jti=jti,
-                    expires_at=datetime.utcfromtimestamp(exp),
+                    expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
                 ))
                 await db.commit()
         except JWTError:

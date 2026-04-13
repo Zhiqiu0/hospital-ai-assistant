@@ -6,6 +6,7 @@ import {
   MedicineBoxOutlined, FileTextOutlined, ThunderboltOutlined, TeamOutlined, AuditOutlined, AudioOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
+import api from '@/services/api'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import OverviewPage from './OverviewPage'
 import UsersPage from './UsersPage'
@@ -35,7 +36,8 @@ export default function AdminLayout() {
   const { user, clearAuth } = useAuthStore()
   const resetWorkbench = useWorkbenchStore((s) => s.reset)
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await api.post('/auth/logout') } catch (_) {}
     resetWorkbench()
     clearAuth()
     navigate('/login')

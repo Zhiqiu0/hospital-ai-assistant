@@ -160,7 +160,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await api.post('/auth/logout') } catch (_) {}
     reset()
     clearAuth()
     navigate('/login')

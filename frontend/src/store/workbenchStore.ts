@@ -240,12 +240,6 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       currentEncounterId: state.currentEncounterId,
       isFinal: state.isFinal,
       finalizedAt: state.finalizedAt,
-      qcIssues: state.qcIssues,
-      qcSummary: state.qcSummary,
-      qcPass: state.qcPass,
-      gradeScore: state.gradeScore,
-      examSuggestions: state.examSuggestions,
-      inquirySuggestions: state.inquirySuggestions,
     }),
   }
 ))

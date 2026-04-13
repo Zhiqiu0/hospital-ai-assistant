@@ -110,7 +110,8 @@ export default function InpatientWorkbenchPage() {
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await api.post('/auth/logout') } catch (_) {}
     reset()
     clearAuth()
     navigate('/login')
