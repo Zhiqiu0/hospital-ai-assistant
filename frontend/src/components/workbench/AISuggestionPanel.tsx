@@ -18,6 +18,7 @@ interface Suggestion {
   option_type: 'single' | 'multi'
   options: string[]
   selectedOptions: string[]
+  writtenToRecord: string[]   // track what was actually appended (prevents re-append on deselect+reselect)
 }
 
 interface DiagnosisItem {
@@ -131,6 +132,7 @@ async function fetchInquirySuggestions(chiefComplaint: string, history: string, 
     option_type: s.option_type === 'single' ? 'single' : 'multi',
     options: s.options || [],
     selectedOptions: [],
+    writtenToRecord: [],
   }))
 }
 
@@ -313,7 +315,7 @@ export default function AISuggestionPanel() {
   // Diagnosis state
   const [diagnoses, setDiagnoses] = useState<DiagnosisItem[]>([])
   const [diagnosisLoading, setDiagnosisLoading] = useState(false)
-  const [appliedDiagnosis, setAppliedDiagnosis] = useState<string | null>(null)
+  const [appliedDiagnoses, setAppliedDiagnoses] = useState<string[]>([])
 
   // QC fix state
   const [fixTexts, setFixTexts] = useState<Record<number, string>>({})
@@ -348,7 +350,7 @@ export default function AISuggestionPanel() {
   // Reset diagnoses when chief_complaint changes
   useEffect(() => {
     setDiagnoses([])
-    setAppliedDiagnosis(null)
+    setAppliedDiagnoses([])
   }, [inquiry.chief_complaint])
 
   // 切换接诊时清空检查建议（避免上一个患者的建议残留）
@@ -372,21 +374,26 @@ export default function AISuggestionPanel() {
     } finally { setLoadingMore(false) }
   }, [inquiry.chief_complaint, inquiry.history_present_illness])
 
-  const handleSelectOption = (suggestionId: string, option: string, questionText: string) => {
+  const handleSelectOption = (suggestionId: string, option: string, _questionText: string) => {
     setSuggestions((prev) =>
       prev.map((s) => {
         if (s.id !== suggestionId) return s
         const already = s.selectedOptions.includes(option)
+        const alreadyWritten = s.writtenToRecord.includes(option)
         const newSelected = already
           ? s.selectedOptions.filter((o) => o !== option)
           : s.option_type === 'single'
-            ? [option]  // single: 替换掉之前的选择
+            ? [option]
             : [...s.selectedOptions, option]
-        if (!already) {
+        // Only append to record the first time this option is written
+        if (!already && !alreadyWritten) {
           appendToRecord('\n' + option)
           message.success({ content: '已追加到病历', duration: 1.2 })
         }
-        return { ...s, selectedOptions: newSelected }
+        const newWritten = !alreadyWritten && !already
+          ? [...s.writtenToRecord, option]
+          : s.writtenToRecord
+        return { ...s, selectedOptions: newSelected, writtenToRecord: newWritten }
       })
     )
   }
@@ -414,8 +421,9 @@ export default function AISuggestionPanel() {
   }
 
   const handleApplyDiagnosis = (name: string) => {
+    if (appliedDiagnoses.includes(name)) return
     appendToRecord('\n初步诊断：' + name)
-    setAppliedDiagnosis(name)
+    setAppliedDiagnoses((prev) => [...prev, name])
     message.success({ content: `已追加到病历：${name}`, duration: 2 })
   }
 
@@ -565,15 +573,17 @@ export default function AISuggestionPanel() {
                           <Text style={{ fontSize: 11, color: '#22c55e' }}>
                             ✓ 已记录：{item.selectedOptions.join('、')}
                           </Text>
-                          <Button
-                            type="link" size="small"
-                            style={{ fontSize: 11, padding: 0, height: 'auto', color: '#94a3b8' }}
-                            onClick={() => setSuggestions((prev) =>
-                              prev.map((s) => s.id === item.id ? { ...s, selectedOptions: [] } : s)
-                            )}
-                          >
-                            清除
-                          </Button>
+                          <Tooltip title="取消标记选项（已追加到病历的文字不受影响）">
+                            <Button
+                              type="link" size="small"
+                              style={{ fontSize: 11, padding: 0, height: 'auto', color: '#94a3b8' }}
+                              onClick={() => setSuggestions((prev) =>
+                                prev.map((s) => s.id === item.id ? { ...s, selectedOptions: [] } : s)
+                              )}
+                            >
+                              取消标记
+                            </Button>
+                          </Tooltip>
                         </div>
                       )}
                     </div>
@@ -626,7 +636,7 @@ export default function AISuggestionPanel() {
                     <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {diagnoses.map((d, idx) => {
                         const conf = CONFIDENCE_CONFIG[d.confidence] || CONFIDENCE_CONFIG.medium
-                        const isApplied = appliedDiagnosis === d.name
+                        const isApplied = appliedDiagnoses.includes(d.name)
                         return (
                           <div key={idx} style={{
                             background: isApplied ? '#f0fdf4' : conf.bg,
@@ -646,7 +656,7 @@ export default function AISuggestionPanel() {
                                   {d.name}
                                 </Text>
                               </div>
-                              <Tooltip title={isApplied ? '已写入初步印象' : '写入初步印象'}>
+                              <Tooltip title={isApplied ? '已写入病历' : '追加到病历'}>
                                 <Button
                                   size="small"
                                   type={isApplied ? 'primary' : 'default'}

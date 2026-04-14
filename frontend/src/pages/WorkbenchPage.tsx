@@ -371,7 +371,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       </Header>
 
       {/* Content */}
-      <Content style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10 }}>
+      <Content style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10, position: 'relative' }}>
         {/* Left: Inquiry + Lab Reports */}
         <div style={{
           width: 320,
@@ -429,6 +429,30 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         }}>
           <AISuggestionPanel />
         </div>
+
+        {/* No-patient overlay: block all interaction until an encounter is created */}
+        {!currentPatient && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'rgba(248,250,252,0.90)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            gap: 16, zIndex: 50, borderRadius: 8,
+          }}>
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={<span style={{ fontSize: 14, color: '#64748b' }}>暂无接诊，请先新建接诊或续接诊</span>}
+            />
+            <Space>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} size="large" style={{ borderRadius: 20 }}>
+                新建接诊
+              </Button>
+              <Button icon={<ReloadOutlined />} onClick={openResume} size="large" style={{ borderRadius: 20 }}>
+                续接诊
+              </Button>
+            </Space>
+          </div>
+        )}
       </Content>
 
       {/* New encounter modal */}
