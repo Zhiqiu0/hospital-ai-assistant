@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
-import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Dropdown } from 'antd'
-import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, PlusOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined, FileWordOutlined, StopOutlined } from '@ant-design/icons'
+import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Dropdown, Tooltip } from 'antd'
+import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined, FileWordOutlined, StopOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
@@ -85,11 +85,11 @@ export default function RecordEditor() {
   const { token } = useAuthStore()
   const abortRef = useRef<AbortController | null>(null)
 
-  const [generateConfirmOpen, setGenerateConfirmOpen] = useState(false)
+
   const [finalModalOpen, setFinalModalOpen] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [isContinuing, setIsContinuing] = useState(false)
+
   const [isSupplementing, setIsSupplementing] = useState(false)
   const [patientNameInput, setPatientNameInput] = useState('')
   const [patientGenderInput, setPatientGenderInput] = useState('')
@@ -260,24 +260,6 @@ export default function RecordEditor() {
     } finally { setIsSupplementing(false) }
   }
 
-  const handleContinue = async () => {
-    if (!recordContent.trim()) { message.warning('请先输入部分病历内容，再使用续写'); return }
-    setIsContinuing(true)
-    const originalContent = recordContent
-    setRecordContent(originalContent.trimEnd() + '\n\n')
-    try {
-      await streamSSE('/api/v1/ai/quick-continue', {
-        current_content: originalContent,
-        ...inquiry,
-        record_type: recordType,
-        patient_name: currentPatient?.name || '',
-        patient_gender: currentPatient?.gender || '',
-        patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
-      }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
-    } catch (e: any) {
-      if (e.name !== 'AbortError') message.error('续写失败，请重试')
-    } finally { setIsContinuing(false) }
-  }
 
   const handleQC = async () => {
     if (!recordContent.trim()) { message.warning('病历内容为空，无法质控'); return }
@@ -336,8 +318,8 @@ export default function RecordEditor() {
     } finally { setQCing(false) }
   }
 
-  const isBusy = isGenerating || isPolishing || isQCing || isContinuing || isSupplementing
-  const busyText = isGenerating ? 'AI 生成中...' : isPolishing ? 'AI 润色中...' : isContinuing ? 'AI 续写中...' : isSupplementing ? 'AI 补全中...' : 'AI 质控中...'
+  const isBusy = isGenerating || isPolishing || isQCing || isSupplementing
+  const busyText = isGenerating ? 'AI 生成中...' : isPolishing ? 'AI 润色中...' : isSupplementing ? 'AI 补全中...' : 'AI 质控中...'
 
   const highRiskCount = qcIssues.filter((i) => i.risk_level === 'high').length
 
@@ -394,30 +376,28 @@ export default function RecordEditor() {
 
         {/* Right: action buttons */}
         <Space size={4}>
-          {/* Primary: 一键生成 */}
-          <Button
-            icon={<ThunderboltOutlined />}
-            type="primary"
-            size="small"
-            loading={isGenerating}
-            onClick={() => {
-              if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
-              if (recordContent.trim()) {
-                setGenerateConfirmOpen(true)
-              } else {
+          {/* Primary: 一键生成（只在病历为空时可用） */}
+          <Tooltip title={recordContent.trim() ? '病历已生成，如需重写请手动清空内容' : ''}>
+            <Button
+              icon={<ThunderboltOutlined />}
+              type="primary"
+              size="small"
+              loading={isGenerating}
+              onClick={() => {
+                if (!inquiry.chief_complaint) { message.warning('请先填写并保存主诉'); return }
                 handleGenerate()
-              }
-            }}
-            disabled={isFinal}
-            style={{
-              borderRadius: 8, fontWeight: 600, fontSize: 13, height: 30, paddingInline: 14,
-              background: isFinal ? undefined : 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
-              border: isFinal ? undefined : 'none',
-              boxShadow: isFinal ? undefined : '0 2px 8px rgba(37,99,235,0.35)',
-            }}
-          >
-            一键生成
-          </Button>
+              }}
+              disabled={isFinal || !!recordContent.trim()}
+              style={{
+                borderRadius: 8, fontWeight: 600, fontSize: 13, height: 30, paddingInline: 14,
+                background: (isFinal || recordContent.trim()) ? undefined : 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+                border: (isFinal || recordContent.trim()) ? undefined : 'none',
+                boxShadow: (isFinal || recordContent.trim()) ? undefined : '0 2px 8px rgba(37,99,235,0.35)',
+              }}
+            >
+              一键生成
+            </Button>
+          </Tooltip>
 
           {/* Separator */}
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
@@ -427,12 +407,6 @@ export default function RecordEditor() {
             disabled={isFinal}
             menu={{
               items: [
-                {
-                  key: 'continue',
-                  icon: <PlusOutlined />,
-                  label: '续写',
-                  onClick: handleContinue,
-                },
                 {
                   key: 'polish',
                   icon: <EditOutlined />,
@@ -454,7 +428,7 @@ export default function RecordEditor() {
             <Button
               size="small"
               disabled={isFinal}
-              loading={isContinuing || isPolishing}
+              loading={isPolishing}
               style={{ borderRadius: 8, fontSize: 12, height: 30 }}
             >
               更多 <EllipsisOutlined />
@@ -585,22 +559,6 @@ export default function RecordEditor() {
         }}
         variant="borderless"
       />
-
-      {/* Generate overwrite confirmation modal */}
-      <Modal
-        title="覆盖现有内容？"
-        open={generateConfirmOpen}
-        onCancel={() => setGenerateConfirmOpen(false)}
-        onOk={() => { setGenerateConfirmOpen(false); handleGenerate() }}
-        okText="确认覆盖"
-        cancelText="取消"
-        okButtonProps={{ danger: true }}
-        width={380}
-      >
-        <p style={{ color: '#475569', fontSize: 14, margin: 0 }}>
-          病历编辑区已有内容，点击「确认覆盖」将清空并重新生成，该操作不可撤销。
-        </p>
-      </Modal>
 
       {/* Final record modal */}
       <Modal

@@ -290,7 +290,7 @@ export default function AISuggestionPanel() {
     examSuggestions, isExamLoading,
     setExamSuggestions, setExamLoading,
     inquirySuggestions, setInquirySuggestions,
-    appendInquiryNote, setInitialImpression,
+    appendToRecord,
     recordContent, setRecordContent,
     setInquiry,
     currentEncounterId,
@@ -383,8 +383,8 @@ export default function AISuggestionPanel() {
             ? [option]  // single: 替换掉之前的选择
             : [...s.selectedOptions, option]
         if (!already) {
-          appendInquiryNote(option)
-          message.success({ content: '已记录到现病史', duration: 1.2 })
+          appendToRecord('\n' + option)
+          message.success({ content: '已追加到病历', duration: 1.2 })
         }
         return { ...s, selectedOptions: newSelected }
       })
@@ -414,11 +414,9 @@ export default function AISuggestionPanel() {
   }
 
   const handleApplyDiagnosis = (name: string) => {
-    const existing = inquiry.initial_impression?.trim()
-    const newVal = existing ? `${existing}\n${name}` : name
-    setInitialImpression(newVal)
+    appendToRecord('\n初步诊断：' + name)
     setAppliedDiagnosis(name)
-    message.success({ content: `已写入初步印象：${name}`, duration: 2 })
+    message.success({ content: `已追加到病历：${name}`, duration: 2 })
   }
 
   const handleLoadExamSuggestions = useCallback(async () => {
