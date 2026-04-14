@@ -247,8 +247,14 @@ export default function RecordEditor() {
         qc_issues: qcIssues,
         ...inquiry,
         record_type: recordType,
+        patient_name: currentPatient?.name || '',
+        patient_gender: currentPatient?.gender || '',
+        patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
-      message.success('补全完成')
+      message.success('补全完成，正在重新质控...')
+      setIsSupplementing(false)
+      await handleQC()
+      return
     } catch (e: any) {
       if (e.name !== 'AbortError') { message.error('补全失败，请重试'); setRecordContent(original) }
     } finally { setIsSupplementing(false) }
@@ -264,6 +270,9 @@ export default function RecordEditor() {
         current_content: originalContent,
         ...inquiry,
         record_type: recordType,
+        patient_name: currentPatient?.name || '',
+        patient_gender: currentPatient?.gender || '',
+        patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
     } catch (e: any) {
       if (e.name !== 'AbortError') message.error('续写失败，请重试')
