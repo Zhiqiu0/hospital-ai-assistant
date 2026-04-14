@@ -22,5 +22,5 @@ jobs:
           script: |
             cd /app
             git pull origin main
-            docker compose up --build -d
+            docker compose up --build -d --wait
             echo "Deploy finished at $(date)"

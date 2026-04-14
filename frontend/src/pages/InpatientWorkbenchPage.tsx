@@ -120,7 +120,7 @@ export default function InpatientWorkbenchPage() {
   const handleNewEncounter = async (values: any) => {
     setLoading(true)
     try {
-      const res: any = await api.post('/encounters/quick-start', {
+      const payload = {
         patient_name: values.patient_name,
         gender: values.gender || 'unknown',
         age: values.age ? Number(values.age) : undefined,
@@ -139,18 +139,31 @@ export default function InpatientWorkbenchPage() {
         bed_no: values.bed_no || undefined,
         admission_route: values.admission_route || undefined,
         admission_condition: values.admission_condition || undefined,
-      })
+      }
+      let res: any
+      try {
+        res = await api.post('/encounters/quick-start', payload)
+      } catch (firstErr: any) {
+        if (!firstErr?.response) {
+          message.loading({ content: '连接中，正在重试...', key: 'retry', duration: 3 })
+          await new Promise(r => setTimeout(r, 3000))
+          res = await api.post('/encounters/quick-start', payload)
+        } else {
+          throw firstErr
+        }
+      }
       reset()
       setRecordType('admission_note')
       setCurrentEncounter(
         { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: values.age },
         res.encounter_id
       )
-      message.success(`已为「${res.patient.name}」开始住院接诊`)
+      message.success({ content: `已为「${res.patient.name}」开始住院接诊`, key: 'retry' })
       setModalOpen(false)
       form.resetFields()
     } catch {
-      message.error('创建住院接诊失败，请重试')
+      message.destroy('retry')
+      message.error('创建住院接诊失败，请稍后重试')
     } finally {
       setLoading(false)
     }

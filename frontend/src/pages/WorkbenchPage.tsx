@@ -173,7 +173,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       const isFirstVisit = values.visit_nature !== 'revisit'
       const birthDateStr = values.birth_date ? values.birth_date.format('YYYY-MM-DD') : undefined
       const computedAge = values.birth_date ? dayjs().diff(values.birth_date, 'year') : undefined
-      const res: any = await api.post('/encounters/quick-start', {
+      const payload = {
         patient_name: values.patient_name,
         gender: values.gender || 'unknown',
         birth_date: birthDateStr,
@@ -186,21 +186,36 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         occupation: values.occupation || undefined,
         workplace: values.workplace || undefined,
         address: values.address || undefined,
-      })
+      }
+      // 网络失败时自动重试一次（应对服务器更新重启的瞬间断连）
+      let res: any
+      try {
+        res = await api.post('/encounters/quick-start', payload)
+      } catch (firstErr: any) {
+        if (!firstErr?.response) {
+          // 网络层错误（连接重置/超时），等 3 秒后重试一次
+          message.loading({ content: '连接中，正在重试...', key: 'retry', duration: 3 })
+          await new Promise(r => setTimeout(r, 3000))
+          res = await api.post('/encounters/quick-start', payload)
+        } else {
+          throw firstErr
+        }
+      }
       reset()
       setCurrentEncounter(
         { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: computedAge },
         res.encounter_id
       )
       setVisitMeta(isFirstVisit, values.visit_type || 'outpatient')
-      message.success(`已为「${res.patient.name}」开始接诊`)
+      message.success({ content: `已为「${res.patient.name}」开始接诊`, key: 'retry' })
       setModalOpen(false)
       form.resetFields()
       if (values.visit_type === 'inpatient') {
         navigate('/inpatient')
       }
     } catch {
-      message.error('创建接诊失败，请重试')
+      message.destroy('retry')
+      message.error('创建接诊失败，请稍后重试')
     } finally {
       setLoading(false)
     }

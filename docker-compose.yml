@@ -22,6 +22,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
     environment:
       DATABASE_URL: postgresql+asyncpg://medassist:${DB_PASSWORD:-medassist123}@db:5432/medassist
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-32-chars}
