@@ -9,7 +9,7 @@ class LLMClient:
         self.client = AsyncOpenAI(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
-            timeout=120.0,
+            timeout=270.0,
             max_retries=2,
         )
         self.model = settings.deepseek_model
