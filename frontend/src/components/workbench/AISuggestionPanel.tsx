@@ -375,27 +375,41 @@ export default function AISuggestionPanel() {
   }, [inquiry.chief_complaint, inquiry.history_present_illness])
 
   const handleSelectOption = (suggestionId: string, option: string, _questionText: string) => {
-    setSuggestions((prev) =>
-      prev.map((s) => {
-        if (s.id !== suggestionId) return s
-        const already = s.selectedOptions.includes(option)
-        const alreadyWritten = s.writtenToRecord.includes(option)
-        const newSelected = already
-          ? s.selectedOptions.filter((o) => o !== option)
-          : s.option_type === 'single'
-            ? [option]
-            : [...s.selectedOptions, option]
-        // Only append to record the first time this option is written
-        if (!already && !alreadyWritten) {
-          appendToRecord('\n' + option)
-          message.success({ content: '已追加到病历', duration: 1.2 })
+    const s = suggestions.find((s) => s.id === suggestionId)
+    if (!s) return
+    const already = s.selectedOptions.includes(option)
+    const alreadyWritten = s.writtenToRecord.includes(option)
+
+    if (already) {
+      // 取消选中：尝试从病历里删除这段文字
+      const textToRemove = '\n' + option
+      const newContent = recordContent.replace(textToRemove, '')
+      const removed = newContent !== recordContent
+      if (removed) setRecordContent(newContent)
+      setSuggestions((prev) => prev.map((item) => {
+        if (item.id !== suggestionId) return item
+        return {
+          ...item,
+          selectedOptions: item.selectedOptions.filter((o) => o !== option),
+          writtenToRecord: removed ? item.writtenToRecord.filter((o) => o !== option) : item.writtenToRecord,
         }
-        const newWritten = !alreadyWritten && !already
-          ? [...s.writtenToRecord, option]
-          : s.writtenToRecord
-        return { ...s, selectedOptions: newSelected, writtenToRecord: newWritten }
-      })
-    )
+      }))
+    } else {
+      // 选中：首次才写入病历
+      const newSelected = s.option_type === 'single' ? [option] : [...s.selectedOptions, option]
+      if (!alreadyWritten) {
+        appendToRecord('\n' + option)
+        message.success({ content: '已追加到病历', duration: 1.2 })
+      }
+      setSuggestions((prev) => prev.map((item) => {
+        if (item.id !== suggestionId) return item
+        return {
+          ...item,
+          selectedOptions: newSelected,
+          writtenToRecord: !alreadyWritten ? [...item.writtenToRecord, option] : item.writtenToRecord,
+        }
+      }))
+    }
   }
 
   // Fetch AI diagnosis suggestions
