@@ -237,6 +237,7 @@ TCM_REQUIRED_RULES = [
         "issue_type": "completeness",
         "risk_level": "high",
         "record_keywords": ["证候诊断：", "证候诊断:", "证型：", "证型:", "辨证："],
+        "record_pattern": r"[\u4e00-\u9fa5]{2,}证",  # 兼容任意格式的中医证型名称
         "issue_description": "病历含中医治疗，但【中医证候诊断】未填写（扣2分）",
         "suggestion": "请填写中医证候诊断，格式如：肝阳上亢证；或：痰热壅肺证。",
         "score_impact": "-2分",
@@ -285,34 +286,37 @@ TCM_REQUIRED_RULES = [
 
 _TCM_TREATMENT_KEYWORDS = [
     "中医诊断", "证候诊断", "治则", "治法", "中药", "针灸", "推拿",
-    "中医治疗", "辨证", "汤", "丸", "散", "膏", "饮", "方",
-    "穴位", "艾灸", "拔罐", "刮痧",
+    "中医治疗", "辨证", "中药汤剂", "中成药", "中药方", "中药饮片",
+    "穴位", "艾灸", "拔罐", "刮痧", "草药",
 ]
 
 
 def check_completeness(record_text: str, is_inpatient: bool = False, is_first_visit: bool = True) -> list:
     """
-    基于病历文本检查完整性，不依赖 inquiry 结构化字段。
-    record_text: 当前病历正文
-    is_inpatient: 是否为住院病历（True 时额外检查住院专用项）
-    is_first_visit: 是否初诊（False 时检查复诊症状变化）
+    规则引擎：只做结构性存在检查（有没有该章节/字段），不做语义内容检查。
+    语义内容质量（如中医四诊是否规范、诊断是否准确）交给 LLM QC 处理。
+    所有返回的 issue 带 source="rule"，用于确定性评分门槛。
     """
     issues = []
     text = record_text or ""
+
+    def _make_issue(rule: dict) -> dict:
+        return {
+            "source": "rule",
+            "issue_type": rule["issue_type"],
+            "risk_level": rule["risk_level"],
+            "field_name": rule["field_name"],
+            "issue_description": rule["issue_description"],
+            "suggestion": rule["suggestion"],
+            "score_impact": rule.get("score_impact", ""),
+        }
 
     # ── 通用规则 ────────────────────────────────────────────
     for rule in COMPLETENESS_RULES:
         keywords = rule.get("record_keywords", [])
         found = any(kw in text for kw in keywords) if keywords else False
         if not found:
-            issues.append({
-                "issue_type": rule["issue_type"],
-                "risk_level": rule["risk_level"],
-                "field_name": rule["field_name"],
-                "issue_description": rule["issue_description"],
-                "suggestion": rule["suggestion"],
-                "score_impact": rule.get("score_impact", ""),
-            })
+            issues.append(_make_issue(rule))
 
     # ── 住院专用规则 ─────────────────────────────────────────
     if is_inpatient:
@@ -320,20 +324,14 @@ def check_completeness(record_text: str, is_inpatient: bool = False, is_first_vi
             keywords = rule.get("record_keywords", [])
             found = any(kw in text for kw in keywords) if keywords else False
             if not found:
-                issues.append({
-                    "issue_type": rule["issue_type"],
-                    "risk_level": rule["risk_level"],
-                    "field_name": rule["field_name"],
-                    "issue_description": rule["issue_description"],
-                    "suggestion": rule["suggestion"],
-                    "score_impact": rule.get("score_impact", ""),
-                })
+                issues.append(_make_issue(rule))
 
     # ── 复诊强制检查 ─────────────────────────────────────────
     if not is_first_visit:
         has_change = any(kw in text for kw in _REVISIT_SYMPTOM_CHANGE_KEYWORDS)
         if not has_change:
             issues.append({
+                "source": "rule",
                 "issue_type": "completeness",
                 "risk_level": "high",
                 "field_name": "history_present_illness",
@@ -342,21 +340,7 @@ def check_completeness(record_text: str, is_inpatient: bool = False, is_first_vi
                 "score_impact": "-2分",
             })
 
-    # ── 中医强制检查 ─────────────────────────────────────────
-    has_tcm = any(kw in text for kw in _TCM_TREATMENT_KEYWORDS)
-    if has_tcm:
-        existing_fields = {i["field_name"] for i in issues}
-        for rule in TCM_REQUIRED_RULES:
-            keywords = rule.get("record_keywords", [])
-            found = any(kw in text for kw in keywords) if keywords else False
-            if not found and rule["field_name"] not in existing_fields:
-                issues.append({
-                    "issue_type": rule["issue_type"],
-                    "risk_level": rule["risk_level"],
-                    "field_name": rule["field_name"],
-                    "issue_description": rule["issue_description"],
-                    "suggestion": rule["suggestion"],
-                    "score_impact": rule.get("score_impact", ""),
-                })
+    # 注意：中医四诊检查（舌象/脉象/证候诊断等）属于语义内容检查，已移至 LLM QC 处理，
+    # 规则引擎不再检查，避免因写法格式不同产生误判。
 
     return issues

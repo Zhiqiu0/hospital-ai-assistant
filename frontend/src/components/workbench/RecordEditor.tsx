@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
-import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Dropdown, Tooltip } from 'antd'
-import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, MedicineBoxOutlined, PrinterOutlined, EllipsisOutlined, FileWordOutlined, StopOutlined } from '@ant-design/icons'
+import { Button, Space, Typography, Input, Alert, Select, message, Spin, Tag, Modal, Checkbox, Radio, Tooltip } from 'antd'
+import { ThunderboltOutlined, EditOutlined, SafetyOutlined, FileDoneOutlined, CheckOutlined, MedicineBoxOutlined, PrinterOutlined, FileWordOutlined, StopOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
@@ -116,10 +116,10 @@ export default function RecordEditor() {
       buf = lines.pop() ?? ''
       for (const line of lines) {
         if (!line.startsWith('data:')) continue
-        try {
-          const obj = JSON.parse(line.slice(5).trim())
-          if (obj.type === 'chunk') onChunk(obj.text)
-        } catch { /* ignore */ }
+        let obj: any
+        try { obj = JSON.parse(line.slice(5).trim()) } catch { continue }
+        if (obj.type === 'chunk') onChunk(obj.text)
+        else if (obj.type === 'error') throw new Error(obj.message || 'LLM_ERROR')
       }
     }
   }
@@ -251,22 +251,31 @@ export default function RecordEditor() {
         patient_gender: currentPatient?.gender || '',
         patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
       }, (text) => setRecordContent(useWorkbenchStore.getState().recordContent + text))
+      const newContent = useWorkbenchStore.getState().recordContent
       message.success('补全完成，正在重新质控...')
       setIsSupplementing(false)
-      await handleQC()
+      await handleQC(newContent)
       return
     } catch (e: any) {
-      if (e.name !== 'AbortError') { message.error('补全失败，请重试'); setRecordContent(original) }
+      if (e.name === 'AbortError') return
+      setRecordContent(original)
+      const msg = e?.message || ''
+      if (msg.includes('context_length_exceeded') || msg.includes('maximum context length') || msg.includes('too many tokens')) {
+        message.error('病历内容超出AI处理上限，请联系管理员或手动分段修改')
+      } else {
+        message.error('补全失败，请重试')
+      }
     } finally { setIsSupplementing(false) }
   }
 
 
-  const handleQC = async () => {
-    if (!recordContent.trim()) { message.warning('病历内容为空，无法质控'); return }
+  const handleQC = async (contentOverride?: string) => {
+    const qcContent = contentOverride ?? useWorkbenchStore.getState().recordContent
+    if (!qcContent.trim()) { message.warning('病历内容为空，无法质控'); return }
     setQCing(true)
     try {
       const result: any = await api.post('/ai/quick-qc', {
-        content: recordContent,
+        content: qcContent,
         record_type: recordType,
         // 基础问诊字段
         chief_complaint: inquiry.chief_complaint || '',
@@ -321,7 +330,6 @@ export default function RecordEditor() {
   const isBusy = isGenerating || isPolishing || isQCing || isSupplementing
   const busyText = isGenerating ? 'AI 生成中...' : isPolishing ? 'AI 润色中...' : isSupplementing ? 'AI 补全中...' : 'AI 质控中...'
 
-  const highRiskCount = qcIssues.filter((i) => i.risk_level === 'high').length
 
   return (
     <div style={{
@@ -399,41 +407,17 @@ export default function RecordEditor() {
             </Button>
           </Tooltip>
 
-          {/* Separator */}
-          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
-
-          {/* Secondary actions: ··· dropdown */}
-          <Dropdown
-            disabled={isFinal}
-            menu={{
-              items: [
-                {
-                  key: 'polish',
-                  icon: <EditOutlined />,
-                  label: '润色',
-                  onClick: handlePolish,
-                },
-                { type: 'divider' },
-                {
-                  key: 'word',
-                  icon: <FileWordOutlined />,
-                  label: '导出 Word',
-                  disabled: !recordContent.trim(),
-                  onClick: () => exportWordDoc(recordContent, currentPatient, recordType, finalizedAt),
-                },
-              ],
-            }}
-            trigger={['click']}
+          {/* 润色 */}
+          <Button
+            icon={<EditOutlined />}
+            size="small"
+            loading={isPolishing}
+            onClick={handlePolish}
+            disabled={isFinal || !recordContent.trim()}
+            style={{ borderRadius: 8, fontSize: 12, height: 30 }}
           >
-            <Button
-              size="small"
-              disabled={isFinal}
-              loading={isPolishing}
-              style={{ borderRadius: 8, fontSize: 12, height: 30 }}
-            >
-              更多 <EllipsisOutlined />
-            </Button>
-          </Dropdown>
+            润色
+          </Button>
 
           {/* Separator */}
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
@@ -442,7 +426,7 @@ export default function RecordEditor() {
             icon={<SafetyOutlined />}
             size="small"
             loading={isQCing}
-            onClick={handleQC}
+            onClick={() => handleQC()}
             disabled={isFinal}
             style={{
               borderRadius: 8, fontSize: 12, height: 30,
@@ -473,14 +457,15 @@ export default function RecordEditor() {
           <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
 
           <Button
-            icon={gradeScore && gradeScore.grade_score < 100 ? <StopOutlined /> : <FileDoneOutlined />}
+            icon={qcPass === false ? <StopOutlined /> : <FileDoneOutlined />}
             size="small"
             disabled={!recordContent.trim()}
             onClick={() => {
-              if (gradeScore && gradeScore.grade_score < 100) {
+              if (qcPass === false) {
+                const score = gradeScore?.grade_score
                 Modal.warning({
-                  title: `评分不足，无法提交（当前 ${gradeScore.grade_score} 分）`,
-                  content: `正式出具病历要求质控评分达到 100 分满分，当前评分 ${gradeScore.grade_score} 分（${gradeScore.grade_level}）。请修复右侧质控提示中的所有问题后重新评分，达到满分后方可出具正式病历。`,
+                  title: `结构检查未通过，无法提交${score != null ? `（当前 ${score} 分）` : ''}`,
+                  content: '请修复右侧质控提示中标注「必须修复」的所有结构性问题后重新质控，通过后方可出具正式病历。',
                   okText: '知道了，去修改',
                   width: 460,
                 })
@@ -491,12 +476,25 @@ export default function RecordEditor() {
             }}
             style={{
               borderRadius: 8, fontSize: 12, height: 30,
-              color: gradeScore && gradeScore.grade_score < 100 ? '#dc2626' : '#065f46',
-              borderColor: gradeScore && gradeScore.grade_score < 100 ? '#fca5a5' : '#6ee7b7',
-              background: gradeScore && gradeScore.grade_score < 100 ? '#fff5f5' : '#f0fdf4',
+              color: qcPass === false ? '#dc2626' : '#065f46',
+              borderColor: qcPass === false ? '#fca5a5' : '#6ee7b7',
+              background: qcPass === false ? '#fff5f5' : '#f0fdf4',
             }}
           >
-            {gradeScore && gradeScore.grade_score < 100 ? `低分拦截(${gradeScore.grade_score}分)` : '出具最终病历'}
+            {qcPass === false
+              ? `结构未通过${gradeScore ? `(${gradeScore.grade_score}分)` : ''}`
+              : '出具最终病历'}
+          </Button>
+
+          {/* 导出 Word — 出具后的辅助操作，放最末 */}
+          <Button
+            icon={<FileWordOutlined />}
+            size="small"
+            disabled={!recordContent.trim()}
+            onClick={() => exportWordDoc(recordContent, currentPatient, recordType, finalizedAt)}
+            style={{ borderRadius: 8, fontSize: 12, height: 30 }}
+          >
+            导出 Word
           </Button>
         </Space>
       </div>
@@ -573,7 +571,7 @@ export default function RecordEditor() {
           <Button
             key="confirm"
             type="primary"
-            disabled={!confirmed || saving || (gradeScore != null && gradeScore.grade_score < 100) || (!currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
+            disabled={!confirmed || saving || qcPass === false || (!currentEncounterId && (!patientNameInput.trim() || !patientGenderInput || !patientAgeInput.trim()))}
             loading={saving}
             icon={<CheckOutlined />}
             onClick={async () => {
@@ -624,20 +622,12 @@ export default function RecordEditor() {
         ]}
       >
         {/* QC status alert */}
-        {gradeScore && gradeScore.grade_score < 100 ? (
+        {qcPass === false ? (
           <Alert
             type="error"
             showIcon
-            message={`评分不足，无法正式提交（${gradeScore.grade_score} 分，${gradeScore.grade_level}）`}
-            description="正式出具病历要求质控评分达到 100 分满分，请修复所有质控问题后重新评分。"
-            style={{ marginBottom: 4 }}
-          />
-        ) : qcPass === false && qcIssues.length > 0 ? (
-          <Alert
-            type="warning"
-            showIcon
-            message="病历存在质控问题，建议修复后签发"
-            description={`共发现 ${qcIssues.length} 个质控问题${highRiskCount > 0 ? `，其中高风险问题 ${highRiskCount} 个` : ''}`}
+            message={`结构检查未通过，无法正式提交${gradeScore ? `（${gradeScore.grade_score} 分，${gradeScore.grade_level}）` : ''}`}
+            description="请修复右侧质控提示中标注「必须修复」的所有问题后重新质控。"
             style={{ marginBottom: 4 }}
           />
         ) : qcPass === true || (qcIssues.length === 0 && qcPass !== null) ? (

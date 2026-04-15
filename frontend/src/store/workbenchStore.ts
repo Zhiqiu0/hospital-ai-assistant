@@ -45,6 +45,7 @@ export interface InquiryData {
 }
 
 export interface QCIssue {
+  source?: 'rule' | 'llm'      // rule=结构性必须修复，llm=质量建议
   issue_type?: string          // 'completeness' | 'insurance' | 'format' | 'logic' etc.
   risk_level: 'high' | 'medium' | 'low'
   field_name: string

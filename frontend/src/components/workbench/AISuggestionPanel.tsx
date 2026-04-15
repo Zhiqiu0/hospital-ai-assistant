@@ -15,10 +15,8 @@ interface Suggestion {
   priority: 'high' | 'medium' | 'low'
   is_red_flag: boolean
   category: string
-  option_type: 'single' | 'multi'
   options: string[]
   selectedOptions: string[]
-  writtenToRecord: string[]   // track what was actually appended (prevents re-append on deselect+reselect)
 }
 
 interface DiagnosisItem {
@@ -120,6 +118,30 @@ function GradeScoreCard({ gradeScore }: { gradeScore: GradeScore }) {
 }
 
 
+// 从所有选中选项构建【追问补充】区块文字
+function buildSupplementSection(items: Suggestion[]): string {
+  const lines = items
+    .filter(s => s.selectedOptions.length > 0)
+    .map(s => `${s.text.replace(/[？?]$/, '')}：${s.selectedOptions.join('、')}`)
+  if (lines.length === 0) return ''
+  return '【追问补充】\n' + lines.join('\n')
+}
+
+// 将新的补充区块写入病历（替换旧区块或追加）
+function updateRecordWithSupplement(content: string, newSection: string): string {
+  const marker = '【追问补充】'
+  const idx = content.indexOf(marker)
+  if (newSection === '') {
+    // 全部取消选中时，移除整个区块
+    if (idx === -1) return content
+    return content.slice(0, idx).trimEnd()
+  }
+  if (idx === -1) {
+    return content ? content.trimEnd() + '\n\n' + newSection : newSection
+  }
+  return content.slice(0, idx).trimEnd() + '\n\n' + newSection
+}
+
 async function fetchInquirySuggestions(chiefComplaint: string, history: string, initialImpression: string): Promise<Suggestion[]> {
   const data: any = await api.post('/ai/inquiry-suggestions', {
     chief_complaint: chiefComplaint,
@@ -129,10 +151,8 @@ async function fetchInquirySuggestions(chiefComplaint: string, history: string, 
   return (data.suggestions || []).map((s: any, idx: number) => ({
     ...s,
     id: `${Date.now()}-${idx}`,
-    option_type: s.option_type === 'single' ? 'single' : 'multi',
     options: s.options || [],
     selectedOptions: [],
-    writtenToRecord: [],
   }))
 }
 
@@ -374,42 +394,19 @@ export default function AISuggestionPanel() {
     } finally { setLoadingMore(false) }
   }, [inquiry.chief_complaint, inquiry.history_present_illness])
 
-  const handleSelectOption = (suggestionId: string, option: string, _questionText: string) => {
+  const handleSelectOption = (suggestionId: string, option: string) => {
     const s = suggestions.find((s) => s.id === suggestionId)
     if (!s) return
     const already = s.selectedOptions.includes(option)
-    const alreadyWritten = s.writtenToRecord.includes(option)
+    const newSelected = already
+      ? s.selectedOptions.filter((o) => o !== option)
+      : [...s.selectedOptions, option]
 
-    if (already) {
-      // 取消选中：尝试从病历里删除这段文字
-      const textToRemove = '\n' + option
-      const newContent = recordContent.replace(textToRemove, '')
-      const removed = newContent !== recordContent
-      if (removed) setRecordContent(newContent)
-      setSuggestions((prev) => prev.map((item) => {
-        if (item.id !== suggestionId) return item
-        return {
-          ...item,
-          selectedOptions: item.selectedOptions.filter((o) => o !== option),
-          writtenToRecord: removed ? item.writtenToRecord.filter((o) => o !== option) : item.writtenToRecord,
-        }
-      }))
-    } else {
-      // 选中：首次才写入病历
-      const newSelected = s.option_type === 'single' ? [option] : [...s.selectedOptions, option]
-      if (!alreadyWritten) {
-        appendToRecord('\n' + option)
-        message.success({ content: '已追加到病历', duration: 1.2 })
-      }
-      setSuggestions((prev) => prev.map((item) => {
-        if (item.id !== suggestionId) return item
-        return {
-          ...item,
-          selectedOptions: newSelected,
-          writtenToRecord: !alreadyWritten ? [...item.writtenToRecord, option] : item.writtenToRecord,
-        }
-      }))
-    }
+    const newSuggestions = suggestions.map((item) =>
+      item.id === suggestionId ? { ...item, selectedOptions: newSelected } : item
+    )
+    setSuggestions(newSuggestions)
+    setRecordContent(updateRecordWithSupplement(recordContent, buildSupplementSection(newSuggestions)))
   }
 
   // Fetch AI diagnosis suggestions
@@ -546,27 +543,26 @@ export default function AISuggestionPanel() {
                         {item.text}
                       </Text>
 
-                      {/* Answer options - single/multi 自适应 */}
+                      {/* Answer options — 全部多选 */}
                       {item.options.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {item.options.map((opt) => {
                             const isSelected = item.selectedOptions.includes(opt)
-                            const isSingle = item.option_type === 'single'
                             return (
                               <Button
                                 key={opt}
                                 size="small"
                                 type={isSelected ? 'primary' : 'default'}
-                                onClick={() => handleSelectOption(item.id, opt, item.text)}
+                                onClick={() => handleSelectOption(item.id, opt)}
                                 style={{
                                   fontSize: 12, height: 'auto',
                                   padding: '4px 10px',
-                                  borderRadius: isSingle ? 4 : 16,
+                                  borderRadius: 16,
                                   whiteSpace: 'normal',
                                   lineHeight: 1.4,
                                   ...(isSelected ? {
-                                    background: isSingle ? '#7c3aed' : '#2563eb',
-                                    borderColor: isSingle ? '#7c3aed' : '#2563eb',
+                                    background: '#2563eb',
+                                    borderColor: '#2563eb',
                                   } : {
                                     borderColor: '#e2e8f0',
                                     color: '#374151',
@@ -581,23 +577,12 @@ export default function AISuggestionPanel() {
                         </div>
                       )}
 
-                      {/* Recorded answers */}
+                      {/* 已选提示（点选项本身可取消）*/}
                       {item.selectedOptions.length > 0 && (
-                        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                        <div style={{ marginTop: 6 }}>
                           <Text style={{ fontSize: 11, color: '#22c55e' }}>
-                            ✓ 已记录：{item.selectedOptions.join('、')}
+                            ✓ 已选：{item.selectedOptions.join('、')}（再次点击可取消）
                           </Text>
-                          <Tooltip title="取消标记选项（已追加到病历的文字不受影响）">
-                            <Button
-                              type="link" size="small"
-                              style={{ fontSize: 11, padding: 0, height: 'auto', color: '#94a3b8' }}
-                              onClick={() => setSuggestions((prev) =>
-                                prev.map((s) => s.id === item.id ? { ...s, selectedOptions: [] } : s)
-                              )}
-                            >
-                              取消标记
-                            </Button>
-                          </Tooltip>
                         </div>
                       )}
                     </div>
@@ -625,10 +610,7 @@ export default function AISuggestionPanel() {
                       background: '#f8fafc', borderRadius: 8, padding: '8px 12px',
                       marginBottom: 10,
                     }}>
-                      已回答 <Text strong style={{ color: '#2563eb' }}>{answeredCount}</Text> 个问题，点击下方获取 AI 诊断建议
-                      <div style={{ marginTop: 4, color: '#22c55e', fontSize: 11 }}>
-                        ✓ 已记录到现病史，点左侧「保存问诊信息」可同步到病历
-                      </div>
+                      已回答 <Text strong style={{ color: '#2563eb' }}>{answeredCount}</Text> 个问题，答案已同步至病历【追问补充】区块，点击下方获取 AI 诊断建议
                     </div>
                   )}
 
@@ -777,24 +759,30 @@ export default function AISuggestionPanel() {
                 <>
                   {qcSummary && (
                     <Alert
-                      message={qcPass ? '质控通过' : '质控发现问题'}
+                      message={qcPass ? '结构检查通过，可出具病历' : '存在结构性问题，需修复后才可出具'}
                       description={qcSummary}
-                      type={qcPass ? 'success' : 'warning'}
+                      type={qcPass ? 'success' : 'error'}
                       showIcon
                       style={{ marginBottom: 12, borderRadius: 8 }}
                     />
                   )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {qcIssues.map((item: QCIssue, idx) => (
+                  {(() => {
+                    const blockingIssues = qcIssues.filter(i => i.source === 'rule' || i.source == null)
+                    const suggestionIssues = qcIssues.filter(i => i.source === 'llm')
+                    const renderIssue = (item: QCIssue, idx: number) => (
                       <div key={idx} style={{
                         background: '#fff',
-                        border: '1px solid #e2e8f0',
+                        border: `1px solid ${item.source === 'rule' || item.source == null ? '#fca5a5' : '#e2e8f0'}`,
                         borderRadius: 10,
                         padding: '12px 14px',
                         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                       }}>
-                        {/* Risk tag + issue type + field name */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                          {(item.source === 'rule' || item.source == null) ? (
+                            <Tag color="red" style={{ margin: 0, fontSize: 11, fontWeight: 600 }}>必须修复</Tag>
+                          ) : (
+                            <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>质量建议</Tag>
+                          )}
                           <Tag color={QC_RISK_COLOR[item.risk_level]} style={{ margin: 0, fontSize: 11 }}>
                             {QC_RISK_LABEL[item.risk_level] || item.risk_level}
                           </Tag>
@@ -810,13 +798,9 @@ export default function AISuggestionPanel() {
                             <Text style={{ fontSize: 10, color: '#ef4444', marginLeft: 'auto' }}>{item.score_impact}</Text>
                           )}
                         </div>
-
-                        {/* Issue description */}
                         <Text style={{ fontSize: 13, lineHeight: 1.5, display: 'block', marginBottom: 8, color: '#1e293b' }}>
                           {item.issue_description}
                         </Text>
-
-                        {/* Editable fix textarea */}
                         <Input.TextArea
                           value={fixTexts[idx] ?? ''}
                           onChange={(e) => setFixTexts((prev) => ({ ...prev, [idx]: e.target.value }))}
@@ -824,41 +808,47 @@ export default function AISuggestionPanel() {
                           style={{ fontSize: 13, borderRadius: 6, marginBottom: 8, resize: 'vertical' }}
                           placeholder="修复建议（可编辑）..."
                         />
-
-                        {/* Action buttons */}
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <Button
-                            size="small"
-                            icon={<BulbOutlined />}
-                            loading={fixLoading[idx] || false}
-                            onClick={() => handleAIFix(item, idx)}
-                            style={{ fontSize: 12, borderRadius: 6 }}
-                          >
-                            AI 生成修复
+                          <Button size="small" icon={<BulbOutlined />} loading={fixLoading[idx] || false}
+                            onClick={() => handleAIFix(item, idx)} style={{ fontSize: 12, borderRadius: 6 }}>
+                            逐条修复
                           </Button>
-                          <Button
-                            size="small"
-                            type="primary"
-                            icon={<EditOutlined />}
+                          <Button size="small" type="primary" icon={<EditOutlined />}
                             disabled={!fixTexts[idx]?.trim()}
                             onClick={() => {
                               const fix = fixTexts[idx] || ''
                               setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
-                              // 同步回 inquiry store，避免下次AI质控仍报同一字段缺失
                               const inquiryKey = FIELD_TO_INQUIRY_KEY[item.field_name]
-                              if (inquiryKey) {
-                                setInquiry({ ...inquiry, [inquiryKey]: fix })
-                              }
+                              if (inquiryKey) setInquiry({ ...inquiry, [inquiryKey]: fix })
                               message.success('已写入病历')
                             }}
-                            style={{ fontSize: 12, borderRadius: 6 }}
-                          >
+                            style={{ fontSize: 12, borderRadius: 6 }}>
                             写入病历
                           </Button>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    )
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {blockingIssues.length > 0 && (
+                          <>
+                            <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
+                              ▍必须修复（共 {blockingIssues.length} 项，修复后重新质控即可出具病历）
+                            </Text>
+                            {blockingIssues.map((item) => renderIssue(item, qcIssues.indexOf(item)))}
+                          </>
+                        )}
+                        {suggestionIssues.length > 0 && (
+                          <>
+                            <Text style={{ fontSize: 11, color: '#92400e', fontWeight: 600, marginTop: blockingIssues.length > 0 ? 4 : 0 }}>
+                              ▍质量建议（共 {suggestionIssues.length} 项，不影响出具，但建议改进）
+                            </Text>
+                            {suggestionIssues.map((item) => renderIssue(item, qcIssues.indexOf(item)))}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>
