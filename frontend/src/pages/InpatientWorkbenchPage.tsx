@@ -213,15 +213,16 @@ export default function InpatientWorkbenchPage() {
           {currentPatient ? (
             <>
               <div style={{
-                display: 'flex', alignItems: 'center', gap: 8,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
                 background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
                 border: '1px solid #bbf7d0',
-                borderRadius: 24, padding: '5px 16px',
+                borderRadius: 8, padding: '4px 12px',
                 boxShadow: '0 1px 4px rgba(5,150,105,0.1)',
+                lineHeight: 1,
               }}>
                 <div style={{
-                  width: 7, height: 7, borderRadius: '50%', background: '#22c55e',
-                  boxShadow: '0 0 0 3px rgba(34,197,94,0.2)',
+                  width: 6, height: 6, borderRadius: '50%', background: '#22c55e',
+                  boxShadow: '0 0 0 2px rgba(34,197,94,0.25)',
                   flexShrink: 0,
                 }} />
                 <Text style={{ fontSize: 13, fontWeight: 700, color: '#065f46' }}>
@@ -232,13 +233,13 @@ export default function InpatientWorkbenchPage() {
                     {currentPatient.gender === 'male' ? '男' : '女'}
                   </Text>
                 )}
-                {currentPatient.age && (
+                {currentPatient.age != null && currentPatient.age > 0 && (
                   <Text style={{ fontSize: 12, color: '#059669' }}>{currentPatient.age}岁</Text>
                 )}
+                <Text style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', marginLeft: 4 }}>
+                  住院 #{currentEncounterId?.slice(-6).toUpperCase()}
+                </Text>
               </div>
-              <Text style={{ fontSize: 12, color: 'var(--text-4)', fontFamily: 'monospace', letterSpacing: 1 }}>
-                住院号 #{currentEncounterId?.slice(-6).toUpperCase()}
-              </Text>
             </>
           ) : (
             <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>未选择患者</Text>
