@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ from app.core.security import require_admin
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.medical_record import AITask, QCIssue
-from app.models.user import Department, User
+from app.models.user import Department
 
 router = APIRouter()
 
@@ -90,7 +90,7 @@ async def usage_stats(
             func.count(Encounter.id).label("encounter_count"),
         )
         .outerjoin(Encounter, Encounter.department_id == Department.id)
-        .where(Department.is_active == True)
+        .where(Department.is_active.is_(True))
         .group_by(Department.id, Department.name)
         .order_by(func.count(Encounter.id).desc())
     )

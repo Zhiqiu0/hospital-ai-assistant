@@ -50,7 +50,7 @@ async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
     """
     result = await db.execute(
         select(PromptTemplate)
-        .where(PromptTemplate.scene == scene, PromptTemplate.is_active == True)
+        .where(PromptTemplate.scene == scene, PromptTemplate.is_active.is_(True))
         .order_by(PromptTemplate.created_at.desc())
         .limit(1)
     )

@@ -13,6 +13,7 @@
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 from datetime import date
 from typing import Optional
 
@@ -22,11 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-import logging
-
 from app.core.security import get_current_user
-
-logger = logging.getLogger(__name__)
 from app.database import get_db
 from app.schemas.ai_suggestion import InquirySuggestionRequest
 from app.schemas.encounter import EncounterCreate, EncounterResponse, InquiryInputUpdate, QuickStartRequest
@@ -36,6 +33,8 @@ from app.services.ai.exam_service import ExamService
 from app.services.ai.inquiry_service import InquiryService
 from app.services.encounter_service import EncounterService
 from app.services.patient_service import PatientService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

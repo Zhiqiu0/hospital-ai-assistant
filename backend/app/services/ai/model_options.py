@@ -27,7 +27,7 @@ async def get_model_options(db: AsyncSession, scene: str) -> dict:
     result = await db.execute(
         select(ModelConfig).where(
             ModelConfig.scene == scene,
-            ModelConfig.is_active == True,
+            ModelConfig.is_active.is_(True),
         ).limit(1)
     )
     config = result.scalar_one_or_none()

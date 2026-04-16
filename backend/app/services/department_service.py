@@ -14,7 +14,7 @@ class DepartmentService:
         return result.scalar_one_or_none()
 
     async def list_all(self):
-        result = await self.db.execute(select(Department).where(Department.is_active == True))
+        result = await self.db.execute(select(Department).where(Department.is_active.is_(True)))
         items = result.scalars().all()
         return {"items": items}
 

@@ -7,6 +7,7 @@ PACS 影像管理 API
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import base64
 import io
+import logging
 import os
 import shutil
 import subprocess
@@ -27,15 +28,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-import logging
-
 from app.config import settings
-
-logger = logging.getLogger(__name__)
 from app.core.security import get_current_user
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingReport, ImagingStudy
+
+logger = logging.getLogger(__name__)
 
 PRIVILEGED_ROLES = {"radiologist", "admin", "super_admin"}
 
@@ -600,7 +599,8 @@ async def analyze_image(
     if is_dcm:
         # DCM → JPEG（含窗宽窗位处理）
         try:
-            import tempfile, os
+            import tempfile
+            import os
             with tempfile.NamedTemporaryFile(suffix=".dcm", delete=False) as tmp:
                 tmp.write(raw_bytes)
                 tmp_path = tmp.name

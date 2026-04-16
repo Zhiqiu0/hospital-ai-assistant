@@ -31,4 +31,4 @@ class Patient(Base, TimestampMixin):
     encounters: Mapped[list["Encounter"]] = relationship(back_populates="patient")
 
 
-from app.models.encounter import Encounter
+from app.models.encounter import Encounter  # noqa: E402

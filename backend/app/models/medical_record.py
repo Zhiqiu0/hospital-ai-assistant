@@ -77,4 +77,4 @@ class AITask(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
-from app.models.encounter import Encounter
+from app.models.encounter import Encounter  # noqa: E402
