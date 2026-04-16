@@ -11,7 +11,6 @@ from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.models.encounter import Encounter

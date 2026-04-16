@@ -6,7 +6,6 @@ from typing import Optional
 from app.database import get_db
 from app.core.security import require_admin
 from app.models.voice_record import VoiceRecord
-from app.models.user import User
 
 router = APIRouter()
 

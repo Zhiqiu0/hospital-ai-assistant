@@ -9,7 +9,6 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import base64
-import io
 import logging
 import re
 from datetime import datetime

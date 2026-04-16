@@ -7,13 +7,12 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import json
-from datetime import datetime
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.models.medical_record import AITask, RecordVersion
+from app.models.medical_record import RecordVersion
 from app.schemas.medical_record import RecordContinueRequest, RecordGenerateRequest, RecordPolishRequest
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options

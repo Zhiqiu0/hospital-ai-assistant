@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.core.security import get_current_user, require_admin
+from app.core.security import require_admin
 from app.database import get_db
 from app.schemas.user import UserCreate, UserListResponse, UserResponse, UserUpdate
 from app.services.user_service import UserService

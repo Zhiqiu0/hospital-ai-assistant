@@ -13,7 +13,6 @@ AI 病历生成路由（/api/v1/ai/quick-generate 等）
 import json
 import logging
 import re
-from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends

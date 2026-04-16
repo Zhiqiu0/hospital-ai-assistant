@@ -4,7 +4,7 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from pydantic import BaseModel

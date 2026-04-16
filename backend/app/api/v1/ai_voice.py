@@ -18,7 +18,7 @@ from typing import Optional
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,6 @@ from app.database import get_db
 from app.models.base import generate_uuid
 from app.models.voice_record import VoiceRecord
 from app.schemas.ai_request import VoiceStructureRequest
-from app.services.ai.ai_utils import get_active_prompt, stream_text
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
