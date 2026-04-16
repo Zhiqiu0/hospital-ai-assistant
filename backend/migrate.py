@@ -88,6 +88,27 @@ async def migrate():
             print(f"    qc_issues.medical_record_id - SKIP ({e})")
         print()
 
+        # 6. qc_rules 重构：新增 rule_code / scope / keywords 等字段
+        print("[6] qc_rules 新增扩展字段...")
+        qc_rules_columns = [
+            ("rule_code",            "VARCHAR(20)"),
+            ("scope",                "VARCHAR(20)"),
+            ("keywords",             "TEXT"),
+            ("indication_keywords",  "TEXT"),
+            ("issue_description",    "TEXT"),
+            ("suggestion",           "TEXT"),
+            ("score_impact",         "VARCHAR(20)"),
+        ]
+        for col, col_type in qc_rules_columns:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE qc_rules ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    qc_rules.{col} - OK")
+            except Exception as e:
+                print(f"    qc_rules.{col} - SKIP ({e})")
+        print()
+
     print("=== 迁移完成 ===")
 
 

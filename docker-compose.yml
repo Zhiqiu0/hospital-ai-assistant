@@ -23,7 +23,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8010/api/v1/health"]
       interval: 5s
       timeout: 3s
       retries: 6
