@@ -11,6 +11,12 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   allergy_history: '【过敏史】',
   personal_history: '【个人史】',
   physical_exam: '【体格检查】',
+  physical_exam_vitals: '【体格检查】',
+  tcm_diagnosis: '【中医诊断】',
+  tcm_syndrome_diagnosis: '【中医诊断】',
+  tcm_disease_diagnosis: '【中医诊断】',
+  western_diagnosis: '【初步诊断】',
+  content: '',
   initial_diagnosis: '【初步诊断】',
   initial_impression: '【初步诊断】',
   auxiliary_exam: '【辅助检查】',
@@ -129,7 +135,8 @@ export const FIELD_NAME_LABEL: Record<string, string> = {
  */
 export function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
   const header = FIELD_TO_SECTION[fieldName]
-  if (!header || !content) return content ? content + '\n\n' + fixText : fixText
+  // content 类字段（全文规则）或未知字段：不做写入
+  if (header === undefined || header === '') return content
 
   const sectionPattern = /【[^】]+】/g
   const matches: Array<{ index: number; header: string }> = []
@@ -139,10 +146,19 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
   }
 
   const targetIdx = matches.findIndex(s => s.header === header)
+
+  // 取消写入（fixText 为空）：移除该章节内容
+  if (!fixText.trim()) {
+    if (targetIdx === -1) return content
+    const start = matches[targetIdx].index
+    const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
+    return (content.slice(0, start) + content.slice(end)).replace(/\n{3,}/g, '\n\n').trimEnd()
+  }
+
+  // 写入：替换或插入章节
   if (targetIdx === -1) {
     return content + '\n\n' + header + '\n' + fixText
   }
-
   const start = matches[targetIdx].index
   const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
   return content.slice(0, start) + header + '\n' + fixText + '\n' + content.slice(end).trimStart()

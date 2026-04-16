@@ -67,7 +67,7 @@ function updateRecordWithSupplement(content: string, newSection: string): string
 export default function InquirySuggestionTab() {
   const {
     inquiry,
-    appendToRecord,
+    setInitialImpression,
     recordContent,
     setRecordContent,
     inquirySuggestions,
@@ -82,11 +82,11 @@ export default function InquirySuggestionTab() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [diagnoses, setDiagnoses] = useState<DiagnosisItem[]>([])
   const [diagnosisLoading, setDiagnosisLoading] = useState(false)
-  const [appliedDiagnoses, setAppliedDiagnoses] = useState<string[]>([])
+  const [appliedDiagnosis, setAppliedDiagnosis] = useState<string | null>(null)
 
   useEffect(() => {
     setDiagnoses([])
-    setAppliedDiagnoses([])
+    setAppliedDiagnosis(null)
   }, [inquiry.chief_complaint])
 
   const handleLoadSuggestions = useCallback(async () => {
@@ -174,10 +174,14 @@ export default function InquirySuggestionTab() {
   }
 
   const handleApplyDiagnosis = (name: string) => {
-    if (appliedDiagnoses.includes(name)) return
-    appendToRecord('\n初步诊断：' + name)
-    setAppliedDiagnoses(prev => [...prev, name])
-    message.success({ content: `已追加到病历：${name}`, duration: 2 })
+    if (appliedDiagnosis === name) {
+      setInitialImpression('')
+      setAppliedDiagnosis(null)
+    } else {
+      setInitialImpression(name)
+      setAppliedDiagnosis(name)
+      message.success({ content: `已写入初步诊断：${name}`, duration: 2 })
+    }
   }
 
   const answeredCount = suggestions.filter(s => s.selectedOptions.length > 0).length
@@ -366,7 +370,7 @@ export default function InquirySuggestionTab() {
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {diagnoses.map((d, idx) => {
             const conf = CONFIDENCE_CONFIG[d.confidence] || CONFIDENCE_CONFIG.medium
-            const isApplied = appliedDiagnoses.includes(d.name)
+            const isApplied = appliedDiagnosis === d.name
             return (
               <div
                 key={idx}
@@ -406,12 +410,12 @@ export default function InquirySuggestionTab() {
                       {d.name}
                     </Text>
                   </div>
-                  <Tooltip title={isApplied ? '已写入病历' : '追加到病历'}>
+                  <Tooltip title={isApplied ? '点击取消' : '写入初步诊断'}>
                     <Button
                       size="small"
                       type={isApplied ? 'primary' : 'default'}
                       icon={isApplied ? <CheckOutlined /> : <ArrowRightOutlined />}
-                      onClick={() => !isApplied && handleApplyDiagnosis(d.name)}
+                      onClick={() => handleApplyDiagnosis(d.name)}
                       style={{
                         borderRadius: 16,
                         fontSize: 11,

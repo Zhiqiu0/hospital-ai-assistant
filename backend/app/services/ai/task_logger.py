@@ -111,11 +111,18 @@ def calc_grade_score(issues: list[dict]) -> tuple[int, str]:
     Returns:
         (score_int, level_str)，score_int 为 0-100 的整数。
     """
+    import re as _re
+
     score = 100.0
     for issue in issues:
         risk = issue.get("risk_level", "low")
         desc = issue.get("issue_description", "")
-        if "单项否决" in desc or "否决" in desc:
+        # 优先用规则表里存的 score_impact（如 "-2分"、"-0.5分"）
+        si = issue.get("score_impact", "")
+        match = _re.search(r"-(\d+(?:\.\d+)?)", si) if si else None
+        if match:
+            score -= float(match.group(1))
+        elif "单项否决" in desc or "否决" in desc:
             score -= 10
         elif risk == "high":
             score -= 3
@@ -125,7 +132,7 @@ def calc_grade_score(issues: list[dict]) -> tuple[int, str]:
             score -= 0.5
 
     score = max(0.0, score)
-    score_int = int(score)
+    score_int = round(score)
     if score_int >= 90:
         level = "甲级"
     elif score_int >= 75:
