@@ -1,11 +1,28 @@
+"""
+接诊服务（Encounter Service）
+
+负责接诊记录的创建、查询及工作台快照组装：
+  - create          : 新建接诊记录
+  - get_my_encounters: 获取当前医生进行中的接诊列表
+  - get_by_id       : 按 ID 查询接诊（404 自动抛出）
+  - get_workspace_snapshot: 拼装工作台所需全量数据
+  - save_inquiry    : 保存 / 更新问诊输入
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+from datetime import date
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from fastapi import HTTPException
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.voice_record import VoiceRecord
 from app.schemas.encounter import EncounterCreate, InquiryInputUpdate
-from fastapi import HTTPException
 
 
 class EncounterService:
@@ -49,10 +66,7 @@ class EncounterService:
                     "name": e.patient.name,
                     "gender": e.patient.gender,
                     "age": (
-                        (
-                            __import__("datetime").date.today().year
-                            - e.patient.birth_date.year
-                        )
+                        date.today().year - e.patient.birth_date.year
                         if e.patient.birth_date
                         else None
                     ),
@@ -106,7 +120,34 @@ class EncounterService:
             version = version_result.scalar_one_or_none()
             content = version.content if version else None
             if isinstance(content, dict):
-                content_text = content.get("text", "")
+                if "text" in content:
+                    # quick_save 签发格式：{"text": "plain text"}
+                    content_text = content["text"]
+                else:
+                    # stream_generate / save_content 结构化格式：{"chief_complaint": ..., ...}
+                    # 按字段顺序重组为可读文本
+                    _labels = {
+                        "chief_complaint": "主诉",
+                        "history_present_illness": "现病史",
+                        "past_history": "既往史",
+                        "allergy_history": "过敏史",
+                        "personal_history": "个人史",
+                        "physical_exam": "体格检查",
+                        "auxiliary_exam": "辅助检查",
+                        "initial_diagnosis": "初步诊断",
+                        "admission_diagnosis": "入院诊断",
+                        "treatment_plan": "诊疗计划",
+                    }
+                    parts = []
+                    for key, label in _labels.items():
+                        val = content.get(key, "")
+                        if val:
+                            parts.append(f"【{label}】\n{val}")
+                    # 其余未在映射中的字段追加到末尾
+                    for key, val in content.items():
+                        if key not in _labels and val:
+                            parts.append(f"【{key}】\n{val}")
+                    content_text = "\n\n".join(parts)
             elif isinstance(content, str):
                 content_text = content
             else:
@@ -133,7 +174,7 @@ class EncounterService:
         patient = encounter.patient
         patient_age = None
         if patient and patient.birth_date:
-            today = __import__("datetime").date.today()
+            today = date.today()
             patient_age = today.year - patient.birth_date.year - (
                 (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
             )

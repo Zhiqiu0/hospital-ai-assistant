@@ -1,14 +1,25 @@
+"""
+管理后台统计接口（/api/v1/admin/stats/*）
+
+提供运营概览、AI token 用量统计及阿里云账户余额查询。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+from datetime import date, datetime, timedelta
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+import httpx
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, Date
-from app.database import get_db
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.config import settings
 from app.core.security import require_admin
+from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.medical_record import AITask, QCIssue
 from app.models.user import Department, User
-from app.config import settings
-from datetime import date, datetime, timedelta
-import httpx
 
 router = APIRouter()
 

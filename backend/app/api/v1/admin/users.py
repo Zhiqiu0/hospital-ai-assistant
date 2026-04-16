@@ -1,9 +1,18 @@
+"""
+管理后台用户管理接口（/api/v1/admin/users/*）
+
+提供用户的增删改查，仅管理员可访问。
+"""
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserListResponse
-from app.services.user_service import UserService
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user, require_admin
+from app.database import get_db
+from app.schemas.user import UserCreate, UserListResponse, UserResponse, UserUpdate
+from app.services.user_service import UserService
 
 router = APIRouter()
 

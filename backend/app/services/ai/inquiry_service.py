@@ -1,8 +1,23 @@
+"""
+问诊建议服务（app/services/ai/inquiry_service.py）
+
+供 /api/v1/encounters/{id}/inquiry-suggestions 路由调用，
+通过 LLM 生成临床追问建议并以 SSE 流式推送。
+
+注意：快捷 AI 接口（/api/v1/ai/inquiry-suggestions）由 ai_suggestions.py
+路由直接调用 llm_client，不经过本服务。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 import json
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.schemas.ai_suggestion import InquirySuggestionRequest
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
-from app.schemas.ai_suggestion import InquirySuggestionRequest
 
 
 INQUIRY_PROMPT = """你是一名经验丰富的临床医生助手。根据患者信息，生成追问建议。
@@ -35,16 +50,31 @@ INQUIRY_PROMPT = """你是一名经验丰富的临床医生助手。根据患者
 
 
 class InquiryService:
+    """就诊问诊建议服务，通过 LLM 生成追问问题列表。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def stream_suggestions(self, encounter_id: str, request: InquirySuggestionRequest):
+        """生成追问建议并以 SSE 格式逐条推送。
+
+        Args:
+            encounter_id: 就诊记录 ID（当前用于上下文，暂不查询 DB）。
+            request: 包含主诉、现病史、科室等信息的请求对象。
+
+        Yields:
+            SSE 格式字符串，事件类型：suggestion / done / error。
+        """
         prompt = INQUIRY_PROMPT.format(
             chief_complaint=request.chief_complaint,
             history_present_illness=request.history_present_illness or "未提供",
             department=request.department or "未知",
             patient_age=request.patient_age or "未知",
-            patient_gender="男" if request.patient_gender == "male" else "女" if request.patient_gender == "female" else "未知",
+            patient_gender=(
+                "男" if request.patient_gender == "male"
+                else "女" if request.patient_gender == "female"
+                else "未知"
+            ),
         )
         messages = [{"role": "user", "content": prompt}]
 
@@ -56,11 +86,10 @@ class InquiryService:
                 max_tokens=opts["max_tokens"],
                 model_name=opts["model_name"],
             )
-            suggestions = result.get("suggestions", [])
-            for suggestion in suggestions:
+            for suggestion in result.get("suggestions", []):
                 data = json.dumps({"type": "suggestion", **suggestion}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            error_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+        except Exception as exc:
+            error_data = json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
             yield f"data: {error_data}\n\n"

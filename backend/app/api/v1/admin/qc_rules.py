@@ -1,10 +1,20 @@
+"""
+管理后台质控规则接口（/api/v1/admin/qc-rules/*）
+
+管理规则引擎使用的质控规则配置（DB 驱动，独立于 LLM prompt）。
+规则变更实时生效：规则引擎每次执行时从 DB 实时加载激活规则。
+"""
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import require_admin
+from app.database import get_db
 from app.models.config import QCRule
-from app.schemas.config import QCRuleCreate, QCRuleUpdate, QCRuleResponse
+from app.schemas.config import QCRuleCreate, QCRuleResponse, QCRuleUpdate
 
 router = APIRouter()
 
@@ -14,7 +24,8 @@ async def list_rules(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    result = await db.execute(select(QCRule).order_by(QCRule.created_at.desc()))
+    """列出所有质控规则，按 rule_code 升序排列。"""
+    result = await db.execute(select(QCRule).order_by(QCRule.rule_code))
     items = result.scalars().all()
     return {"items": [QCRuleResponse.model_validate(item) for item in items]}
 
@@ -25,14 +36,8 @@ async def create_rule(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    rule = QCRule(
-        name=data.name,
-        description=data.description,
-        rule_type=data.rule_type,
-        field_name=data.field_name,
-        condition=data.condition,
-        risk_level=data.risk_level,
-    )
+    """新增质控规则。rule_code 需全局唯一。"""
+    rule = QCRule(**data.model_dump())
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
@@ -46,6 +51,7 @@ async def update_rule(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
+    """更新质控规则字段（仅更新传入的非 None 字段）。"""
     result = await db.execute(select(QCRule).where(QCRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
@@ -63,6 +69,7 @@ async def toggle_rule(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
+    """切换质控规则的启用/停用状态。"""
     result = await db.execute(select(QCRule).where(QCRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
@@ -79,6 +86,7 @@ async def delete_rule(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
+    """删除质控规则（不可恢复，建议改用 toggle 停用）。"""
     result = await db.execute(select(QCRule).where(QCRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:

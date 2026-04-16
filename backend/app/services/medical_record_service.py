@@ -1,13 +1,27 @@
+"""
+病历服务（app/services/medical_record_service.py）
+
+提供病历的创建、查询、内容保存、版本管理及快速签发操作。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+from datetime import datetime
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from fastapi import HTTPException
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.schemas.medical_record import MedicalRecordCreate, RecordContentUpdate
-from fastapi import HTTPException
-from datetime import datetime
 
 
 class MedicalRecordService:
+    """病历数据访问服务，封装病历 CRUD 及版本控制逻辑。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -23,7 +37,6 @@ class MedicalRecordService:
 
     async def get_by_id(self, record_id: str, doctor_id: str | None = None) -> MedicalRecord:
         """获取病历。若传入 doctor_id 则同时校验归属权（接诊医生必须匹配）。"""
-        from app.models.encounter import Encounter
         if doctor_id:
             result = await self.db.execute(
                 select(MedicalRecord)
@@ -41,7 +54,6 @@ class MedicalRecordService:
         return record
 
     async def save_content(self, record_id: str, data: RecordContentUpdate, user_id: str):
-        from app.models.encounter import Encounter
         result = await self.db.execute(
             select(MedicalRecord)
             .join(Encounter, Encounter.id == MedicalRecord.encounter_id)
@@ -68,8 +80,12 @@ class MedicalRecordService:
         return {"ok": True, "version_no": new_version_no}
 
     async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str) -> MedicalRecord:
-        """签发时快速创建或更新病历记录"""
-        # Check if a record already exists for this encounter+type (加锁防并发重复签发)
+        """签发时快速创建或更新病历记录，并将接诊状态标记为已完成。
+
+        签发 = 医生确认本次接诊已处理完毕。将 Encounter.status 设为 'completed'，
+        使该接诊从「进行中」列表消失，防止被误触发「续接诊」。
+        """
+        # 加锁防并发重复签发
         result = await self.db.execute(
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
@@ -94,6 +110,15 @@ class MedicalRecordService:
         record.current_version = new_version_no
         record.status = "submitted"
         record.submitted_at = datetime.now()
+
+        # 根因修复：签发即完成接诊，从续接诊列表中移除
+        enc_result = await self.db.execute(
+            select(Encounter).where(Encounter.id == encounter_id)
+        )
+        encounter = enc_result.scalar_one_or_none()
+        if encounter:
+            encounter.status = "completed"
+
         await self.db.commit()
         await self.db.refresh(record)
         return record

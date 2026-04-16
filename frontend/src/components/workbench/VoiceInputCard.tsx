@@ -32,12 +32,12 @@ const SPEAKER_META: Record<string, { color: string; label: string }> = {
   uncertain: { color: 'orange', label: '待确认' },
 }
 
-export default function VoiceInputCard({ visitType, getFormValues, onApplyInquiry }: VoiceInputCardProps) {
-  const {
-    inquiry,
-    currentPatient,
-    currentEncounterId,
-  } = useWorkbenchStore()
+export default function VoiceInputCard({
+  visitType,
+  getFormValues,
+  onApplyInquiry,
+}: VoiceInputCardProps) {
+  const { inquiry, currentPatient, currentEncounterId } = useWorkbenchStore()
   const { token } = useAuthStore()
 
   const recognitionRef = useRef<any>(null)
@@ -46,12 +46,18 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
   const streamRef = useRef<MediaStream | null>(null)
   const transcriptRef = useRef('')
 
-  const [speechSupported] = useState(() => typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))
-  const [recordingSupported] = useState(() => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined')
+  const [speechSupported] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+  )
+  const [recordingSupported] = useState(
+    () => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined'
+  )
   const [listening, setListening] = useState(false)
   const [uploadingAudio, setUploadingAudio] = useState(false)
   const [structuring, setStructuring] = useState(false)
-  const [restoring, setRestoring] = useState(false)
+
   const [transcriptId, setTranscriptId] = useState<string | null>(null)
   const [transcript, setTranscript] = useState('')
   const [lastAnalyzedTranscript, setLastAnalyzedTranscript] = useState('')
@@ -78,7 +84,6 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
         setTranscriptId(null)
         return
       }
-      setRestoring(true)
       try {
         const snapshot: any = await api.get(`/encounters/${currentEncounterId}/workspace`)
         const latest = snapshot?.latest_voice_record
@@ -98,8 +103,6 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
         setSummary('')
         setSpeakerDialogue([])
         setTranscriptId(null)
-      } finally {
-        setRestoring(false)
       }
     }
 
@@ -107,7 +110,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
   }, [currentEncounterId])
 
   const stopTracks = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
   }
 
@@ -172,7 +175,9 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
         if (event.data.size > 0) mediaChunksRef.current.push(event.data)
       }
       mediaRecorder.onstop = async () => {
-        const blob = new Blob(mediaChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' })
+        const blob = new Blob(mediaChunksRef.current, {
+          type: mediaRecorder.mimeType || 'audio/webm',
+        })
         mediaChunksRef.current = []
         stopTracks()
         await uploadAudioBlob(blob, transcriptRef.current)
@@ -181,7 +186,8 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       mediaRecorderRef.current = mediaRecorder
 
       if (speechSupported) {
-        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        const RecognitionCtor =
+          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
         const recognition = new RecognitionCtor()
         recognition.lang = 'zh-CN'
         recognition.continuous = true
@@ -199,7 +205,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
             }
           }
           if (finalText.trim()) {
-            setTranscript((prev) => [prev, finalText.trim()].filter(Boolean).join('\n'))
+            setTranscript(prev => [prev, finalText.trim()].filter(Boolean).join('\n'))
           }
           setInterimText(interim.trim())
         }
@@ -311,10 +317,21 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       style={{ marginBottom: 12, borderRadius: 10, background: '#f8fbff', borderColor: '#dbeafe' }}
       bodyStyle={{ padding: 12 }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+        }}
+      >
         <Space size={8}>
-          <Tag color="blue" style={{ marginRight: 0 }}>语音录入</Tag>
-          <Text style={{ fontSize: 12, color: '#475569' }}>保存原始录音与转写，并让 AI 识别对话结构</Text>
+          <Tag color="blue" style={{ marginRight: 0 }}>
+            语音录入
+          </Tag>
+          <Text style={{ fontSize: 12, color: '#475569' }}>
+            保存原始录音与转写，并让 AI 识别对话结构
+          </Text>
         </Space>
         <Space size={6}>
           {uploadingAudio && <Tag color="purple">上传并转写中...</Tag>}
@@ -411,7 +428,7 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       <TextArea
         rows={6}
         value={fullTranscript}
-        onChange={(e) => {
+        onChange={e => {
           setTranscript(e.target.value)
           setInterimText('')
         }}
@@ -431,18 +448,29 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       )}
 
       {speakerDialogue.length > 0 && (
-        <Card size="small" style={{ marginBottom: 8, borderRadius: 8, background: '#fff' }} bodyStyle={{ padding: 10 }}>
+        <Card
+          size="small"
+          style={{ marginBottom: 8, borderRadius: 8, background: '#fff' }}
+          bodyStyle={{ padding: 10 }}
+        >
           <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tag color="cyan" style={{ marginRight: 0 }}>角色分析</Tag>
-            <Text style={{ fontSize: 12, color: '#64748b' }}>AI 会尽量区分医生与患者；不确定内容会单独标记</Text>
+            <Tag color="cyan" style={{ marginRight: 0 }}>
+              角色分析
+            </Tag>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>
+              AI 会尽量区分医生与患者；不确定内容会单独标记
+            </Text>
           </div>
           <List
             size="small"
             dataSource={speakerDialogue}
-            renderItem={(item) => (
+            renderItem={item => (
               <List.Item style={{ padding: '6px 0', borderBlockEnd: '1px solid #f1f5f9' }}>
                 <Space align="start">
-                  <Tag color={SPEAKER_META[item.speaker]?.color || 'default'} style={{ marginRight: 0 }}>
+                  <Tag
+                    color={SPEAKER_META[item.speaker]?.color || 'default'}
+                    style={{ marginRight: 0 }}
+                  >
                     {SPEAKER_META[item.speaker]?.label || '待确认'}
                   </Tag>
                   <Text style={{ fontSize: 12 }}>{item.text}</Text>
@@ -458,14 +486,16 @@ export default function VoiceInputCard({ visitType, getFormValues, onApplyInquir
       </Text>
       {transcriptId && (
         <div style={{ marginTop: 8 }}>
-          <div style={{
-            background: '#f1f5f9',
-            borderRadius: 8,
-            padding: '8px 12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}>
+          <div
+            style={{
+              background: '#f1f5f9',
+              borderRadius: 8,
+              padding: '8px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
             <SaveOutlined style={{ color: '#64748b', fontSize: 13, flexShrink: 0 }} />
             <Text style={{ fontSize: 12, color: '#475569', flexShrink: 0 }}>
               录音 #{transcriptId.slice(-6).toUpperCase()}

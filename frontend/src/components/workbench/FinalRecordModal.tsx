@@ -1,0 +1,211 @@
+import { useState } from 'react'
+import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio, message } from 'antd'
+import { CheckOutlined } from '@ant-design/icons'
+import { useWorkbenchStore } from '@/store/workbenchStore'
+import api from '@/services/api'
+
+const { Text } = Typography
+
+interface FinalRecordModalProps {
+  open: boolean
+  onCancel: () => void
+}
+
+export default function FinalRecordModal({ open, onCancel }: FinalRecordModalProps) {
+  const {
+    qcPass,
+    qcIssues,
+    gradeScore,
+    recordContent,
+    recordType,
+    inquiry,
+    currentEncounterId,
+    reset,
+    setCurrentEncounter,
+  } = useWorkbenchStore()
+
+  const [confirmed, setConfirmed] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [patientName, setPatientName] = useState('')
+  const [patientGender, setPatientGender] = useState('')
+  const [patientAge, setPatientAge] = useState('')
+
+  const handleClose = () => {
+    setConfirmed(false)
+    setPatientName('')
+    setPatientGender('')
+    setPatientAge('')
+    onCancel()
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      let encounterId = useWorkbenchStore.getState().currentEncounterId
+      const inferredVisitType = recordType === 'outpatient' ? 'outpatient' : 'inpatient'
+
+      if (!encounterId) {
+        const pName =
+          patientName.trim() || inquiry.chief_complaint.slice(0, 6) + '患者' || '未知患者'
+        const res: any = await api.post('/encounters/quick-start', {
+          patient_name: pName,
+          gender: patientGender || 'unknown',
+          age: patientAge.trim() ? parseInt(patientAge.trim()) : undefined,
+          visit_type: inferredVisitType,
+        })
+        encounterId = res.encounter_id
+        setCurrentEncounter({ id: res.patient.id, name: res.patient.name }, encounterId)
+      }
+
+      await api.post('/medical-records/quick-save', {
+        encounter_id: encounterId,
+        record_type: recordType,
+        content: recordContent,
+      })
+
+      message.success('病历已签发，可在「历史病历」中查看或打印')
+      handleClose()
+      reset()
+    } catch (e: any) {
+      message.error('保存失败：' + (e?.detail || '请重试'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const canSubmit =
+    confirmed &&
+    !saving &&
+    qcPass !== false &&
+    (!!currentEncounterId || (!!patientName.trim() && !!patientGender && !!patientAge.trim()))
+
+  return (
+    <Modal
+      title="出具最终病历"
+      width={720}
+      open={open}
+      onCancel={handleClose}
+      footer={[
+        <Button key="cancel" onClick={handleClose}>
+          取消
+        </Button>,
+        <Button
+          key="confirm"
+          type="primary"
+          disabled={!canSubmit}
+          loading={saving}
+          icon={<CheckOutlined />}
+          onClick={handleSave}
+        >
+          确认签发
+        </Button>,
+      ]}
+    >
+      {/* QC status */}
+      {qcPass === false ? (
+        <Alert
+          type="error"
+          showIcon
+          message={`结构检查未通过，无法正式提交${gradeScore ? `（${gradeScore.grade_score} 分，${gradeScore.grade_level}）` : ''}`}
+          description="请修复右侧质控提示中标注「必须修复」的所有问题后重新质控。"
+          style={{ marginBottom: 4 }}
+        />
+      ) : qcPass === true || (qcIssues.length === 0 && qcPass !== null) ? (
+        <Alert
+          type="success"
+          showIcon
+          message="病历质控通过，可以签发"
+          style={{ marginBottom: 4 }}
+        />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="尚未进行质控检查，建议先运行 AI 质控"
+          style={{ marginBottom: 4 }}
+        />
+      )}
+
+      {/* Patient info — only when no encounter */}
+      {!currentEncounterId && (
+        <div
+          style={{
+            margin: '10px 0 4px',
+            padding: '12px 14px',
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ fontSize: 13, color: '#92400e', display: 'block', marginBottom: 10 }}>
+            ⚠️ 未关联接诊记录，保存时将自动创建患者档案（以下信息必填）
+          </Text>
+          <Space direction="vertical" style={{ width: '100%' }} size={8}>
+            <Input
+              placeholder="患者姓名（必填）"
+              value={patientName}
+              onChange={e => setPatientName(e.target.value)}
+              style={{ borderRadius: 6 }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#92400e', display: 'block', marginBottom: 4 }}>
+                  性别（必填）
+                </Text>
+                <Radio.Group
+                  value={patientGender}
+                  onChange={e => setPatientGender(e.target.value)}
+                  buttonStyle="solid"
+                  size="small"
+                >
+                  <Radio.Button value="male">男</Radio.Button>
+                  <Radio.Button value="female">女</Radio.Button>
+                </Radio.Group>
+              </div>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#92400e', display: 'block', marginBottom: 4 }}>
+                  年龄（必填）
+                </Text>
+                <Input
+                  placeholder="如：35"
+                  value={patientAge}
+                  onChange={e => setPatientAge(e.target.value.replace(/\D/g, ''))}
+                  suffix="岁"
+                  style={{ borderRadius: 6 }}
+                />
+              </div>
+            </div>
+          </Space>
+        </div>
+      )}
+
+      {/* Record preview */}
+      <div
+        style={{
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: 8,
+          padding: '20px 24px',
+          maxHeight: 400,
+          overflowY: 'auto',
+          fontSize: 14,
+          lineHeight: 1.9,
+          whiteSpace: 'pre-wrap',
+          margin: '16px 0',
+          fontFamily: "'PingFang SC', 'Microsoft YaHei', sans-serif",
+          color: '#1e293b',
+        }}
+      >
+        {recordContent}
+      </div>
+
+      <Checkbox
+        onChange={e => setConfirmed(e.target.checked)}
+        checked={confirmed}
+        style={{ marginTop: 8 }}
+      >
+        我已认真阅读以上病历内容，确认内容真实、完整，同意签发
+      </Checkbox>
+    </Modal>
+  )
+}

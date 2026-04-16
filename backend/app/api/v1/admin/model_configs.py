@@ -1,10 +1,22 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from pydantic import BaseModel, ConfigDict
+"""
+管理后台模型配置接口（/api/v1/admin/model-configs/*）
+
+允许管理员按场景（generate / polish / qc / inquiry / exam）
+配置 LLM 模型名称、温度、最大 token 等参数。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 from typing import Optional
-from app.database import get_db
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import require_admin
+from app.database import get_db
 from app.models.config import ModelConfig
 
 router = APIRouter()

@@ -1,11 +1,23 @@
+"""
+病历 AI 生成服务（app/services/ai/record_gen_service.py）
+
+供 /api/v1/medical-records/{id}/generate|continue|polish 路由调用，
+处理病历的 AI 生成、续写和润色，并将结果持久化为新版本。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 import json
+from datetime import datetime
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.models.medical_record import AITask, RecordVersion
+from app.schemas.medical_record import RecordContinueRequest, RecordGenerateRequest, RecordPolishRequest
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
-from app.models.medical_record import RecordVersion, AITask
-from app.schemas.medical_record import RecordGenerateRequest, RecordContinueRequest, RecordPolishRequest
-from datetime import datetime
 
 
 GENERATE_PROMPT = """你是一名专业的临床病历书写助手。根据以下问诊信息，生成标准化的{record_type}病历草稿。
@@ -52,11 +64,23 @@ RECORD_TYPE_MAP = {
 
 
 class RecordGenService:
+    """病历 AI 生成服务：生成、续写、润色，并保存版本快照。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.record_service = MedicalRecordService(db)
 
     async def stream_generate(self, record_id: str, request: RecordGenerateRequest, user_id: str):
+        """根据问诊信息 AI 生成病历，逐字段推送并保存为新版本。
+
+        Args:
+            record_id: 目标病历 ID。
+            request: 包含 inquiry_input 问诊字段的请求对象。
+            user_id: 触发操作的医生 ID（用于版本追踪）。
+
+        Yields:
+            SSE 格式字符串，事件类型：field_done / done / error。
+        """
         record = await self.record_service.get_by_id(record_id, doctor_id=user_id)
         if record.status == "submitted":
             yield f"data: {json.dumps({'type': 'error', 'message': '病历已签发，不可修改'}, ensure_ascii=False)}\n\n"
@@ -104,16 +128,27 @@ class RecordGenService:
                 yield f"data: {data}\n\n"
             done_data = json.dumps({"type": "done", "version_no": new_version_no}, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
-        except Exception as e:
+        except Exception as exc:
             record.status = "draft"
             await self.db.commit()
-            error_data = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-            yield f"data: {error_data}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
     async def stream_continue(self, record_id: str, request: RecordContinueRequest, user_id: str):
-        prompt = f"""请续写以下病历中未完成的「{request.target_field}」字段内容。
-已有内容：{json.dumps(request.current_content, ensure_ascii=False)}
-请仅输出续写内容，不重复已有部分，保持书面医学语言。"""
+        """续写病历指定字段，返回续写文本（非版本化存储）。
+
+        Args:
+            record_id: 目标病历 ID（当前仅用于上下文，不修改状态）。
+            request: 包含当前内容和目标字段的请求对象。
+            user_id: 触发操作的医生 ID。
+
+        Yields:
+            SSE 格式字符串，事件类型：done / error。
+        """
+        prompt = (
+            f"请续写以下病历中未完成的「{request.target_field}」字段内容。\n"
+            f"已有内容：{json.dumps(request.current_content, ensure_ascii=False)}\n"
+            "请仅输出续写内容，不重复已有部分，保持书面医学语言。"
+        )
         try:
             opts = await get_model_options(self.db, "generate")
             content = await llm_client.chat(
@@ -122,12 +157,25 @@ class RecordGenService:
                 max_tokens=opts["max_tokens"],
                 model_name=opts["model_name"],
             )
-            data = json.dumps({"type": "done", "field": request.target_field, "content": content}, ensure_ascii=False)
+            data = json.dumps(
+                {"type": "done", "field": request.target_field, "content": content},
+                ensure_ascii=False,
+            )
             yield f"data: {data}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
     async def stream_polish(self, record_id: str, request: RecordPolishRequest, user_id: str):
+        """润色病历全文，返回整理后的 JSON 内容（非版本化存储）。
+
+        Args:
+            record_id: 目标病历 ID（当前仅用于上下文）。
+            request: 包含待润色内容（dict）的请求对象。
+            user_id: 触发操作的医生 ID。
+
+        Yields:
+            SSE 格式字符串，事件类型：done / error。
+        """
         content_str = json.dumps(request.content, ensure_ascii=False)
         prompt = POLISH_PROMPT.format(content=content_str)
         try:
@@ -140,5 +188,5 @@ class RecordGenService:
             )
             data = json.dumps({"type": "done", "content": result}, ensure_ascii=False)
             yield f"data: {data}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"

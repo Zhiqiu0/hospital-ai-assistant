@@ -1,43 +1,43 @@
+"""
+接诊路由（/api/v1/encounters/*）
+
+端点列表：
+  POST   /quick-start           一键创建患者 + 接诊记录
+  POST   /                      标准创建接诊记录
+  GET    /my                    获取当前医生进行中的接诊列表
+  GET    /{encounter_id}        查询单条接诊记录
+  GET    /{encounter_id}/workspace  获取工作台快照
+  PUT    /{encounter_id}/inquiry    保存问诊输入
+  POST   /{encounter_id}/inquiry-suggestions  问诊追问建议
+  POST   /{encounter_id}/exam-suggestions     检查建议
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+from datetime import date
+from typing import Optional
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Optional
-from app.database import get_db
-from app.schemas.encounter import EncounterCreate, EncounterResponse, InquiryInputUpdate
-from app.schemas.ai_suggestion import InquirySuggestionRequest
-from app.schemas.exam import ExamSuggestionRequest
-from app.services.encounter_service import EncounterService
-from app.services.patient_service import PatientService
-from app.services.ai.inquiry_service import InquiryService
-from app.services.ai.exam_service import ExamService
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+import logging
+
 from app.core.security import get_current_user
 
+logger = logging.getLogger(__name__)
+from app.database import get_db
+from app.schemas.ai_suggestion import InquirySuggestionRequest
+from app.schemas.encounter import EncounterCreate, EncounterResponse, InquiryInputUpdate, QuickStartRequest
+from app.schemas.exam import ExamSuggestionRequest
+from app.schemas.patient import PatientCreate
+from app.services.ai.exam_service import ExamService
+from app.services.ai.inquiry_service import InquiryService
+from app.services.encounter_service import EncounterService
+from app.services.patient_service import PatientService
+
 router = APIRouter()
-
-
-class QuickStartRequest(BaseModel):
-    """一键开始接诊：自动创建患者（如有需要）并创建接诊记录"""
-    patient_name: str
-    gender: Optional[str] = "unknown"
-    age: Optional[int] = None
-    birth_date: Optional[str] = None          # YYYY-MM-DD
-    id_card: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    ethnicity: Optional[str] = None
-    marital_status: Optional[str] = None
-    occupation: Optional[str] = None
-    workplace: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_relation: Optional[str] = None
-    blood_type: Optional[str] = None
-    visit_type: str = "outpatient"
-    department_id: Optional[str] = None
-    bed_no: Optional[str] = None
-    admission_route: Optional[str] = None
-    admission_condition: Optional[str] = None
 
 
 @router.post("/quick-start")
@@ -46,16 +46,14 @@ async def quick_start_encounter(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """快速开始接诊：创建患者 + 接诊记录，返回 encounter_id 和 patient 信息"""
-    from app.schemas.patient import PatientCreate
-    from datetime import date
+    """快速开始接诊：创建患者（如已存在则复用）并创建接诊记录。"""
     # 解析出生日期：优先使用 birth_date 字符串，其次从 age 推算
-    birth_date_val = None
+    birth_date_val: Optional[date] = None
     if data.birth_date:
         try:
             birth_date_val = date.fromisoformat(data.birth_date)
         except ValueError:
-            pass
+            logger.warning("birth_date 格式无效，已忽略: %r", data.birth_date)
     elif data.age:
         birth_date_val = date(date.today().year - data.age, 1, 1)
 
@@ -67,6 +65,7 @@ async def quick_start_encounter(
         birth_date=birth_date_val,
     )
     patient_reused = patient is not None
+
     if not patient:
         patient = await patient_service.create(PatientCreate(
             name=data.patient_name,
@@ -84,6 +83,7 @@ async def quick_start_encounter(
             contact_relation=data.contact_relation,
             blood_type=data.blood_type,
         ))
+
     encounter_service = EncounterService(db)
     encounter = await encounter_service.create(
         EncounterCreate(
@@ -111,6 +111,7 @@ async def create_encounter(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """标准接诊记录创建（患者必须已存在）。"""
     service = EncounterService(db)
     return await service.create(data, current_user.id)
 
@@ -120,7 +121,7 @@ async def get_my_encounters(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """获取当前医生的进行中接诊列表"""
+    """获取当前医生进行中的接诊列表。"""
     service = EncounterService(db)
     return await service.get_my_encounters(current_user.id)
 
@@ -131,6 +132,7 @@ async def get_encounter(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """按 ID 查询单条接诊记录。"""
     service = EncounterService(db)
     return await service.get_by_id(encounter_id)
 
@@ -141,7 +143,7 @@ async def get_encounter_workspace(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """恢复工作台所需数据：患者、问诊、最近病历草稿/已签发内容。"""
+    """恢复工作台：返回患者、问诊、最近病历及语音记录的完整快照。"""
     service = EncounterService(db)
     return await service.get_workspace_snapshot(encounter_id, current_user.id)
 
@@ -153,6 +155,7 @@ async def save_inquiry_input(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """保存 / 更新问诊输入字段。"""
     service = EncounterService(db)
     return await service.save_inquiry(encounter_id, data)
 
@@ -164,6 +167,7 @@ async def get_inquiry_suggestions(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """生成问诊追问建议（流式）。"""
     service = InquiryService(db)
     return StreamingResponse(
         service.stream_suggestions(encounter_id, request),
@@ -178,5 +182,6 @@ async def get_exam_suggestions(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """生成辅助检查建议。"""
     service = ExamService(db)
     return await service.get_suggestions(encounter_id, request)

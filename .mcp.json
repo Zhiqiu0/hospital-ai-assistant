@@ -2,7 +2,7 @@
   "mcpServers": {
     "playwright": {
       "command": "cmd",
-      "args": ["/c", "npx", "@playwright/mcp@latest", "--browser", "msedge"]
+      "args": ["/c", "npx", "@playwright/mcp@latest", "--browser", "msedge", "--timeout-action", "15000", "--timeout-navigation", "60000"]
     }
   }
 }

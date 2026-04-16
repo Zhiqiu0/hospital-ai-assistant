@@ -1,12 +1,25 @@
+"""
+患者服务（app/services/patient_service.py）
+
+提供患者的查重、搜索、创建、更新和查询操作。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+from datetime import date
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from fastapi import HTTPException
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.models.patient import Patient
 from app.schemas.patient import PatientCreate, PatientUpdate
-from fastapi import HTTPException
-from datetime import date
 
 
 class PatientService:
+    """患者数据访问服务，封装患者 CRUD 及去重逻辑。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 

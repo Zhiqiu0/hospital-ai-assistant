@@ -1,10 +1,19 @@
+"""
+管理后台 Prompt 模板接口（/api/v1/admin/prompts/*）
+
+支持按场景（scene）管理 LLM prompt 模板，激活的模板将覆盖代码内置默认值。
+"""
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import require_admin
+from app.database import get_db
 from app.models.config import PromptTemplate
-from app.schemas.config import PromptTemplateCreate, PromptTemplateUpdate, PromptTemplateResponse
+from app.schemas.config import PromptTemplateCreate, PromptTemplateResponse, PromptTemplateUpdate
 
 router = APIRouter()
 

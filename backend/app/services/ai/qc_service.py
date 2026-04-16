@@ -61,7 +61,7 @@ class QCService:
         all_issues = []
 
         # 规则引擎：完整性检查
-        rule_issues = check_completeness(content)
+        rule_issues = await check_completeness(record_text=str(content), db=self.db)
         for issue_data in rule_issues:
             issue = QCIssue(
                 ai_task_id=task.id,

@@ -1,13 +1,24 @@
+"""
+用户服务（app/services/user_service.py）
+
+提供用户的查询、创建、更新和停用操作，仅供管理后台调用。
+"""
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.core.security import hash_password
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
-from app.core.security import hash_password
-from fastapi import HTTPException
 
 
 class UserService:
+    """用户数据访问服务，封装用户 CRUD 操作。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 

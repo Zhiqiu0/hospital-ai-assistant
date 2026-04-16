@@ -1,26 +1,42 @@
+"""
+病历路由（/api/v1/medical-records/*）
+
+端点列表：
+  POST   /quick-save              签发并快速保存病历
+  GET    /my                      查询当前医生的历史签发病历
+  POST   /                        标准创建病历记录
+  GET    /{record_id}             查询单条病历
+  POST   /{record_id}/generate    AI 生成病历（流式）
+  POST   /{record_id}/continue    AI 续写病历（流式）
+  POST   /{record_id}/polish      AI 润色病历（流式）
+  PUT    /{record_id}/content     保存病历内容
+  GET    /{record_id}/versions    获取历史版本列表
+  POST   /{record_id}/qc/scan     触发 AI 质控扫描
+"""
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Optional
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.medical_record import (
-    MedicalRecordCreate, MedicalRecordResponse,
-    RecordContentUpdate, RecordGenerateRequest,
-    RecordContinueRequest, RecordPolishRequest,
+    MedicalRecordCreate,
+    MedicalRecordResponse,
+    QuickSaveRequest,
+    RecordContinueRequest,
+    RecordContentUpdate,
+    RecordGenerateRequest,
+    RecordPolishRequest,
 )
-from app.services.medical_record_service import MedicalRecordService
+from app.services.ai.qc_service import QCService
 from app.services.ai.record_gen_service import RecordGenService
-from app.core.security import get_current_user
 from app.services.audit_service import log_action
+from app.services.medical_record_service import MedicalRecordService
 
 router = APIRouter()
-
-
-class QuickSaveRequest(BaseModel):
-    encounter_id: str
-    record_type: str = "outpatient"
-    content: str
 
 
 @router.post("/quick-save")
@@ -162,6 +178,5 @@ async def scan_qc(
     # 先校验归属权
     rec_service = MedicalRecordService(db)
     await rec_service.get_by_id(record_id, doctor_id=current_user.id)
-    from app.services.ai.qc_service import QCService
     service = QCService(db)
     return await service.scan(record_id)

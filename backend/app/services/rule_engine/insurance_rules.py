@@ -1,100 +1,99 @@
 """
-医保风险规则引擎
-基于关键词和模式检测病历中可能存在的医保合规风险
+医保风险规则引擎（DB 驱动）
+
+规则数据从 qc_rules 表动态加载（rule_type='insurance'）。
+执行逻辑：
+  1. 检查 keywords 中是否有触发词出现在病历文本中
+  2. 若触发词存在，再在触发词前后 ±80 字符的上下文中查找 indication_keywords
+     - indication_keywords 为空 → 只要触发词出现即报警（无条件触发）
+     - indication_keywords 非空 → 上下文中未见适应症词才报警
 """
-import re
 
-# 高值检查/治疗关键词 — 需要明确适应症记录
-HIGH_VALUE_ITEMS = [
-    ("MRI", "核磁共振（MRI）"),
-    ("核磁", "核磁共振"),
-    ("磁共振", "磁共振检查"),
-    ("增强CT", "增强CT扫描"),
-    ("PET", "PET-CT"),
-    ("内镜", "内镜检查"),
-    ("胃镜", "胃镜检查"),
-    ("肠镜", "肠镜检查"),
-    ("骨髓穿刺", "骨髓穿刺"),
-    ("腰椎穿刺", "腰椎穿刺"),
-    ("心导管", "心导管检查"),
-]
+# ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 
-# 高风险用药关键词 — 需要有明确诊断依据
-HIGH_RISK_DRUGS = [
-    ("人血白蛋白", "人血白蛋白"),
-    ("丙种球蛋白", "丙种球蛋白"),
-    ("重组人促红细胞生成素", "促红细胞生成素"),
-    ("奥美拉唑注射液", "奥美拉唑注射液（需有消化道出血或手术预防依据）"),
-    ("血浆", "血浆输注"),
-]
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# 住院相关高风险词
-INPATIENT_RISK_PATTERNS = [
-    (r"住院.*?(\d+)\s*天", "住院天数"),
-    (r"手术", "手术治疗"),
-]
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.models.config import QCRule
 
-# 表述不当关键词（可能导致医保拒付）
-INVALID_PHRASES = [
-    ("家属要求", "记录'家属要求'为治疗依据——医保通常不认可，应写明医学必要性"),
-    ("患者要求", "记录'患者要求'为治疗依据——应写明医学适应症"),
-    ("预防性使用", "预防性用药需有明确适应症，否则医保可拒付"),
-    ("自费", "病历中出现'自费'字样，确认记录是否规范"),
-]
+logger = logging.getLogger(__name__)
+
+# 触发词前后的上下文窗口大小（字符数）
+_CONTEXT_WINDOW = 80
 
 
-def check_insurance_risk(content: str) -> list[dict]:
+def _has_indication_nearby(text: str, trigger_pos: int, indication_keywords: list) -> bool:
+    """在触发词前后 ±_CONTEXT_WINDOW 字符范围内查找适应症关键词。"""
+    ctx_start = max(0, trigger_pos - _CONTEXT_WINDOW)
+    ctx_end = min(len(text), trigger_pos + _CONTEXT_WINDOW)
+    context = text[ctx_start:ctx_end]
+    return any(kw in context for kw in indication_keywords)
+
+
+async def check_insurance_risk(content: str, db: AsyncSession) -> list[dict]:
     """
-    对病历文本进行医保风险扫描，返回风险列表。
-    只做关键词/模式检测，不做语义判断（语义由LLM负责）。
+    对病历文本进行医保风险扫描，返回风险问题列表。
+
+    只做关键词 / 上下文检测，不做语义判断（语义判断由 LLM 负责）。
+
+    Args:
+        content: 病历全文
+        db: 数据库会话（用于加载 qc_rules 表中的医保规则）
     """
     if not content or len(content.strip()) < 20:
         return []
 
-    issues = []
+    # 加载所有激活的医保风险规则
+    try:
+        result = await db.execute(
+            select(QCRule).where(
+                QCRule.rule_type == "insurance",
+                QCRule.is_active.is_(True),
+            ).order_by(QCRule.rule_code)
+        )
+        rules: list[QCRule] = list(result.scalars().all())
+    except Exception as exc:
+        logger.error("check_insurance_risk: failed to load rules from DB: %s", exc)
+        return []
 
-    # 1. 高值检查 — 检查是否出现但缺少适应症描述
-    for keyword, display_name in HIGH_VALUE_ITEMS:
-        if keyword in content:
-            # 简单启发：如果附近没有"因为"/"由于"/"适应症"/"诊断"等词，则标记
-            context_start = max(0, content.find(keyword) - 80)
-            context_end = min(len(content), content.find(keyword) + 80)
-            context = content[context_start:context_end]
-            has_indication = any(w in context for w in ["因", "由于", "考虑", "诊断", "为明确", "排除", "评估", "适应"])
-            if not has_indication:
+    issues: list[dict] = []
+
+    for rule in rules:
+        keywords = rule.keywords or []
+        indication_keywords = rule.indication_keywords or []
+
+        for kw in keywords:
+            pos = content.find(kw)
+            if pos == -1:
+                continue  # 触发词不在病历中
+
+            # 无条件触发（indication_keywords 为空）
+            if not indication_keywords:
                 issues.append({
+                    "source": "rule",
                     "issue_type": "insurance",
-                    "risk_level": "medium",
-                    "field_name": "content",
-                    "issue_description": f"病历中记录了{display_name}，但附近未见明确适应症描述",
-                    "suggestion": f"请在{display_name}前补充医学必要性说明，如“为明确某项诊断”或“因某项适应症行相关检查”",
+                    "risk_level": rule.risk_level,
+                    "field_name": rule.field_name or "content",
+                    "issue_description": rule.issue_description or rule.name,
+                    "suggestion": rule.suggestion or "",
+                    "score_impact": rule.score_impact or "",
                 })
+                break  # 同一规则不重复报警
 
-    # 2. 高风险用药
-    for keyword, display_name in HIGH_RISK_DRUGS:
-        if keyword in content:
-            context_start = max(0, content.find(keyword) - 60)
-            context_end = min(len(content), content.find(keyword) + 60)
-            context = content[context_start:context_end]
-            has_indication = any(w in context for w in ["因", "用于", "治疗", "适用于", "低蛋白", "出血", "手术"])
-            if not has_indication:
+            # 上下文检查：附近有适应症词则不报警
+            if not _has_indication_nearby(content, pos, indication_keywords):
                 issues.append({
+                    "source": "rule",
                     "issue_type": "insurance",
-                    "risk_level": "high",
-                    "field_name": "content",
-                    "issue_description": f"使用了高值药物“{display_name}”，但未见明确用药指征",
-                    "suggestion": f"请补充“{display_name}”的用药依据，否则可能面临医保拒付风险",
+                    "risk_level": rule.risk_level,
+                    "field_name": rule.field_name or "content",
+                    "issue_description": rule.issue_description or rule.name,
+                    "suggestion": rule.suggestion or "",
+                    "score_impact": rule.score_impact or "",
                 })
-
-    # 3. 不当表述
-    for phrase, description in INVALID_PHRASES:
-        if phrase in content:
-            issues.append({
-                "issue_type": "insurance",
-                "risk_level": "medium",
-                "field_name": "content",
-                "issue_description": f"病历含有医保高风险表述：“{phrase}”",
-                "suggestion": description,
-            })
+                break  # 同一规则不重复报警
 
     return issues

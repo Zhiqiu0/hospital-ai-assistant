@@ -4,31 +4,38 @@ PACS 影像管理 API
 - 影像科医生：上传ZIP、选帧、AI分析、审核发布报告
 - 临床医生：查看患者影像报告
 """
-import os
-import subprocess
-import zipfile
-import shutil
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 import base64
 import io
-from pathlib import Path
-from typing import Optional, List
+import os
+import shutil
+import subprocess
+import zipfile
 from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
 
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
 import numpy as np
 import pydicom
-from PIL import Image
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
+import logging
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.core.security import get_current_user
 from app.database import get_db
-from app.models.imaging import ImagingStudy, ImagingReport
 from app.models.encounter import Encounter
-from app.config import settings
+from app.models.imaging import ImagingReport, ImagingStudy
 
 PRIVILEGED_ROLES = {"radiologist", "admin", "super_admin"}
 
@@ -43,29 +50,44 @@ AUTO_ANALYZE_THRESHOLD = 18
 AUTO_SAMPLE_COUNT = 18
 
 
-def _dcm_to_jpeg_bytes(dcm_path: str) -> bytes:
-    """将单个 DCM 文件转换为 JPEG bytes（含窗宽窗位处理）"""
+def _render_dcm_to_jpeg(
+    dcm_path: str,
+    wc: Optional[float] = None,
+    ww: Optional[float] = None,
+    quality: int = 85,
+) -> bytes:
+    """
+    将单个 DCM 文件渲染为 JPEG bytes（含窗宽窗位处理）。
+
+    wc / ww 为 None 时自动从 DICOM 标签读取，若标签不存在则退化为
+    中位数 / 全值域。quality 默认 85（缩略图传 70，AI 分析传 85）。
+    """
     ds = pydicom.dcmread(dcm_path)
     arr = ds.pixel_array.astype(np.float32)
     slope = float(getattr(ds, "RescaleSlope", 1))
     intercept = float(getattr(ds, "RescaleIntercept", 0))
     arr = arr * slope + intercept
 
-    if hasattr(ds, "WindowCenter") and hasattr(ds, "WindowWidth"):
-        wc = float(ds.WindowCenter[0] if hasattr(ds.WindowCenter, "__iter__") else ds.WindowCenter)
-        ww = float(ds.WindowWidth[0] if hasattr(ds.WindowWidth, "__iter__") else ds.WindowWidth)
-    else:
-        wc = float(np.median(arr))
-        ww = float(arr.max() - arr.min()) or 1.0
+    if wc is None or ww is None:
+        if hasattr(ds, "WindowCenter") and hasattr(ds, "WindowWidth"):
+            wc = float(ds.WindowCenter[0] if hasattr(ds.WindowCenter, "__iter__") else ds.WindowCenter)
+            ww = float(ds.WindowWidth[0] if hasattr(ds.WindowWidth, "__iter__") else ds.WindowWidth)
+        else:
+            wc = float(np.median(arr))
+            ww = float(arr.max() - arr.min()) or 1.0
 
     lo, hi = wc - ww / 2, wc + ww / 2
     arr = np.clip(arr, lo, hi)
     arr = ((arr - lo) / (hi - lo) * 255).astype(np.uint8)
 
-    img = Image.fromarray(arr)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    Image.fromarray(arr).save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
+
+
+def _dcm_to_jpeg_bytes(dcm_path: str) -> bytes:
+    """将单个 DCM 文件转换为 JPEG bytes，使用 DICOM 标签或自动窗位。"""
+    return _render_dcm_to_jpeg(dcm_path)
 
 
 def _generate_thumbnails(study_dir: Path, dcm_files: list[str]) -> None:
@@ -81,8 +103,8 @@ def _generate_thumbnails(study_dir: Path, dcm_files: list[str]) -> None:
             img = Image.open(io.BytesIO(jpeg_bytes))
             img.thumbnail((128, 128))
             img.save(str(thumb_path), "JPEG", quality=70)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("缩略图生成失败 [%s]: %s", fname, e)
 
 
 def _read_dicom_metadata(dcm_path: str) -> dict:
@@ -93,7 +115,8 @@ def _read_dicom_metadata(dcm_path: str) -> dict:
             "body_part": str(getattr(ds, "BodyPartExamined", "") or ""),
             "series_description": str(getattr(ds, "SeriesDescription", "") or ""),
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("读取 DICOM 元数据失败 [%s]: %s", dcm_path, e)
         return {}
 
 
@@ -306,19 +329,11 @@ async def get_thumbnail(
         if not dcm_path.exists():
             raise HTTPException(404, "文件不存在")
         try:
-            ds = pydicom.dcmread(str(dcm_path))
-            arr = ds.pixel_array.astype(np.float32)
-            slope = float(getattr(ds, "RescaleSlope", 1))
-            intercept = float(getattr(ds, "RescaleIntercept", 0))
-            arr = arr * slope + intercept
-            lo, hi = wc - ww / 2, wc + ww / 2
-            arr = np.clip(arr, lo, hi)
-            arr = ((arr - lo) / (hi - lo) * 255).astype(np.uint8)
-            img = Image.fromarray(arr)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=88)
             from fastapi.responses import Response
-            return Response(content=buf.getvalue(), media_type="image/jpeg")
+            return Response(
+                content=_render_dcm_to_jpeg(str(dcm_path), wc=wc, ww=ww, quality=88),
+                media_type="image/jpeg",
+            )
         except Exception as e:
             raise HTTPException(500, f"渲染失败: {e}")
 

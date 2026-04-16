@@ -1,26 +1,38 @@
-name: Deploy to Server
+name: Deploy to Production
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   deploy:
+    name: Deploy via SSH
     runs-on: ubuntu-latest
+    # 只在 CI workflow 全绿后才执行部署
+    # 配合 GitHub → Settings → Branches → main → Require status checks:
+    #   "Frontend — Lint & Type Check" 和 "Backend — Lint & Syntax Check"
+    environment: production
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 122.51.4.37
-          username: ubuntu
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd /app
             git pull origin main
             docker compose up --build -d --wait
+            docker compose exec -T backend alembic upgrade head
+            docker compose exec -T backend python seed_config.py
             echo "Deploy finished at $(date)"
+
+      - name: Health check
+        run: |
+          sleep 15
+          curl --fail --retry 3 --retry-delay 5 \
+            "http://${{ secrets.SERVER_HOST }}/api/v1/health" \
+            && echo "Health check passed" \
+            || (echo "Health check failed" && exit 1)

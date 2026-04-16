@@ -1,6 +1,38 @@
-from pydantic import BaseModel
-from typing import Optional
+"""
+接诊相关 Pydantic 模型（Encounter Schemas）
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime
+from typing import Optional
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from pydantic import BaseModel
+
+
+class QuickStartRequest(BaseModel):
+    """一键开始接诊：自动创建患者（如有需要）并创建接诊记录。"""
+
+    patient_name: str
+    gender: Optional[str] = "unknown"
+    age: Optional[int] = None
+    birth_date: Optional[str] = None          # YYYY-MM-DD
+    id_card: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    ethnicity: Optional[str] = None
+    marital_status: Optional[str] = None
+    occupation: Optional[str] = None
+    workplace: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_relation: Optional[str] = None
+    blood_type: Optional[str] = None
+    visit_type: str = "outpatient"
+    department_id: Optional[str] = None
+    bed_no: Optional[str] = None
+    admission_route: Optional[str] = None
+    admission_condition: Optional[str] = None
 
 
 class EncounterCreate(BaseModel):

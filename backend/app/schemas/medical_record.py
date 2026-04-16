@@ -1,6 +1,21 @@
-from pydantic import BaseModel
-from typing import Optional, Any
+"""
+病历相关 Pydantic 模型（Medical Record Schemas）
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime
+from typing import Any, Optional
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
+from pydantic import BaseModel
+
+
+class QuickSaveRequest(BaseModel):
+    """签发时快速保存病历的入参。"""
+
+    encounter_id: str
+    record_type: str = "outpatient"
+    content: str
 
 
 class MedicalRecordCreate(BaseModel):

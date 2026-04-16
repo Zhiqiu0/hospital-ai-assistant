@@ -1,3 +1,13 @@
+"""
+检验报告路由（/api/v1/lab-reports/*）
+
+支持 PDF / 图片格式的检验报告上传与 OCR 解析：
+  - PDF 有文字层 → pdfmupdf 提取 → DeepSeek 文本结构化
+  - PDF 扫描件（无文字层）→ 转图片 → Qwen VL OCR
+  - 图片 → 直接 Qwen VL OCR
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 import base64
 import io
 import logging
@@ -6,18 +16,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.security import get_current_user
 from app.database import get_db
 from app.models.base import generate_uuid
 from app.models.lab_report import LabReport
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

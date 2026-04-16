@@ -1,13 +1,27 @@
+"""
+认证路由（/api/v1/auth/*）
+
+提供登录、登出及账号检查端点。
+登录接口含限速保护（防爆破），登出时将 JWT 写入黑名单。
+"""
+
+# ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime, timezone
+
+# ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.schemas.auth import LoginRequest, TokenResponse
-from app.services.auth_service import AuthService
-from app.services.audit_service import log_action
+
+# ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.rate_limit import login_limiter
+from app.database import get_db
+from app.models.revoked_token import RevokedToken
+from app.schemas.auth import LoginRequest, TokenResponse
+from app.services.audit_service import log_action
+from app.services.auth_service import AuthService
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
@@ -16,7 +30,6 @@ router = APIRouter()
 
 @router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
-    from app.core.rate_limit import login_limiter
     # 按用户名限速：防爆破单个账号，不影响同网段其他医生
     login_limiter.check(http_request, key_override=f"login:{request.username}")
     service = AuthService(db)
@@ -55,7 +68,6 @@ async def logout(
             jti = payload.get("jti")
             exp = payload.get("exp")
             if jti and exp:
-                from app.models.revoked_token import RevokedToken
                 db.add(RevokedToken(
                     jti=jti,
                     expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),

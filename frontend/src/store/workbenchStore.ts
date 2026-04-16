@@ -45,8 +45,8 @@ export interface InquiryData {
 }
 
 export interface QCIssue {
-  source?: 'rule' | 'llm'      // rule=结构性必须修复，llm=质量建议
-  issue_type?: string          // 'completeness' | 'insurance' | 'format' | 'logic' etc.
+  source?: 'rule' | 'llm' // rule=结构性必须修复，llm=质量建议
+  issue_type?: string // 'completeness' | 'insurance' | 'format' | 'logic' etc.
   risk_level: 'high' | 'medium' | 'low'
   field_name: string
   issue_description: string
@@ -55,7 +55,7 @@ export interface QCIssue {
 }
 
 export interface GradeScore {
-  grade_score: number          // 0-100
+  grade_score: number // 0-100
   grade_level: '甲级' | '乙级' | '丙级'
   strengths?: string[]
 }
@@ -64,6 +64,16 @@ export interface ExamSuggestion {
   exam_name: string
   category: 'basic' | 'differential' | 'high_risk'
   reason: string
+}
+
+export interface InquirySuggestion {
+  id: string
+  text: string
+  priority: 'high' | 'medium' | 'low'
+  is_red_flag: boolean
+  category: string
+  options: string[]
+  selectedOptions: string[]
 }
 
 export interface PatientInfo {
@@ -79,7 +89,7 @@ interface WorkbenchState {
   recordContent: string
   recordType: string
   isFirstVisit: boolean
-  currentVisitType: string   // 'outpatient' | 'emergency' | 'inpatient'
+  currentVisitType: string // 'outpatient' | 'emergency' | 'inpatient'
   isGenerating: boolean
   isPolishing: boolean
   isQCing: boolean
@@ -89,8 +99,8 @@ interface WorkbenchState {
   gradeScore: GradeScore | null
   examSuggestions: ExamSuggestion[]
   isExamLoading: boolean
-  inquirySuggestions: any[]
-  setInquirySuggestions: (items: any[]) => void
+  inquirySuggestions: InquirySuggestion[]
+  setInquirySuggestions: (items: InquirySuggestion[]) => void
   currentPatient: PatientInfo | null
   currentEncounterId: string | null
   setInquiry: (data: InquiryData) => void
@@ -101,7 +111,12 @@ interface WorkbenchState {
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setQCing: (v: boolean) => void
-  setQCResult: (issues: QCIssue[], summary: string, pass: boolean, gradeScore?: GradeScore | null) => void
+  setQCResult: (
+    issues: QCIssue[],
+    summary: string,
+    pass: boolean,
+    gradeScore?: GradeScore | null
+  ) => void
   setExamSuggestions: (items: ExamSuggestion[]) => void
   setExamLoading: (v: boolean) => void
   pendingGenerate: boolean
@@ -156,91 +171,97 @@ const defaultInquiry: InquiryData = {
 
 export const useWorkbenchStore = create<WorkbenchState>()(
   persist(
-  (set) => ({
-  inquiry: defaultInquiry,
-  inquirySavedAt: 0,
-  recordContent: '',
-  recordType: 'outpatient',
-  isFirstVisit: true,
-  currentVisitType: 'outpatient',
-  isGenerating: false,
-  isPolishing: false,
-  isQCing: false,
-  qcIssues: [],
-  qcSummary: '',
-  qcPass: null,
-  gradeScore: null,
-  examSuggestions: [],
-  isExamLoading: false,
-  inquirySuggestions: [],
-  setInquirySuggestions: (items) => set({ inquirySuggestions: items }),
-  currentPatient: null,
-  currentEncounterId: null,
-  pendingGenerate: false,
-  setPendingGenerate: (v) => set({ pendingGenerate: v }),
-  isFinal: false,
-  finalizedAt: null,
-  setVisitMeta: (isFirstVisit, visitType) => set({ isFirstVisit, currentVisitType: visitType }),
-  setInquiry: (data) => set({ inquiry: data, inquirySavedAt: Date.now() }),
-  updateInquiryFields: (data) => set({ inquiry: data }),
-  setRecordContent: (content) => set({ recordContent: content }),
-  setRecordType: (type) => set({ recordType: type }),
-  setGenerating: (v) => set({ isGenerating: v }),
-  setPolishing: (v) => set({ isPolishing: v }),
-  setQCing: (v) => set({ isQCing: v }),
-  setQCResult: (issues, summary, pass, gradeScore = null) => set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore }),
-  setExamSuggestions: (items) => set({ examSuggestions: items }),
-  setExamLoading: (v) => set({ isExamLoading: v }),
-  setFinal: (v) => set({ isFinal: v, finalizedAt: v ? new Date().toLocaleString('zh-CN') : null }),
-  setCurrentEncounter: (patient, encounterId) => set({ currentPatient: patient, currentEncounterId: encounterId }),
-  appendToRecord: (text) => set((state) => ({
-    recordContent: state.recordContent
-      ? state.recordContent + '\n\n' + text
-      : text,
-  })),
-  setInitialImpression: (text) => set((state) => ({
-    inquiry: { ...state.inquiry, initial_impression: text },
-  })),
-  appendInquiryNote: (note) => set((state) => ({
-    inquiry: {
-      ...state.inquiry,
-      history_present_illness: state.inquiry.history_present_illness
-        ? state.inquiry.history_present_illness + '\n' + note
-        : note,
-    },
-  })),
-  reset: () => set({
-    inquiry: defaultInquiry,
-    inquirySavedAt: 0,
-    recordContent: '',
-    recordType: 'outpatient',
-    isFirstVisit: true,
-    currentVisitType: 'outpatient',
-    qcIssues: [],
-    qcSummary: '',
-    qcPass: null,
-    gradeScore: null,
-    examSuggestions: [],
-    inquirySuggestions: [],
-    currentPatient: null,
-    currentEncounterId: null,
-    isFinal: false,
-    finalizedAt: null,
-  }),
-  }),
-  {
-    name: 'medassist-workbench',
-    partialize: (state) => ({
-      inquiry: state.inquiry,
-      inquirySavedAt: state.inquirySavedAt,
-      recordContent: state.recordContent,
-      recordType: state.recordType,
-      isFirstVisit: state.isFirstVisit,
-      currentVisitType: state.currentVisitType,
-      currentPatient: state.currentPatient,
-      currentEncounterId: state.currentEncounterId,
-      isFinal: state.isFinal,
-      finalizedAt: state.finalizedAt,
+    set => ({
+      inquiry: defaultInquiry,
+      inquirySavedAt: 0,
+      recordContent: '',
+      recordType: 'outpatient',
+      isFirstVisit: true,
+      currentVisitType: 'outpatient',
+      isGenerating: false,
+      isPolishing: false,
+      isQCing: false,
+      qcIssues: [],
+      qcSummary: '',
+      qcPass: null,
+      gradeScore: null,
+      examSuggestions: [],
+      isExamLoading: false,
+      inquirySuggestions: [],
+      setInquirySuggestions: items => set({ inquirySuggestions: items }),
+      currentPatient: null,
+      currentEncounterId: null,
+      pendingGenerate: false,
+      setPendingGenerate: v => set({ pendingGenerate: v }),
+      isFinal: false,
+      finalizedAt: null,
+      setVisitMeta: (isFirstVisit, visitType) => set({ isFirstVisit, currentVisitType: visitType }),
+      setInquiry: data => set({ inquiry: data, inquirySavedAt: Date.now() }),
+      updateInquiryFields: data => set({ inquiry: data }),
+      setRecordContent: content => set({ recordContent: content }),
+      setRecordType: type => set({ recordType: type }),
+      setGenerating: v => set({ isGenerating: v }),
+      setPolishing: v => set({ isPolishing: v }),
+      setQCing: v => set({ isQCing: v }),
+      setQCResult: (issues, summary, pass, gradeScore = null) =>
+        set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore }),
+      setExamSuggestions: items => set({ examSuggestions: items }),
+      setExamLoading: v => set({ isExamLoading: v }),
+      setFinal: v =>
+        set({ isFinal: v, finalizedAt: v ? new Date().toLocaleString('zh-CN') : null }),
+      setCurrentEncounter: (patient, encounterId) =>
+        set({ currentPatient: patient, currentEncounterId: encounterId }),
+      appendToRecord: text =>
+        set(state => ({
+          recordContent: state.recordContent ? state.recordContent + '\n\n' + text : text,
+        })),
+      setInitialImpression: text =>
+        set(state => ({
+          inquiry: { ...state.inquiry, initial_impression: text },
+        })),
+      appendInquiryNote: note =>
+        set(state => ({
+          inquiry: {
+            ...state.inquiry,
+            history_present_illness: state.inquiry.history_present_illness
+              ? state.inquiry.history_present_illness + '\n' + note
+              : note,
+          },
+        })),
+      reset: () =>
+        set({
+          inquiry: defaultInquiry,
+          inquirySavedAt: 0,
+          recordContent: '',
+          recordType: 'outpatient',
+          isFirstVisit: true,
+          currentVisitType: 'outpatient',
+          qcIssues: [],
+          qcSummary: '',
+          qcPass: null,
+          gradeScore: null,
+          examSuggestions: [],
+          inquirySuggestions: [],
+          currentPatient: null,
+          currentEncounterId: null,
+          isFinal: false,
+          finalizedAt: null,
+        }),
     }),
-  }
-))
+    {
+      name: 'medassist-workbench',
+      partialize: state => ({
+        inquiry: state.inquiry,
+        inquirySavedAt: state.inquirySavedAt,
+        recordContent: state.recordContent,
+        recordType: state.recordType,
+        isFirstVisit: state.isFirstVisit,
+        currentVisitType: state.currentVisitType,
+        currentPatient: state.currentPatient,
+        currentEncounterId: state.currentEncounterId,
+        isFinal: state.isFinal,
+        finalizedAt: state.finalizedAt,
+      }),
+    }
+  )
+)
