@@ -1,5 +1,30 @@
+/**
+ * 模型配置页（pages/admin/ModelConfigsPage.tsx）
+ *
+ * 管理各 AI 功能使用的大语言模型配置，调用 GET/POST/PUT /admin/model-configs：
+ *   - 配置项：task_type（生成/质控/建议等）、model_name、
+ *     api_base、temperature、max_tokens、is_active
+ *   - Switch 控制启用/禁用：禁用后对应功能降级为规则引擎兜底
+ *   - 支持多个 task_type 使用不同模型（如质控用 deepseek-chat，
+ *     生成用 deepseek-reasoner）
+ *
+ * 后端配置落库后即时生效，无需重启服务。
+ */
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import {
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd'
 import api from '@/services/api'
 
 const { Title, Text } = Typography
@@ -34,7 +59,9 @@ export default function ModelConfigsPage() {
     }
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    loadData()
+  }, [])
 
   const handleSave = async (scene: string, values: any) => {
     setSavingScene(scene)
@@ -52,7 +79,9 @@ export default function ModelConfigsPage() {
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>模型配置</Title>
+        <Title level={4} style={{ margin: 0 }}>
+          模型配置
+        </Title>
         <Text type="secondary" style={{ fontSize: 12 }}>
           按场景配置模型、温度和最大输出长度；保存后立即影响对应 AI 能力。
         </Text>
@@ -70,8 +99,12 @@ export default function ModelConfigsPage() {
             width: 180,
             render: (scene: string) => (
               <Space direction="vertical" size={2}>
-                <Tag color="blue" style={{ marginRight: 0 }}>{SCENE_LABELS[scene] || scene}</Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>{scene}</Text>
+                <Tag color="blue" style={{ marginRight: 0 }}>
+                  {SCENE_LABELS[scene] || scene}
+                </Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {scene}
+                </Text>
               </Space>
             ),
           },
@@ -82,7 +115,7 @@ export default function ModelConfigsPage() {
                 <Form
                   layout="inline"
                   initialValues={record}
-                  onFinish={(values) => handleSave(record.scene, values)}
+                  onFinish={values => handleSave(record.scene, values)}
                 >
                   <Form.Item name="model_name" label="模型" rules={[{ required: true }]}>
                     <Select style={{ width: 180 }} options={MODEL_OPTIONS} />
@@ -100,7 +133,9 @@ export default function ModelConfigsPage() {
                     <Input style={{ width: 220 }} placeholder="场景用途说明" />
                   </Form.Item>
                   <Form.Item>
-                    <Button type="primary" htmlType="submit" loading={savingScene === record.scene}>保存</Button>
+                    <Button type="primary" htmlType="submit" loading={savingScene === record.scene}>
+                      保存
+                    </Button>
                   </Form.Item>
                 </Form>
               </Card>

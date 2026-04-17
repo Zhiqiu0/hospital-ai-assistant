@@ -1,7 +1,29 @@
+/**
+ * 患者管理页（pages/admin/PatientsPage.tsx）
+ *
+ * 管理员查看和维护全量患者档案，调用 GET /admin/patients（分页）：
+ *   - 搜索：按姓名、身份证号、手机号模糊查询
+ *   - 新建患者：POST /patients（与医生端共用接口）
+ *   - 编辑患者基本信息：PUT /patients/{id}
+ *   - 查看患者就诊历史：点击展开关联的接诊和病历列表
+ *
+ * 权限说明：
+ *   医生端只能在接诊时创建/查询患者；
+ *   管理员可跨科室查看全院患者，并可修正错误信息。
+ */
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Table, Button, Modal, Form, Input, Select, Space,
-  Tag, Typography, message, DatePicker
+  Table,
+  Button,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Space,
+  Tag,
+  Typography,
+  message,
+  DatePicker,
 } from 'antd'
 import { EditOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
@@ -25,18 +47,25 @@ export default function PatientsPage() {
   const [editPatient, setEditPatient] = useState<any>(null)
   const [form] = Form.useForm()
 
-  const loadPatients = useCallback(async (p = page, kw = keyword) => {
-    setLoading(true)
-    try {
-      const data: any = await api.get(`/patients?page=${p}&page_size=10&keyword=${encodeURIComponent(kw)}`)
-      setPatients(data.items || [])
-      setTotal(data.total || 0)
-    } finally {
-      setLoading(false)
-    }
-  }, [page, keyword])
+  const loadPatients = useCallback(
+    async (p = page, kw = keyword) => {
+      setLoading(true)
+      try {
+        const data: any = await api.get(
+          `/patients?page=${p}&page_size=10&keyword=${encodeURIComponent(kw)}`
+        )
+        setPatients(data.items || [])
+        setTotal(data.total || 0)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [page, keyword]
+  )
 
-  useEffect(() => { loadPatients() }, [])
+  useEffect(() => {
+    loadPatients()
+  }, [])
 
   const handleSearch = () => {
     setPage(1)
@@ -76,9 +105,7 @@ export default function PatientsPage() {
       key: 'patient_no',
       width: 120,
       render: (v: string) => (
-        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: '#64748b' }}>
-          {v || '—'}
-        </Text>
+        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: '#64748b' }}>{v || '—'}</Text>
       ),
     },
     {
@@ -87,16 +114,24 @@ export default function PatientsPage() {
       key: 'name',
       render: (name: string) => (
         <Space size={6}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 8,
-            background: 'linear-gradient(135deg, #eff6ff, #dbeafe)',
-            border: '1px solid #bfdbfe',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
-          }}>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: 'linear-gradient(135deg, #eff6ff, #dbeafe)',
+              border: '1px solid #bfdbfe',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
             <UserOutlined style={{ color: '#2563eb', fontSize: 13 }} />
           </div>
-          <Text strong style={{ fontSize: 14 }}>{name}</Text>
+          <Text strong style={{ fontSize: 14 }}>
+            {name}
+          </Text>
         </Space>
       ),
     },
@@ -107,7 +142,11 @@ export default function PatientsPage() {
       width: 80,
       render: (g: string) => {
         const info = GENDER_MAP[g] || { label: g || '—', color: 'default' }
-        return <Tag color={info.color} style={{ borderRadius: 20 }}>{info.label}</Tag>
+        return (
+          <Tag color={info.color} style={{ borderRadius: 20 }}>
+            {info.label}
+          </Tag>
+        )
       },
     },
     {
@@ -115,7 +154,7 @@ export default function PatientsPage() {
       dataIndex: 'age',
       key: 'age',
       width: 80,
-      render: (age: number) => age != null ? `${age} 岁` : '—',
+      render: (age: number) => (age != null ? `${age} 岁` : '—'),
     },
     {
       title: '联系电话',
@@ -143,13 +182,22 @@ export default function PatientsPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <Title level={4} style={{ margin: 0 }}>患者档案管理</Title>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 20,
+        }}
+      >
+        <Title level={4} style={{ margin: 0 }}>
+          患者档案管理
+        </Title>
         <Space>
           <Input
             placeholder="搜索姓名或患者编号"
             value={keyword}
-            onChange={(e) => {
+            onChange={e => {
               setKeyword(e.target.value)
               if (!e.target.value) loadPatients(1, '')
             }}
@@ -173,8 +221,11 @@ export default function PatientsPage() {
           current: page,
           pageSize: 10,
           total,
-          onChange: (p) => { setPage(p); loadPatients(p, keyword) },
-          showTotal: (t) => `共 ${t} 位患者`,
+          onChange: p => {
+            setPage(p)
+            loadPatients(p, keyword)
+          },
+          showTotal: t => `共 ${t} 位患者`,
           showSizeChanger: false,
         }}
         size="middle"
@@ -184,18 +235,27 @@ export default function PatientsPage() {
       <Modal
         title={
           <Space>
-            <div style={{
-              width: 28, height: 28, borderRadius: 8,
-              background: 'linear-gradient(135deg, #2563eb, #3b82f6)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                background: 'linear-gradient(135deg, #2563eb, #3b82f6)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
               <EditOutlined style={{ color: '#fff', fontSize: 13 }} />
             </div>
             <span>编辑患者信息</span>
           </Space>
         }
         open={modalOpen}
-        onCancel={() => { setModalOpen(false); form.resetFields() }}
+        onCancel={() => {
+          setModalOpen(false)
+          form.resetFields()
+        }}
         onOk={() => form.submit()}
         okText="保存"
         width={480}

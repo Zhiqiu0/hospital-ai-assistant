@@ -1,3 +1,18 @@
+/**
+ * 续接诊抽屉（components/workbench/ResumeDrawer.tsx）
+ *
+ * 展示当前医生未完成的接诊列表，允许一键恢复工作台状态：
+ *   - 调用 GET /encounters/my 加载进行中接诊（status != 'completed'）
+ *   - 点击「续接诊」调用 GET /encounters/{id}/workspace 获取完整快照
+ *   - 快照恢复顺序：reset() → setCurrentEncounter → setInquiry → setRecordContent
+ *
+ * 住院工作台特殊处理：
+ *   visitTypeFilter='inpatient' 过滤，只显示住院类型接诊，
+ *   避免门诊/急诊接诊出现在住院工作台的续接诊列表中。
+ *
+ * 性别图标：ManOutlined / WomanOutlined 根据 patient.gender 显示。
+ * 已签发病历：status='submitted' 时提示不可修改并中止恢复流程。
+ */
 import { Drawer, List, Button, Space, Tag, Badge, Empty, Typography } from 'antd'
 import { ReloadOutlined, ManOutlined, WomanOutlined } from '@ant-design/icons'
 

@@ -1,3 +1,18 @@
+/**
+ * 历史病历抽屉（components/workbench/HistoryDrawer.tsx）
+ *
+ * 展示当前登录医生历史已签发病历列表，从右侧滑出：
+ *   - 调用 GET /medical-records/my 加载数据（useWorkbenchBase.loadHistory）
+ *   - 列表显示：患者姓名、就诊类型、病历类型、签发时间
+ *   - 点击「查看」弹出 RecordViewModal 显示完整内容
+ *
+ * 权限边界：
+ *   仅返回当前医生自己的病历（后端按 created_by 过滤）。
+ *   管理员查看全量病历需使用 /admin/records 页面。
+ *
+ * 状态颜色：
+ *   submitted → 绿色「已签发」  draft → 橙色「草稿」
+ */
 import { Drawer, List, Button, Space, Tag, Badge, Empty, Typography } from 'antd'
 import { HistoryOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 

@@ -26,9 +26,12 @@ logger = logging.getLogger(__name__)
 
 # 检测病历是否含中医内容的关键词
 _TCM_DETECTION_KEYWORDS = [
-    "中医诊断", "证候诊断", "治则", "治法", "中药", "针灸", "推拿",
-    "中医治疗", "辨证", "中药汤剂", "中成药", "中药方", "中药饮片",
-    "穴位", "艾灸", "拔罐", "刮痧", "草药",
+    # 章节标题或诊断标签（带括号或冒号才算，避免"中医诊断"裸词误触发）
+    "【中医诊断】", "中医诊断：", "中医诊断:",
+    "证候诊断：", "证候诊断:", "证型：", "证型:",
+    # 明确中医诊疗行为
+    "中药", "针灸", "推拿", "中医治疗", "辨证", "中药汤剂", "中成药",
+    "中药方", "中药饮片", "穴位", "艾灸", "拔罐", "刮痧", "草药", "治则治法",
 ]
 
 
@@ -55,6 +58,7 @@ async def check_completeness(
     db: AsyncSession,
     is_inpatient: bool = False,
     is_first_visit: bool = True,
+    patient_gender: str = "",
 ) -> list:
     """
     规则引擎：对病历文本做结构性完整性检查（有没有该章节/字段）。
@@ -68,6 +72,7 @@ async def check_completeness(
         db: 数据库会话（用于加载 qc_rules 表中的规则）
         is_inpatient: 是否为住院病历
         is_first_visit: 是否为初诊（False 则同时执行复诊规则）
+        patient_gender: 患者性别（'male'/'female'/''），用于过滤 gender_scope 规则
     """
     text = record_text or ""
     issues: list = []
@@ -89,6 +94,7 @@ async def check_completeness(
 
     for rule in rules:
         scope = rule.scope or "all"
+        gender_scope = getattr(rule, "gender_scope", "all") or "all"
 
         # scope 过滤
         if scope == "inpatient" and not is_inpatient:
@@ -96,6 +102,13 @@ async def check_completeness(
         if scope == "revisit" and is_first_visit:
             continue
         if scope == "tcm" and not is_tcm:
+            continue
+
+        # 性别过滤：gender_scope 非 all 时，患者性别必须匹配才触发
+        if gender_scope != "all" and patient_gender and gender_scope != patient_gender:
+            continue
+        # 性别未知（patient_gender 为空）时跳过性别限定规则，避免误报
+        if gender_scope != "all" and not patient_gender:
             continue
 
         keywords = rule.keywords or []

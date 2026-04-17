@@ -1,4 +1,19 @@
-"""质控（QC）/ 质控修复 / 甲级评分 Prompt"""
+"""
+质控 Prompt 库（app/services/ai/prompts_qc.py）
+
+包含病历质量控制相关的 prompt 模板：
+  QC_PROMPT         : 综合质控——按《浙江省病历质量检查评分标准》逐项检查，
+                      支持门诊/住院分类标准，返回问题列表和 pass/fail 判断
+  QC_FIX_PROMPT     : 单条质控修复——针对某一字段的具体问题生成修复文本，
+                      供医生直接复制写入病历
+  GRADE_SCORE_PROMPT: 甲级评分——逐项精确评分，返回分值、扣分项、优点和等级，
+                      比 QC_PROMPT 更详细，专门用于归档前的最终评分
+
+调用来源：
+  QC_PROMPT         → ai_qc.py 路由的 /scan SSE 接口
+  QC_FIX_PROMPT     → ai_qc.py 路由的 /fix 接口
+  GRADE_SCORE_PROMPT → ai_qc.py 路由的 /grade-score 接口
+"""
 
 QC_PROMPT = """你是病历质控专家，依据《浙江省病历质量检查评分标准》对病历进行质控评分。
 

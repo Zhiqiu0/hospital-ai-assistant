@@ -1,4 +1,20 @@
-"""问诊建议 / 检查建议 / 诊断建议 Prompt"""
+"""
+AI 建议 Prompt 库（app/services/ai/prompts_suggestions.py）
+
+包含临床辅助建议类的 prompt 模板：
+  INQUIRY_SUGGESTIONS_PROMPT  : 追问建议——按病情类型生成 4-6 条结构化追问问题，
+                                每条含优先级/危险信号/选项类型（single/multi），
+                                严禁重复问已知信息
+  EXAM_SUGGESTIONS_PROMPT     : 检查建议——根据症状推荐本院现有设备的检查项目（3-6条），
+                                严格限制在院内设备列表范围内，不推荐院外检查
+  DIAGNOSIS_SUGGESTION_PROMPT : 诊断建议——结合问诊信息和追问结果，给出 3-5 个
+                                可能诊断，按可信度排序，每条含依据和下一步建议
+
+调用来源：
+  INQUIRY_SUGGESTIONS_PROMPT  → ai_suggestions.py 路由的 /inquiry-suggestions 接口
+  EXAM_SUGGESTIONS_PROMPT     → ai_suggestions.py 路由的 /exam-suggestions 接口
+  DIAGNOSIS_SUGGESTION_PROMPT → ai_suggestions.py 路由的 /diagnosis-suggestions 接口
+"""
 
 INQUIRY_SUGGESTIONS_PROMPT = """你是一名临床医生，请严格按照以下步骤为患者生成追问问题，必须输出完整JSON。
 

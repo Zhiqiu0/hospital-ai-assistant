@@ -1,8 +1,26 @@
+/**
+ * 质控问题面板（components/workbench/QCIssuePanel.tsx）
+ *
+ * 展示质控扫描结果，提供问题处理能力：
+ *   - 规则引擎问题（source='rule'，蓝色标签"结构"）：必须修复才能签发
+ *   - LLM 质量建议（source='llm'，绿色标签"建议"）：可忽略
+ *   - 每条问题支持：标记已解决（✓）/ 标记忽略（跳过）/ AI 修复（生成补充文本）
+ *   - 问题状态持久化：调用 PATCH /qc-issues/{id} 更新数据库状态
+ *   - 底部显示 GradeScoreCard（病历评分卡）
+ *
+ * 状态监听：
+ *   qcRunId 变化时（新一轮质控开始）自动重置所有问题的本地操作状态（resolved/ignored/fixing）。
+ *   这样可以避免上一轮用户操作残留影响新一轮结果。
+ *
+ * AI 修复（qc-fix）：
+ *   对单条质控问题调用 POST /ai/qc-fix，返回可直接写入对应字段的修复文本。
+ *   修复结果通过 writeSectionToRecord（qcFieldMaps.ts）写入病历编辑区。
+ */
 import { useState, useEffect } from 'react'
-import { Button, Typography, Empty, Alert, Tag, message, Input } from 'antd'
+import { Button, Typography, Empty, Alert, Tag, message, Input, Spin } from 'antd'
 import { BulbOutlined, EditOutlined } from '@ant-design/icons'
 import { useWorkbenchStore, QCIssue } from '@/store/workbenchStore'
-import { FIELD_NAME_LABEL, FIELD_TO_INQUIRY_KEY, writeSectionToRecord } from './qcFieldMaps'
+import { FIELD_NAME_LABEL, writeSectionToRecord } from './qcFieldMaps'
 import GradeScoreCard from './GradeScoreCard'
 import api from '@/services/api'
 
@@ -30,23 +48,23 @@ export default function QCIssuePanel() {
     qcIssues,
     qcSummary,
     qcPass,
+    qcRunId,
+    qcLlmLoading,
     gradeScore,
     recordContent,
     setRecordContent,
     inquiry,
-    setInquiry,
   } = useWorkbenchStore()
 
   const [fixTexts, setFixTexts] = useState<Record<number, string>>({})
   const [fixLoading, setFixLoading] = useState<Record<number, boolean>>({})
+  const [writtenSet, setWrittenSet] = useState<Set<number>>(new Set())
 
+  // 只在新一轮质控开始时清空，追加 LLM issues 不触发（qcRunId 变化代表新一轮）
   useEffect(() => {
-    const init: Record<number, string> = {}
-    qcIssues.forEach((issue, idx) => {
-      init[idx] = issue.suggestion || ''
-    })
-    setFixTexts(init)
-  }, [qcIssues])
+    setFixTexts({})
+    setWrittenSet(new Set())
+  }, [qcRunId])
 
   const handleAIFix = async (item: QCIssue, idx: number) => {
     setFixLoading(prev => ({ ...prev, [idx]: true }))
@@ -68,11 +86,22 @@ export default function QCIssuePanel() {
   }
 
   const handleWriteToRecord = (item: QCIssue, idx: number) => {
-    const fix = fixTexts[idx] || ''
-    setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
-    const inquiryKey = FIELD_TO_INQUIRY_KEY[item.field_name]
-    if (inquiryKey) setInquiry({ ...inquiry, [inquiryKey]: fix })
-    message.success('已写入病历')
+    if (writtenSet.has(idx)) {
+      // 取消写入：还原该字段
+      setRecordContent(writeSectionToRecord(recordContent, item.field_name, ''))
+      setWrittenSet(prev => {
+        const s = new Set(prev)
+        s.delete(idx)
+        return s
+      })
+      message.info('已取消写入')
+    } else {
+      const fix = fixTexts[idx]?.trim() || ''
+      if (!fix) return
+      setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
+      setWrittenSet(prev => new Set(prev).add(idx))
+      message.success('已写入病历')
+    }
   }
 
   const renderIssue = (item: QCIssue, idx: number) => (
@@ -114,7 +143,7 @@ export default function QCIssuePanel() {
             {FIELD_NAME_LABEL[item.field_name] || item.field_name}
           </Text>
         )}
-        {item.score_impact && (
+        {item.score_impact && item.source !== 'llm' && (
           <Text style={{ fontSize: 10, color: '#ef4444', marginLeft: 'auto' }}>
             {item.score_impact}
           </Text>
@@ -131,34 +160,55 @@ export default function QCIssuePanel() {
       >
         {item.issue_description}
       </Text>
-      <Input.TextArea
-        value={fixTexts[idx] ?? ''}
-        onChange={e => setFixTexts(prev => ({ ...prev, [idx]: e.target.value }))}
-        rows={3}
-        style={{ fontSize: 13, borderRadius: 6, marginBottom: 8, resize: 'vertical' }}
-        placeholder="修复建议（可编辑）..."
-      />
-      <div style={{ display: 'flex', gap: 8 }}>
-        <Button
-          size="small"
-          icon={<BulbOutlined />}
-          loading={fixLoading[idx] || false}
-          onClick={() => handleAIFix(item, idx)}
-          style={{ fontSize: 12, borderRadius: 6 }}
+      {item.source === 'llm' && (!item.field_name || item.field_name === 'content') ? (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '6px 10px',
+            background: '#fef9c3',
+            borderRadius: 6,
+            fontSize: 12,
+            color: '#92400e',
+          }}
         >
-          逐条修复
-        </Button>
-        <Button
-          size="small"
-          type="primary"
-          icon={<EditOutlined />}
-          disabled={!fixTexts[idx]?.trim()}
-          onClick={() => handleWriteToRecord(item, idx)}
-          style={{ fontSize: 12, borderRadius: 6 }}
-        >
-          写入病历
-        </Button>
-      </div>
+          💡 此为格式/全文问题，建议点击上方「AI 润色」自动修复
+        </div>
+      ) : (
+        <>
+          <Input.TextArea
+            value={fixTexts[idx] ?? ''}
+            onChange={e => setFixTexts(prev => ({ ...prev, [idx]: e.target.value }))}
+            rows={3}
+            style={{ fontSize: 13, borderRadius: 6, marginBottom: 8, resize: 'vertical' }}
+            placeholder="修复建议（可编辑）..."
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              size="small"
+              icon={<BulbOutlined />}
+              loading={fixLoading[idx] || false}
+              onClick={() => handleAIFix(item, idx)}
+              style={{ fontSize: 12, borderRadius: 6 }}
+            >
+              逐条修复
+            </Button>
+            <Button
+              size="small"
+              type={writtenSet.has(idx) ? 'primary' : 'default'}
+              icon={<EditOutlined />}
+              disabled={!writtenSet.has(idx) && !fixTexts[idx]?.trim()}
+              onClick={() => handleWriteToRecord(item, idx)}
+              style={{
+                fontSize: 12,
+                borderRadius: 6,
+                ...(writtenSet.has(idx) ? { background: '#22c55e', borderColor: '#22c55e' } : {}),
+              }}
+            >
+              {writtenSet.has(idx) ? '已写入' : '写入病历'}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   )
 
@@ -216,7 +266,7 @@ export default function QCIssuePanel() {
             {blockingIssues.map(item => renderIssue(item, qcIssues.indexOf(item)))}
           </>
         )}
-        {suggestionIssues.length > 0 && (
+        {(suggestionIssues.length > 0 || qcLlmLoading) && (
           <>
             <Text
               style={{
@@ -224,9 +274,19 @@ export default function QCIssuePanel() {
                 color: '#92400e',
                 fontWeight: 600,
                 marginTop: blockingIssues.length > 0 ? 4 : 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
               }}
             >
-              ▍质量建议（共 {suggestionIssues.length} 项，不影响出具，但建议改进）
+              ▍质量建议
+              {suggestionIssues.length > 0
+                ? `（共 ${suggestionIssues.length} 项，不影响出具，但建议改进）`
+                : ''}
+              {qcLlmLoading && <Spin size="small" style={{ marginLeft: 4 }} />}
+              {qcLlmLoading && (
+                <span style={{ fontWeight: 400, color: '#94a3b8' }}>AI 分析中...</span>
+              )}
             </Text>
             {suggestionIssues.map(item => renderIssue(item, qcIssues.indexOf(item)))}
           </>

@@ -32,6 +32,11 @@ class QCRule(Base, TimestampMixin):
       - inpatient : 仅住院病历
       - revisit   : 仅复诊病历
       - tcm       : 仅含中医内容的病历（病历文本中检测到中医关键词）
+
+    gender_scope 字段控制性别限制：
+      - all    : 不限性别
+      - female : 仅女性患者触发（如月经史）
+      - male   : 仅男性患者触发
     """
 
     __tablename__ = "qc_rules"
@@ -45,6 +50,8 @@ class QCRule(Base, TimestampMixin):
     rule_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # 适用范围：all / inpatient / revisit / tcm
     scope: Mapped[str] = mapped_column(String(20), default="all", nullable=False)
+    # 性别限制：all / female / male（如月经史只对女性触发）
+    gender_scope: Mapped[str] = mapped_column(String(10), default="all", nullable=False)
 
     field_name: Mapped[Optional[str]] = mapped_column(String(50))
 

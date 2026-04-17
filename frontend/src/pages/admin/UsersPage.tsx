@@ -1,7 +1,29 @@
+/**
+ * 用户管理页（pages/admin/UsersPage.tsx）
+ *
+ * 管理系统用户账号，调用 GET/POST/PUT/DELETE /admin/users：
+ *   - 列：用户名、姓名、角色、所属科室、状态（激活/禁用）、注册时间
+ *   - 角色：doctor / admin / radiologist
+ *   - 新建用户：含初始密码（后端 bcrypt hash 存储）
+ *   - 编辑：修改姓名、科室、角色；重置密码
+ *   - 软删除：is_active=False（不物理删除，保留历史病历关联）
+ *
+ * 密码策略：
+ *   创建时要求 ≥8 位；管理员可强制重置密码但不能查看原密码。
+ */
 import { useEffect, useState } from 'react'
 import {
-  Table, Button, Modal, Form, Input, Select, Space,
-  Tag, Typography, Popconfirm, message
+  Table,
+  Button,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Space,
+  Tag,
+  Typography,
+  Popconfirm,
+  message,
 } from 'antd'
 import { PlusOutlined, EditOutlined, StopOutlined } from '@ant-design/icons'
 import api from '@/services/api'
@@ -32,7 +54,9 @@ export default function UsersPage() {
       const data: any = await api.get(`/admin/users?page=${p}&page_size=10`)
       setUsers(data.items)
       setTotal(data.total)
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
 
   const loadDepts = async () => {
@@ -40,7 +64,10 @@ export default function UsersPage() {
     setDepartments(data.items || [])
   }
 
-  useEffect(() => { loadUsers(); loadDepts() }, [])
+  useEffect(() => {
+    loadUsers()
+    loadDepts()
+  }, [])
 
   const openCreate = () => {
     setEditUser(null)
@@ -50,7 +77,11 @@ export default function UsersPage() {
 
   const openEdit = (user: any) => {
     setEditUser(user)
-    form.setFieldsValue({ real_name: user.real_name, role: user.role, department_id: user.department_id })
+    form.setFieldsValue({
+      real_name: user.real_name,
+      role: user.role,
+      department_id: user.department_id,
+    })
     setModalOpen(true)
   }
 
@@ -75,50 +106,73 @@ export default function UsersPage() {
       await api.delete(`/admin/users/${id}`)
       message.success('已停用')
       loadUsers()
-    } catch { message.error('操作失败') }
+    } catch {
+      message.error('操作失败')
+    }
   }
 
   const columns = [
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '姓名', dataIndex: 'real_name', key: 'real_name' },
     {
-      title: '角色', dataIndex: 'role', key: 'role',
+      title: '角色',
+      dataIndex: 'role',
+      key: 'role',
       render: (role: string) => {
         const r = ROLE_MAP[role] || { label: role, color: 'default' }
         return <Tag color={r.color}>{r.label}</Tag>
-      }
+      },
     },
     {
-      title: '状态', dataIndex: 'is_active', key: 'is_active',
-      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '启用' : '停用'}</Tag>
+      title: '状态',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '启用' : '停用'}</Tag>,
     },
     {
-      title: '操作', key: 'action',
+      title: '操作',
+      key: 'action',
       render: (_: any, record: any) => (
         <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+            编辑
+          </Button>
           {record.is_active && (
             <Popconfirm title="确认停用该用户？" onConfirm={() => handleDeactivate(record.id)}>
-              <Button size="small" danger icon={<StopOutlined />}>停用</Button>
+              <Button size="small" danger icon={<StopOutlined />}>
+                停用
+              </Button>
             </Popconfirm>
           )}
         </Space>
-      )
-    }
+      ),
+    },
   ]
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>用户管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建用户</Button>
+        <Title level={4} style={{ margin: 0 }}>
+          用户管理
+        </Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          新建用户
+        </Button>
       </div>
       <Table
         columns={columns}
         dataSource={users}
         rowKey="id"
         loading={loading}
-        pagination={{ total, pageSize: 10, current: page, onChange: (p) => { setPage(p); loadUsers(p) } }}
+        pagination={{
+          total,
+          pageSize: 10,
+          current: page,
+          onChange: p => {
+            setPage(p)
+            loadUsers(p)
+          },
+        }}
       />
       <Modal
         title={editUser ? '编辑用户' : '新建用户'}
@@ -144,7 +198,9 @@ export default function UsersPage() {
             <Input placeholder="真实姓名" />
           </Form.Item>
           <Form.Item label="角色" name="role" rules={[{ required: true }]}>
-            <Select options={Object.entries(ROLE_MAP).map(([v, r]) => ({ value: v, label: r.label }))} />
+            <Select
+              options={Object.entries(ROLE_MAP).map(([v, r]) => ({ value: v, label: r.label }))}
+            />
           </Form.Item>
           <Form.Item label="所属科室" name="department_id">
             <Select

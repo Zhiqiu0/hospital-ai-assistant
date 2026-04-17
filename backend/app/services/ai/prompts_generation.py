@@ -1,4 +1,25 @@
-"""病历生成 Prompt（门诊 + 住院各类型）"""
+"""
+病历生成 Prompt 库（app/services/ai/prompts_generation.py）
+
+包含各类病历类型的 AI 生成 prompt 模板：
+  OUTPATIENT_GENERATE_PROMPT : 中医门/急诊病历（含中医四诊要求）
+  ADMISSION_NOTE_PROMPT      : 入院记录（含专项评估七项）
+  FIRST_COURSE_PROMPT        : 首次病程记录（含鉴别诊断要求）
+  COURSE_RECORD_PROMPT       : 日常病程记录
+  SENIOR_ROUND_PROMPT        : 上级医师查房记录
+  DISCHARGE_RECORD_PROMPT    : 出院记录
+  PRE_OP_SUMMARY_PROMPT      : 术前小结
+  OP_RECORD_PROMPT           : 手术记录
+  POST_OP_RECORD_PROMPT      : 术后病程记录
+
+路由表：
+  PROMPT_MAP                 : record_type → prompt 的映射字典，供路由层按病历类型选择
+  RECORD_TYPE_LABELS         : record_type → 中文标签的权威映射
+
+合规依据：
+  门诊病历参照《浙江省中医门、急诊病历评分标准》
+  住院病历参照《浙江省住院病历质量检查评分表（2021版）》
+"""
 
 # record_type → 中文标签（唯一权威映射，同时用于 prompt 说明和质控/评分）
 RECORD_TYPE_LABELS: dict[str, str] = {

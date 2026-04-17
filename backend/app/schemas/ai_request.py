@@ -176,6 +176,7 @@ class QuickQCRequest(BaseModel):
     record_type: Optional[str] = "outpatient"
     encounter_id: Optional[str] = None
     is_first_visit: Optional[bool] = True
+    patient_gender: Optional[str] = ""
 
     # 基础问诊字段（用于规则引擎）
     chief_complaint: Optional[str] = ""

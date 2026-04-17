@@ -1,3 +1,17 @@
+/**
+ * 应用入口（main.tsx）
+ *
+ * 挂载 React 应用到 #root 节点，配置全局：
+ *   - Ant Design ConfigProvider（中文语言包 + 统一主题 token）
+ *   - ErrorBoundary（捕获组件级错误，防止白屏）
+ *
+ * 主题设计：
+ *   colorPrimary: #2563eb（蓝色）—— 品牌色
+ *   colorBgLayout: #eef2f7 —— 页面背景灰蓝色
+ *   字体: PingFang SC / Microsoft YaHei / system-ui 降级链
+ *   圆角: 8px（标准）/ 12px（卡片）/ 6px（小组件）
+ */
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { ConfigProvider } from 'antd'
@@ -23,7 +37,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           borderRadius: 8,
           borderRadiusLG: 12,
           borderRadiusSM: 6,
-          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+          fontFamily:
+            "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
           fontSize: 14,
           fontSizeSM: 12,
           boxShadow: '0 1px 4px rgba(0,0,0,0.06)',

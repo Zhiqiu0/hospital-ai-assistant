@@ -1,3 +1,20 @@
+/**
+ * 登录页面（pages/LoginPage.tsx）
+ *
+ * 系统统一登录入口，支持医生和管理员登录：
+ *   - 调用 POST /auth/login，成功后将 access_token 存入 authStore
+ *   - 根据 user.role 路由分发：
+ *     admin → /admin/overview  doctor → /workbench  radiologist → /pacs
+ *   - 登录接口有速率限制（5次/分钟/账号），超限返回 429
+ *
+ * 系统类型选择（systemType）：
+ *   authStore.systemType 控制顶栏显示的系统名称（医院可配置）。
+ *   登录时一并设置，无需单独接口。
+ *
+ * 安全：
+ *   密码字段不记录到 sessionStorage；
+ *   token 存储在 authStore（zustand persist → localStorage）。
+ */
 import { useState } from 'react'
 import { Form, Input, Button, message } from 'antd'
 import { UserOutlined, LockOutlined, MedicineBoxOutlined } from '@ant-design/icons'
@@ -9,7 +26,7 @@ import api from '@/services/api'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setAuth, setSystemType } = useAuthStore()
-  const resetWorkbench = useWorkbenchStore((s) => s.reset)
+  const resetWorkbench = useWorkbenchStore(s => s.reset)
   const [selectedSystem, setSelectedSystem] = useState<'outpatient' | 'inpatient'>('outpatient')
 
   const resolveLoginErrorMessage = async (username: string, error: any) => {
@@ -47,40 +64,60 @@ export default function LoginPage() {
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* Left panel — branding */}
-      <div style={{
-        flex: 1,
-        background: isInpatient
-          ? 'linear-gradient(145deg, #064e3b 0%, #065f46 50%, #047857 100%)'
-          : 'linear-gradient(145deg, #1e40af 0%, #2563eb 50%, #3b82f6 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: '60px 48px',
-        position: 'relative',
-        overflow: 'hidden',
-        transition: 'background 0.4s ease',
-      }}>
-        <div style={{
-          position: 'absolute', top: -80, right: -80,
-          width: 320, height: 320, borderRadius: '50%',
-          background: 'rgba(255,255,255,0.06)',
-        }} />
-        <div style={{
-          position: 'absolute', bottom: -60, left: -60,
-          width: 240, height: 240, borderRadius: '50%',
-          background: 'rgba(255,255,255,0.05)',
-        }} />
+      <div
+        style={{
+          flex: 1,
+          background: isInpatient
+            ? 'linear-gradient(145deg, #064e3b 0%, #065f46 50%, #047857 100%)'
+            : 'linear-gradient(145deg, #1e40af 0%, #2563eb 50%, #3b82f6 100%)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: '60px 48px',
+          position: 'relative',
+          overflow: 'hidden',
+          transition: 'background 0.4s ease',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: -80,
+            right: -80,
+            width: 320,
+            height: 320,
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.06)',
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            bottom: -60,
+            left: -60,
+            width: 240,
+            height: 240,
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.05)',
+          }}
+        />
 
         <div style={{ position: 'relative', textAlign: 'center', color: '#fff' }}>
-          <div style={{
-            width: 72, height: 72, borderRadius: 20,
-            background: 'rgba(255,255,255,0.18)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 24px',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255,255,255,0.25)',
-          }}>
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 20,
+              background: 'rgba(255,255,255,0.18)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 24px',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255,255,255,0.25)',
+            }}
+          >
             <MedicineBoxOutlined style={{ fontSize: 34, color: '#fff' }} />
           </div>
           <h1 style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.5px', marginBottom: 8 }}>
@@ -91,22 +128,31 @@ export default function LoginPage() {
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'left' }}>
-            {(isInpatient ? [
-              { icon: '📋', title: '住院病历生成', desc: '符合浙江省2021版质控标准' },
-              { icon: '🩺', title: '专项评估辅助', desc: 'VTE风险、营养、心理一键评估' },
-              { icon: '🛡️', title: 'AI质控检查', desc: '按百分制评分标准实时检测' },
-            ] : [
-              { icon: '⚡', title: 'AI 病历生成', desc: '一键生成标准化病历草稿' },
-              { icon: '💬', title: '智能追问建议', desc: '自动提示关键问诊问题' },
-              { icon: '🛡️', title: 'AI 质控检查', desc: '实时检测病历规范问题' },
-            ]).map((f) => (
-              <div key={f.title} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 12,
-                background: 'rgba(255,255,255,0.1)',
-                borderRadius: 12, padding: '14px 16px',
-                border: '1px solid rgba(255,255,255,0.15)',
-                backdropFilter: 'blur(4px)',
-              }}>
+            {(isInpatient
+              ? [
+                  { icon: '📋', title: '住院病历生成', desc: '符合浙江省2021版质控标准' },
+                  { icon: '🩺', title: '专项评估辅助', desc: 'VTE风险、营养、心理一键评估' },
+                  { icon: '🛡️', title: 'AI质控检查', desc: '按百分制评分标准实时检测' },
+                ]
+              : [
+                  { icon: '⚡', title: 'AI 病历生成', desc: '一键生成标准化病历草稿' },
+                  { icon: '💬', title: '智能追问建议', desc: '自动提示关键问诊问题' },
+                  { icon: '🛡️', title: 'AI 质控检查', desc: '实时检测病历规范问题' },
+                ]
+            ).map(f => (
+              <div
+                key={f.title}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 12,
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: 12,
+                  padding: '14px 16px',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
                 <span style={{ fontSize: 22, lineHeight: 1 }}>{f.icon}</span>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{f.title}</div>
@@ -119,15 +165,17 @@ export default function LoginPage() {
       </div>
 
       {/* Right panel — login form */}
-      <div style={{
-        width: 440,
-        background: '#fff',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        padding: '60px 48px',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.06)',
-      }}>
+      <div
+        style={{
+          width: 440,
+          background: '#fff',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          padding: '60px 48px',
+          boxShadow: '-4px 0 24px rgba(0,0,0,0.06)',
+        }}
+      >
         <div style={{ marginBottom: 32 }}>
           <h2 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>
             欢迎回来
@@ -144,29 +192,47 @@ export default function LoginPage() {
             {[
               { key: 'outpatient', label: '门诊系统', icon: '🏥', desc: '门诊接诊·病历书写' },
               { key: 'inpatient', label: '住院系统', icon: '🛏️', desc: '住院管理·入院记录' },
-            ].map((s) => (
+            ].map(s => (
               <div
                 key={s.key}
                 onClick={() => setSelectedSystem(s.key as any)}
                 style={{
-                  flex: 1, padding: '14px 12px', borderRadius: 10, cursor: 'pointer',
-                  border: `2px solid ${selectedSystem === s.key
-                    ? (s.key === 'inpatient' ? '#065f46' : '#2563eb')
-                    : '#e2e8f0'}`,
-                  background: selectedSystem === s.key
-                    ? (s.key === 'inpatient' ? '#f0fdf4' : '#eff6ff')
-                    : '#f8fafc',
+                  flex: 1,
+                  padding: '14px 12px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  border: `2px solid ${
+                    selectedSystem === s.key
+                      ? s.key === 'inpatient'
+                        ? '#065f46'
+                        : '#2563eb'
+                      : '#e2e8f0'
+                  }`,
+                  background:
+                    selectedSystem === s.key
+                      ? s.key === 'inpatient'
+                        ? '#f0fdf4'
+                        : '#eff6ff'
+                      : '#f8fafc',
                   transition: 'all 0.2s',
                   textAlign: 'center',
                 }}
               >
                 <div style={{ fontSize: 24, marginBottom: 4 }}>{s.icon}</div>
-                <div style={{
-                  fontSize: 13, fontWeight: 700,
-                  color: selectedSystem === s.key
-                    ? (s.key === 'inpatient' ? '#065f46' : '#2563eb')
-                    : '#374151',
-                }}>{s.label}</div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color:
+                      selectedSystem === s.key
+                        ? s.key === 'inpatient'
+                          ? '#065f46'
+                          : '#2563eb'
+                        : '#374151',
+                  }}
+                >
+                  {s.label}
+                </div>
                 <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{s.desc}</div>
               </div>
             ))}
@@ -202,7 +268,10 @@ export default function LoginPage() {
               htmlType="submit"
               block
               style={{
-                height: 44, borderRadius: 8, fontWeight: 600, fontSize: 15,
+                height: 44,
+                borderRadius: 8,
+                fontWeight: 600,
+                fontSize: 15,
                 background: isInpatient
                   ? 'linear-gradient(135deg, #065f46, #059669)'
                   : 'linear-gradient(135deg, #2563eb, #3b82f6)',

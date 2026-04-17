@@ -1,4 +1,22 @@
-"""语音结构化 Prompt"""
+"""
+语音结构化 Prompt 库（app/services/ai/prompts_voice.py）
+
+包含将语音转写文本结构化为问诊表单的 prompt 模板：
+  VOICE_STRUCTURE_PROMPT_OUTPATIENT : 门诊语音结构化——含中医四诊字段
+                                      （舌象/脉象/望诊/闻诊/证候诊断/治则治法）
+  VOICE_STRUCTURE_PROMPT_INPATIENT  : 住院语音结构化——含专项评估七项
+                                      （疼痛/VTE/营养/心理/康复/用药/宗教）
+
+两个 prompt 均输出三部分内容：
+  1. transcript_summary  : 对话概括（1-2句）
+  2. speaker_dialogue    : 按 doctor/patient/uncertain 区分的逐句对话
+  3. inquiry             : 结构化问诊字段（直接填入 InquiryInput 表单）
+  4. draft_record        : 完整病历草稿文本（直接显示在编辑区）
+
+调用来源：
+  均由 ai_voice.py 路由的 /voice-records/{id}/structure 接口调用，
+  根据 is_inpatient 参数选择对应模板。
+"""
 
 VOICE_STRUCTURE_PROMPT_OUTPATIENT = """你是一名临床门诊病历助手。请根据以下医患对话转写内容，提炼出结构化问诊信息，并生成一份逻辑清晰的门诊病历草稿。
 

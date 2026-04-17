@@ -148,29 +148,69 @@ async def upload_voice_record(
     }
 
 
+@router.get("/voice-records/{voice_record_id}/audio-token")
+async def get_audio_token(
+    voice_record_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """为指定语音记录颁发短期音频令牌（有效期 5 分钟）。
+
+    解决方案说明（Bug B 修复）：
+      HTML <audio> 元素无法设置自定义请求头，音频 URL 必须携带凭证。
+      原做法把完整 JWT 放 query 参数，会被写入服务器访问日志，存在安全风险。
+      改进后：前端先调用此端点获取短期令牌，再将短期令牌放入音频 URL，
+      即使 URL 被日志记录，5 分钟后自动失效且只能访问该特定音频文件。
+
+    Returns:
+        { "audio_token": "<短期JWT>" }
+    """
+    # 验证该语音记录存在且属于当前用户（管理员可访问所有）
+    query = select(VoiceRecord).where(VoiceRecord.id == voice_record_id)
+    if current_user.role not in ("admin", "super_admin"):
+        query = query.where(VoiceRecord.doctor_id == current_user.id)
+    result = await db.execute(query)
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="语音记录不存在")
+
+    from app.core.security import create_audio_token
+    audio_token = create_audio_token(
+        user_id=current_user.id,
+        voice_record_id=voice_record_id,
+    )
+    return {"audio_token": audio_token}
+
+
 @router.get("/voice-records/{voice_record_id}/audio")
 async def get_voice_audio(
     voice_record_id: str,
-    token: str = Query(..., description="JWT token（audio 标签不支持自定义 header，故通过 query 传参）"),
+    token: str = Query(..., description="短期音频令牌（由 /audio-token 端点颁发，有效期 5 分钟）"),
     db: AsyncSession = Depends(get_db),
 ):
-    """播放语音文件（通过 query param 传 token 绕过浏览器 audio 标签的 header 限制）。"""
-    from app.core.security import settings as sec_settings
-    from jose import JWTError, jwt
+    """播放语音文件。
 
-    try:
-        payload = jwt.decode(token, sec_settings.secret_key, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        role = payload.get("role", "doctor")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="无效 token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="无效 token")
+    鉴权方式：
+      接受由 GET /voice-records/{id}/audio-token 颁发的短期音频令牌。
+      短期令牌（aud="audio"）与普通会话令牌（aud 不含 "audio"）严格区分，
+      即使普通会话令牌泄露也无法直接访问音频端点。
 
-    query = select(VoiceRecord).where(VoiceRecord.id == voice_record_id)
-    if role not in ("admin", "super_admin"):
-        query = query.where(VoiceRecord.doctor_id == user_id)
-    result = await db.execute(query)
+    为什么用 query param 而不是 Authorization header：
+      HTML <audio> 元素不支持自定义请求头，必须将凭证放在 URL 中。
+      使用短期令牌（5 分钟过期、仅限特定资源）将暴露窗口降到最低。
+    """
+    from app.core.security import verify_audio_token
+
+    # 验证短期音频令牌，获取用户 ID 和资源 ID
+    user_id, token_record_id = verify_audio_token(token)
+
+    # 令牌中的资源 ID 必须与 URL 路径参数一致，防止令牌被用于访问其他文件
+    if token_record_id != voice_record_id:
+        raise HTTPException(status_code=403, detail="令牌与请求资源不匹配")
+
+    result = await db.execute(
+        select(VoiceRecord).where(VoiceRecord.id == voice_record_id)
+    )
     record = result.scalar_one_or_none()
     if not record or not record.audio_file_path:
         raise HTTPException(status_code=404, detail="音频文件不存在")

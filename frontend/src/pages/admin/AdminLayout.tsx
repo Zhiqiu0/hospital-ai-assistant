@@ -1,9 +1,35 @@
+/**
+ * 管理后台布局（pages/admin/AdminLayout.tsx）
+ *
+ * 管理员专用后台的外层 Shell，包含左侧导航菜单和内容区路由：
+ *
+ * 菜单项（对应 /admin/* 子路由）：
+ *   概览、用户管理、科室管理、病历管理、质控规则、
+ *   AI提示词、模型配置、语音记录、Token用量、操作日志、统计报表
+ *
+ * 权限控制：
+ *   App.tsx 中 PrivateRoute 已拦截非 admin 角色，
+ *   此组件不需要重复校验角色。
+ *
+ * 登出：
+ *   调用 POST /auth/logout（加入 JWT 黑名单）+ 清除 authStore。
+ */
 import { Layout, Menu, Button, Space, Avatar } from 'antd'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import {
-  UserOutlined, ApartmentOutlined, SafetyOutlined,
-  RobotOutlined, BarChartOutlined, HomeOutlined, LogoutOutlined,
-  MedicineBoxOutlined, FileTextOutlined, ThunderboltOutlined, TeamOutlined, AuditOutlined, AudioOutlined,
+  UserOutlined,
+  ApartmentOutlined,
+  SafetyOutlined,
+  RobotOutlined,
+  BarChartOutlined,
+  HomeOutlined,
+  LogoutOutlined,
+  MedicineBoxOutlined,
+  FileTextOutlined,
+  ThunderboltOutlined,
+  TeamOutlined,
+  AuditOutlined,
+  AudioOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
@@ -34,10 +60,12 @@ export default function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, clearAuth } = useAuthStore()
-  const resetWorkbench = useWorkbenchStore((s) => s.reset)
+  const resetWorkbench = useWorkbenchStore(s => s.reset)
 
   const handleLogout = async () => {
-    try { await api.post('/auth/logout') } catch (_) {}
+    try {
+      await api.post('/auth/logout')
+    } catch (_) {}
     resetWorkbench()
     clearAuth()
     navigate('/login')
@@ -58,9 +86,12 @@ export default function AdminLayout() {
     { key: '/admin/voice-records', icon: <AudioOutlined />, label: '语音记录' },
   ]
 
-  const selectedKey = menuItems.slice().reverse().find(
-    (item) => location.pathname === item.key || location.pathname.startsWith(item.key + '/')
-  )?.key ?? '/admin'
+  const selectedKey =
+    menuItems
+      .slice()
+      .reverse()
+      .find(item => location.pathname === item.key || location.pathname.startsWith(item.key + '/'))
+      ?.key ?? '/admin'
 
   return (
     <Layout style={{ height: '100vh', background: 'var(--bg)' }}>
@@ -78,29 +109,51 @@ export default function AdminLayout() {
         }}
       >
         {/* Top accent stripe */}
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0, height: 3,
-          background: 'linear-gradient(90deg, #1d4ed8, #3b82f6, #60a5fa)',
-        }} />
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 3,
+            background: 'linear-gradient(90deg, #1d4ed8, #3b82f6, #60a5fa)',
+          }}
+        />
 
         {/* Logo */}
-        <div style={{
-          padding: '20px 20px 16px',
-          borderBottom: '1px solid var(--border-subtle)',
-          marginTop: 3,
-        }}>
+        <div
+          style={{
+            padding: '20px 20px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+            marginTop: 3,
+          }}
+        >
           <Space size={10}>
-            <div style={{
-              width: 34, height: 34, borderRadius: 10,
-              background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-              boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
-            }}>
+            <div
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
+              }}
+            >
               <MedicineBoxOutlined style={{ color: '#fff', fontSize: 17 }} />
             </div>
             <div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text-1)', lineHeight: 1.2, letterSpacing: '-0.3px' }}>
+              <div
+                style={{
+                  fontWeight: 800,
+                  fontSize: 15,
+                  color: 'var(--text-1)',
+                  lineHeight: 1.2,
+                  letterSpacing: '-0.3px',
+                }}
+              >
                 MediScribe
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>管理控制台</div>
@@ -120,33 +173,47 @@ export default function AdminLayout() {
         </div>
 
         {/* User info at bottom */}
-        <div style={{
-          padding: '12px 14px',
-          borderTop: '1px solid var(--border-subtle)',
-          background: 'var(--surface-2)',
-        }}>
+        <div
+          style={{
+            padding: '12px 14px',
+            borderTop: '1px solid var(--border-subtle)',
+            background: 'var(--surface-2)',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
             <Avatar
               size={34}
               style={{
                 background: 'linear-gradient(135deg, #1d4ed8, #60a5fa)',
-                fontSize: 13, flexShrink: 0,
+                fontSize: 13,
+                flexShrink: 0,
                 boxShadow: '0 1px 4px rgba(37,99,235,0.2)',
               }}
             >
               {user?.real_name?.[0]}
             </Avatar>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 13, fontWeight: 600, color: 'var(--text-1)',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-1)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {user?.real_name}
               </div>
-              <div style={{
-                fontSize: 11, color: 'var(--text-4)',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-4)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {ROLE_MAP[user?.role || ''] || user?.role}
               </div>
             </div>
@@ -158,8 +225,11 @@ export default function AdminLayout() {
             block
             onClick={handleLogout}
             style={{
-              color: 'var(--text-3)', textAlign: 'left', fontSize: 12,
-              borderRadius: 8, height: 30,
+              color: 'var(--text-3)',
+              textAlign: 'left',
+              fontSize: 12,
+              borderRadius: 8,
+              height: 30,
             }}
           >
             退出登录

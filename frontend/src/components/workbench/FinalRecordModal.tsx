@@ -1,3 +1,19 @@
+/**
+ * 签发病历弹窗（components/workbench/FinalRecordModal.tsx）
+ *
+ * 医生完成病历后点击「签发」时弹出的确认对话框，执行最终提交流程：
+ *   1. 展示当前病历内容供最后核查
+ *   2. 检查 blockingIssues > 0 时显示红色警告（有必须修复项）
+ *   3. 医生确认后调用 POST /medical-records/{id}/submit
+ *   4. 提交成功后 setFinal(true) 锁定工作台，阻止进一步编辑
+ *
+ * 签发选项：
+ *   - record_type: 门诊/急诊/住院（Radio 选择）
+ *   - with_qc_override: 管理员可强制签发（Checkbox，有 blockingIssues 时才出现）
+ *
+ * 防止误操作：
+ *   存在必须修复项且未勾选 override 时，提交按钮 disabled。
+ */
 import { useState } from 'react'
 import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio, message } from 'antd'
 import { CheckOutlined } from '@ant-design/icons'

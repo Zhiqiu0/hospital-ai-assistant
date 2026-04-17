@@ -1,8 +1,29 @@
+/**
+ * 检验报告标签页（components/workbench/LabReportTab.tsx）
+ *
+ * 展示当前接诊关联的所有检验报告，支持上传与 AI 解读：
+ *   - 调用 GET /encounters/{id}/lab-reports 加载已有报告列表
+ *   - 上传入口：集成 LabReportUploadButton 组件（支持图片/PDF）
+ *   - AI 解读：点击「AI 解读」调用 POST /ai/interpret-lab，
+ *     流式返回解读文本并展示在报告下方
+ *
+ * 报告状态：
+ *   pending → 橙色「待解读」  interpreted → 绿色「已解读」
+ *
+ * 删除报告：
+ *   调用 DELETE /lab-reports/{id}，删除后刷新列表。
+ *   已签发病历（isFinal=true）时隐藏操作按钮。
+ */
 import { useEffect, useState } from 'react'
 import { Button, Empty, Spin, message, Typography, Tag, Upload, Modal } from 'antd'
 import {
-  FileTextOutlined, DeleteOutlined, ReloadOutlined,
-  InboxOutlined, CheckCircleOutlined, PlusOutlined, WarningOutlined,
+  FileTextOutlined,
+  DeleteOutlined,
+  ReloadOutlined,
+  InboxOutlined,
+  CheckCircleOutlined,
+  PlusOutlined,
+  WarningOutlined,
 } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
@@ -58,7 +79,9 @@ export default function LabReportTab() {
     if (!currentEncounterId) return
     setLoading(true)
     try {
-      const data = await api.get(`/lab-reports/?encounter_id=${currentEncounterId}`) as LabReportItem[]
+      const data = (await api.get(
+        `/lab-reports/?encounter_id=${currentEncounterId}`
+      )) as LabReportItem[]
       setReports(data)
     } catch {
       // silent
@@ -69,7 +92,7 @@ export default function LabReportTab() {
 
   useEffect(() => {
     fetchReports()
-    setInsertedIds(new Set())  // 切换接诊时重置已插入标记
+    setInsertedIds(new Set()) // 切换接诊时重置已插入标记
   }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {
@@ -83,9 +106,9 @@ export default function LabReportTab() {
     formData.append('file', file)
     if (currentEncounterId) formData.append('encounter_id', currentEncounterId)
     try {
-      const data = await api.post('/lab-reports/upload', formData, {
+      const data = (await api.post('/lab-reports/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-      }) as LabReportItem
+      })) as LabReportItem
       setReports(prev => [data, ...prev])
       message.success({ content: `识别成功：${extractReportType(data.ocr_text)}`, duration: 2 })
     } catch {
@@ -163,7 +186,11 @@ export default function LabReportTab() {
     try {
       await api.delete(`/lab-reports/${id}`)
       setReports(prev => prev.filter(r => r.id !== id))
-      setInsertedIds(prev => { const s = new Set(prev); s.delete(id); return s })
+      setInsertedIds(prev => {
+        const s = new Set(prev)
+        s.delete(id)
+        return s
+      })
       message.success({ content: '已删除', duration: 1.5 })
     } catch {
       message.error('删除失败')
@@ -171,25 +198,40 @@ export default function LabReportTab() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '8px 12px', gap: 10 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        padding: '8px 12px',
+        gap: 10,
+      }}
+    >
       {/* Upload area */}
       <Dragger
         accept=".jpg,.jpeg,.png,.webp,.pdf"
         multiple
         showUploadList={false}
-        beforeUpload={(file) => { handleUpload(file); return false }}
+        beforeUpload={file => {
+          handleUpload(file)
+          return false
+        }}
         disabled={uploadingCount > 0}
         style={{ borderRadius: 8, padding: 0 }}
       >
         {uploadingCount > 0 ? (
           <div style={{ padding: '12px 0', textAlign: 'center' }}>
             <Spin size="small" />
-            <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 6 }}>AI 识别中{uploadingCount > 1 ? `（${uploadingCount} 份）` : ''}...</div>
+            <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 6 }}>
+              AI 识别中{uploadingCount > 1 ? `（${uploadingCount} 份）` : ''}...
+            </div>
           </div>
         ) : (
           <div style={{ padding: '10px 0', textAlign: 'center' }}>
             <InboxOutlined style={{ fontSize: 22, color: '#7c3aed' }} />
-            <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>点击或拖拽上传检验报告</div>
+            <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
+              点击或拖拽上传检验报告
+            </div>
             <div style={{ fontSize: 11, color: '#94a3b8' }}>支持 JPG / PNG / PDF</div>
           </div>
         )}
@@ -207,15 +249,21 @@ export default function LabReportTab() {
           style={{ margin: '16px 0' }}
         />
       ) : (
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div
+          style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
           {/* Insert all button */}
           <Button
             size="small"
             icon={<PlusOutlined />}
             onClick={handleInsertAll}
             style={{
-              borderRadius: 6, fontSize: 12, height: 28,
-              color: '#7c3aed', borderColor: '#ddd6fe', background: '#f5f3ff',
+              borderRadius: 6,
+              fontSize: 12,
+              height: 28,
+              color: '#7c3aed',
+              borderColor: '#ddd6fe',
+              background: '#f5f3ff',
             }}
             block
           >
@@ -231,52 +279,115 @@ export default function LabReportTab() {
             const hasAnomaly = !!anomalyMatch
             const anomalyItems = anomalyMatch
               ? anomalyMatch[1]
-                  .split(/\n?\d+\.\s+/).filter(Boolean)
+                  .split(/\n?\d+\.\s+/)
+                  .filter(Boolean)
                   .map(s => s.replace(/\*\*/g, '').split(/[：:]/)[0].trim())
-                  .filter(Boolean).slice(0, 2)
+                  .filter(Boolean)
+                  .slice(0, 2)
               : []
             const expanded = expandedId === r.id
             const reportPatientName = extractPatientName(r.ocr_text)
-            const nameMismatch = !!reportPatientName && !!currentPatient?.name && reportPatientName !== currentPatient.name
+            const nameMismatch =
+              !!reportPatientName &&
+              !!currentPatient?.name &&
+              reportPatientName !== currentPatient.name
 
             return (
-              <div key={r.id} style={{
-                border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : '#e2e8f0'}`,
-                borderRadius: 8,
-                background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : '#fff',
-                overflow: 'hidden',
-              }}>
+              <div
+                key={r.id}
+                style={{
+                  border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : '#e2e8f0'}`,
+                  borderRadius: 8,
+                  background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : '#fff',
+                  overflow: 'hidden',
+                }}
+              >
                 {/* Card header */}
                 <div
-                  style={{ padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                  style={{
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
                   onClick={() => setExpandedId(expanded ? null : r.id)}
                 >
-                  <FileTextOutlined style={{ color: nameMismatch ? '#ef4444' : '#7c3aed', fontSize: 13, flexShrink: 0 }} />
+                  <FileTextOutlined
+                    style={{
+                      color: nameMismatch ? '#ef4444' : '#7c3aed',
+                      fontSize: 13,
+                      flexShrink: 0,
+                    }}
+                  />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: '#1e293b',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {reportType}
                     </div>
-                    <div style={{ fontSize: 10, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: '#94a3b8',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {r.original_filename}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end', flexShrink: 0 }}>
-                    {inserted && <Tag color="success" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>已插入</Tag>}
-                    {nameMismatch && <Tag color="error" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}><WarningOutlined /> 患者不符</Tag>}
-                    {hasAnomaly && <Tag color="warning" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}><WarningOutlined /> 有异常</Tag>}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                      alignItems: 'flex-end',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {inserted && (
+                      <Tag color="success" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
+                        已插入
+                      </Tag>
+                    )}
+                    {nameMismatch && (
+                      <Tag color="error" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
+                        <WarningOutlined /> 患者不符
+                      </Tag>
+                    )}
+                    {hasAnomaly && (
+                      <Tag color="warning" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
+                        <WarningOutlined /> 有异常
+                      </Tag>
+                    )}
                   </div>
                 </div>
 
                 {/* Anomaly preview strip */}
                 {hasAnomaly && anomalyItems.length > 0 && (
-                  <div style={{
-                    padding: '4px 10px',
-                    background: '#fffbeb',
-                    borderTop: '1px solid #fef3c7',
-                    display: 'flex', gap: 6, flexWrap: 'wrap',
-                  }}>
+                  <div
+                    style={{
+                      padding: '4px 10px',
+                      background: '#fffbeb',
+                      borderTop: '1px solid #fef3c7',
+                      display: 'flex',
+                      gap: 6,
+                      flexWrap: 'wrap',
+                    }}
+                  >
                     {anomalyItems.map((item, i) => (
-                      <span key={i} style={{ fontSize: 10, color: '#92400e' }}>▲ {item}</span>
+                      <span key={i} style={{ fontSize: 10, color: '#92400e' }}>
+                        ▲ {item}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -284,30 +395,58 @@ export default function LabReportTab() {
                 {/* Expanded content */}
                 {expanded && (
                   <div style={{ borderTop: '1px solid #f1f5f9' }}>
-                    <div style={{
-                      padding: '8px 10px',
-                      fontSize: 11, lineHeight: 1.6,
-                      whiteSpace: 'pre-wrap', color: '#334155',
-                      maxHeight: 200, overflowY: 'auto',
-                      background: '#fafafa',
-                    }}>
+                    <div
+                      style={{
+                        padding: '8px 10px',
+                        fontSize: 11,
+                        lineHeight: 1.6,
+                        whiteSpace: 'pre-wrap',
+                        color: '#334155',
+                        maxHeight: 200,
+                        overflowY: 'auto',
+                        background: '#fafafa',
+                      }}
+                    >
                       {r.ocr_text}
                     </div>
                   </div>
                 )}
 
                 {/* Actions */}
-                <div style={{ padding: '6px 10px', display: 'flex', gap: 6, justifyContent: 'flex-end', borderTop: '1px solid #f1f5f9' }}>
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    display: 'flex',
+                    gap: 6,
+                    justifyContent: 'flex-end',
+                    borderTop: '1px solid #f1f5f9',
+                  }}
+                >
                   <Text style={{ fontSize: 10, color: '#94a3b8', flex: 1, alignSelf: 'center' }}>
-                    {r.created_at ? new Date(r.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                    {r.created_at
+                      ? new Date(r.created_at).toLocaleString('zh-CN', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : ''}
                   </Text>
-                  <Button size="small" icon={<DeleteOutlined />} danger onClick={() => handleDelete(r.id)} style={{ fontSize: 11, borderRadius: 5, height: 24 }} />
+                  <Button
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    danger
+                    onClick={() => handleDelete(r.id)}
+                    style={{ fontSize: 11, borderRadius: 5, height: 24 }}
+                  />
                   <Button
                     size="small"
                     icon={inserted ? <CheckCircleOutlined /> : <PlusOutlined />}
                     onClick={() => handleInsert(r)}
                     style={{
-                      fontSize: 11, borderRadius: 5, height: 24,
+                      fontSize: 11,
+                      borderRadius: 5,
+                      height: 24,
                       color: inserted ? '#16a34a' : '#7c3aed',
                       borderColor: inserted ? '#86efac' : '#ddd6fe',
                       background: inserted ? '#f0fdf4' : '#f5f3ff',
@@ -324,7 +463,12 @@ export default function LabReportTab() {
 
       {/* Refresh */}
       <div style={{ textAlign: 'right' }}>
-        <Button size="small" icon={<ReloadOutlined />} onClick={fetchReports} style={{ fontSize: 11, color: '#94a3b8' }}>
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          onClick={fetchReports}
+          style={{ fontSize: 11, color: '#94a3b8' }}
+        >
           刷新
         </Button>
       </div>

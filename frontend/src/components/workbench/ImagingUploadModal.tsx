@@ -1,3 +1,20 @@
+/**
+ * 影像上传弹窗（components/workbench/ImagingUploadModal.tsx）
+ *
+ * 用于上传患者影像资料（X光/CT/MRI）并关联到当前接诊：
+ *   - 支持文件选择（jpg/png/dcm）和摄像头拍照（useRef<HTMLVideoElement>）
+ *   - 上传前选择影像类型（exam_type）和检查部位（body_part）
+ *   - 调用 POST /pacs/upload（multipart/form-data）
+ *   - 上传成功后通知 PACS 工作台刷新影像列表
+ *
+ * DICOM 文件：
+ *   .dcm 文件由后端 pydicom 解析，转换为可在浏览器显示的 PNG 缩略图。
+ *   前端不做 DICOM 解析，仅透传二进制文件。
+ *
+ * 摄像头拍照：
+ *   navigator.mediaDevices.getUserMedia() 获取视频流，
+ *   canvas.toBlob() 截帧后作为 File 对象上传。
+ */
 import { useState, useRef } from 'react'
 import { Modal, Button, Select, Input, message, Spin, Typography } from 'antd'
 import { CameraOutlined, UploadOutlined, CheckOutlined } from '@ant-design/icons'
@@ -97,11 +114,17 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
     <Modal
       title={
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 8,
-            background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <CameraOutlined style={{ color: '#fff', fontSize: 13 }} />
           </div>
           <span>影像AI分析</span>
@@ -145,15 +168,15 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
             ) : (
               <div style={{ fontSize: 36, marginBottom: 8 }}>🩻</div>
             )}
-            <div style={{ fontSize: 12, color: '#7c3aed' }}>
-              {selectedFile.name} · 点击重新选择
-            </div>
+            <div style={{ fontSize: 12, color: '#7c3aed' }}>{selectedFile.name} · 点击重新选择</div>
           </div>
         ) : (
           <div>
             <UploadOutlined style={{ fontSize: 32, color: '#9ca3af', marginBottom: 8 }} />
             <div style={{ fontSize: 14, color: '#6b7280' }}>点击上传影像图片</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>支持 JPG / PNG / WebP / DCM</div>
+            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+              支持 JPG / PNG / WebP / DCM
+            </div>
           </div>
         )}
       </div>
@@ -188,15 +211,19 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
       {analyzing && (
         <div style={{ textAlign: 'center', padding: '32px 0', color: '#7c3aed' }}>
           <Spin />
-          <div style={{ marginTop: 8, fontSize: 13, color: '#9ca3af' }}>正在分析影像，请稍候...</div>
+          <div style={{ marginTop: 8, fontSize: 13, color: '#9ca3af' }}>
+            正在分析影像，请稍候...
+          </div>
         </div>
       )}
       {analysisResult && !analyzing && (
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>AI 分析结果</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+            AI 分析结果
+          </div>
           <Input.TextArea
             value={analysisResult}
-            onChange={(e) => setAnalysisResult(e.target.value)}
+            onChange={e => setAnalysisResult(e.target.value)}
             rows={8}
             style={{ borderRadius: 8, fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
           />

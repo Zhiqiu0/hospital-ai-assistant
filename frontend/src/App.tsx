@@ -1,3 +1,27 @@
+/**
+ * 应用路由根组件（App.tsx）
+ *
+ * 路由结构：
+ *   /login           → LoginPage（无需认证）
+ *   /workbench       → WorkbenchPage（门诊工作台，需登录）
+ *   /emergency       → EmergencyWorkbenchPage（急诊工作台，需登录）
+ *   /inpatient       → InpatientWorkbenchPage（住院工作台，需登录）
+ *   /pacs            → PacsWorkbenchPage（影像阅片工作台，需登录）
+ *   /admin/*         → AdminLayout（管理后台，需 admin 角色）
+ *   /                → RootRedirect（根据角色/系统类型自动跳转）
+ *
+ * 路由守卫：
+ *   PrivateRoute: 检查 token 是否存在，未登录重定向到 /login
+ *   AdminRoute:   同时检查 token + 角色，非管理员重定向到 /workbench
+ *
+ * 根路由重定向逻辑（RootRedirect）：
+ *   未登录 → /login
+ *   admin/super_admin → /admin
+ *   radiologist → /pacs
+ *   systemType='inpatient' → /inpatient
+ *   其他 → /workbench（门诊，默认）
+ */
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
