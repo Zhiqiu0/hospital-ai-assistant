@@ -1,5 +1,15 @@
 /**
- * Shared record export utilities: print and Word export.
+ * 病历导出工具（utils/recordExport.ts）
+ *
+ * 提供两种病历导出方式：
+ *   printRecord    : 打开新窗口并自动触发浏览器打印（生成 HTML，含样式）
+ *   exportWordDoc  : 生成 Word 兼容的 HTML 文档并触发下载（.doc 格式）
+ *
+ * 两种格式均包含：病历类型标题、患者信息、签发时间、病历正文。
+ * 章节标题（如【主诉】）在 Word 导出时自动加粗。
+ *
+ * 注意：exportWordDoc 生成的是 Office XML HTML（非真正 .docx），
+ * 但可被 Microsoft Word / WPS 正确识别并打开。
  */
 
 export const RECORD_TYPE_LABEL: Record<string, string> = {

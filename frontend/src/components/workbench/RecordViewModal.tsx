@@ -1,3 +1,19 @@
+/**
+ * 病历查看弹窗（components/workbench/RecordViewModal.tsx）
+ *
+ * 只读模式展示一份完整病历内容，被 HistoryDrawer 和管理页调用：
+ *   - 展示患者基本信息、就诊类型、病历类型、签发时间
+ *   - 完整病历文本内容（pre 标签保留格式）
+ *   - 「打印」按钮调用 window.print()，打印区域通过 CSS 媒体查询控制
+ *
+ * Props:
+ *   record: 完整病历对象（含 content 字段）
+ *   open: 是否显示
+ *   onClose: 关闭回调
+ *
+ * 不提供编辑功能：已签发病历不可修改，
+ * 草稿病历应通过续接诊恢复工作台进行编辑。
+ */
 import { Modal, Space, Tag, Button, Typography } from 'antd'
 import { FileTextOutlined, CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 

@@ -1,11 +1,32 @@
+/**
+ * 体征快速录入组件（components/workbench/VitalSignsInput.tsx）
+ *
+ * 提供体征数据的快速文本录入与结构化解析：
+ *   - 输入格式示例："T36.5 P80 R18 BP120/80 W65"
+ *   - 点击「⚡解析」按钮将自由文本解析为 ParsedVitals 结构体
+ *   - 解析结果同步到 workbenchStore.inquiry 中的体征字段
+ *
+ * ParsedVitals 字段：
+ *   temperature（体温）/ pulse（脉搏）/ respiration（呼吸）
+ *   blood_pressure / weight / height / spo2（血氧饱和度）
+ *
+ * 解析逻辑（纯前端，无 API 调用）：
+ *   正则匹配各体征前缀（T/P/R/BP/W/H/SpO2），
+ *   匹配失败的字段保留为空字符串（不覆盖已有值）。
+ */
 import { useState, useEffect } from 'react'
 import { Button, Input, Tooltip } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 
 export interface ParsedVitals {
-  t?: string; p?: string; r?: string
-  bpS?: string; bpD?: string; spo2?: string
-  h?: string; w?: string
+  t?: string
+  p?: string
+  r?: string
+  bpS?: string
+  bpD?: string
+  spo2?: string
+  h?: string
+  w?: string
 }
 
 interface Props {
@@ -57,24 +78,32 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
   }
 
   return (
-    <div style={{
-      background: '#f0f9ff',
-      border: '1px solid #bae6fd',
-      borderRadius: 8,
-      padding: '10px 12px',
-      marginBottom: 10,
-    }}>
+    <div
+      style={{
+        background: '#f0f9ff',
+        border: '1px solid #bae6fd',
+        borderRadius: 8,
+        padding: '10px 12px',
+        marginBottom: 10,
+      }}
+    >
       <div style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', marginBottom: 8 }}>
         生命体征快速录入
       </div>
 
       {/* Row 1: T P R BP SpO2 */}
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+      <div
+        style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}
+      >
         <Tooltip title="体温 ℃">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569', whiteSpace: 'nowrap' }}>T</span>
-            <Input value={t} onChange={e => setT(e.target.value)} placeholder="36.5"
-              style={{ ...inputStyle, width: 52 }} />
+            <Input
+              value={t}
+              onChange={e => setT(e.target.value)}
+              placeholder="36.5"
+              style={{ ...inputStyle, width: 52 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>℃</span>
           </div>
         </Tooltip>
@@ -82,8 +111,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="脉搏 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>P</span>
-            <Input value={p} onChange={e => setP(e.target.value)} placeholder="72"
-              style={{ ...inputStyle, width: 46 }} />
+            <Input
+              value={p}
+              onChange={e => setP(e.target.value)}
+              placeholder="72"
+              style={{ ...inputStyle, width: 46 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
           </div>
         </Tooltip>
@@ -91,8 +124,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="呼吸 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>R</span>
-            <Input value={r} onChange={e => setR(e.target.value)} placeholder="18"
-              style={{ ...inputStyle, width: 40 }} />
+            <Input
+              value={r}
+              onChange={e => setR(e.target.value)}
+              placeholder="18"
+              style={{ ...inputStyle, width: 40 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
           </div>
         </Tooltip>
@@ -100,11 +137,19 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="血压 mmHg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>BP</span>
-            <Input value={bpS} onChange={e => setBpS(e.target.value)} placeholder="120"
-              style={{ ...inputStyle, width: 44 }} />
+            <Input
+              value={bpS}
+              onChange={e => setBpS(e.target.value)}
+              placeholder="120"
+              style={{ ...inputStyle, width: 44 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>/</span>
-            <Input value={bpD} onChange={e => setBpD(e.target.value)} placeholder="80"
-              style={{ ...inputStyle, width: 40 }} />
+            <Input
+              value={bpD}
+              onChange={e => setBpD(e.target.value)}
+              placeholder="80"
+              style={{ ...inputStyle, width: 40 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>mmHg</span>
           </div>
         </Tooltip>
@@ -112,8 +157,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="血氧饱和度 %">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>SpO₂</span>
-            <Input value={spo2} onChange={e => setSpo2(e.target.value)} placeholder="98"
-              style={{ ...inputStyle, width: 40 }} />
+            <Input
+              value={spo2}
+              onChange={e => setSpo2(e.target.value)}
+              placeholder="98"
+              style={{ ...inputStyle, width: 40 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>%</span>
           </div>
         </Tooltip>
@@ -124,8 +173,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="身高 cm">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>身高</span>
-            <Input value={h} onChange={e => setH(e.target.value)} placeholder="170"
-              style={{ ...inputStyle, width: 46 }} />
+            <Input
+              value={h}
+              onChange={e => setH(e.target.value)}
+              placeholder="170"
+              style={{ ...inputStyle, width: 46 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>cm</span>
           </div>
         </Tooltip>
@@ -133,8 +186,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="体重 kg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>体重</span>
-            <Input value={w} onChange={e => setW(e.target.value)} placeholder="65"
-              style={{ ...inputStyle, width: 46 }} />
+            <Input
+              value={w}
+              onChange={e => setW(e.target.value)}
+              placeholder="65"
+              style={{ ...inputStyle, width: 46 }}
+            />
             <span style={{ fontSize: 11, color: '#94a3b8' }}>kg</span>
           </div>
         </Tooltip>

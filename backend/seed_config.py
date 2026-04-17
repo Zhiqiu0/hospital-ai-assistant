@@ -318,6 +318,21 @@ QC_RULES: list[dict] = [
         "suggestion": "请填写个人史，包括职业、生活习惯（吸烟/饮酒等），如「否认吸烟、饮酒史」",
         "score_impact": "-0.5分",
     },
+    {
+        "rule_code": "CC021",
+        "name": "月经史缺失（住院·女性）",
+        "description": "女性住院病历须记录月经史，包括末次月经、周期、经量等，是妇科及全科评估的必要内容",
+        "rule_type": "completeness",
+        "scope": "inpatient",
+        "gender_scope": "female",
+        "field_name": "menstrual_history",
+        "keywords": ["月经史", "月经：", "月经:", "末次月经", "LMP", "绝经", "行经", "月经规律", "月经周期"],
+        "indication_keywords": [],
+        "risk_level": "medium",
+        "issue_description": "月经史未填写——女性住院病历必填项（扣0.5分）",
+        "suggestion": "请填写月经史，如「月经规律，周期28天，经期5天，LMP：XXXX-XX-XX」或「已绝经X年」",
+        "score_impact": "-0.5分",
+    },
     # ════════════════════════════════════════════════════════════════════════
     # 三、复诊病历专用规则（scope: revisit）
     # 依据：浙江省住院病历质量检查评分表2021版 复诊病历专项
@@ -725,6 +740,7 @@ async def seed() -> None:
                 description=rule.get("description"),
                 rule_type=rule["rule_type"],
                 scope=rule.get("scope", "all"),
+                gender_scope=rule.get("gender_scope", "all"),
                 field_name=rule.get("field_name"),
                 keywords=rule.get("keywords") or [],
                 indication_keywords=rule.get("indication_keywords") or [],

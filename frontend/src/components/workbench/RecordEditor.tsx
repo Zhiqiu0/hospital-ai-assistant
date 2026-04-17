@@ -1,3 +1,22 @@
+/**
+ * 病历编辑器组件（components/workbench/RecordEditor.tsx）
+ *
+ * 工作台核心区域，提供病历的完整编辑和操作流程：
+ *   - AI 生成：调用 POST /ai/quick-generate，SSE 流式接收并实时更新编辑区
+ *   - AI 续写：调用 POST /ai/quick-continue，补全未完成部分
+ *   - AI 润色：调用 POST /ai/quick-polish，去重/规范化/口语转书面语
+ *   - AI 质控：调用 POST /ai/quick-qc，SSE 流式接收规则+LLM双重质控结果
+ *   - 签发病历：调用 POST /medical-records/quick-save，保存并锁定
+ *   - 打印/导出 Word：调用 utils/recordExport 工具函数
+ *
+ * 状态来源：全部从 useWorkbenchStore 读写（recordContent/isGenerating/isQCing 等）
+ * 签发后 isFinal=true，编辑区变为只读，按钮替换为打印/导出。
+ *
+ * SSE 流处理（EventSource API）：
+ *   - 收到 chunk 事件：追加文本到 recordContent
+ *   - 收到 rule_issues/llm_issues 事件：更新 qcIssues
+ *   - 收到 done/error 事件：关闭流，更新加载状态
+ */
 import { useRef, useState, useEffect } from 'react'
 import { Button, Space, Typography, Input, Select, message, Spin, Tag, Modal } from 'antd'
 import {
@@ -13,7 +32,6 @@ import {
 } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useAuthStore } from '@/store/authStore'
-import api from '@/services/api'
 import { printRecord, exportWordDoc } from '@/utils/recordExport'
 import FinalRecordModal from './FinalRecordModal'
 
@@ -28,12 +46,17 @@ export default function RecordEditor() {
     isGenerating,
     isPolishing,
     isQCing,
+    isQCStale,
     setRecordContent,
     setRecordType,
     setGenerating,
     setPolishing,
     setQCing,
     setQCResult,
+    appendQCIssues,
+    setQCSummary,
+    setQCLlmLoading,
+    startQCRun,
     setInquiry,
     isFinal,
     finalizedAt,
@@ -196,6 +219,26 @@ export default function RecordEditor() {
     _doGenerate()
   }
 
+  /**
+   * 从病历文本中提取所有章节，返回 Map<章节标题, 该章节完整文本（含标题）>。
+   * 用于润色后的章节完整性校验。
+   */
+  const extractSections = (text: string): Map<string, string> => {
+    const map = new Map<string, string>()
+    const pattern = /【[^】]+】/g
+    const matches: Array<{ header: string; index: number }> = []
+    let m: RegExpExecArray | null
+    while ((m = pattern.exec(text)) !== null) {
+      matches.push({ header: m[0], index: m.index })
+    }
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].index
+      const end = i + 1 < matches.length ? matches[i + 1].index : text.length
+      map.set(matches[i].header, text.slice(start, end).trimEnd())
+    }
+    return map
+  }
+
   const handlePolish = async () => {
     if (!recordContent.trim()) {
       message.warning('病历内容为空，无法润色')
@@ -208,6 +251,26 @@ export default function RecordEditor() {
       await streamSSE('/api/v1/ai/quick-polish', { content: original }, text =>
         setRecordContent(useWorkbenchStore.getState().recordContent + text)
       )
+
+      // ── 章节完整性守卫 ──────────────────────────────────────────
+      // LLM 可能无视"禁止删除"指令而遗漏章节，此处程序化补回，不依赖 prompt 约束。
+      const polished = useWorkbenchStore.getState().recordContent
+      const originalSections = extractSections(original)
+      const polishedSections = extractSections(polished)
+
+      const missing: string[] = []
+      let restored = polished
+      for (const [header, sectionText] of originalSections) {
+        if (!polishedSections.has(header)) {
+          missing.push(header)
+          restored = restored.trimEnd() + '\n\n' + sectionText
+        }
+      }
+
+      if (missing.length > 0) {
+        setRecordContent(restored)
+        message.warning(`润色完成，但 AI 误删了 ${missing.join('、')}，已自动还原`)
+      }
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         message.error('润色失败，请重试')
@@ -225,63 +288,84 @@ export default function RecordEditor() {
       return
     }
     setQCing(true)
+    startQCRun()
+
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
     try {
-      const result: any = await api.post('/ai/quick-qc', {
-        content: qcContent,
-        record_type: recordType,
-        chief_complaint: inquiry.chief_complaint || '',
-        history_present_illness: inquiry.history_present_illness || '',
-        past_history: inquiry.past_history || '',
-        allergy_history: inquiry.allergy_history || '',
-        physical_exam: inquiry.physical_exam || '',
-        marital_history: inquiry.marital_history || '',
-        family_history: inquiry.family_history || '',
-        pain_assessment: inquiry.pain_assessment || '',
-        vte_risk: inquiry.vte_risk || '',
-        nutrition_assessment: inquiry.nutrition_assessment || '',
-        psychology_assessment: inquiry.psychology_assessment || '',
-        rehabilitation_assessment: inquiry.rehabilitation_assessment || '',
-        current_medications: inquiry.current_medications || '',
-        religion_belief: inquiry.religion_belief || '',
-        auxiliary_exam: inquiry.auxiliary_exam || '',
-        admission_diagnosis: inquiry.admission_diagnosis || '',
-        tcm_inspection: inquiry.tcm_inspection || '',
-        tcm_auscultation: inquiry.tcm_auscultation || '',
-        tongue_coating: inquiry.tongue_coating || '',
-        pulse_condition: inquiry.pulse_condition || '',
-        tcm_disease_diagnosis: inquiry.tcm_disease_diagnosis || '',
-        tcm_syndrome_diagnosis: inquiry.tcm_syndrome_diagnosis || '',
-        treatment_method: inquiry.treatment_method || '',
-        treatment_plan: inquiry.treatment_plan || '',
-        followup_advice: inquiry.followup_advice || '',
-        is_first_visit: useWorkbenchStore.getState().isFirstVisit,
-        onset_time: inquiry.onset_time || '',
-        encounter_id: currentEncounterId || undefined,
+      const res = await fetch('/api/v1/ai/quick-qc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          content: qcContent,
+          record_type: recordType,
+          patient_gender: currentPatient?.gender || '',
+          is_first_visit: useWorkbenchStore.getState().isFirstVisit,
+          encounter_id: currentEncounterId || undefined,
+        }),
+        signal: ctrl.signal,
       })
-      const gradeScoreResult =
-        result.grade_score != null
-          ? {
-              grade_score: result.grade_score,
-              grade_level: result.grade_level,
-              strengths: result.strengths,
-            }
-          : null
-      setQCResult(result.issues || [], result.summary || '', result.pass ?? false, gradeScoreResult)
-      if (result.grade_level === '甲级') {
-        message.success(`质控通过！预估评分 ${result.grade_score} 分，达到甲级病历标准`)
-      } else if (result.grade_score != null) {
-        message.warning(
-          `预估评分 ${result.grade_score} 分（${result.grade_level}），发现 ${(result.issues || []).length} 个问题，请查看右侧质控提示`
-        )
-      } else if (result.pass) {
-        message.success('质控通过！')
-      } else {
-        message.warning(`发现 ${(result.issues || []).length} 个问题，请查看右侧质控提示`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let finalData: any = null
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue
+          let obj: any
+          try {
+            obj = JSON.parse(line.slice(5).trim())
+          } catch {
+            continue
+          }
+          if (obj.type === 'rule_issues') {
+            const gs =
+              obj.grade_score != null
+                ? { grade_score: obj.grade_score, grade_level: obj.grade_level }
+                : null
+            setQCResult(obj.issues || [], '', obj.pass ?? false, gs)
+            setQCLlmLoading(true)
+          } else if (obj.type === 'llm_issues') {
+            appendQCIssues(obj.issues || [])
+          } else if (obj.type === 'done') {
+            finalData = obj
+            setQCSummary(obj.summary || '')
+            setQCLlmLoading(false)
+          } else if (obj.type === 'error') {
+            throw new Error(obj.message || 'QC_ERROR')
+          }
+        }
       }
-    } catch {
-      message.error('质控失败，请重试')
+
+      if (finalData) {
+        const totalIssues = useWorkbenchStore.getState().qcIssues.length
+        if (finalData.grade_level === '甲级') {
+          message.success(`质控通过！预估评分 ${finalData.grade_score} 分，达到甲级病历标准`)
+        } else if (finalData.grade_score != null) {
+          message.warning(
+            `预估评分 ${finalData.grade_score} 分（${finalData.grade_level}），发现 ${totalIssues} 个问题，请查看右侧质控提示`
+          )
+        } else if (finalData.pass) {
+          message.success('质控通过！')
+        } else {
+          message.warning(`发现 ${totalIssues} 个问题，请查看右侧质控提示`)
+        }
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') message.error('质控失败，请重试')
+      setQCLlmLoading(false)
     } finally {
       setQCing(false)
+      setQCLlmLoading(false)
     }
   }
 
@@ -449,7 +533,7 @@ export default function RecordEditor() {
             size="small"
             loading={isPolishing}
             onClick={handlePolish}
-            disabled={isFinal || !recordContent.trim()}
+            disabled={isFinal || !recordContent.trim() || isBusy}
             style={{ borderRadius: 8, fontSize: 12, height: 30 }}
           >
             润色
@@ -462,17 +546,20 @@ export default function RecordEditor() {
             size="small"
             loading={isQCing}
             onClick={() => handleQC()}
-            disabled={isFinal}
+            disabled={isFinal || isBusy}
             style={{
               borderRadius: 8,
               fontSize: 12,
               height: 30,
+              // 病历改动后变为橙色提示重新质控
               ...(isFinal
                 ? {}
-                : { color: '#dc2626', borderColor: '#fca5a5', background: '#fff5f5' }),
+                : isQCStale
+                  ? { color: '#d97706', borderColor: '#fcd34d', background: '#fffbeb' }
+                  : { color: '#dc2626', borderColor: '#fca5a5', background: '#fff5f5' }),
             }}
           >
-            AI质控
+            {isQCStale ? '重新质控' : 'AI质控'}
           </Button>
 
           {qcIssues.length > 0 && !isFinal && (

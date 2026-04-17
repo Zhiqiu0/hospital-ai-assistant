@@ -1,3 +1,17 @@
+/**
+ * AI 辅助建议面板（components/workbench/AISuggestionPanel.tsx）
+ *
+ * 三栏标签页，汇总来自 DeepSeek 的三类实时 AI 辅助建议：
+ *   1. 「问诊建议」(InquirySuggestionTab)  — 追问方向与鉴别诊断思路
+ *   2. 「检查建议」(ExamSuggestionTab)     — 推荐检查项目及理由
+ *   3. 「诊断建议」(DiagnosisSuggestionTab)— 鉴别诊断列表及置信度
+ *
+ * 未读徽标：
+ *   workbenchStore.suggestions 中每类建议有独立 seen 标记；
+ *   收到新建议时对应标签显示红点，点进去后标记已读。
+ *
+ * 各 Tab 均通过 SSE stream 实时填充，用户无需手动刷新。
+ */
 import { Tabs, Badge } from 'antd'
 import { QuestionCircleOutlined, ExperimentOutlined, SafetyOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'

@@ -1,3 +1,24 @@
+/**
+ * 门诊/急诊工作台页面（pages/WorkbenchPage.tsx）
+ *
+ * 门诊和急诊接诊的核心工作台，通过 mode prop 区分：
+ *   mode="outpatient"（默认）→ 门诊  mode="emergency" → 急诊
+ *
+ * 布局：三栏响应式布局
+ *   左栏：InquiryPanel（问诊表单）+ VoiceInputCard（语音录入）
+ *   中栏：RecordEditor（病历编辑区）+ FinalRecordModal（签发弹窗）
+ *   右栏：Tab 切换 QCIssuePanel / AISuggestionPanel / LabReportTab
+ *
+ * 顶栏功能：
+ *   - 登记新患者（PatientSearch + 接诊登记）
+ *   - 历史病历查看（HistoryDrawer）
+ *   - 续接诊（ResumeDrawer）
+ *   - 登出（useWorkbenchBase.handleLogout）
+ *
+ * 工作台重置：
+ *   每次登记新患者时调用 workbenchStore.reset()，
+ *   清空所有问诊、病历、质控状态，开始新接诊。
+ */
 import { useState, useEffect } from 'react'
 import {
   Layout,

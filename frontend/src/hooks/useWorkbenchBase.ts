@@ -1,3 +1,23 @@
+/**
+ * 工作台基础逻辑 Hook（hooks/useWorkbenchBase.ts）
+ *
+ * 提取三个工作台页面（门诊/急诊/住院）共同的逻辑：
+ *   - 历史病历面板（historyOpen/loadHistory/openHistory）
+ *   - 续接诊面板（resumeOpen/openResume/handleResume）
+ *   - 登出操作（handleLogout）
+ *
+ * 通过 options 参数定制各工作台的差异行为：
+ *   visitTypeFilter:   续接诊列表只显示特定类型（住院页只显示 inpatient 接诊）
+ *   defaultRecordType: 恢复接诊时若无 active_record 用的默认病历类型
+ *   resumeSuccessMsg:  恢复成功提示文本（可接收患者姓名参数）
+ *   resumeErrorMsg:    恢复失败提示文本
+ *
+ * 恢复接诊（handleResume）流程：
+ *   1. 调用 GET /encounters/{id}/workspace 获取完整快照
+ *   2. 若病历已签发（status='submitted'），警告并退出（不允许修改）
+ *   3. 依次恢复：reset → setCurrentEncounter → setInquiry → setRecordContent/Type
+ */
+
 import { useState, useCallback } from 'react'
 import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'

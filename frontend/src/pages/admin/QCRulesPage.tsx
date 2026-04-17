@@ -1,3 +1,16 @@
+/**
+ * 质控规则管理页（pages/admin/QCRulesPage.tsx）
+ *
+ * 管理规则引擎使用的质控规则库，调用 GET/POST/PUT/DELETE /admin/qc-rules：
+ *   - 规则类型：completeness（完整性）/ insurance（医保风险）
+ *   - 字段：rule_name、field_name、condition、risk_level、is_active
+ *   - 启用/禁用：Switch 控制，禁用后规则引擎跳过该条规则
+ *   - 新建/编辑：弹窗表单，condition 字段支持表达式语法
+ *
+ * 规则存库后即时生效：
+ *   规则引擎每次质控时重新从 DB 加载 active 规则，
+ *   无缓存，修改立刻影响下一次质控扫描。
+ */
 import { useEffect, useState } from 'react'
 import {
   Table,

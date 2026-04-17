@@ -1,8 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-PACS 影像管理 API
-- 影像科医生：上传ZIP、选帧、AI分析、审核发布报告
-- 临床医生：查看患者影像报告
+PACS 影像管理路由（/api/v1/pacs/*）
+
+端点列表：
+  POST /upload                    上传 DICOM ZIP/RAR，后台解压并生成缩略图
+  GET  /{study_id}/frames         获取所有切片文件名 + 自动抽帧建议
+  GET  /{study_id}/thumbnail/{f}  获取缩略图（支持自定义窗宽窗位）
+  GET  /{study_id}/dicom/{f}      获取原始 DCM 文件（供 Cornerstone.js 加载）
+  POST /{study_id}/analyze        将选中帧发给千问 VL 进行 AI 分析
+  PUT  /{study_id}/report         保存（草稿）影像报告
+  POST /{study_id}/publish        发布影像报告（正式签发）
+  GET  /patient/{patient_id}/reports  获取患者已发布的影像报告列表
+  POST /analyze-image             临床医生上传单张 JPG/PNG/DCM 直接分析
+
+权限分层：
+  普通医生（doctor）: 只能访问自己有接诊的患者的已发布报告 + 单图分析
+  影像科医生（radiologist）/ 管理员: 全量影像列表、AI 分析、发布报告
+
+技术说明：
+  - DICOM 文件读取使用 pydicom，像素渲染使用 Pillow + numpy（含窗宽窗位处理）
+  - AI 分析使用阿里云千问 VL（Qwen-VL-Plus 多模态视觉模型）
+  - 抽帧策略：非均匀智能抽帧（头尾少量、中间密集），适合 CT 脊柱序列等
 """
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import base64

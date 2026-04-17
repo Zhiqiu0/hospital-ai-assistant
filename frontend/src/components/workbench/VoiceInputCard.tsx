@@ -1,3 +1,25 @@
+/**
+ * 语音输入卡片（components/workbench/VoiceInputCard.tsx）
+ *
+ * 提供完整的语音录制→转写→结构化流程：
+ *   1. 录音：调用浏览器 MediaRecorder API，实时推送 timeslice 片段
+ *   2. 上传：录音完成后调用 POST /ai/voice-records/upload（含 ASR 转写）
+ *   3. 结构化：调用 POST /ai/voice-structure，LLM 解析转写文本为问诊字段 + 病历草稿
+ *   4a. 问诊模式（未锁定）：通过 onApplyInquiry 回调将字段填入左侧问诊表单
+ *   4b. 追记模式（已锁定）：通过 onApplyToRecord 回调将字段写入病历对应章节
+ *       结构化完成后先展示预览，医生确认后再点「插入病历」写入
+ *
+ * 音频播放安全机制：
+ *   先调用 GET /ai/voice-records/{id}/audio-token 获取 5 分钟短期令牌，
+ *   避免完整 JWT 出现在 audio src URL / 服务器日志中。
+ *
+ * Props：
+ *   visitType:        决定使用门诊还是住院语音结构化 prompt
+ *   getFormValues:    获取当前问诊表单现有值（传给结构化 API 作为上下文）
+ *   onApplyInquiry:   问诊模式回调，接收结构化字段 patch，填入左侧表单
+ *   onApplyToRecord:  追记模式回调（可选），接收结构化字段 patch，写入病历章节
+ *                     传入此 prop 则进入追记模式，不传则为问诊模式
+ */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Input, List, Modal, Space, Tag, Typography, message } from 'antd'
 import {
@@ -7,9 +29,10 @@ import {
   DeleteOutlined,
   FileTextOutlined,
   SaveOutlined,
+  MedicineBoxOutlined,
 } from '@ant-design/icons'
 import { InquiryData, useWorkbenchStore } from '@/store/workbenchStore'
-import { useAuthStore } from '@/store/authStore'
+import { FIELD_NAME_LABEL, FIELD_TO_SECTION } from './qcFieldMaps'
 import api from '@/services/api'
 
 const { TextArea } = Input
@@ -17,8 +40,12 @@ const { Text } = Typography
 
 type VoiceInputCardProps = {
   visitType: 'outpatient' | 'inpatient'
+  /** 获取当前问诊表单现有值，作为 AI 结构化的上下文 */
   getFormValues: () => Record<string, any>
+  /** 问诊模式：结构化完成后填入左侧表单 */
   onApplyInquiry: (patch: Partial<InquiryData>) => void
+  /** 追记模式（可选）：传入此 prop 后结构化结果进入预览，确认后写入病历章节 */
+  onApplyToRecord?: (patch: Partial<InquiryData>) => void
 }
 
 type DialogueItem = {
@@ -36,9 +63,15 @@ export default function VoiceInputCard({
   visitType,
   getFormValues,
   onApplyInquiry,
+  onApplyToRecord,
 }: VoiceInputCardProps) {
+  /** 追记模式：onApplyToRecord 存在时为 true */
+  const isRecordMode = !!onApplyToRecord
   const { inquiry, currentPatient, currentEncounterId } = useWorkbenchStore()
-  const { token } = useAuthStore()
+
+  // Bug B 修复：不再把完整会话 JWT 放入 audio src URL（会被服务器日志记录）。
+  // 改为按需请求 5 分钟短期音频令牌，过期自动失效且只绑定特定音频文件。
+  const [audioToken, setAudioToken] = useState<string | null>(null)
 
   const recognitionRef = useRef<any>(null)
   const mediaRecorderRef = useRef<any>(null)
@@ -58,6 +91,12 @@ export default function VoiceInputCard({
   const [uploadingAudio, setUploadingAudio] = useState(false)
   const [structuring, setStructuring] = useState(false)
 
+  /**
+   * 追记模式下的待确认 patch：AI 整理完成后暂存，等待医生点「插入病历」再写入。
+   * 问诊模式下此值始终为 null（直接回填表单，无需预览确认）。
+   */
+  const [pendingPatch, setPendingPatch] = useState<Partial<InquiryData> | null>(null)
+
   const [transcriptId, setTranscriptId] = useState<string | null>(null)
   const [transcript, setTranscript] = useState('')
   const [lastAnalyzedTranscript, setLastAnalyzedTranscript] = useState('')
@@ -73,6 +112,19 @@ export default function VoiceInputCard({
   useEffect(() => {
     transcriptRef.current = fullTranscript
   }, [fullTranscript])
+
+  // transcriptId 变化时（新录音上传完成 / 切换接诊），获取新的短期音频令牌
+  useEffect(() => {
+    if (!transcriptId) {
+      setAudioToken(null)
+      return
+    }
+    // 请求短期音频令牌（有效期 5 分钟），失败时静默处理（audio 元素会显示加载失败）
+    api
+      .get(`/ai/voice-records/${transcriptId}/audio-token`)
+      .then((res: any) => setAudioToken(res?.audio_token || null))
+      .catch(() => setAudioToken(null))
+  }, [transcriptId])
 
   useEffect(() => {
     const restoreLatestVoice = async () => {
@@ -271,17 +323,25 @@ export default function VoiceInputCard({
       })
 
       const patch = (data?.inquiry || {}) as Partial<InquiryData>
-      // 只应用非空字段，防止覆盖已有问诊内容
+      // 只应用非空字段，防止覆盖已有内容
       const filteredPatch = Object.fromEntries(
         Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined)
       ) as Partial<InquiryData>
-      onApplyInquiry(filteredPatch)
+
       setSummary(data?.transcript_summary || '')
       setSpeakerDialogue(Array.isArray(data?.speaker_dialogue) ? data.speaker_dialogue : [])
       setTranscriptId(data?.transcript_id || transcriptId)
       setLastAnalyzedTranscript(fullTranscript)
 
-      message.success('已根据语音内容整理问诊字段，保存后将同步到病历')
+      if (isRecordMode) {
+        // 追记模式：暂存 patch，展示预览，等待医生点「插入病历」确认
+        setPendingPatch(filteredPatch)
+        message.success('AI 整理完成，请确认下方内容后点击「插入病历」')
+      } else {
+        // 问诊模式：直接回填左侧问诊表单
+        onApplyInquiry(filteredPatch)
+        message.success('已根据语音内容整理问诊字段，保存后将同步到病历')
+      }
     } catch {
       message.error('语音整理失败，请重试')
     } finally {
@@ -481,9 +541,63 @@ export default function VoiceInputCard({
         </Card>
       )}
 
+      {/* 模式说明文字：追记模式与问诊模式提示不同 */}
       <Text style={{ fontSize: 12, color: '#64748b' }}>
-        语音原文会在后台保存；AI整理后会自动回填问诊字段，点击「保存问诊信息」后同步到病历编辑区。
+        {isRecordMode
+          ? '语音原文会在后台保存；AI整理后展示预览，确认无误后点击「插入病历」写入对应章节。'
+          : '语音原文会在后台保存；AI整理后会自动回填问诊字段，点击「保存问诊信息」后同步到病历编辑区。'}
       </Text>
+
+      {/* 追记模式下的结构化结果预览区 */}
+      {isRecordMode && pendingPatch && Object.keys(pendingPatch).length > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            background: '#f0fdf4',
+            border: '1px solid #86efac',
+            borderRadius: 8,
+            padding: '10px 12px',
+          }}
+        >
+          <Text
+            strong
+            style={{ fontSize: 12, color: '#166534', display: 'block', marginBottom: 6 }}
+          >
+            AI 整理结果（确认后插入病历）：
+          </Text>
+          {/* 遍历 patch 中有值且有章节映射的字段，展示字段名→内容 */}
+          {Object.entries(pendingPatch)
+            .filter(
+              ([k, v]) => v && FIELD_TO_SECTION[k] !== undefined && FIELD_TO_SECTION[k] !== ''
+            )
+            .map(([k, v]) => (
+              <div key={k} style={{ fontSize: 12, marginBottom: 4, lineHeight: 1.5 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {FIELD_NAME_LABEL[k] || k}（{FIELD_TO_SECTION[k]}）：
+                </Text>
+                <Text style={{ fontSize: 12 }}>{String(v)}</Text>
+              </div>
+            ))}
+          <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<MedicineBoxOutlined />}
+              onClick={() => {
+                // 将 patch 传给父组件的 onApplyToRecord 回调，写入病历章节
+                onApplyToRecord!(pendingPatch)
+                setPendingPatch(null)
+              }}
+              style={{ borderRadius: 6, background: '#16a34a', borderColor: '#16a34a' }}
+            >
+              插入病历
+            </Button>
+            <Button size="small" onClick={() => setPendingPatch(null)} style={{ borderRadius: 6 }}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
       {transcriptId && (
         <div style={{ marginTop: 8 }}>
           <div
@@ -500,11 +614,16 @@ export default function VoiceInputCard({
             <Text style={{ fontSize: 12, color: '#475569', flexShrink: 0 }}>
               录音 #{transcriptId.slice(-6).toUpperCase()}
             </Text>
-            <audio
-              controls
-              src={`/api/v1/ai/voice-records/${transcriptId}/audio?token=${token}`}
-              style={{ flex: 1, height: 32, minWidth: 0 }}
-            />
+            {/* 使用短期音频令牌（5分钟过期），避免完整会话 JWT 出现在 URL/日志中 */}
+            {audioToken ? (
+              <audio
+                controls
+                src={`/api/v1/ai/voice-records/${transcriptId}/audio?token=${audioToken}`}
+                style={{ flex: 1, height: 32, minWidth: 0 }}
+              />
+            ) : (
+              <Text style={{ fontSize: 12, color: '#94a3b8' }}>音频加载中...</Text>
+            )}
           </div>
         </div>
       )}

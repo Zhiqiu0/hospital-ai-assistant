@@ -1,3 +1,20 @@
+/**
+ * 病历评分卡（components/workbench/GradeScoreCard.tsx）
+ *
+ * 展示 LLM 对病历质量的综合评分，位于 QCIssuePanel 顶部。
+ *
+ * 评分来源：
+ *   POST /ai/grade-score 返回 GradeScore 对象，包含：
+ *     - total_score: 0-100 总分
+ *     - grade: A/B/C/D 等级
+ *     - dimensions: 各维度评分（完整性、准确性、规范性等）
+ *     - comment: LLM 总评文字
+ *
+ * 显示规则：
+ *   - 90+: 绿色 A 级  75-89: 蓝色 B 级
+ *   - 60-74: 橙色 C 级  <60: 红色 D 级
+ *   - gradeScore 为 null 时不渲染（QCIssuePanel 控制）
+ */
 import { Typography } from 'antd'
 import { GradeScore } from '@/store/workbenchStore'
 

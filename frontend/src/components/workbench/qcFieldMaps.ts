@@ -3,8 +3,15 @@
  * 供 QCIssuePanel、AISuggestionPanel 等共享使用
  */
 
-/** field_name → 病历中的章节标题（用于定位写入位置）*/
+/** field_name → 病历中的章节标题（用于定位写入位置）
+ *
+ * 设计原则：
+ *   - 每个 field_name 必须有对应条目，否则 writeSectionToRecord 静默跳过写入
+ *   - 专项评估各子项独立成章节，避免写一项覆盖其他子项
+ *   - content / onset_time 等非章节字段映射为 ''（跳过写入）
+ */
 export const FIELD_TO_SECTION: Record<string, string> = {
+  // ── 通用必填 ──
   chief_complaint: '【主诉】',
   history_present_illness: '【现病史】',
   past_history: '【既往史】',
@@ -12,16 +19,41 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   personal_history: '【个人史】',
   physical_exam: '【体格检查】',
   physical_exam_vitals: '【体格检查】',
+  auxiliary_exam: '【辅助检查】',
+  onset_time: '', // 时间戳字段，不对应独立章节
+  content: '', // 全文类问题，不做章节替换
+
+  // ── 诊断 ──
+  initial_diagnosis: '【初步诊断】',
+  initial_impression: '【初步诊断】',
+  western_diagnosis: '【初步诊断】',
   tcm_diagnosis: '【中医诊断】',
   tcm_syndrome_diagnosis: '【中医诊断】',
   tcm_disease_diagnosis: '【中医诊断】',
-  western_diagnosis: '【初步诊断】',
-  content: '',
-  initial_diagnosis: '【初步诊断】',
-  initial_impression: '【初步诊断】',
-  auxiliary_exam: '【辅助检查】',
+  admission_diagnosis: '【入院诊断】',
+
+  // ── 住院通用 ──
   marital_history: '【婚育史】',
+  menstrual_history: '【月经史】',
   family_history: '【家族史】',
+
+  // ── 中医四诊 ──
+  tcm_inspection: '【望诊】',
+  tcm_auscultation: '【闻诊】',
+  tongue_coating: '【舌象】',
+  pulse_condition: '【脉象】',
+  treatment_method: '【治则治法】',
+
+  // ── 住院专项评估（各自独立章节，避免互相覆盖）──
+  pain_assessment: '【疼痛评估】',
+  vte_risk: '【VTE风险评估】',
+  nutrition_assessment: '【营养评估】',
+  psychology_assessment: '【心理评估】',
+  rehabilitation_assessment: '【康复评估】',
+  current_medications: '【当前用药】',
+  religion_belief: '【宗教信仰】',
+
+  // ── 中文 field_name 别名（LLM 返回中文键时使用）──
   主诉: '【主诉】',
   现病史: '【现病史】',
   既往史: '【既往史】',
@@ -32,12 +64,24 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   月经史: '【月经史】',
   家族史: '【家族史】',
   体格检查: '【体格检查】',
+  舌象: '【舌象】',
+  脉象: '【脉象】',
+  望诊: '【望诊】',
+  闻诊: '【闻诊】',
+  治则治法: '【治则治法】',
   初步诊断: '【初步诊断】',
   入院诊断: '【入院诊断】',
   诊断: '【入院诊断】',
-  辅助检查: '【辅助检查（入院前）】',
+  辅助检查: '【辅助检查】',
   '辅助检查（入院前）': '【辅助检查（入院前）】',
   专项评估: '【专项评估】',
+  疼痛评估: '【疼痛评估】',
+  VTE风险评估: '【VTE风险评估】',
+  营养评估: '【营养评估】',
+  心理评估: '【心理评估】',
+  康复评估: '【康复评估】',
+  当前用药: '【当前用药】',
+  宗教信仰: '【宗教信仰】',
 }
 
 /** field_name → 问诊 store 中对应的 key */

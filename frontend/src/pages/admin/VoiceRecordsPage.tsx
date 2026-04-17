@@ -1,3 +1,17 @@
+/**
+ * 语音记录管理页（pages/admin/VoiceRecordsPage.tsx）
+ *
+ * 查看所有医生的语音录入记录，调用 GET /admin/voice-records（分页）：
+ *   - 筛选：医生、科室、时间范围、处理状态
+ *   - 列：录音时长、转写文本（截断显示）、语言、处理时长、创建时间
+ *   - 「详情」Drawer：展示完整转写文本、关联接诊、生成的病历字段
+ *   - 状态 Tag：pending/processing/completed/failed
+ *
+ * 业务价值：
+ *   - 监控 ASR 转写质量，发现系统性识别错误
+ *   - 统计语音功能使用率，为提示词优化提供依据
+ *   - 排查转写失败的具体音频（failed 状态可下载原始音频）
+ */
 import { useEffect, useState } from 'react'
 import { Table, Input, Select, Space, Tag, Typography, Button, Drawer, Descriptions } from 'antd'
 import { AudioOutlined, SearchOutlined } from '@ant-design/icons'
@@ -46,16 +60,21 @@ export default function VoiceRecordsPage() {
     }
   }
 
-  useEffect(() => { loadData(1) }, [status])
+  useEffect(() => {
+    loadData(1)
+  }, [status])
 
-  const handleSearch = () => { setPage(1); loadData(1) }
+  const handleSearch = () => {
+    setPage(1)
+    loadData(1)
+  }
 
   const columns = [
     {
       title: '时间',
       dataIndex: 'created_at',
       width: 160,
-      render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-',
+      render: (v: string) => (v ? new Date(v).toLocaleString('zh-CN') : '-'),
     },
     {
       title: '医生',
@@ -73,17 +92,20 @@ export default function VoiceRecordsPage() {
       title: '状态',
       dataIndex: 'status',
       width: 90,
-      render: (v: string) => (
-        <Tag color={STATUS_COLOR[v] || 'default'}>{STATUS_LABEL[v] || v}</Tag>
-      ),
+      render: (v: string) => <Tag color={STATUS_COLOR[v] || 'default'}>{STATUS_LABEL[v] || v}</Tag>,
     },
     {
       title: '有录音',
       dataIndex: 'has_audio',
       width: 70,
-      render: (v: boolean) => v
-        ? <Tag color="blue" icon={<AudioOutlined />}>有</Tag>
-        : <Tag color="default">无</Tag>,
+      render: (v: boolean) =>
+        v ? (
+          <Tag color="blue" icon={<AudioOutlined />}>
+            有
+          </Tag>
+        ) : (
+          <Tag color="default">无</Tag>
+        ),
     },
     {
       title: '转写摘要',
@@ -99,7 +121,9 @@ export default function VoiceRecordsPage() {
       title: '操作',
       width: 80,
       render: (_: any, record: any) => (
-        <Button size="small" type="link" onClick={() => setDetail(record)}>详情</Button>
+        <Button size="small" type="link" onClick={() => setDetail(record)}>
+          详情
+        </Button>
       ),
     },
   ]
@@ -107,13 +131,15 @@ export default function VoiceRecordsPage() {
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Text strong style={{ fontSize: 16 }}>语音记录</Text>
+        <Text strong style={{ fontSize: 16 }}>
+          语音记录
+        </Text>
         <div style={{ flex: 1 }} />
         <Input
           prefix={<SearchOutlined />}
           placeholder="搜索转写内容"
           value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          onChange={e => setKeyword(e.target.value)}
           onPressEnter={handleSearch}
           style={{ width: 220 }}
           allowClear
@@ -121,7 +147,10 @@ export default function VoiceRecordsPage() {
         <Select
           placeholder="状态筛选"
           value={status}
-          onChange={(v) => { setStatus(v); setPage(1) }}
+          onChange={v => {
+            setStatus(v)
+            setPage(1)
+          }}
           allowClear
           style={{ width: 120 }}
           options={[
@@ -129,7 +158,9 @@ export default function VoiceRecordsPage() {
             { value: 'structured', label: '已整理' },
           ]}
         />
-        <Button type="primary" onClick={handleSearch}>搜索</Button>
+        <Button type="primary" onClick={handleSearch}>
+          搜索
+        </Button>
       </div>
 
       <Table
@@ -141,23 +172,23 @@ export default function VoiceRecordsPage() {
           current: page,
           total,
           pageSize: 20,
-          onChange: (p) => { setPage(p); loadData(p) },
-          showTotal: (t) => `共 ${t} 条`,
+          onChange: p => {
+            setPage(p)
+            loadData(p)
+          },
+          showTotal: t => `共 ${t} 条`,
         }}
         size="small"
       />
 
-      <Drawer
-        title="语音记录详情"
-        open={!!detail}
-        onClose={() => setDetail(null)}
-        width={520}
-      >
+      <Drawer title="语音记录详情" open={!!detail} onClose={() => setDetail(null)} width={520}>
         {detail && (
           <Space direction="vertical" style={{ width: '100%' }} size={16}>
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="记录 ID">
-                <Text copyable style={{ fontSize: 12 }}>{detail.id}</Text>
+                <Text copyable style={{ fontSize: 12 }}>
+                  {detail.id}
+                </Text>
               </Descriptions.Item>
               <Descriptions.Item label="时间">
                 {detail.created_at ? new Date(detail.created_at).toLocaleString('zh-CN') : '-'}
@@ -170,13 +201,17 @@ export default function VoiceRecordsPage() {
                 <Text style={{ fontSize: 12 }}>{detail.encounter_id || '-'}</Text>
               </Descriptions.Item>
               <Descriptions.Item label="状态">
-                <Tag color={STATUS_COLOR[detail.status]}>{STATUS_LABEL[detail.status] || detail.status}</Tag>
+                <Tag color={STATUS_COLOR[detail.status]}>
+                  {STATUS_LABEL[detail.status] || detail.status}
+                </Tag>
               </Descriptions.Item>
             </Descriptions>
 
             {detail.has_audio && (
               <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>音频播放</Text>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                  音频播放
+                </Text>
                 <audio
                   controls
                   src={`/api/v1/ai/voice-records/${detail.id}/audio?token=${token}`}
@@ -187,11 +222,19 @@ export default function VoiceRecordsPage() {
 
             {detail.transcript_summary && (
               <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>对话摘要</Text>
-                <div style={{
-                  background: '#f8fafc', border: '1px solid #e2e8f0',
-                  borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.7,
-                }}>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                  对话摘要
+                </Text>
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                    padding: '10px 14px',
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                  }}
+                >
                   {detail.transcript_summary}
                 </div>
               </div>
@@ -199,12 +242,20 @@ export default function VoiceRecordsPage() {
 
             {detail.transcript_preview && (
               <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>转写文本（前100字）</Text>
-                <div style={{
-                  background: '#f8fafc', border: '1px solid #e2e8f0',
-                  borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.7,
-                  color: '#475569',
-                }}>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                  转写文本（前100字）
+                </Text>
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                    padding: '10px 14px',
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                    color: '#475569',
+                  }}
+                >
                   {detail.transcript_preview}
                   {detail.transcript_preview?.length >= 100 && '…'}
                 </div>

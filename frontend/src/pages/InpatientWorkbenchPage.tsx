@@ -1,3 +1,16 @@
+/**
+ * 住院工作台页面（pages/InpatientWorkbenchPage.tsx）
+ *
+ * 住院接诊专用工作台，相比门诊有以下差异：
+ *   - 问诊面板：InpatientInquiryPanel（含入院诊断、体征等住院专属字段）
+ *   - 病历类型默认：inpatient
+ *   - 续接诊列表：visitTypeFilter='inpatient'，只加载住院类接诊
+ *   - 布局增加「病程记录」标签页（Progress Notes）
+ *
+ * 与 WorkbenchPage 的关系：
+ *   住院工作台独立实现（非 mode prop 复用），
+ *   因字段结构差异较大（主页布局、问诊面板均不同）。
+ */
 import { useState, useEffect } from 'react'
 import {
   Layout,

@@ -1,7 +1,29 @@
+/**
+ * AI 提示词管理页（pages/admin/PromptsPage.tsx）
+ *
+ * 管理系统内置的 AI 提示词模板，调用 GET/PUT /admin/prompts：
+ *   - 列出所有 task_type 对应的提示词（生成、质控、建议、语音等）
+ *   - 点击「编辑」打开 Monaco Editor 或 TextArea 直接修改提示词文本
+ *   - 修改后立即写入数据库并生效（下次 AI 调用时使用新提示词）
+ *   - 「恢复默认」按钮重置为代码中的 prompts_*.py 内容
+ *
+ * 为何需要此页：
+ *   各医院合规要求和用语习惯不同，提示词需按医院定制，
+ *   通过管理页热更新比改代码重部署效率高。
+ */
 import { useEffect, useState } from 'react'
 import {
-  List, Button, Modal, Form, Input, Select,
-  Tag, Typography, Card, message, Popconfirm
+  List,
+  Button,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Tag,
+  Typography,
+  Card,
+  message,
+  Popconfirm,
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '@/services/api'
@@ -34,10 +56,14 @@ export default function PromptsPage() {
     try {
       const data: any = await api.get('/admin/prompts')
       setPrompts(data.items || [])
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
 
-  useEffect(() => { loadPrompts() }, [])
+  useEffect(() => {
+    loadPrompts()
+  }, [])
 
   const openCreate = () => {
     setEditPrompt(null)
@@ -62,7 +88,9 @@ export default function PromptsPage() {
       }
       setModalOpen(false)
       loadPrompts()
-    } catch { message.error('操作失败') }
+    } catch {
+      message.error('操作失败')
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -70,17 +98,28 @@ export default function PromptsPage() {
       await api.delete(`/admin/prompts/${id}`)
       message.success('已删除')
       loadPrompts()
-    } catch { message.error('删除失败') }
+    } catch {
+      message.error('删除失败')
+    }
   }
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={4} style={{ margin: 0 }}>Prompt 模板管理</Title>
-          <Text type="secondary" style={{ fontSize: 12 }}>管理 AI 各功能使用的提示词模板，激活后覆盖系统默认提示词，立即生效。模板中可使用 {`{chief_complaint}`}、{`{history_present_illness}`}、{`{past_history}`}、{`{allergy_history}`}、{`{physical_exam}`}、{`{initial_impression}`}、{`{personal_history}`} 占位符</Text>
+          <Title level={4} style={{ margin: 0 }}>
+            Prompt 模板管理
+          </Title>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            管理 AI 各功能使用的提示词模板，激活后覆盖系统默认提示词，立即生效。模板中可使用{' '}
+            {`{chief_complaint}`}、{`{history_present_illness}`}、{`{past_history}`}、
+            {`{allergy_history}`}、{`{physical_exam}`}、{`{initial_impression}`}、
+            {`{personal_history}`} 占位符
+          </Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建模板</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          新建模板
+        </Button>
       </div>
       <List
         loading={loading}
@@ -101,19 +140,33 @@ export default function PromptsPage() {
               }
               extra={
                 <span style={{ display: 'flex', gap: 8 }}>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(item)}>编辑</Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(item)}>
+                    编辑
+                  </Button>
                   <Popconfirm title="确认删除该模板？" onConfirm={() => handleDelete(item.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                    <Button size="small" danger icon={<DeleteOutlined />}>
+                      删除
+                    </Button>
                   </Popconfirm>
                 </span>
               }
             >
-              <pre style={{
-                fontSize: 12, color: '#666', whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all', maxHeight: 80, overflow: 'hidden',
-                margin: 0, background: '#f5f5f5', padding: 8, borderRadius: 4
-              }}>
-                {item.content?.slice(0, 200)}{item.content?.length > 200 ? '...' : ''}
+              <pre
+                style={{
+                  fontSize: 12,
+                  color: '#666',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  maxHeight: 80,
+                  overflow: 'hidden',
+                  margin: 0,
+                  background: '#f5f5f5',
+                  padding: 8,
+                  borderRadius: 4,
+                }}
+              >
+                {item.content?.slice(0, 200)}
+                {item.content?.length > 200 ? '...' : ''}
               </pre>
             </Card>
           )
@@ -134,7 +187,9 @@ export default function PromptsPage() {
             <Input placeholder="如：门诊病历生成-v2" />
           </Form.Item>
           <Form.Item label="应用场景" name="scene" rules={[{ required: true }]}>
-            <Select options={Object.entries(SCENE_MAP).map(([v, s]) => ({ value: v, label: s.label }))} />
+            <Select
+              options={Object.entries(SCENE_MAP).map(([v, s]) => ({ value: v, label: s.label }))}
+            />
           </Form.Item>
           <Form.Item label="版本号" name="version">
             <Input placeholder="如：v1、v2" style={{ width: 120 }} />
