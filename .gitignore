@@ -27,28 +27,19 @@ frontend/.next/
 .DS_Store
 Thumbs.db
 
-# 日志
+# 日志 & 上传文件（运行时产生，不进 git）
 *.log
-logs/
+backend/logs/
 backend/uploads/
-
-# 数据库迁移临时文件
-*.pyc
-
-# 本地启动脚本（Windows 开发用，服务器不需要）
-start-backend.bat
-start-frontend.bat
-setup.bat
+backend/etc/
 
 # Claude Code 本地配置
 .claude/
+.mcp.json
 .mcp.json.bak
 .playwright-mcp/
 
 # 截图与临时文档
 *.png
 dialog_snap.md
-
-# 测试脚本（本地用）
-test_isolation.py
-# auto-deploy test Sun Apr 12 18:54:22     2026
+actions-snapshot.md
