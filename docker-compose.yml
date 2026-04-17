@@ -48,7 +48,15 @@ services:
     build: ./frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        # backend 健康后再启动 nginx，避免首次请求 502/连接关闭
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health.txt || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     ports:
       - "80:80"
       - "443:443"
