@@ -98,6 +98,8 @@ async def migrate():
             ("issue_description",    "TEXT"),
             ("suggestion",           "TEXT"),
             ("score_impact",         "VARCHAR(20)"),
+            # gender_scope：按患者性别过滤规则（all/female/male）
+            ("gender_scope",         "VARCHAR(10) DEFAULT 'all'"),
         ]
         for col, col_type in qc_rules_columns:
             try:
