@@ -24,7 +24,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # 用 npm install 而不是 npm ci：esbuild 的跨平台 optional dependencies
+        # 在 Linux runner 上用 npm ci 会报 EBADPLATFORM；npm install 能正确
+        # 跳过非当前平台的 optional dep。
+        run: npm install --no-audit --no-fund
 
       - name: TypeScript type check
         run: npx tsc --noEmit
