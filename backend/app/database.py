@@ -35,12 +35,13 @@ async_db_url = settings.database_url.replace(
 
 # ── 异步引擎 ──────────────────────────────────────────────────────────────────
 # echo=settings.app_debug: 开发环境打印 SQL 语句，生产环境关闭（app_debug=False）
-engine = create_async_engine(
-    async_db_url,
-    echo=settings.app_debug,
-    pool_size=10,      # 连接池核心大小
-    max_overflow=20,   # 超出 pool_size 时最多额外创建的连接数
-)
+# pool_size/max_overflow 仅 PostgreSQL/MySQL 等支持连接池的驱动适用；
+# SQLite (含 CI 的 sqlite+aiosqlite:///:memory:) 用 StaticPool，不接受这两个参数
+_engine_kwargs: dict = {"echo": settings.app_debug}
+if not async_db_url.startswith("sqlite"):
+    _engine_kwargs["pool_size"] = 10        # 连接池核心大小
+    _engine_kwargs["max_overflow"] = 20     # 超出 pool_size 时最多额外创建的连接数
+engine = create_async_engine(async_db_url, **_engine_kwargs)
 
 # ── Session 工厂 ──────────────────────────────────────────────────────────────
 # expire_on_commit=False: commit 后 ORM 对象不失效，避免访问属性时触发额外查询
