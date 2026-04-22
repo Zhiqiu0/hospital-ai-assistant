@@ -70,6 +70,6 @@ jobs:
         # Settings 在 import 时校验 DATABASE_URL/SECRET_KEY；CI 没有 .env，
         # 用假值让 Settings 初始化通过（实际测试用 conftest 内的 sqlite 内存库）
         env:
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
-          SECRET_KEY: ci-test-secret-key-not-for-production
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
         run: pytest tests/ -v
