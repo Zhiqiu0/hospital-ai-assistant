@@ -11,7 +11,7 @@
   限流不能跨进程生效，需替换为 Redis 后端（如 slowapi + redis）。
 
 预置实例：
-  login_limiter : 登录接口，按用户名限速，5次/3分钟，防密码爆破
+  login_limiter : 登录接口，按用户名限速，10次/10分钟，防密码爆破
   ai_limiter    : AI 接口，按 IP 限速，30次/分钟，防滥用
 """
 
@@ -77,9 +77,9 @@ class RateLimiter:
 
 # ── 预置限流实例 ──────────────────────────────────────────────────────────────
 
-# 登录接口：按用户名限速（不按 IP，避免同 IP 下多用户互相干扰）
-# 5次/3分钟，超出后响应 "请 3 分钟后重试"
-login_limiter = RateLimiter(max_calls=5, window=timedelta(minutes=3))
+# 登录接口：按用户名限速（不按 IP，避免同院 NAT 下多用户互相干扰）
+# 10次/10分钟，给医生足够的容错空间
+login_limiter = RateLimiter(max_calls=10, window=timedelta(minutes=10))
 
 # AI 功能接口（生成/质控/润色等）：按 IP 限速
 # 30次/分钟，防止单用户高频调用消耗大量 LLM token

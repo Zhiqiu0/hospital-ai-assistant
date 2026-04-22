@@ -16,14 +16,26 @@
   以上三种都匹配不到则视为新患者，由调用方创建。
 """
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient import Patient
-from app.schemas.patient import PatientCreate, PatientUpdate
+from app.schemas.patient import PatientCreate, PatientProfileUpdate, PatientUpdate
+
+# 档案字段列表：用于序列化 profile 和批量赋值
+PROFILE_FIELDS = (
+    "past_history",
+    "allergy_history",
+    "family_history",
+    "personal_history",
+    "current_medications",
+    "marital_history",
+    "menstrual_history",
+    "religion_belief",
+)
 
 
 class PatientService:
@@ -162,3 +174,39 @@ class PatientService:
             "phone": patient.phone,
             "birth_date": patient.birth_date,
         }
+
+    # ── 患者档案（Longitudinal Record）─────────────────────────────────────────
+    async def get_profile(self, patient_id: str) -> dict:
+        """取患者档案（过敏/既往/用药等纵向数据）。"""
+        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        patient = result.scalar_one_or_none()
+        if not patient:
+            raise HTTPException(status_code=404, detail="患者不存在")
+        return {
+            **{f: getattr(patient, f"profile_{f}") for f in PROFILE_FIELDS},
+            "updated_at": patient.profile_updated_at,
+        }
+
+    async def update_profile(self, patient_id: str, data: PatientProfileUpdate) -> dict:
+        """更新患者档案。只覆盖传入的字段，未传的保留旧值。"""
+        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        patient = result.scalar_one_or_none()
+        if not patient:
+            raise HTTPException(status_code=404, detail="患者不存在")
+
+        changed = False
+        for field in PROFILE_FIELDS:
+            new_val = getattr(data, field)
+            if new_val is None:
+                continue
+            attr = f"profile_{field}"
+            if getattr(patient, attr) != new_val:
+                setattr(patient, attr, new_val)
+                changed = True
+
+        if changed:
+            patient.profile_updated_at = datetime.now()
+            await self.db.commit()
+            await self.db.refresh(patient)
+
+        return await self.get_profile(patient_id)

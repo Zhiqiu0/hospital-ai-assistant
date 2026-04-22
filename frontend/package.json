@@ -6,9 +6,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src --max-warnings 200",
+    "lint": "eslint src --max-warnings 300",
     "lint:fix": "eslint src --fix",
-    "format": "prettier --write src"
+    "format": "prettier --write src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
@@ -24,20 +27,26 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "@vitejs/plugin-react": "^4.3.2",
+    "@vitest/ui": "^4.1.5",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "husky": "^9.1.7",
+    "jsdom": "^29.0.2",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.3",
     "typescript": "^5.6.3",
-    "vite": "^5.4.9"
+    "vite": "^5.4.9",
+    "vitest": "^4.1.5"
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [

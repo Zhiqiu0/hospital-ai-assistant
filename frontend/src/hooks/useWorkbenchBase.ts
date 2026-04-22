@@ -23,6 +23,7 @@ import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
+import { applySnapshotResult } from '@/store/encounterIntake'
 import api from '@/services/api'
 
 interface UseWorkbenchBaseOptions {
@@ -101,6 +102,8 @@ export function useWorkbenchBase({
         return
       }
       reset()
+      // 1.6 数据接入：snapshot 同样含 patient + patient_profile，写入 patientCache
+      applySnapshotResult(snapshot)
       if (snapshot.patient) {
         setCurrentEncounter(snapshot.patient, snapshot.encounter_id)
       }

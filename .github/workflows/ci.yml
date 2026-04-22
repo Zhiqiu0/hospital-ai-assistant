@@ -24,7 +24,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # 用 npm install 而不是 npm ci：esbuild 的跨平台 optional dependencies
+        # 在 Linux runner 上用 npm ci 会报 EBADPLATFORM；npm install 能正确
+        # 跳过非当前平台的 optional dep。
+        run: npm install --no-audit --no-fund
 
       - name: TypeScript type check
         run: npx tsc --noEmit
@@ -47,7 +50,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
 
       - name: Install dependencies
@@ -62,3 +65,11 @@ jobs:
         run: |
           pip install ruff
           ruff check app --select E,F,W --ignore E501
+
+      - name: Run tests
+        # Settings 在 import 时校验 DATABASE_URL/SECRET_KEY；CI 没有 .env，
+        # 用假值让 Settings 初始化通过（实际测试用 conftest 内的 sqlite 内存库）
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+        run: pytest tests/ -v

@@ -2,14 +2,10 @@
  * 应用入口（main.tsx）
  *
  * 挂载 React 应用到 #root 节点，配置全局：
- *   - Ant Design ConfigProvider（中文语言包 + 统一主题 token）
+ *   - Ant Design ConfigProvider（中文语言包 + 主题 token）
  *   - ErrorBoundary（捕获组件级错误，防止白屏）
  *
- * 主题设计：
- *   colorPrimary: #2563eb（蓝色）—— 品牌色
- *   colorBgLayout: #eef2f7 —— 页面背景灰蓝色
- *   字体: PingFang SC / Microsoft YaHei / system-ui 降级链
- *   圆角: 8px（标准）/ 12px（卡片）/ 6px（小组件）
+ * 主题采用 design tokens 单一来源（theme/tokens.ts），禁止在此处硬编码颜色。
  */
 
 import React from 'react'
@@ -18,7 +14,10 @@ import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { scenes, neutral, radius, typography, shadow } from './theme/tokens'
 import './index.css'
+
+const outpatient = scenes.outpatient
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -26,23 +25,22 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       locale={zhCN}
       theme={{
         token: {
-          colorPrimary: '#2563eb',
-          colorBgContainer: '#ffffff',
-          colorBgLayout: '#eef2f7',
-          colorBorder: '#e2e8f0',
-          colorBorderSecondary: '#f1f5f9',
-          colorTextBase: '#0f172a',
-          colorTextSecondary: '#64748b',
-          colorTextTertiary: '#94a3b8',
-          borderRadius: 8,
-          borderRadiusLG: 12,
-          borderRadiusSM: 6,
-          fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
-          fontSize: 14,
-          fontSizeSM: 12,
-          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-          boxShadowSecondary: '0 4px 12px rgba(0,0,0,0.08)',
+          colorPrimary: outpatient.primary,
+          colorBgContainer: neutral.surface,
+          colorBgLayout: neutral.bg,
+          colorBorder: neutral.border,
+          colorBorderSecondary: neutral.borderSubtle,
+          colorTextBase: neutral.text1,
+          colorTextSecondary: neutral.text3,
+          colorTextTertiary: neutral.text4,
+          borderRadius: radius.md,
+          borderRadiusLG: radius.lg,
+          borderRadiusSM: radius.sm,
+          fontFamily: typography.fontBody,
+          fontSize: typography.fontSize.base,
+          fontSizeSM: typography.fontSize.sm,
+          boxShadow: shadow.sm,
+          boxShadowSecondary: shadow.md,
           controlHeight: 34,
           controlHeightSM: 28,
           controlHeightLG: 40,
@@ -51,19 +49,19 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
         components: {
           Menu: {
-            itemBorderRadius: 8,
+            itemBorderRadius: radius.md,
             itemHeight: 40,
             itemMarginInline: 6,
             subMenuItemBg: 'transparent',
-            itemActiveBg: '#eff6ff',
-            itemSelectedBg: '#eff6ff',
-            itemSelectedColor: '#2563eb',
+            itemActiveBg: outpatient.primaryLight,
+            itemSelectedBg: outpatient.primaryLight,
+            itemSelectedColor: outpatient.primary,
           },
           Table: {
-            headerBg: '#f8fafc',
+            headerBg: neutral.surface2,
             headerSplitColor: 'transparent',
-            rowHoverBg: '#f8fafc',
-            borderColor: '#f1f5f9',
+            rowHoverBg: neutral.surface2,
+            borderColor: neutral.borderSubtle,
           },
           Card: {
             paddingLG: 20,
@@ -71,38 +69,38 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           },
           Button: {
             fontWeight: 500,
-            primaryShadow: '0 2px 6px rgba(37,99,235,0.25)',
+            primaryShadow: `0 2px 6px rgba(${outpatient.shadowRgba},0.25)`,
           },
           Input: {
             paddingBlock: 6,
             paddingInline: 10,
-            activeShadow: '0 0 0 3px rgba(37,99,235,0.12)',
+            activeShadow: `0 0 0 3px rgba(${outpatient.shadowRgba},0.12)`,
           },
           Select: {
-            selectorBg: '#ffffff',
+            selectorBg: neutral.surface,
           },
           Modal: {
             borderRadiusLG: 14,
           },
           Tabs: {
             horizontalItemGutter: 20,
-            inkBarColor: '#2563eb',
-            itemActiveColor: '#2563eb',
-            itemSelectedColor: '#2563eb',
+            inkBarColor: outpatient.primary,
+            itemActiveColor: outpatient.primary,
+            itemSelectedColor: outpatient.primary,
           },
           Form: {
-            labelColor: '#475569',
-            labelFontSize: 12,
+            labelColor: neutral.text2,
+            labelFontSize: typography.fontSize.sm,
           },
           Divider: {
-            colorSplit: '#f1f5f9',
+            colorSplit: neutral.borderSubtle,
           },
           Badge: {
-            colorBgContainer: '#ffffff',
+            colorBgContainer: neutral.surface,
           },
           Tag: {
-            defaultBg: '#f1f5f9',
-            defaultColor: '#64748b',
+            defaultBg: neutral.surface3,
+            defaultColor: neutral.text3,
           },
           Alert: {
             borderRadiusLG: 10,

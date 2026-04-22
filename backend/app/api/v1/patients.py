@@ -2,13 +2,14 @@
 患者路由（/api/v1/patients/*）
 
 端点列表：
-  GET    /              搜索患者列表（关键词模糊匹配，分页）
-  POST   /              新建患者档案
-  GET    /{patient_id}  查询单个患者详情
-  PUT    /{patient_id}  更新患者信息
+  GET    /                       搜索患者列表（关键词模糊匹配，分页）
+  POST   /                       新建患者档案
+  GET    /{patient_id}           查询单个患者详情
+  PUT    /{patient_id}            更新患者信息
+  GET    /{patient_id}/profile   取患者档案（过敏/既往/用药等纵向数据）
+  PUT    /{patient_id}/profile   更新患者档案
 
 所有端点均需登录认证（get_current_user）。
-患者查重逻辑在 PatientService 内部处理，路由层只做参数传递。
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -16,7 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.database import get_db
-from app.schemas.patient import PatientCreate, PatientListResponse, PatientResponse, PatientUpdate
+from app.schemas.patient import (
+    PatientCreate,
+    PatientListResponse,
+    PatientProfile,
+    PatientProfileUpdate,
+    PatientResponse,
+    PatientUpdate,
+)
 from app.services.patient_service import PatientService
 
 router = APIRouter()
@@ -71,3 +79,33 @@ async def update_patient(
     """更新患者信息（只更新传入的非 None 字段）。"""
     service = PatientService(db)
     return await service.update(patient_id, data)
+
+
+@router.get("/{patient_id}/profile", response_model=PatientProfile)
+async def get_patient_profile(
+    patient_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """取患者档案（过敏/既往/家族史/用药等纵向持久数据）。
+
+    该档案跟随患者本身，不跟随单次接诊，符合 FHIR 标准。
+    复诊/再次住院时前端自动加载，医生无需重复询问。
+    """
+    service = PatientService(db)
+    return await service.get_profile(patient_id)
+
+
+@router.put("/{patient_id}/profile", response_model=PatientProfile)
+async def update_patient_profile(
+    patient_id: str,
+    data: PatientProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """更新患者档案。只覆盖传入的非 None 字段，已有数据保留。
+
+    医生在问诊时发现新过敏史/新用药等，写入该接口持久化到患者档案。
+    """
+    service = PatientService(db)
+    return await service.update_profile(patient_id, data)

@@ -124,7 +124,11 @@ interface WorkbenchState {
   recordContent: string
   recordType: string
   isFirstVisit: boolean
+  /** 本次接诊是系统判定的复诊（患者已存在），此时初诊/复诊不允许手动切换 */
+  isPatientReused: boolean
   currentVisitType: string // 'outpatient' | 'emergency' | 'inpatient'
+  /** 复诊时上一次的病历全文，用于 AI 生成参考和折叠展示 */
+  previousRecordContent: string | null
   isGenerating: boolean
   isPolishing: boolean
   isQCing: boolean
@@ -150,6 +154,8 @@ interface WorkbenchState {
   currentEncounterId: string | null
   setInquiry: (data: InquiryData) => void
   updateInquiryFields: (data: InquiryData) => void
+  setPreviousRecordContent: (content: string | null) => void
+  setPatientReused: (reused: boolean) => void
   setVisitMeta: (isFirstVisit: boolean, visitType: string) => void
   setRecordContent: (content: string) => void
   setRecordType: (type: string) => void
@@ -228,7 +234,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       recordContent: '',
       recordType: 'outpatient',
       isFirstVisit: true,
+      isPatientReused: false,
       currentVisitType: 'outpatient',
+      previousRecordContent: null,
       isGenerating: false,
       isPolishing: false,
       isQCing: false,
@@ -253,6 +261,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       setPendingGenerate: v => set({ pendingGenerate: v }),
       isFinal: false,
       finalizedAt: null,
+      setPreviousRecordContent: content => set({ previousRecordContent: content }),
+      setPatientReused: reused => set({ isPatientReused: reused }),
       setVisitMeta: (isFirstVisit, visitType) => set({ isFirstVisit, currentVisitType: visitType }),
       setInquiry: data => set({ inquiry: data, inquirySavedAt: Date.now() }),
       updateInquiryFields: data => set({ inquiry: data }),
@@ -316,7 +326,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           recordContent: '',
           recordType: 'outpatient',
           isFirstVisit: true,
+          isPatientReused: false,
           currentVisitType: 'outpatient',
+          previousRecordContent: null,
           qcRunId: '',
           qcLlmLoading: false,
           isQCStale: false,

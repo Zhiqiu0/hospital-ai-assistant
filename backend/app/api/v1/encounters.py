@@ -33,6 +33,8 @@ from app.services.ai.exam_service import ExamService
 from app.services.ai.inquiry_service import InquiryService
 from app.services.encounter_service import EncounterService
 from app.services.patient_service import PatientService
+from app.models.medical_record import MedicalRecord
+from sqlalchemy import select, desc
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +59,19 @@ async def quick_start_encounter(
         birth_date_val = date(date.today().year - data.age, 1, 1)
 
     patient_service = PatientService(db)
-    patient = await patient_service.find_existing(
-        id_card=data.id_card,
-        phone=data.phone,
-        name=data.patient_name,
-        birth_date=birth_date_val,
-    )
-    patient_reused = patient is not None
+
+    # 前端传入已知患者 ID 时（复诊场景）直接复用，跳过模糊匹配
+    if data.patient_id:
+        patient = await patient_service.get_by_id(data.patient_id)
+        patient_reused = True
+    else:
+        patient = await patient_service.find_existing(
+            id_card=data.id_card,
+            phone=data.phone,
+            name=data.patient_name,
+            birth_date=birth_date_val,
+        )
+        patient_reused = patient is not None
 
     if not patient:
         patient = await patient_service.create(PatientCreate(
@@ -83,24 +91,69 @@ async def quick_start_encounter(
             blood_type=data.blood_type,
         ))
 
+    # 是否初诊：由系统自动判断（患者是否为新建），不依赖前端传值
+    is_first_visit = not patient_reused
+
     encounter_service = EncounterService(db)
+
+    # 取患者档案（档案数据跟随患者，不跟随接诊）
+    patient_profile = await patient_service.get_profile(patient["id"])
+
+    # 若该医生对该患者已有进行中的接诊，直接续接，不再新建
+    from app.models.encounter import Encounter as EncounterModel
+    existing = await encounter_service.find_in_progress(patient["id"], current_user.id)
+    if existing:
+        return {
+            "encounter_id": existing.id,
+            "patient": patient,
+            "patient_profile": patient_profile,
+            "visit_type": existing.visit_type,
+            "patient_reused": patient_reused,
+            "previous_record_content": None,
+            "resumed": True,
+        }
+
     encounter = await encounter_service.create(
         EncounterCreate(
             patient_id=patient["id"],
             visit_type=data.visit_type,
             department_id=data.department_id or current_user.department_id,
-            is_first_visit=True,
+            is_first_visit=is_first_visit,
             bed_no=data.bed_no,
             admission_route=data.admission_route,
             admission_condition=data.admission_condition,
         ),
         current_user.id,
     )
+
+    # 复诊时查询该患者最近一次非空病历版本，作为本次生成的参考
+    previous_record_content: Optional[str] = None
+    if patient_reused:
+        from app.models.medical_record import RecordVersion
+        stmt = (
+            select(RecordVersion.content)
+            .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
+            .join(EncounterModel, MedicalRecord.encounter_id == EncounterModel.id)
+            .where(
+                EncounterModel.patient_id == patient["id"],
+                EncounterModel.id != encounter.id,
+                RecordVersion.content.isnot(None),
+            )
+            .order_by(desc(RecordVersion.created_at))
+            .limit(1)
+        )
+        row = (await db.execute(stmt)).scalar_one_or_none()
+        if row:
+            previous_record_content = (row or {}).get("text") or None
+
     return {
         "encounter_id": encounter.id,
         "patient": patient,
+        "patient_profile": patient_profile,
         "visit_type": data.visit_type,
         "patient_reused": patient_reused,
+        "previous_record_content": previous_record_content,
+        "resumed": False,
     }
 
 

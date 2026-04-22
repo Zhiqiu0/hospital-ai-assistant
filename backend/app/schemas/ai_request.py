@@ -73,6 +73,9 @@ class QuickGenerateRequest(BaseModel):
     observation_notes: Optional[str] = ""
     patient_disposition: Optional[str] = ""
 
+    # 复诊专用：上次病历全文，AI 据此保持稳定信息并生成变化对比
+    previous_record: Optional[str] = None
+
 
 class ContinueRequest(BaseModel):
     """续写病历的入参。"""

@@ -1,20 +1,23 @@
+/* ─── Fonts ──────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Figtree:wght@400;500;600;700&display=swap');
+
 /* ─── Reset ──────────────────────────────────────────── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* ─── CSS Variables ──────────────────────────────────── */
 :root {
-  --primary:        #2563eb;
-  --primary-dark:   #1d4ed8;
-  --primary-light:  #eff6ff;
-  --primary-border: #bfdbfe;
-  --green:          #059669;
-  --green-light:    #ecfdf5;
-  --green-border:   #a7f3d0;
+  --primary:        #0891B2;
+  --primary-dark:   #0e7490;
+  --primary-light:  #ecfeff;
+  --primary-border: #a5f3fc;
+  --green:          #22C55E;
+  --green-light:    #f0fdf4;
+  --green-border:   #bbf7d0;
 
   --surface:        #ffffff;
   --surface-2:      #f8fafc;
-  --surface-3:      #f1f5f9;
-  --bg:             #eef2f7;
+  --surface-3:      #f0fdfa;
+  --bg:             #f0fdfa;
 
   --border:         #e2e8f0;
   --border-subtle:  #f1f5f9;
@@ -37,8 +40,8 @@
 
 /* ─── Base ───────────────────────────────────────────── */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-               'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB',
+               'Microsoft YaHei', sans-serif;
   background: var(--bg);
   color: var(--text-1);
   -webkit-font-smoothing: antialiased;
@@ -61,7 +64,7 @@ body {
 
 /* ─── Text selection ─────────────────────────────────── */
 ::selection {
-  background: rgba(37, 99, 235, 0.15);
+  background: rgba(8, 145, 178, 0.15);
   color: var(--text-1);
 }
 
@@ -70,7 +73,7 @@ body {
 .ant-input-affix-wrapper:focus,
 .ant-input-affix-wrapper-focused,
 .ant-select-focused .ant-select-selector {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12) !important;
 }
 .ant-input-textarea:focus-within textarea {
   box-shadow: none !important;
@@ -84,7 +87,7 @@ body {
 .ant-btn:hover { transform: translateY(-1px); }
 .ant-btn:active { transform: translateY(0); }
 .ant-btn-primary:not(:disabled):hover {
-  box-shadow: 0 4px 12px rgba(37,99,235,0.35) !important;
+  box-shadow: 0 4px 12px rgba(8,145,178,0.35) !important;
 }
 
 /* ─── Cards ──────────────────────────────────────────── */
@@ -175,7 +178,7 @@ body {
 /* ─── Slider ─────────────────────────────────────────── */
 .ant-slider-track { border-radius: 10px !important; }
 .ant-slider-handle {
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.2) !important;
+  box-shadow: 0 0 0 3px rgba(8,145,178,0.2) !important;
 }
 
 /* ─── Input ──────────────────────────────────────────── */
@@ -185,7 +188,7 @@ body {
 }
 .ant-input:hover,
 .ant-input-affix-wrapper:hover {
-  border-color: #93c5fd !important;
+  border-color: #67e8f9 !important;
 }
 
 /* ─── List ───────────────────────────────────────────── */

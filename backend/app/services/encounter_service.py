@@ -59,6 +59,20 @@ class EncounterService:
         await self.db.refresh(encounter)
         return encounter
 
+    async def find_in_progress(self, patient_id: str, doctor_id: str):
+        """查询该医生对该患者是否已有进行中的接诊，有则返回，无则返回 None。"""
+        result = await self.db.execute(
+            select(Encounter)
+            .where(
+                Encounter.patient_id == patient_id,
+                Encounter.doctor_id == doctor_id,
+                Encounter.status == "in_progress",
+            )
+            .order_by(Encounter.visited_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_my_encounters(self, doctor_id: str, limit: int = 20):
         """获取当前医生进行中的接诊列表（按接诊时间倒序）。
 
@@ -229,6 +243,16 @@ class EncounterService:
                 (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
             )
 
+        # 患者档案（纵向持久数据，跟随患者不跟随接诊）
+        profile_fields = (
+            "past_history", "allergy_history", "family_history", "personal_history",
+            "current_medications", "marital_history", "menstrual_history", "religion_belief",
+        )
+        patient_profile = {
+            **{f: getattr(patient, f"profile_{f}") for f in profile_fields},
+            "updated_at": patient.profile_updated_at,
+        } if patient else None
+
         return {
             "encounter_id": encounter.id,
             "visit_type": encounter.visit_type,
@@ -239,6 +263,7 @@ class EncounterService:
                 "gender": patient.gender,
                 "age": patient_age,
             } if patient else None,
+            "patient_profile": patient_profile,
             "inquiry": {
                 "chief_complaint": inquiry.chief_complaint or "",
                 "history_present_illness": inquiry.history_present_illness or "",

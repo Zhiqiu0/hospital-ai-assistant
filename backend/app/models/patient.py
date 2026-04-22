@@ -16,7 +16,7 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, String
+from sqlalchemy import Boolean, Date, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -70,6 +70,22 @@ class Patient(Base, TimestampMixin):
     contact_relation: Mapped[Optional[str]] = mapped_column(String(20))
     # 血型
     blood_type: Mapped[Optional[str]] = mapped_column(String(10))
+
+    # ── 患者档案（Longitudinal Patient Record）────────────────────────────────
+    # 这些字段跟随患者，不跟随单次接诊。符合 FHIR 标准：
+    # AllergyIntolerance/Condition/MedicationStatement 都挂在 Patient 上，
+    # 复诊时自动加载，医生不用每次重新问。
+    # 新架构通过 GET/PUT /patients/:id/profile 管理。
+    profile_past_history: Mapped[Optional[str]] = mapped_column(Text)         # 既往史
+    profile_allergy_history: Mapped[Optional[str]] = mapped_column(Text)       # 过敏史
+    profile_family_history: Mapped[Optional[str]] = mapped_column(Text)        # 家族史
+    profile_personal_history: Mapped[Optional[str]] = mapped_column(Text)      # 个人史
+    profile_current_medications: Mapped[Optional[str]] = mapped_column(Text)   # 长期用药
+    profile_marital_history: Mapped[Optional[str]] = mapped_column(Text)       # 婚育史
+    profile_menstrual_history: Mapped[Optional[str]] = mapped_column(Text)     # 月经史
+    profile_religion_belief: Mapped[Optional[str]] = mapped_column(Text)       # 宗教信仰（影响用药）
+    # 档案最后更新时间（前端展示"最后更新于 xx 时"）
+    profile_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
 
     # 该患者的所有接诊记录（按时间倒序使用时在服务层处理）
     encounters: Mapped[list["Encounter"]] = relationship(back_populates="patient")
