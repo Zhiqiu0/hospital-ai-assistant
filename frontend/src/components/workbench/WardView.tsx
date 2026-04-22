@@ -23,6 +23,9 @@ interface WardPatient {
   admission_condition: string | null
   visited_at: string | null
   chief_complaint: string | null
+  /** 入院天数：在 fetchWard 时一次性计算好，避免 render 内调 Date.now()
+      触发 react-hooks/purity 规则 */
+  admit_days?: number | null
 }
 
 interface Props {
@@ -46,7 +49,15 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
     setLoading(true)
     try {
       const res = (await api.get('/inpatient/ward')) as any
-      setPatients(res.items || [])
+      // 在拉取后立即计算 admit_days（async 函数内调 Date.now() 不在 render path）
+      const now = Date.now()
+      const items: WardPatient[] = (res.items || []).map((p: WardPatient) => ({
+        ...p,
+        admit_days: p.visited_at
+          ? Math.floor((now - new Date(p.visited_at).getTime()) / 86400000)
+          : null,
+      }))
+      setPatients(items)
     } catch {
       setPatients([])
     } finally {
@@ -100,9 +111,7 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
           patients.map(p => {
             const isSelected =
               p.encounter_id === selectedEncounterId || p.encounter_id === currentEncounterId
-            const admitDays = p.visited_at
-              ? Math.floor((Date.now() - new Date(p.visited_at).getTime()) / 86400000)
-              : null
+            const admitDays = p.admit_days ?? null
 
             return (
               <div
