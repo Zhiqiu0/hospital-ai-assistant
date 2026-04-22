@@ -3,7 +3,10 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --registry=https://mirrors.tencentyun.com/npm/
+# 用 npm install 而不是 npm ci：esbuild 跨平台 optional dependencies
+# 在 Linux runner 上用 npm ci 会报 EBADPLATFORM；npm install 能正确
+# 跳过非当前平台的 optional dep（如 netbsd-arm64/win32-x64 等）
+RUN npm install --no-audit --no-fund --registry=https://mirrors.tencentyun.com/npm/
 
 COPY . .
 RUN npm run build
