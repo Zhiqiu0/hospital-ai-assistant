@@ -25,7 +25,7 @@ from app.core.security import get_current_user
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.inpatient import ProblemItem, VitalSign
-from app.models.medical_record import MedicalRecord, RecordVersion
+from app.models.medical_record import MedicalRecord
 from app.models.patient import Patient
 
 router = APIRouter()
@@ -203,7 +203,7 @@ async def add_problem(
         result = await db.execute(
             select(ProblemItem).where(
                 ProblemItem.encounter_id == encounter_id,
-                ProblemItem.is_primary == True,
+                ProblemItem.is_primary.is_(True),
             )
         )
         for old in result.scalars().all():
@@ -268,7 +268,7 @@ async def update_problem(
             others = await db.execute(
                 select(ProblemItem).where(
                     ProblemItem.encounter_id == encounter_id,
-                    ProblemItem.is_primary == True,
+                    ProblemItem.is_primary.is_(True),
                     ProblemItem.id != problem_id,
                 )
             )
@@ -373,7 +373,6 @@ async def get_compliance(
     for rule in _COMPLIANCE_RULES:
         deadline = admission_time + timedelta(hours=rule["deadline_hours"])
         done_at = existing.get(rule["record_type"])
-        elapsed_hours = (now - admission_time).total_seconds() / 3600
         remaining_seconds = (deadline - now).total_seconds()
 
         if done_at:
