@@ -1,22 +1,8 @@
 /**
  * PACS 影像工作台页面（pages/PacsWorkbenchPage.tsx）
- *
- * 放射科/影像科专用工作台，主要功能：
- *   - 影像上传：支持 DICOM(.dcm)、JPG/PNG，调用 POST /pacs/upload
- *   - 影像列表：GET /pacs/images，展示缩略图、检查类型、患者信息
- *   - DICOM 查看：点击影像调用 GET /pacs/images/{id}/dicom-url，
- *     在内嵌 iframe 或新标签打开 OHIF Viewer
- *   - AI 报告生成：POST /ai/generate-radiology-report，SSE stream
- *   - 报告编辑与提交：PUT /pacs/reports/{id}
- *
- * 角色权限：
- *   放射科技师（radiologist）：上传影像、查看全部影像
- *   普通医生（doctor）：只能查看自己接诊患者的影像
- *
- * 进度展示：
- *   大文件上传使用 Ant Design Progress 组件显示上传进度（onUploadProgress）。
+ * DicomViewer 已提取至 components/workbench/DicomViewer.tsx。
  */
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Layout,
   Button,
@@ -44,12 +30,11 @@ import {
 } from '@ant-design/icons'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import DicomViewer from '@/components/workbench/DicomViewer'
 
 const { Header, Content } = Layout
 const { Title, Text, Paragraph } = Typography
 const { TextArea } = Input
-
-// ─── 类型 ────────────────────────────────────────────────────────────────────
 
 interface Study {
   study_id: string
@@ -64,177 +49,32 @@ interface Study {
 
 type Stage = 'list' | 'select_frames' | 'analyzing' | 'report'
 
-// ─── Cornerstone 影像查看器 ──────────────────────────────────────────────────
-
-function DicomViewer({ studyId, filename }: { studyId: string; filename: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [wc, setWc] = useState(50)
-  const [ww, setWw] = useState(350)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const loadImage = useCallback(
-    (wcVal: number, wwVal: number, customWin: boolean) => {
-      if (!filename) return
-      setLoading(true)
-      setError('')
-      const url = customWin
-        ? `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}?wc=${wcVal}&ww=${wwVal}`
-        : `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}`
-      const img = new Image()
-      img.onload = () => {
-        if (!canvasRef.current) return
-        const canvas = canvasRef.current
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext('2d')
-        ctx?.drawImage(img, 0, 0)
-        setLoading(false)
-      }
-      img.onerror = () => {
-        setError('影像加载失败')
-        setLoading(false)
-      }
-      img.src = url
-    },
-    [studyId, filename]
-  )
-
-  useEffect(() => {
-    setWc(50)
-    setWw(350)
-    loadImage(50, 350, false)
-  }, [studyId, filename])
-
-  const handleWcChange = (val: number) => {
-    setWc(val)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => loadImage(val, ww, true), 400)
-  }
-
-  const handleWwChange = (val: number) => {
-    setWw(val)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => loadImage(wc, val, true), 400)
-  }
-
-  return (
-    <div
-      style={{
-        background: '#000',
-        borderRadius: 8,
-        overflow: 'hidden',
-        position: 'relative',
-        minHeight: 400,
-      }}
-    >
-      {loading && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Spin tip="加载影像..." />
-        </div>
-      )}
-      {error && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Text style={{ color: '#fff' }}>{error}</Text>
-        </div>
-      )}
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', height: '100%', display: 'block', maxHeight: 480 }}
-      />
-      <div
-        style={{
-          padding: '8px 12px',
-          background: '#111',
-          display: 'flex',
-          gap: 16,
-          alignItems: 'center',
-        }}
-      >
-        <Text style={{ color: '#999', fontSize: 12 }}>窗位(WC)</Text>
-        <input
-          type="range"
-          min={-200}
-          max={400}
-          value={wc}
-          onChange={e => handleWcChange(Number(e.target.value))}
-          style={{ flex: 1 }}
-        />
-        <Text style={{ color: '#fff', fontSize: 12, minWidth: 30 }}>{wc}</Text>
-        <Text style={{ color: '#999', fontSize: 12 }}>窗宽(WW)</Text>
-        <input
-          type="range"
-          min={1}
-          max={2000}
-          value={ww}
-          onChange={e => handleWwChange(Number(e.target.value))}
-          style={{ flex: 1 }}
-        />
-        <Text style={{ color: '#fff', fontSize: 12, minWidth: 40 }}>{ww}</Text>
-      </div>
-    </div>
-  )
-}
-
-// ─── 主页面 ──────────────────────────────────────────────────────────────────
-
 export default function PacsWorkbenchPage() {
   const { user } = useAuthStore()
-
-  // 工作列表
   const [studies, setStudies] = useState<Study[]>([])
   const [loadingStudies, setLoadingStudies] = useState(false)
-
-  // 上传
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [patients, setPatients] = useState<any[]>([])
   const [selectedPatient, setSelectedPatient] = useState<string>('')
-
-  // 当前工作中的检查
   const [currentStudy, setCurrentStudy] = useState<any>(null)
   const [stage, setStage] = useState<Stage>('list')
-
-  // 帧选择
   const [frames, setFrames] = useState<string[]>([])
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set())
   const [previewFrame, setPreviewFrame] = useState<string>('')
   const [loadingFrames, setLoadingFrames] = useState(false)
-
-  // AI 分析
   const [_analyzing, setAnalyzing] = useState(false)
   const [aiResult, setAiResult] = useState('')
   const [finalReport, setFinalReport] = useState('')
   const [publishing, setPublishing] = useState(false)
 
-  // 加载患者列表
   useEffect(() => {
     api
       .get('/patients?page=1&page_size=100')
-      .then((d: any) => {
-        setPatients(d.items || d || [])
-      })
+      .then((d: any) => setPatients(d.items || d || []))
       .catch(() => {})
   }, [])
 
-  // 加载检查列表
   const loadStudies = useCallback(() => {
     setLoadingStudies(true)
     api
@@ -247,8 +87,6 @@ export default function PacsWorkbenchPage() {
     loadStudies()
   }, [loadStudies])
 
-  // ── 上传 ZIP ──────────────────────────────────────────────────────────────
-
   const handleUpload = async (file: File) => {
     if (!selectedPatient) {
       message.warning('请先选择患者')
@@ -256,17 +94,13 @@ export default function PacsWorkbenchPage() {
     }
     setUploading(true)
     setUploadProgress(0)
-
     const formData = new FormData()
     formData.append('patient_id', selectedPatient)
     formData.append('file', file)
-
     try {
       const res: any = await api.post('/pacs/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (e: any) => {
-          setUploadProgress(Math.round((e.loaded / e.total) * 100))
-        },
+        onUploadProgress: (e: any) => setUploadProgress(Math.round((e.loaded / e.total) * 100)),
         timeout: 300000,
       })
       message.success(`上传成功！共 ${res.total_frames} 张切片，正在后台生成缩略图...`)
@@ -280,8 +114,6 @@ export default function PacsWorkbenchPage() {
     }
     return false
   }
-
-  // ── 打开检查 ──────────────────────────────────────────────────────────────
 
   const openStudy = async (studyId: string, autoAll = false) => {
     setLoadingFrames(true)
@@ -300,24 +132,18 @@ export default function PacsWorkbenchPage() {
     }
   }
 
-  // ── 全选 / 自动抽帧 ───────────────────────────────────────────────────────
-
   const selectAll = () => setSelectedFrames(new Set(frames))
   const selectSuggested = () => {
     const step = Math.max(1, Math.floor(frames.length / 10))
     setSelectedFrames(new Set(frames.filter((_, i) => i % step === 0).slice(0, 10)))
   }
   const clearSelection = () => setSelectedFrames(new Set())
-
-  const toggleFrame = (fname: string) => {
+  const toggleFrame = (fname: string) =>
     setSelectedFrames(prev => {
       const next = new Set(prev)
       next.has(fname) ? next.delete(fname) : next.add(fname)
       return next
     })
-  }
-
-  // ── AI 分析 ───────────────────────────────────────────────────────────────
 
   const runAnalysis = async () => {
     if (selectedFrames.size === 0) {
@@ -340,8 +166,6 @@ export default function PacsWorkbenchPage() {
       setAnalyzing(false)
     }
   }
-
-  // ── 发布报告 ──────────────────────────────────────────────────────────────
 
   const publishReport = async () => {
     if (!finalReport.trim()) {
@@ -372,11 +196,8 @@ export default function PacsWorkbenchPage() {
     return <Tag color={color}>{label}</Tag>
   }
 
-  // ─── 渲染 ─────────────────────────────────────────────────────────────────
-
   return (
     <Layout style={{ height: '100vh', background: '#f5f5f5' }}>
-      {/* 顶栏 */}
       <Header
         style={{
           background: '#001529',
@@ -403,10 +224,9 @@ export default function PacsWorkbenchPage() {
       </Header>
 
       <Content style={{ padding: 24, overflow: 'auto' }}>
-        {/* ── 阶段：检查列表 ── */}
+        {/* 检查列表阶段 */}
         {stage === 'list' && (
           <>
-            {/* 上传区 */}
             <Card title="上传影像" style={{ marginBottom: 16 }}>
               <Row gutter={16} align="middle">
                 <Col span={8}>
@@ -455,7 +275,6 @@ export default function PacsWorkbenchPage() {
               </Text>
             </Card>
 
-            {/* 检查列表 */}
             <Card
               title="检查列表"
               extra={
@@ -518,10 +337,9 @@ export default function PacsWorkbenchPage() {
           </>
         )}
 
-        {/* ── 阶段：选帧 ── */}
+        {/* 选帧阶段 */}
         {stage === 'select_frames' && currentStudy && (
           <Row gutter={16}>
-            {/* 左：缩略图网格 */}
             <Col span={10}>
               <Card
                 title={
@@ -609,8 +427,6 @@ export default function PacsWorkbenchPage() {
                 )}
               </Card>
             </Col>
-
-            {/* 右：预览 + 操作 */}
             <Col span={14}>
               <Card
                 title={`预览：${previewFrame}`}
@@ -645,7 +461,7 @@ export default function PacsWorkbenchPage() {
           </Row>
         )}
 
-        {/* ── 阶段：AI 分析中 ── */}
+        {/* AI 分析中 */}
         {stage === 'analyzing' && (
           <div style={{ textAlign: 'center', padding: 80 }}>
             <Spin size="large" />
@@ -658,7 +474,7 @@ export default function PacsWorkbenchPage() {
           </div>
         )}
 
-        {/* ── 阶段：报告审核 ── */}
+        {/* 报告审核 */}
         {stage === 'report' && (
           <Row gutter={16}>
             <Col span={12}>

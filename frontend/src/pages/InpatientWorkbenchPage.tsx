@@ -12,39 +12,30 @@
  *   因字段结构差异较大（主页布局、问诊面板均不同）。
  */
 import { useState, useEffect } from 'react'
-import {
-  Layout,
-  Button,
-  Typography,
-  Space,
-  Tag,
-  Modal,
-  Form,
-  Input,
-  Select,
-  message,
-  Avatar,
-  Divider,
-  Empty,
-} from 'antd'
+import { Layout, Button, Typography, Space, Tag, message, Avatar, Divider, Empty, Tabs } from 'antd'
 import {
   LogoutOutlined,
-  UserOutlined,
   PlusOutlined,
   MedicineBoxOutlined,
   CameraOutlined,
+  UnorderedListOutlined,
+  HeartOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
+import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import HistoryDrawer from '@/components/workbench/HistoryDrawer'
-import ResumeDrawer from '@/components/workbench/ResumeDrawer'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
-import api from '@/services/api'
+import WardView from '@/components/workbench/WardView'
+import NewInpatientEncounterModal from '@/components/workbench/NewInpatientEncounterModal'
+import ComplianceBar from '@/components/workbench/ComplianceBar'
+import VitalsPanel from '@/components/workbench/VitalsPanel'
+import ProblemListPanel from '@/components/workbench/ProblemListPanel'
 
 const { Header, Content } = Layout
 const { Text } = Typography
@@ -69,6 +60,10 @@ export default function InpatientWorkbenchPage() {
     setRecordType('admission_note')
   }, [])
 
+  // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）
+  // 否则 PatientProfileCard 会因 cache 为空而显示空白
+  useEnsureSnapshotHydrated()
+
   const {
     historyOpen,
     setHistoryOpen,
@@ -77,11 +72,6 @@ export default function InpatientWorkbenchPage() {
     openHistory,
     viewRecord,
     setViewRecord,
-    resumeOpen,
-    setResumeOpen,
-    resumeList,
-    resumeLoading,
-    openResume,
     handleResume,
     handleLogout,
   } = useWorkbenchBase({
@@ -93,59 +83,26 @@ export default function InpatientWorkbenchPage() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [imagingOpen, setImagingOpen] = useState(false)
-  const [form] = Form.useForm()
-  const [loading, setLoading] = useState(false)
 
-  const handleNewEncounter = async (values: any) => {
-    setLoading(true)
-    try {
-      const payload = {
-        patient_name: values.patient_name,
-        gender: values.gender || 'unknown',
-        age: values.age ? Number(values.age) : undefined,
-        id_card: values.id_card || undefined,
-        phone: values.phone || undefined,
-        address: values.address || undefined,
-        ethnicity: values.ethnicity || undefined,
-        marital_status: values.marital_status || undefined,
-        occupation: values.occupation || undefined,
-        workplace: values.workplace || undefined,
-        contact_name: values.contact_name || undefined,
-        contact_phone: values.contact_phone || undefined,
-        contact_relation: values.contact_relation || undefined,
-        blood_type: values.blood_type || undefined,
-        visit_type: 'inpatient',
-        bed_no: values.bed_no || undefined,
-        admission_route: values.admission_route || undefined,
-        admission_condition: values.admission_condition || undefined,
-      }
-      let res: any
-      try {
-        res = await api.post('/encounters/quick-start', payload)
-      } catch (firstErr: any) {
-        if (!firstErr?.response) {
-          message.loading({ content: '连接中，正在重试...', key: 'retry', duration: 3 })
-          await new Promise(r => setTimeout(r, 3000))
-          res = await api.post('/encounters/quick-start', payload)
-        } else {
-          throw firstErr
-        }
-      }
-      reset()
-      setRecordType('admission_note')
-      setCurrentEncounter(
-        { id: res.patient.id, name: res.patient.name, gender: res.patient.gender, age: values.age },
-        res.encounter_id
-      )
-      message.success({ content: `已为「${res.patient.name}」开始住院接诊`, key: 'retry' })
-      setModalOpen(false)
-      form.resetFields()
-    } catch {
-      message.destroy('retry')
-      message.error('创建住院接诊失败，请稍后重试')
-    } finally {
-      setLoading(false)
-    }
+  // 从病区列表选择患者，复用 handleResume 加载工作台快照
+  const handleSelectWardPatient = async (p: any) => {
+    await handleResume({ encounter_id: p.encounter_id, patient_name: p.patient_name })
+  }
+
+  // 新建住院接诊成功回调
+  const handleEncounterCreated = (res: any) => {
+    reset()
+    setRecordType('admission_note')
+    setCurrentEncounter(
+      {
+        id: res.patient.id,
+        name: res.patient.name,
+        gender: res.patient.gender,
+        age: res.patient.age,
+      },
+      res.encounter_id
+    )
+    message.success(`已为「${res.patient.name}」开始住院接诊`)
   }
 
   return (
@@ -256,36 +213,12 @@ export default function InpatientWorkbenchPage() {
               </Text>
             </div>
           ) : (
-            <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>未选择患者</Text>
+            <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>从左侧病区选择患者</Text>
           )}
-          <Button
-            icon={<PlusOutlined />}
-            size="small"
-            onClick={() => setModalOpen(true)}
-            style={{
-              borderRadius: 20,
-              fontSize: 12,
-              height: 30,
-              paddingInline: 14,
-              background: ACCENT,
-              borderColor: ACCENT,
-              color: '#fff',
-            }}
-          >
-            新建住院接诊
-          </Button>
         </div>
 
         {/* Right: user actions */}
         <Space size={4}>
-          <Button
-            size="small"
-            type="text"
-            onClick={openResume}
-            style={{ color: 'var(--text-3)', fontSize: 12, borderRadius: 8 }}
-          >
-            续接诊
-          </Button>
           <Button
             size="small"
             type="text"
@@ -345,50 +278,143 @@ export default function InpatientWorkbenchPage() {
 
       {/* Content */}
       <Content
-        style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10, position: 'relative' }}
+        style={{ display: 'flex', overflow: 'hidden', gap: 0, padding: 10, position: 'relative' }}
       >
-        {/* Left: Inpatient Inquiry */}
+        {/* 最左：病区视图侧栏 */}
         <div
           style={{
-            width: 320,
+            width: 210,
             background: '#fff',
             borderRadius: 12,
             border: '1px solid var(--border)',
-            overflow: 'auto',
+            overflow: 'hidden',
             flexShrink: 0,
             boxShadow: 'var(--shadow-sm)',
+            marginRight: 10,
           }}
         >
-          <InpatientInquiryPanel />
+          <WardView
+            onNewEncounter={() => setModalOpen(true)}
+            onSelectPatient={handleSelectWardPatient}
+            selectedEncounterId={currentEncounterId}
+          />
         </div>
 
-        {/* Center: Record editor */}
-        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-          <RecordEditor />
-        </div>
-
-        {/* Right: AI suggestions */}
+        {/* 右侧主工作区（竖向：时效栏 + 三栏面板） */}
         <div
           style={{
-            width: 364,
-            background: '#fff',
-            borderRadius: 12,
-            border: '1px solid var(--border)',
-            overflow: 'auto',
-            flexShrink: 0,
-            boxShadow: 'var(--shadow-sm)',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            minWidth: 0,
           }}
         >
-          <AISuggestionPanel />
+          {/* 时效合规提醒栏 */}
+          <ComplianceBar encounterId={currentEncounterId} />
+
+          {/* 三栏面板 */}
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              gap: 10,
+              overflow: 'hidden',
+              marginTop: currentEncounterId ? 0 : 0,
+            }}
+          >
+            {/* 问诊面板 */}
+            <div
+              style={{
+                width: 300,
+                background: '#fff',
+                borderRadius: 12,
+                border: '1px solid var(--border)',
+                overflow: 'auto',
+                flexShrink: 0,
+                boxShadow: 'var(--shadow-sm)',
+              }}
+            >
+              <InpatientInquiryPanel />
+            </div>
+
+            {/* 病历编辑器 */}
+            <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+              <RecordEditor />
+            </div>
+
+            {/* 右侧：AI建议 + 问题列表 + 生命体征 */}
+            <div
+              style={{
+                width: 340,
+                background: '#fff',
+                borderRadius: 12,
+                border: '1px solid var(--border)',
+                overflow: 'hidden',
+                flexShrink: 0,
+                boxShadow: 'var(--shadow-sm)',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <Tabs
+                defaultActiveKey="ai"
+                size="small"
+                style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+                tabBarStyle={{ padding: '0 12px', marginBottom: 0, flexShrink: 0 }}
+                items={[
+                  {
+                    key: 'ai',
+                    label: 'AI 建议',
+                    children: (
+                      <div style={{ overflow: 'auto', height: '100%' }}>
+                        <AISuggestionPanel />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'problems',
+                    label: (
+                      <span>
+                        <UnorderedListOutlined /> 问题列表
+                      </span>
+                    ),
+                    children: (
+                      <div style={{ overflow: 'auto', height: '100%' }}>
+                        <ProblemListPanel />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'vitals',
+                    label: (
+                      <span>
+                        <HeartOutlined /> 体征
+                      </span>
+                    ),
+                    children: (
+                      <div style={{ overflow: 'auto', height: '100%' }}>
+                        <VitalsPanel />
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* No-patient overlay */}
+        {/* 未选患者蒙层：提示从左侧选患者 */}
         {!currentPatient && (
           <div
             style={{
               position: 'absolute',
-              inset: 0,
-              background: 'rgba(248,250,252,0.90)',
+              // 不覆盖病区侧栏（left = 210 + 10gap + 10padding = 230px）
+              left: 220,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(248,250,252,0.92)',
               backdropFilter: 'blur(3px)',
               display: 'flex',
               flexDirection: 'column',
@@ -396,276 +422,35 @@ export default function InpatientWorkbenchPage() {
               justifyContent: 'center',
               gap: 16,
               zIndex: 50,
-              borderRadius: 8,
+              borderRadius: '0 12px 12px 0',
             }}
           >
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
                 <span style={{ fontSize: 14, color: '#64748b' }}>
-                  暂无接诊，请先新建接诊或续接诊
+                  从左侧病区选择患者，或新建住院接诊
                 </span>
               }
             />
-            <Space>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => setModalOpen(true)}
-                size="large"
-                style={{ borderRadius: 20 }}
-              >
-                新建接诊
-              </Button>
-              <Button onClick={openResume} size="large" style={{ borderRadius: 20 }}>
-                续接诊
-              </Button>
-            </Space>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setModalOpen(true)}
+              size="large"
+              style={{ borderRadius: 20, background: ACCENT, borderColor: ACCENT }}
+            >
+              新建住院接诊
+            </Button>
           </div>
         )}
       </Content>
 
-      {/* New encounter modal */}
-      <Modal
-        title={
-          <Space>
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                background: 'linear-gradient(135deg, #065f46, #059669)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <UserOutlined style={{ color: '#fff', fontSize: 13 }} />
-            </div>
-            <span>新建住院接诊</span>
-          </Space>
-        }
+      <NewInpatientEncounterModal
         open={modalOpen}
-        onCancel={() => {
-          setModalOpen(false)
-          form.resetFields()
-        }}
-        onOk={() => form.submit()}
-        confirmLoading={loading}
-        okText="开始住院接诊"
-        okButtonProps={{ style: { background: ACCENT, borderColor: ACCENT } }}
-        width={660}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleNewEncounter}
-          style={{ marginTop: 16 }}
-          size="small"
-        >
-          {/* ── 一、基本身份信息 ── */}
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: '#065f46',
-              background: '#f0fdf4',
-              padding: '3px 8px',
-              borderRadius: 4,
-              marginBottom: 10,
-            }}
-          >
-            一、基本身份信息
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Form.Item
-              name="patient_name"
-              label="患者姓名"
-              style={{ flex: 2 }}
-              rules={[{ required: true, message: '请输入患者姓名' }]}
-            >
-              <Input placeholder="请输入患者姓名" />
-            </Form.Item>
-            <Form.Item
-              name="gender"
-              label="性别"
-              style={{ flex: 1 }}
-              rules={[{ required: true, message: '请选择性别' }]}
-            >
-              <Select placeholder="性别">
-                <Select.Option value="male">男</Select.Option>
-                <Select.Option value="female">女</Select.Option>
-                <Select.Option value="unknown">未知</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="age"
-              label="年龄"
-              style={{ flex: 1 }}
-              rules={[{ required: true, message: '请输入年龄' }]}
-            >
-              <Input type="number" placeholder="岁" min={0} max={150} suffix="岁" />
-            </Form.Item>
-          </div>
-
-          <Form.Item
-            name="id_card"
-            label={
-              <span>
-                身份证号{' '}
-                <span style={{ color: '#ef4444', fontSize: 11 }}>（信息错误为单项否决）</span>
-              </span>
-            }
-            rules={[
-              { required: true, message: '身份证号为必填项' },
-              { pattern: /^\d{17}[\dXx]$/, message: '请输入有效的18位身份证号' },
-            ]}
-          >
-            <Input placeholder="请输入18位身份证号" maxLength={18} />
-          </Form.Item>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Form.Item name="ethnicity" label="民族" style={{ flex: 1 }}>
-              <Select placeholder="民族" allowClear showSearch>
-                {[
-                  '汉族',
-                  '回族',
-                  '满族',
-                  '壮族',
-                  '藏族',
-                  '维吾尔族',
-                  '苗族',
-                  '彝族',
-                  '土家族',
-                  '蒙古族',
-                  '其他',
-                ].map(e => (
-                  <Select.Option key={e} value={e}>
-                    {e}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-            <Form.Item name="marital_status" label="婚姻状况" style={{ flex: 1 }}>
-              <Select placeholder="婚姻" allowClear>
-                <Select.Option value="未婚">未婚</Select.Option>
-                <Select.Option value="已婚">已婚</Select.Option>
-                <Select.Option value="离婚">离婚</Select.Option>
-                <Select.Option value="丧偶">丧偶</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item name="blood_type" label="血型" style={{ flex: 1 }}>
-              <Select placeholder="血型" allowClear>
-                <Select.Option value="A型">A型</Select.Option>
-                <Select.Option value="B型">B型</Select.Option>
-                <Select.Option value="AB型">AB型</Select.Option>
-                <Select.Option value="O型">O型</Select.Option>
-                <Select.Option value="未知">未知</Select.Option>
-              </Select>
-            </Form.Item>
-          </div>
-
-          {/* ── 二、联系方式 ── */}
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: '#065f46',
-              background: '#f0fdf4',
-              padding: '3px 8px',
-              borderRadius: 4,
-              marginBottom: 10,
-              marginTop: 4,
-            }}
-          >
-            二、联系方式
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Form.Item name="phone" label="本人电话" style={{ flex: 1 }}>
-              <Input placeholder="手机号" />
-            </Form.Item>
-            <Form.Item name="contact_name" label="紧急联系人" style={{ flex: 1 }}>
-              <Input placeholder="联系人姓名" />
-            </Form.Item>
-            <Form.Item name="contact_relation" label="与患者关系" style={{ flex: 1 }}>
-              <Select placeholder="关系" allowClear>
-                {['配偶', '父母', '子女', '兄弟姐妹', '其他亲属', '朋友', '其他'].map(r => (
-                  <Select.Option key={r} value={r}>
-                    {r}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-            <Form.Item name="contact_phone" label="联系人电话" style={{ flex: 1 }}>
-              <Input placeholder="联系人手机" />
-            </Form.Item>
-          </div>
-
-          <Form.Item name="address" label="家庭住址">
-            <Input placeholder="详细家庭地址" />
-          </Form.Item>
-
-          {/* ── 三、入院信息 ── */}
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: '#065f46',
-              background: '#f0fdf4',
-              padding: '3px 8px',
-              borderRadius: 4,
-              marginBottom: 10,
-              marginTop: 4,
-            }}
-          >
-            三、入院信息
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Form.Item name="bed_no" label="床位号" style={{ flex: 1 }}>
-              <Input placeholder="如：内科3床" />
-            </Form.Item>
-            <Form.Item
-              name="admission_route"
-              label="入院途径"
-              style={{ flex: 1 }}
-              rules={[{ required: true, message: '请选择入院途径' }]}
-            >
-              <Select placeholder="入院途径">
-                <Select.Option value="急诊">急诊</Select.Option>
-                <Select.Option value="门诊">门诊</Select.Option>
-                <Select.Option value="其他医疗机构转入">其他医疗机构转入</Select.Option>
-                <Select.Option value="其他">其他</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="admission_condition"
-              label="入院病情"
-              style={{ flex: 1 }}
-              rules={[{ required: true, message: '请选择入院病情' }]}
-            >
-              <Select placeholder="入院病情">
-                <Select.Option value="危">危</Select.Option>
-                <Select.Option value="急">急</Select.Option>
-                <Select.Option value="一般">一般</Select.Option>
-                <Select.Option value="不详">不详</Select.Option>
-              </Select>
-            </Form.Item>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Form.Item name="occupation" label="职业" style={{ flex: 1 }}>
-              <Input placeholder="如：教师、农民、工人" />
-            </Form.Item>
-            <Form.Item name="workplace" label="工作单位" style={{ flex: 2 }}>
-              <Input placeholder="工作单位名称" />
-            </Form.Item>
-          </div>
-        </Form>
-      </Modal>
+        onClose={() => setModalOpen(false)}
+        onSuccess={handleEncounterCreated}
+      />
 
       <HistoryDrawer
         open={historyOpen}
@@ -676,18 +461,6 @@ export default function InpatientWorkbenchPage() {
         accentColor={ACCENT}
         tagColor="green"
         recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
-      />
-
-      <ResumeDrawer
-        open={resumeOpen}
-        onClose={() => setResumeOpen(false)}
-        list={resumeList}
-        loading={resumeLoading}
-        onResume={handleResume}
-        accentColor={ACCENT}
-        title="进行中住院接诊"
-        emptyText="暂无进行中住院接诊"
-        fixedTag={{ color: 'green', label: '住院' }}
       />
 
       <RecordViewModal

@@ -34,6 +34,9 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
 import { useWorkbenchStore } from '@/store/workbenchStore'
+import { scenes, shadow } from '@/theme/tokens'
+
+const brand = scenes.outpatient
 import OverviewPage from './OverviewPage'
 import UsersPage from './UsersPage'
 import DepartmentsPage from './DepartmentsPage'
@@ -100,7 +103,7 @@ export default function AdminLayout() {
         width={224}
         style={{
           borderRight: '1px solid var(--border)',
-          boxShadow: '2px 0 12px rgba(0,0,0,0.05)',
+          boxShadow: shadow.xs,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -116,7 +119,7 @@ export default function AdminLayout() {
             left: 0,
             right: 0,
             height: 3,
-            background: 'linear-gradient(90deg, #1d4ed8, #3b82f6, #60a5fa)',
+            background: `linear-gradient(90deg, ${brand.primary}, ${brand.accentLight}, ${brand.accentLighter})`,
           }}
         />
 
@@ -134,12 +137,12 @@ export default function AdminLayout() {
                 width: 34,
                 height: 34,
                 borderRadius: 10,
-                background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+                background: `linear-gradient(135deg, ${brand.primary}, ${brand.accentLight})`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
+                boxShadow: `0 2px 8px rgba(${brand.shadowRgba},0.3)`,
               }}
             >
               <MedicineBoxOutlined style={{ color: '#fff', fontSize: 17 }} />
@@ -184,10 +187,10 @@ export default function AdminLayout() {
             <Avatar
               size={34}
               style={{
-                background: 'linear-gradient(135deg, #1d4ed8, #60a5fa)',
+                background: `linear-gradient(135deg, ${brand.primary}, ${brand.accentLighter})`,
                 fontSize: 13,
                 flexShrink: 0,
-                boxShadow: '0 1px 4px rgba(37,99,235,0.2)',
+                boxShadow: `0 1px 4px rgba(${brand.shadowRgba},0.2)`,
               }}
             >
               {user?.real_name?.[0]}

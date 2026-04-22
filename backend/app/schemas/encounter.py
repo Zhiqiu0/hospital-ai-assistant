@@ -53,6 +53,8 @@ class QuickStartRequest(BaseModel):
     bed_no: Optional[str] = None          # 床位号（住院用）
     admission_route: Optional[str] = None  # 入院途径（住院病案首页）
     admission_condition: Optional[str] = None  # 入院病情（住院病案首页）
+    # 复诊时前端可直接传入已知的患者 ID，跳过模糊匹配搜索
+    patient_id: Optional[str] = None
 
 
 class EncounterCreate(BaseModel):

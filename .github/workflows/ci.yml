@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
 
       - name: Install dependencies
@@ -62,3 +62,6 @@ jobs:
         run: |
           pip install ruff
           ruff check app --select E,F,W --ignore E501
+
+      - name: Run tests
+        run: pytest tests/ -v

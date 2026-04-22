@@ -1,34 +1,14 @@
 /**
  * 检验报告标签页（components/workbench/LabReportTab.tsx）
- *
- * 展示当前接诊关联的所有检验报告，支持上传与 AI 解读：
- *   - 调用 GET /encounters/{id}/lab-reports 加载已有报告列表
- *   - 上传入口：集成 LabReportUploadButton 组件（支持图片/PDF）
- *   - AI 解读：点击「AI 解读」调用 POST /ai/interpret-lab，
- *     流式返回解读文本并展示在报告下方
- *
- * 报告状态：
- *   pending → 橙色「待解读」  interpreted → 绿色「已解读」
- *
- * 删除报告：
- *   调用 DELETE /lab-reports/{id}，删除后刷新列表。
- *   已签发病历（isFinal=true）时隐藏操作按钮。
+ * 报告卡片已提取至 LabReportCard.tsx。
  */
 import { useEffect, useState } from 'react'
-import { Button, Empty, Spin, message, Typography, Tag, Upload, Modal } from 'antd'
-import {
-  FileTextOutlined,
-  DeleteOutlined,
-  ReloadOutlined,
-  InboxOutlined,
-  CheckCircleOutlined,
-  PlusOutlined,
-  WarningOutlined,
-} from '@ant-design/icons'
+import { Button, Empty, Spin, message, Upload, Modal } from 'antd'
+import { ReloadOutlined, InboxOutlined, PlusOutlined } from '@ant-design/icons'
 import { useWorkbenchStore } from '@/store/workbenchStore'
+import LabReportCard from './LabReportCard'
 import api from '@/services/api'
 
-const { Text } = Typography
 const { Dragger } = Upload
 
 interface LabReportItem {
@@ -39,25 +19,18 @@ interface LabReportItem {
   created_at: string
 }
 
-// 从 ocr_text 中提取报告类型
 function extractReportType(text: string): string {
-  const m = text.match(/【报告类型】([^\n【]+)/)
-  return m?.[1]?.trim() || '未知类型'
+  return text.match(/【报告类型】([^\n【]+)/)?.[1]?.trim() || '未知类型'
 }
 
-// 从 ocr_text 中提取患者姓名
 function extractPatientName(text: string): string {
-  const m = text.match(/姓名[：:]\s*([^\s\n]+)/)
-  return m?.[1]?.trim() || ''
+  return text.match(/姓名[：:]\s*([^\s\n]+)/)?.[1]?.trim() || ''
 }
 
-// 智能插入：同类型替换，不同类型追加
 function smartInsert(existing: string, newReport: string): string {
   if (!existing.trim()) return newReport
   const newType = extractReportType(newReport)
   if (newType === '未知类型') return existing.trimEnd() + '\n\n' + newReport
-
-  // 按报告分块（每块以【报告类型】开头）
   const sections = existing.split(/(?=【报告类型】)/)
   const idx = sections.findIndex(s => extractReportType(s) === newType)
   if (idx >= 0) {
@@ -84,7 +57,6 @@ export default function LabReportTab() {
       )) as LabReportItem[]
       setReports(data)
     } catch {
-      // silent
     } finally {
       setLoading(false)
     }
@@ -92,7 +64,7 @@ export default function LabReportTab() {
 
   useEffect(() => {
     fetchReports()
-    setInsertedIds(new Set()) // 切换接诊时重置已插入标记
+    setInsertedIds(new Set())
   }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {
@@ -120,13 +92,11 @@ export default function LabReportTab() {
   }
 
   const doInsert = (report: LabReportItem) => {
-    const current = inquiry.auxiliary_exam?.trim() || ''
-    const newVal = smartInsert(current, report.ocr_text)
+    const newVal = smartInsert(inquiry.auxiliary_exam?.trim() || '', report.ocr_text)
     const newInquiry = { ...inquiry, auxiliary_exam: newVal }
     setInquiry(newInquiry)
-    if (currentEncounterId) {
+    if (currentEncounterId)
       api.put(`/encounters/${currentEncounterId}/inquiry`, newInquiry).catch(() => {})
-    }
     setInsertedIds(prev => new Set([...prev, report.id]))
     message.success({ content: `已插入：${extractReportType(report.ocr_text)}`, duration: 1.5 })
   }
@@ -157,14 +127,11 @@ export default function LabReportTab() {
     })
     const doAll = () => {
       let current = inquiry.auxiliary_exam?.trim() || ''
-      for (const r of reports) {
-        current = smartInsert(current, r.ocr_text)
-      }
+      for (const r of reports) current = smartInsert(current, r.ocr_text)
       const newInquiry = { ...inquiry, auxiliary_exam: current }
       setInquiry(newInquiry)
-      if (currentEncounterId) {
+      if (currentEncounterId)
         api.put(`/encounters/${currentEncounterId}/inquiry`, newInquiry).catch(() => {})
-      }
       setInsertedIds(new Set(reports.map(r => r.id)))
       message.success({ content: `已插入全部 ${reports.length} 份报告`, duration: 2 })
     }
@@ -207,7 +174,6 @@ export default function LabReportTab() {
         gap: 10,
       }}
     >
-      {/* Upload area */}
       <Dragger
         accept=".jpg,.jpeg,.png,.webp,.pdf"
         multiple
@@ -237,7 +203,6 @@ export default function LabReportTab() {
         )}
       </Dragger>
 
-      {/* Report list */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <Spin size="small" />
@@ -252,11 +217,11 @@ export default function LabReportTab() {
         <div
           style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}
         >
-          {/* Insert all button */}
           <Button
             size="small"
             icon={<PlusOutlined />}
             onClick={handleInsertAll}
+            block
             style={{
               borderRadius: 6,
               fontSize: 12,
@@ -265,203 +230,24 @@ export default function LabReportTab() {
               borderColor: '#ddd6fe',
               background: '#f5f3ff',
             }}
-            block
           >
             一键插入全部（{reports.length} 份）
           </Button>
-
-          {/* Individual report cards */}
-          {reports.map(r => {
-            const inserted = insertedIds.has(r.id)
-            const reportType = extractReportType(r.ocr_text)
-            // Extract anomaly summary
-            const anomalyMatch = r.ocr_text.match(/【异常项汇总】([\s\S]*?)(?=\n【|$)/)
-            const hasAnomaly = !!anomalyMatch
-            const anomalyItems = anomalyMatch
-              ? anomalyMatch[1]
-                  .split(/\n?\d+\.\s+/)
-                  .filter(Boolean)
-                  .map(s => s.replace(/\*\*/g, '').split(/[：:]/)[0].trim())
-                  .filter(Boolean)
-                  .slice(0, 2)
-              : []
-            const expanded = expandedId === r.id
-            const reportPatientName = extractPatientName(r.ocr_text)
-            const nameMismatch =
-              !!reportPatientName &&
-              !!currentPatient?.name &&
-              reportPatientName !== currentPatient.name
-
-            return (
-              <div
-                key={r.id}
-                style={{
-                  border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : '#e2e8f0'}`,
-                  borderRadius: 8,
-                  background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : '#fff',
-                  overflow: 'hidden',
-                }}
-              >
-                {/* Card header */}
-                <div
-                  style={{
-                    padding: '8px 10px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                  onClick={() => setExpandedId(expanded ? null : r.id)}
-                >
-                  <FileTextOutlined
-                    style={{
-                      color: nameMismatch ? '#ef4444' : '#7c3aed',
-                      fontSize: 13,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: '#1e293b',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {reportType}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: '#94a3b8',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {r.original_filename}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 2,
-                      alignItems: 'flex-end',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {inserted && (
-                      <Tag color="success" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                        已插入
-                      </Tag>
-                    )}
-                    {nameMismatch && (
-                      <Tag color="error" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                        <WarningOutlined /> 患者不符
-                      </Tag>
-                    )}
-                    {hasAnomaly && (
-                      <Tag color="warning" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                        <WarningOutlined /> 有异常
-                      </Tag>
-                    )}
-                  </div>
-                </div>
-
-                {/* Anomaly preview strip */}
-                {hasAnomaly && anomalyItems.length > 0 && (
-                  <div
-                    style={{
-                      padding: '4px 10px',
-                      background: '#fffbeb',
-                      borderTop: '1px solid #fef3c7',
-                      display: 'flex',
-                      gap: 6,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    {anomalyItems.map((item, i) => (
-                      <span key={i} style={{ fontSize: 10, color: '#92400e' }}>
-                        ▲ {item}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Expanded content */}
-                {expanded && (
-                  <div style={{ borderTop: '1px solid #f1f5f9' }}>
-                    <div
-                      style={{
-                        padding: '8px 10px',
-                        fontSize: 11,
-                        lineHeight: 1.6,
-                        whiteSpace: 'pre-wrap',
-                        color: '#334155',
-                        maxHeight: 200,
-                        overflowY: 'auto',
-                        background: '#fafafa',
-                      }}
-                    >
-                      {r.ocr_text}
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div
-                  style={{
-                    padding: '6px 10px',
-                    display: 'flex',
-                    gap: 6,
-                    justifyContent: 'flex-end',
-                    borderTop: '1px solid #f1f5f9',
-                  }}
-                >
-                  <Text style={{ fontSize: 10, color: '#94a3b8', flex: 1, alignSelf: 'center' }}>
-                    {r.created_at
-                      ? new Date(r.created_at).toLocaleString('zh-CN', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : ''}
-                  </Text>
-                  <Button
-                    size="small"
-                    icon={<DeleteOutlined />}
-                    danger
-                    onClick={() => handleDelete(r.id)}
-                    style={{ fontSize: 11, borderRadius: 5, height: 24 }}
-                  />
-                  <Button
-                    size="small"
-                    icon={inserted ? <CheckCircleOutlined /> : <PlusOutlined />}
-                    onClick={() => handleInsert(r)}
-                    style={{
-                      fontSize: 11,
-                      borderRadius: 5,
-                      height: 24,
-                      color: inserted ? '#16a34a' : '#7c3aed',
-                      borderColor: inserted ? '#86efac' : '#ddd6fe',
-                      background: inserted ? '#f0fdf4' : '#f5f3ff',
-                    }}
-                  >
-                    {inserted ? '已插入' : '插入'}
-                  </Button>
-                </div>
-              </div>
-            )
-          })}
+          {reports.map(r => (
+            <LabReportCard
+              key={r.id}
+              report={r}
+              inserted={insertedIds.has(r.id)}
+              expanded={expandedId === r.id}
+              currentPatientName={currentPatient?.name}
+              onInsert={() => handleInsert(r)}
+              onDelete={() => handleDelete(r.id)}
+              onToggleExpand={() => setExpandedId(expandedId === r.id ? null : r.id)}
+            />
+          ))}
         </div>
       )}
 
-      {/* Refresh */}
       <div style={{ textAlign: 'right' }}>
         <Button
           size="small"

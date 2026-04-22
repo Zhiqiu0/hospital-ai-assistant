@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient
 from app.api.v1.admin import users, departments, qc_rules, prompts, stats, records as admin_records, audit_logs, model_configs, voice_records as admin_voice_records
 
 router = APIRouter()
@@ -12,6 +12,8 @@ router.include_router(medical_records.router, prefix="/medical-records", tags=["
 router.include_router(qc.router, prefix="/qc-issues", tags=["质控"])
 router.include_router(pacs.router, prefix="/pacs", tags=["PACS影像"])
 router.include_router(lab_reports.router, prefix="/lab-reports", tags=["检验报告"])
+# 住院专项：病区视图、体征、问题列表、时效合规
+router.include_router(inpatient.router, prefix="", tags=["住院专项"])
 
 # 后台管理
 router.include_router(users.router, prefix="/admin/users", tags=["管理-用户"])

@@ -1,33 +1,57 @@
 /**
  * 登录页面（pages/LoginPage.tsx）
  *
- * 系统统一登录入口，支持医生和管理员登录：
- *   - 调用 POST /auth/login，成功后将 access_token 存入 authStore
- *   - 根据 user.role 路由分发：
- *     admin → /admin/overview  doctor → /workbench  radiologist → /pacs
+ * 系统统一登录入口：
+ *   - POST /auth/login 成功后将 access_token 存入 authStore
+ *   - 根据 user.role 分发：admin → /admin  radiologist → /pacs
+ *     其他按 systemType 去门诊或住院工作台
  *   - 登录接口有速率限制（5次/分钟/账号），超限返回 429
  *
- * 系统类型选择（systemType）：
- *   authStore.systemType 控制顶栏显示的系统名称（医院可配置）。
- *   登录时一并设置，无需单独接口。
- *
- * 安全：
- *   密码字段不记录到 sessionStorage；
- *   token 存储在 authStore（zustand persist → localStorage）。
+ * 视觉：全部颜色从 theme/tokens.ts 读取，按 selectedSystem 切换门诊青 / 住院深青主题。
+ * 图标：使用 antd SVG 图标替代 emoji（无障碍 + 专业度）。
  */
 import { useState } from 'react'
 import { Form, Input, Button, message } from 'antd'
-import { UserOutlined, LockOutlined, MedicineBoxOutlined } from '@ant-design/icons'
+import {
+  UserOutlined,
+  LockOutlined,
+  MedicineBoxOutlined,
+  HomeOutlined,
+  AppstoreOutlined,
+  ThunderboltOutlined,
+  MessageOutlined,
+  SafetyOutlined,
+  FileTextOutlined,
+  ExperimentOutlined,
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import api from '@/services/api'
+import { scenes, neutral, radius, spacing, typography } from '@/theme/tokens'
+
+type SystemType = 'outpatient' | 'inpatient'
+
+const FEATURES: Record<SystemType, { icon: React.ReactNode; title: string; desc: string }[]> = {
+  outpatient: [
+    { icon: <ThunderboltOutlined />, title: 'AI 病历生成', desc: '一键生成标准化病历草稿' },
+    { icon: <MessageOutlined />, title: '智能追问建议', desc: '自动提示关键问诊问题' },
+    { icon: <SafetyOutlined />, title: 'AI 质控检查', desc: '实时检测病历规范问题' },
+  ],
+  inpatient: [
+    { icon: <FileTextOutlined />, title: '住院病历生成', desc: '符合浙江省2021版质控标准' },
+    { icon: <ExperimentOutlined />, title: '专项评估辅助', desc: 'VTE风险、营养、心理一键评估' },
+    { icon: <SafetyOutlined />, title: 'AI 质控检查', desc: '按百分制评分标准实时检测' },
+  ],
+}
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setAuth, setSystemType } = useAuthStore()
   const resetWorkbench = useWorkbenchStore(s => s.reset)
-  const [selectedSystem, setSelectedSystem] = useState<'outpatient' | 'inpatient'>('outpatient')
+  const [selectedSystem, setSelectedSystem] = useState<SystemType>('outpatient')
+
+  const theme = selectedSystem === 'inpatient' ? scenes.inpatient : scenes.outpatient
 
   const resolveLoginErrorMessage = async (username: string, error: any) => {
     const detail = error?.detail
@@ -63,13 +87,11 @@ export default function LoginPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      {/* Left panel — branding */}
+      {/* 左侧品牌区 */}
       <div
         style={{
           flex: 1,
-          background: isInpatient
-            ? 'linear-gradient(145deg, #064e3b 0%, #065f46 50%, #047857 100%)'
-            : 'linear-gradient(145deg, #1e40af 0%, #2563eb 50%, #3b82f6 100%)',
+          background: `linear-gradient(145deg, ${theme.primaryDark} 0%, ${theme.primary} 50%, ${theme.accentLight} 100%)`,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
@@ -80,6 +102,7 @@ export default function LoginPage() {
           transition: 'background 0.4s ease',
         }}
       >
+        {/* 装饰圆 */}
         <div
           style={{
             position: 'absolute',
@@ -120,7 +143,15 @@ export default function LoginPage() {
           >
             <MedicineBoxOutlined style={{ fontSize: 34, color: '#fff' }} />
           </div>
-          <h1 style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.5px', marginBottom: 8 }}>
+          <h1
+            style={{
+              fontSize: 32,
+              fontWeight: 800,
+              letterSpacing: '-0.5px',
+              marginBottom: 8,
+              fontFamily: typography.fontHeading,
+            }}
+          >
             MediScribe
           </h1>
           <p style={{ fontSize: 16, opacity: 0.85, marginBottom: 48 }}>
@@ -128,32 +159,36 @@ export default function LoginPage() {
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, textAlign: 'left' }}>
-            {(isInpatient
-              ? [
-                  { icon: '📋', title: '住院病历生成', desc: '符合浙江省2021版质控标准' },
-                  { icon: '🩺', title: '专项评估辅助', desc: 'VTE风险、营养、心理一键评估' },
-                  { icon: '🛡️', title: 'AI质控检查', desc: '按百分制评分标准实时检测' },
-                ]
-              : [
-                  { icon: '⚡', title: 'AI 病历生成', desc: '一键生成标准化病历草稿' },
-                  { icon: '💬', title: '智能追问建议', desc: '自动提示关键问诊问题' },
-                  { icon: '🛡️', title: 'AI 质控检查', desc: '实时检测病历规范问题' },
-                ]
-            ).map(f => (
+            {FEATURES[selectedSystem].map(f => (
               <div
                 key={f.title}
                 style={{
                   display: 'flex',
-                  alignItems: 'flex-start',
+                  alignItems: 'center',
                   gap: 12,
                   background: 'rgba(255,255,255,0.1)',
-                  borderRadius: 12,
+                  borderRadius: radius.lg,
                   padding: '14px 16px',
                   border: '1px solid rgba(255,255,255,0.15)',
                   backdropFilter: 'blur(4px)',
                 }}
               >
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{f.icon}</span>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: radius.md,
+                    background: 'rgba(255,255,255,0.18)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 18,
+                    color: '#fff',
+                    flexShrink: 0,
+                  }}
+                >
+                  {f.icon}
+                </div>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{f.title}</div>
                   <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>{f.desc}</div>
@@ -164,11 +199,11 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Right panel — login form */}
+      {/* 右侧登录表单 */}
       <div
         style={{
           width: 440,
-          background: '#fff',
+          background: neutral.surface,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
@@ -177,108 +212,124 @@ export default function LoginPage() {
         }}
       >
         <div style={{ marginBottom: 32 }}>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>
+          <h2
+            style={{
+              fontSize: 24,
+              fontWeight: 700,
+              color: neutral.text1,
+              marginBottom: 6,
+              fontFamily: typography.fontHeading,
+            }}
+          >
             欢迎回来
           </h2>
-          <p style={{ color: '#64748b', fontSize: 14 }}>请选择系统并登录您的账号</p>
+          <p style={{ color: neutral.text3, fontSize: 14 }}>请选择系统并登录您的账号</p>
         </div>
 
-        {/* 系统选择 */}
+        {/* 系统选择卡片 */}
         <div style={{ marginBottom: 28 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: neutral.text2, marginBottom: 10 }}>
             选择登录系统
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            {[
-              { key: 'outpatient', label: '门诊系统', icon: '🏥', desc: '门诊接诊·病历书写' },
-              { key: 'inpatient', label: '住院系统', icon: '🛏️', desc: '住院管理·入院记录' },
-            ].map(s => (
-              <div
-                key={s.key}
-                onClick={() => setSelectedSystem(s.key as any)}
-                style={{
-                  flex: 1,
-                  padding: '14px 12px',
-                  borderRadius: 10,
-                  cursor: 'pointer',
-                  border: `2px solid ${
-                    selectedSystem === s.key
-                      ? s.key === 'inpatient'
-                        ? '#065f46'
-                        : '#2563eb'
-                      : '#e2e8f0'
-                  }`,
-                  background:
-                    selectedSystem === s.key
-                      ? s.key === 'inpatient'
-                        ? '#f0fdf4'
-                        : '#eff6ff'
-                      : '#f8fafc',
-                  transition: 'all 0.2s',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: 24, marginBottom: 4 }}>{s.icon}</div>
-                <div
+            {(
+              [
+                {
+                  key: 'outpatient',
+                  label: '门诊系统',
+                  icon: <AppstoreOutlined />,
+                  desc: '门诊接诊 · 病历书写',
+                },
+                {
+                  key: 'inpatient',
+                  label: '住院系统',
+                  icon: <HomeOutlined />,
+                  desc: '住院管理 · 入院记录',
+                },
+              ] as const
+            ).map(s => {
+              const active = selectedSystem === s.key
+              const sceneTheme = s.key === 'inpatient' ? scenes.inpatient : scenes.outpatient
+              return (
+                <button
+                  type="button"
+                  key={s.key}
+                  onClick={() => setSelectedSystem(s.key)}
+                  aria-pressed={active}
                   style={{
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color:
-                      selectedSystem === s.key
-                        ? s.key === 'inpatient'
-                          ? '#065f46'
-                          : '#2563eb'
-                        : '#374151',
+                    flex: 1,
+                    padding: '14px 12px',
+                    borderRadius: radius.lg,
+                    cursor: 'pointer',
+                    border: `2px solid ${active ? sceneTheme.primary : neutral.border}`,
+                    background: active ? sceneTheme.primaryLight : neutral.surface2,
+                    transition: 'all 0.2s',
+                    textAlign: 'center',
                   }}
                 >
-                  {s.label}
-                </div>
-                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{s.desc}</div>
-              </div>
-            ))}
+                  <div
+                    style={{
+                      fontSize: 22,
+                      marginBottom: 4,
+                      color: active ? sceneTheme.primary : neutral.text3,
+                    }}
+                  >
+                    {s.icon}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: active ? sceneTheme.primary : neutral.text2,
+                    }}
+                  >
+                    {s.label}
+                  </div>
+                  <div style={{ fontSize: 11, color: neutral.text4, marginTop: 2 }}>{s.desc}</div>
+                </button>
+              )
+            })}
           </div>
         </div>
 
         <Form onFinish={onFinish} size="large" layout="vertical">
           <Form.Item
-            label={<span style={{ fontWeight: 500, color: '#374151' }}>用户名</span>}
+            label={<span style={{ fontWeight: 500, color: neutral.text2 }}>用户名</span>}
             name="username"
             rules={[{ required: true, message: '请输入用户名' }]}
           >
             <Input
-              prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+              prefix={<UserOutlined style={{ color: neutral.text4 }} />}
               placeholder="请输入用户名"
-              style={{ borderRadius: 8, height: 44 }}
+              style={{ borderRadius: radius.md, height: 44 }}
+              autoComplete="username"
             />
           </Form.Item>
           <Form.Item
-            label={<span style={{ fontWeight: 500, color: '#374151' }}>密码</span>}
+            label={<span style={{ fontWeight: 500, color: neutral.text2 }}>密码</span>}
             name="password"
             rules={[{ required: true, message: '请输入密码' }]}
           >
             <Input.Password
-              prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+              prefix={<LockOutlined style={{ color: neutral.text4 }} />}
               placeholder="请输入密码"
-              style={{ borderRadius: 8, height: 44 }}
+              style={{ borderRadius: radius.md, height: 44 }}
+              autoComplete="current-password"
             />
           </Form.Item>
-          <Form.Item style={{ marginTop: 8 }}>
+          <Form.Item style={{ marginTop: spacing.sm }}>
             <Button
               type="primary"
               htmlType="submit"
               block
               style={{
                 height: 44,
-                borderRadius: 8,
+                borderRadius: radius.md,
                 fontWeight: 600,
                 fontSize: 15,
-                background: isInpatient
-                  ? 'linear-gradient(135deg, #065f46, #059669)'
-                  : 'linear-gradient(135deg, #2563eb, #3b82f6)',
+                background: `linear-gradient(135deg, ${theme.primary}, ${theme.accentLight})`,
                 border: 'none',
-                boxShadow: isInpatient
-                  ? '0 4px 14px rgba(6,95,70,0.35)'
-                  : '0 4px 14px rgba(37,99,235,0.35)',
+                boxShadow: `0 4px 14px rgba(${theme.shadowRgba},0.35)`,
               }}
             >
               登录{isInpatient ? '住院系统' : '门诊系统'}
@@ -286,7 +337,7 @@ export default function LoginPage() {
           </Form.Item>
         </Form>
 
-        <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 24 }}>
+        <p style={{ textAlign: 'center', color: neutral.text4, fontSize: 12, marginTop: 24 }}>
           © 2025 MediScribe · 临床智能辅助系统
         </p>
       </div>

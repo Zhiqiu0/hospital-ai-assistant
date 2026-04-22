@@ -24,6 +24,7 @@
 # record_type → 中文标签（唯一权威映射，同时用于 prompt 说明和质控/评分）
 RECORD_TYPE_LABELS: dict[str, str] = {
     "outpatient": "门诊病历",
+    "emergency": "急诊病历",
     "admission_note": "入院记录",
     "first_course_record": "首次病程记录",
     "course_record": "日常病程记录",
@@ -469,9 +470,66 @@ T:__℃  P:__次/分  R:__次/分  BP:__/__mmHg
 要求：术后病程须记录伤口情况，用药须与医嘱一致。"""
 
 
+EMERGENCY_GENERATE_PROMPT = """你是一名专业的急诊病历书写助手。根据以下问诊信息，按照《急诊病历书写规范》生成规范的急诊{visit_nature}病历草稿。
+
+患者信息：姓名：{patient_name}  性别：{patient_gender}  年龄：{patient_age}
+就诊时间：{visit_time}　病发时间：{onset_time}
+
+问诊信息：
+主诉：{chief_complaint}
+现病史：{history_present_illness}
+既往史：{past_history}
+过敏史：{allergy_history}
+个人史：{personal_history}
+体格检查（含生命体征）：{physical_exam}
+辅助检查（真实数据，原样写入，不得编造）：{auxiliary_exam}
+诊断：{initial_impression}
+急诊处置：{treatment_plan}
+患者去向：{emergency_section}
+
+请直接输出病历文本（不要JSON），第一行输出：
+就诊时间：{visit_time}　病发时间：{onset_time}
+
+【主诉】
+（主要症状/体征+持续时间，20字以内）
+
+【现病史】
+（①起病时间、诱因、主要症状及演变；②院前处置经过；{revisit_note}③一般情况）
+
+【既往史】
+（重要既往病史、手术史、用药史，无则写"否认"）
+
+【过敏史】
+（药物/食物过敏史，无则写"否认药物及食物过敏史"）
+
+【体格检查】
+T:   P:   R:   BP:
+（生命体征必须作为第一行，严格照抄医生录入的体征数据；其后为重点体征，若字段为空则写"[未填写，需补充]"）
+
+【辅助检查】
+（若有真实数据则如实写入；若无则写"暂无"，禁止编造数值）
+
+【诊断】
+（严格照抄医生录入的诊断；若字段为空则写"[未填写，需补充]"）
+
+【急诊处置】
+（照抄医生录入的处置意见；若字段为空则写"[未填写，需补充]"）
+
+{emergency_record_section}
+【患者去向】
+（照抄医生选择的患者去向：回家观察/留院观察/收入住院/转院/手术室；若未填写则写"[未填写，需补充]"）
+
+【核心要求】
+1. 诊断、处置意见、患者去向——必须严格使用医生录入的原文
+2. 生命体征必须完整记录，缺项写"[未测]"
+3. 禁止编造任何未提供的症状、体征、检验数据或诊断
+4. 急诊病历不需要中医四诊内容，专注西医急诊格式"""
+
+
 # Prompt 路由表（record_type → 生成 prompt）
 PROMPT_MAP: dict[str, str] = {
     "outpatient": OUTPATIENT_GENERATE_PROMPT,
+    "emergency": EMERGENCY_GENERATE_PROMPT,
     "admission_note": ADMISSION_NOTE_PROMPT,
     "first_course_record": FIRST_COURSE_PROMPT,
     "course_record": COURSE_RECORD_PROMPT,

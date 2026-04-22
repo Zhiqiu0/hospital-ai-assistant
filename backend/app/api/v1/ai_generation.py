@@ -65,7 +65,9 @@ async def quick_generate(
     current_user=Depends(get_current_user),
 ):
     """根据问诊信息流式生成指定类型的病历草稿。"""
-    record_type = req.record_type or "outpatient"
+    # 急诊接诊自动使用急诊 prompt，除非医生已明确指定其他类型（如收入住院后切换为入院记录）
+    is_emergency = (req.visit_type_detail or "outpatient") == "emergency"
+    record_type = req.record_type or ("emergency" if is_emergency else "outpatient")
     db_prompt = await get_active_prompt(db, record_type)
     template = db_prompt or PROMPT_MAP.get(record_type, PROMPT_MAP["outpatient"])
     model_options = await get_model_options(db, "generate")
@@ -91,12 +93,14 @@ async def quick_generate(
     )
     visit_nature = "初诊" if req.is_first_visit else "复诊"
     revisit_note = "③复诊患者需记录治疗后症状改变情况；" if not req.is_first_visit else ""
-    is_emergency = (req.visit_type_detail or "outpatient") == "emergency"
-
+    # 复诊时在 prompt 中注入上次病历，AI 据此保持稳定信息不变、更新变动章节
+    previous_record_section = (
+        f"\n\n【上次病历（复诊参考，稳定信息请保持一致）】\n{req.previous_record}"
+        if req.previous_record else ""
+    )
+    # emergency_section 在急诊 prompt 中作为去向/留观的简洁注入
     emergency_section = (
-        f"\n急诊附加：\n  急诊生命体征：{req.physical_exam or '见体格检查'}"
-        f"\n  留观记录：{req.observation_notes or '未提供'}"
-        f"\n  患者去向：{req.patient_disposition or '未提供'}"
+        f"留观记录：{req.observation_notes or '未提供'}\n患者去向：{req.patient_disposition or '未提供'}"
         if is_emergency else ""
     )
     emergency_record_section = (
@@ -141,7 +145,7 @@ async def quick_generate(
     )
 
     try:
-        prompt = template.format(**fmt_kwargs)
+        prompt = template.format(**fmt_kwargs) + previous_record_section
     except KeyError:
         # 自定义 prompt 字段不全时降级为最小集格式化
         prompt = template.format(
@@ -158,6 +162,7 @@ async def quick_generate(
             assessment_info=fmt_kwargs["assessment_info"],
             auxiliary_exam=fmt_kwargs["auxiliary_exam"],
         )
+        prompt += previous_record_section
 
     return StreamingResponse(
         stream_text(prompt, task_type="generate", model_options=model_options),

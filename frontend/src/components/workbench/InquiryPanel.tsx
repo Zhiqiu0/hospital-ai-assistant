@@ -1,48 +1,28 @@
 /**
  * 门诊/急诊问诊面板（components/workbench/InquiryPanel.tsx）
- *
- * 医生填写门诊问诊信息的主表单，字段按接诊流程分组：
- *   - 基础问诊：主诉、现病史、既往史、过敏史、个人史、体格检查
- *   - 中医四诊：望诊、闻诊、舌象、脉象（Collapse 折叠，中医病历必填）
- *   - 诊断信息：西医诊断、中医疾病/证候诊断、初步印象
- *   - 治疗意见：治则治法、处理意见、复诊建议、注意事项
- *   - 急诊附加：留观记录、患者去向（visitType='emergency' 时显示）
- *
- * 自动保存：useEffect 监听表单变化，防抖 1.5s 后调用 PUT /encounters/{id}/inquiry。
- * 表单恢复：通过 inquiry（store）预填 Ant Design Form 初始值。
- * AI 规范化：调用 POST /ai/normalize-fields，口语转书面语后更新表单和 store。
+ * 业务逻辑已提取至 hooks/useInquiryPanel.ts，此文件仅保留 JSX 渲染。
+ * 各区块已拆分为独立子组件：TcmSection / DiagnosisSection / TreatmentSection /
+ * EmergencySection / EmergencyDispositionBar。
  */
-import { useEffect, useState } from 'react'
-import {
-  Form,
-  Input,
-  Button,
-  message,
-  Divider,
-  Radio,
-  Tag,
-  Collapse,
-  Select,
-  DatePicker,
-} from 'antd'
+import { Form, Input, Button, Divider, Radio, Tag, DatePicker } from 'antd'
 import {
   SaveOutlined,
   CheckOutlined,
-  MedicineBoxOutlined,
   HeartOutlined,
-  BulbOutlined,
   AlertOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons'
-import dayjs from 'dayjs'
-import { useWorkbenchStore } from '@/store/workbenchStore'
-import api from '@/services/api'
 import VoiceInputCard from './VoiceInputCard'
-import VitalSignsInput, { ParsedVitals } from './VitalSignsInput'
-import { writeSectionToRecord, FIELD_TO_SECTION } from './qcFieldMaps'
+import VitalSignsInput from './VitalSignsInput'
+import TcmSection from './TcmSection'
+import DiagnosisSection from './DiagnosisSection'
+import TreatmentSection from './TreatmentSection'
+import EmergencySection from './EmergencySection'
+import EmergencyDispositionBar from './EmergencyDispositionBar'
+import PatientProfileCard from './PatientProfileCard'
+import { useInquiryPanel } from '@/hooks/useInquiryPanel'
 
 const { TextArea } = Input
-const { Panel } = Collapse
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
@@ -64,287 +44,39 @@ const sectionHeaderStyle: React.CSSProperties = {
 const fs: React.CSSProperties = { marginBottom: 10 }
 
 export default function InquiryPanel() {
-  const [form] = Form.useForm()
   const {
-    inquiry,
-    setInquiry,
-    updateInquiryFields,
-    currentEncounterId,
-    currentPatient,
-    recordContent,
-    setRecordContent,
-    setPendingGenerate,
-    inquirySavedAt,
+    form,
+    isInputLocked,
+    isEmergency,
+    isDirty,
+    hasSavedInquiry,
+    profileDirty,
+    profileSaving,
+    saveAll,
+    setIsDirty,
+    saving,
+    parsedVitals,
+    onSave,
+    applyVoiceInquiry,
+    applyVoiceToRecord,
+    handleVitalFill,
+    visitNatureColor,
+    visitTypeLabel,
+    visitTypeColor,
     isFirstVisit,
+    isPatientReused,
     currentVisitType,
     setVisitMeta,
-    isPolishing,
-  } = useWorkbenchStore()
-  // 润色期间 recordContent 会短暂清空，isPolishing 防止输入框闪烁解锁
-  const isInputLocked = !!recordContent.trim() || isPolishing
-  const isFemale = currentPatient?.gender === 'female'
-  const isEmergency = currentVisitType === 'emergency'
-  const [isDirty, setIsDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [parsedVitals, setParsedVitals] = useState<ParsedVitals | undefined>(undefined)
-
-  const parseVitalsFromText = (text: string): ParsedVitals => {
-    const v: ParsedVitals = {}
-    const tM = text.match(/(?:体温|T)[:\s：]*(\d+\.?\d*)\s*℃/i)
-    if (tM) v.t = tM[1]
-    const pM = text.match(/(?:脉搏|P)[:\s：]*(\d+)\s*次/i)
-    if (pM) v.p = pM[1]
-    const rM = text.match(/(?:呼吸|R)[:\s：]*(\d+)\s*次/i)
-    if (rM) v.r = rM[1]
-    const bpM = text.match(/(?:血压|BP)[:\s：]*(\d+)\s*\/\s*(\d+)/i)
-    if (bpM) {
-      v.bpS = bpM[1]
-      v.bpD = bpM[2]
-    }
-    const spo2M = text.match(/SpO[₂2][:\s：]*(\d+)\s*%/i)
-    if (spo2M) v.spo2 = spo2M[1]
-    const hM = text.match(/身高[:\s：]*(\d+\.?\d*)\s*cm/i)
-    if (hM) v.h = hM[1]
-    const wM = text.match(/体重[:\s：]*(\d+\.?\d*)\s*kg/i)
-    if (wM) v.w = wM[1]
-    return v
-  }
-
-  useEffect(() => {
-    form.setFieldsValue({
-      ...inquiry,
-      visit_time: inquiry.visit_time ? dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm') : dayjs(),
-      onset_time: inquiry.onset_time ? dayjs(inquiry.onset_time, 'YYYY-MM-DD HH:mm') : null,
-    })
-    setIsDirty(false)
-  }, [form, currentEncounterId, inquirySavedAt])
-
-  useEffect(() => {
-    const current = form.getFieldValue('auxiliary_exam') || ''
-    if (inquiry.auxiliary_exam !== current) {
-      form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
-    }
-  }, [inquiry.auxiliary_exam])
-
-  // 就诊时间：从 store 初始化（来自 workspace snapshot 的 visited_at）
-  useEffect(() => {
-    if (inquiry.visit_time && !form.getFieldValue('visit_time')) {
-      form.setFieldValue('visit_time', dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm'))
-    }
-  }, [inquiry.visit_time])
-
-  useEffect(() => {
-    const current = form.getFieldValue('history_present_illness') || ''
-    if (inquiry.history_present_illness !== current) {
-      form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
-      setIsDirty(true)
-    }
-  }, [inquiry.history_present_illness])
-
-  useEffect(() => {
-    const current = form.getFieldValue('initial_impression') || ''
-    if (inquiry.initial_impression !== current) {
-      form.setFieldValue('initial_impression', inquiry.initial_impression || '')
-      setIsDirty(true)
-    }
-  }, [inquiry.initial_impression])
-
-  const allFields = [
-    'chief_complaint',
-    'history_present_illness',
-    'past_history',
-    'allergy_history',
-    'personal_history',
-    'menstrual_history',
-    'physical_exam',
-    'auxiliary_exam',
-    'initial_impression',
-    'tcm_inspection',
-    'tcm_auscultation',
-    'tongue_coating',
-    'pulse_condition',
-    'western_diagnosis',
-    'tcm_disease_diagnosis',
-    'tcm_syndrome_diagnosis',
-    'treatment_method',
-    'treatment_plan',
-    'followup_advice',
-    'precautions',
-    'observation_notes',
-    'patient_disposition',
-    'visit_time',
-    'onset_time',
-  ] as const
-
-  const buildData = (values: any) => {
-    const data: Record<string, string> = {}
-    for (const key of allFields) {
-      const val = values[key]
-      if (key === 'visit_time' || key === 'onset_time') {
-        // DatePicker 返回 dayjs 对象，转为字符串
-        data[key] = val ? (typeof val === 'string' ? val : val.format('YYYY-MM-DD HH:mm')) : ''
-      } else {
-        data[key] = val || ''
-      }
-    }
-    return data as any
-  }
-
-  const onSave = async (values: any) => {
-    setSaving(true)
-    const data = buildData(values)
-
-    const changedFields: Record<string, string> = {}
-    for (const key of allFields) {
-      const val = data[key] ?? ''
-      if (val && val !== ((inquiry as any)[key] ?? '')) changedFields[key] = val
-    }
-
-    const isFirstGeneration = !recordContent.trim()
-
-    let normalizedData = { ...data }
-    if (!isFirstGeneration && Object.keys(changedFields).length > 0) {
-      try {
-        const res: any = await api.post('/ai/normalize-fields', { fields: changedFields })
-        if (res?.fields) {
-          normalizedData = { ...data, ...res.fields }
-          form.setFieldsValue(res.fields)
-        }
-      } catch {
-        /* 失败时用原值 */
-      }
-    }
-
-    setInquiry(normalizedData)
-    if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
-    }
-
-    // 同步修改字段到病历对应段落
-    if (recordContent) {
-      const sectionMap: [string, string, string][] = [
-        ['【主诉】', normalizedData.chief_complaint, 'chief_complaint'],
-        ['【现病史】', normalizedData.history_present_illness, 'history_present_illness'],
-        ['【既往史】', normalizedData.past_history, 'past_history'],
-        ['【过敏史】', normalizedData.allergy_history || '', 'allergy_history'],
-        ['【个人史】', normalizedData.personal_history || '', 'personal_history'],
-        ['【月经史】', normalizedData.menstrual_history || '', 'menstrual_history'],
-        ['【体格检查】', normalizedData.physical_exam, 'physical_exam'],
-        ['【辅助检查】', normalizedData.auxiliary_exam || '', 'auxiliary_exam'],
-        ['【诊断】', buildDiagnosisText(normalizedData), 'western_diagnosis'],
-        ['【治疗意见及措施】', buildTreatmentText(normalizedData), 'treatment_method'],
-      ]
-      let updated = recordContent
-      for (const [header, value, fieldKey] of sectionMap) {
-        if (!changedFields[fieldKey]) continue
-        if (!value) continue
-        if (updated.includes(header)) {
-          updated = updated.replace(
-            new RegExp(`${header}[^\\S\\n]*\\n?[\\s\\S]*?(?=\\n【|$)`),
-            `${header}\n${value}`
-          )
-        }
-      }
-      if (updated !== recordContent) setRecordContent(updated)
-    }
-
-    if (!recordContent.trim() && data.chief_complaint) {
-      setPendingGenerate(true)
-    }
-    message.success({ content: '问诊信息已保存', duration: 1.5 })
-    setIsDirty(false)
-    setSaving(false)
-  }
-
-  const buildDiagnosisText = (d: any) => {
-    const parts: string[] = []
-    if (d.tcm_disease_diagnosis || d.tcm_syndrome_diagnosis) {
-      parts.push(
-        `中医诊断：${d.tcm_disease_diagnosis || '待明确'} — ${d.tcm_syndrome_diagnosis || '待明确'}`
-      )
-    }
-    if (d.western_diagnosis) parts.push(`西医诊断：${d.western_diagnosis}`)
-    return parts.join('\n')
-  }
-
-  const buildTreatmentText = (d: any) => {
-    const parts: string[] = []
-    if (d.treatment_method) parts.push(`治则治法：${d.treatment_method}`)
-    if (d.treatment_plan) parts.push(`处理意见：${d.treatment_plan}`)
-    if (d.followup_advice) parts.push(`复诊建议：${d.followup_advice}`)
-    if (d.precautions) parts.push(`注意事项：${d.precautions}`)
-    return parts.join('\n')
-  }
-
-  /** 问诊模式：语音结构化结果直接填入左侧表单 */
-  const applyVoiceInquiry = (patch: any) => {
-    const nextValues = { ...form.getFieldsValue(), ...patch }
-    form.setFieldsValue(nextValues)
-    updateInquiryFields(buildData(nextValues))
-    if (patch.physical_exam) {
-      setParsedVitals(parseVitalsFromText(patch.physical_exam))
-    }
-    setIsDirty(true)
-  }
-
-  /**
-   * 追记模式：语音结构化结果逐字段写入病历对应章节。
-   * 只处理 FIELD_TO_SECTION 中有映射（且不为空字符串）的字段，
-   * 无映射的字段（如 onset_time）跳过，不会写入病历。
-   */
-  const applyVoiceToRecord = (patch: any) => {
-    let updated = recordContent
-    let count = 0
-    for (const [fieldName, value] of Object.entries(patch)) {
-      if (!value || typeof value !== 'string') continue
-      if (FIELD_TO_SECTION[fieldName] === undefined || FIELD_TO_SECTION[fieldName] === '') continue
-      updated = writeSectionToRecord(updated, fieldName, value)
-      count++
-    }
-    if (count > 0) {
-      setRecordContent(updated)
-      message.success(`语音内容已插入病历 ${count} 个章节`)
-    } else {
-      message.warning('未识别到可写入病历的字段，请检查语音内容')
-    }
-  }
-
-  const handleVitalFill = (vitalText: string) => {
-    const current = form.getFieldValue('physical_exam') || ''
-    const lines = current.split('\n')
-    const firstLine = lines[0] || ''
-    const isVitalLine = /^(T:|P:|R:|BP:|SpO|身高:|体重:)/.test(firstLine)
-    let mergedLine: string
-    if (isVitalLine) {
-      const getKey = (s: string) => s.split(':')[0]
-      const existingParts = firstLine.split(/\s{2,}/).filter(Boolean)
-      const newParts = vitalText.split(/\s{2,}/).filter(Boolean)
-      const result = [...existingParts]
-      for (const part of newParts) {
-        const key = getKey(part)
-        const idx = result.findIndex(p => getKey(p) === key)
-        if (idx >= 0) result[idx] = part
-        else result.push(part)
-      }
-      mergedLine = result.join('  ')
-    } else {
-      mergedLine = vitalText
-    }
-    const newVal = isVitalLine
-      ? [mergedLine, ...lines.slice(1)].join('\n')
-      : mergedLine + (current ? '\n' + current : '')
-    form.setFieldValue('physical_exam', newVal)
-    updateInquiryFields({ ...inquiry, physical_exam: newVal })
-    setIsDirty(true)
-  }
-
-  const visitNatureColor = isFirstVisit ? '#2563eb' : '#7c3aed'
-  const visitTypeLabel = currentVisitType === 'emergency' ? '急诊' : '门诊'
-  const visitTypeColor = currentVisitType === 'emergency' ? '#dc2626' : '#0284c7'
+    inquiry,
+    updateInquiryFields,
+    savedDisposition,
+    handleAdmitToInpatient,
+    handleAddObservationNote,
+  } = useInquiryPanel()
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Panel header */}
+      {/* 面板标题 + 初诊/复诊切换 */}
       <div
         style={{
           padding: '12px 16px 10px',
@@ -373,7 +105,7 @@ export default function InquiryPanel() {
               }}
               optionType="button"
               buttonStyle="solid"
-              disabled={isInputLocked}
+              disabled={isInputLocked || isPatientReused}
             >
               <Radio.Button
                 value={true}
@@ -399,7 +131,7 @@ export default function InquiryPanel() {
         </div>
       </div>
 
-      {/* Form */}
+      {/* 表单主体 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px' }}>
         <Form
           form={form}
@@ -430,7 +162,11 @@ export default function InquiryPanel() {
               </span>
             </div>
           )}
-          {/* 始终显示语音卡片：未锁定时填左侧表单，锁定后追记到病历章节 */}
+
+          {/* 患者档案卡片（既往/过敏/个人/家族/月经/婚育/用药/宗教 8 字段，纵向跟随患者） */}
+          <PatientProfileCard />
+
+          {/* 语音录入卡片：未锁定时填左侧表单，锁定后追记到病历章节 */}
           <VoiceInputCard
             visitType="outpatient"
             getFormValues={() => form.getFieldsValue()}
@@ -438,7 +174,7 @@ export default function InquiryPanel() {
             onApplyToRecord={isInputLocked ? applyVoiceToRecord : undefined}
           />
 
-          {/* ── 时间信息 ── */}
+          {/* 时间信息 */}
           <div
             style={{
               background: '#f8fafc',
@@ -468,10 +204,12 @@ export default function InquiryPanel() {
                   placeholder="选择就诊时间"
                   style={{ width: '100%', borderRadius: 6, fontSize: 12 }}
                   size="small"
-                  onChange={val => {
-                    const str = val ? val.format('YYYY-MM-DD HH:mm') : ''
-                    updateInquiryFields({ ...inquiry, visit_time: str })
-                  }}
+                  onChange={val =>
+                    updateInquiryFields({
+                      ...inquiry,
+                      visit_time: val ? val.format('YYYY-MM-DD HH:mm') : '',
+                    })
+                  }
                 />
               </Form.Item>
               <Form.Item
@@ -490,16 +228,18 @@ export default function InquiryPanel() {
                   placeholder="请选择病发时间"
                   style={{ width: '100%', borderRadius: 6, fontSize: 12 }}
                   size="small"
-                  onChange={val => {
-                    const str = val ? val.format('YYYY-MM-DD HH:mm') : ''
-                    updateInquiryFields({ ...inquiry, onset_time: str })
-                  }}
+                  onChange={val =>
+                    updateInquiryFields({
+                      ...inquiry,
+                      onset_time: val ? val.format('YYYY-MM-DD HH:mm') : '',
+                    })
+                  }
                 />
               </Form.Item>
             </div>
           </div>
 
-          {/* ── 基础问诊 ── */}
+          {/* 基础问诊字段 */}
           <Form.Item
             style={fs}
             name="chief_complaint"
@@ -564,85 +304,17 @@ export default function InquiryPanel() {
             />
           </Form.Item>
 
-          <Form.Item
-            style={fs}
-            name="past_history"
-            rules={[{ required: true, message: '请填写既往史，无特殊病史可填写「既往体质可」' }]}
-            label={
-              <span style={labelStyle}>
-                既往史 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <TextArea
-              rows={2}
-              placeholder="既往病史、手术史、传染病史、家族史、长期用药史；无特殊可填「既往体质可」"
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            style={fs}
-            name="allergy_history"
-            rules={[
-              { required: true, message: '请填写过敏史，无过敏可填写「否认药物及食物过敏史」' },
-            ]}
-            label={
-              <span style={labelStyle}>
-                过敏史 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <Input
-              placeholder="如：青霉素过敏 / 否认药物及食物过敏史"
-              style={{ borderRadius: 6, fontSize: 13 }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            style={fs}
-            name="personal_history"
-            rules={[{ required: true, message: '请填写个人史，无特殊可填写「无特殊」' }]}
-            label={
-              <span style={labelStyle}>
-                个人史 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <TextArea
-              rows={2}
-              placeholder="吸烟、饮酒、职业、婚育史；无特殊可填「无特殊」"
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
-
-          {isFemale && (
-            <Form.Item
-              style={fs}
-              name="menstrual_history"
-              label={
-                <span style={labelStyle}>
-                  月经史 <span style={{ color: '#f59e0b', fontSize: 10 }}>育龄期必填</span>
-                </span>
-              }
-            >
-              <TextArea
-                rows={2}
-                placeholder="初潮年龄、行经天数/间隔天数、末次月经、经量、痛经、生育情况"
-                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-              />
-            </Form.Item>
-          )}
+          {/* 既往史/过敏史/个人史/月经史 已迁移至 PatientProfileCard（跟随患者纵向档案） */}
 
           <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
 
-          {/* ── 体格检查 ── */}
+          {/* 体格检查 */}
           <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
             <HeartOutlined style={{ color: '#0284c7' }} />
             <span>体格检查</span>
           </div>
 
-          {isEmergency && (
+          {isEmergency ? (
             <div
               style={{
                 background: '#fef2f2',
@@ -667,8 +339,9 @@ export default function InquiryPanel() {
               </div>
               <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
             </div>
+          ) : (
+            <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
           )}
-          {!isEmergency && <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />}
 
           <Form.Item
             style={fs}
@@ -682,80 +355,8 @@ export default function InquiryPanel() {
             />
           </Form.Item>
 
-          {/* ── 中医四诊 ── */}
-          <Collapse
-            size="small"
-            defaultActiveKey={['tcm']}
-            style={{
-              marginBottom: 10,
-              borderRadius: 8,
-              border: '1px solid #bae6fd',
-              background: '#f0f9ff',
-            }}
-          >
-            <Panel
-              key="tcm"
-              header={
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <MedicineBoxOutlined style={{ color: '#0284c7' }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0369a1' }}>中医四诊</span>
-                  <span style={{ fontSize: 10, color: '#7dd3fc' }}>望 · 闻 · 问 · 切</span>
-                </div>
-              }
-            >
-              <Form.Item
-                style={fs}
-                name="tcm_inspection"
-                label={<span style={labelStyle}>望诊（神色形态）</span>}
-              >
-                <Input
-                  placeholder="如：神清气爽，面色略红，体形中等"
-                  style={{ borderRadius: 6, fontSize: 13 }}
-                />
-              </Form.Item>
-
-              <Form.Item
-                style={fs}
-                name="tcm_auscultation"
-                label={<span style={labelStyle}>闻诊（声音气味）</span>}
-              >
-                <Input
-                  placeholder="如：语声清晰，无异常气味"
-                  style={{ borderRadius: 6, fontSize: 13 }}
-                />
-              </Form.Item>
-
-              <Form.Item
-                style={fs}
-                name="tongue_coating"
-                label={
-                  <span style={{ ...labelStyle, color: '#0369a1' }}>
-                    舌象 <span style={{ color: '#ef4444' }}>*</span>
-                  </span>
-                }
-              >
-                <Input
-                  placeholder="如：舌淡红，苔薄白；或：舌红苔黄腻"
-                  style={{ borderRadius: 6, fontSize: 13 }}
-                />
-              </Form.Item>
-
-              <Form.Item
-                style={{ marginBottom: 0 }}
-                name="pulse_condition"
-                label={
-                  <span style={{ ...labelStyle, color: '#0369a1' }}>
-                    脉象 <span style={{ color: '#ef4444' }}>*</span>
-                  </span>
-                }
-              >
-                <Input
-                  placeholder="如：脉弦细；或：脉滑数"
-                  style={{ borderRadius: 6, fontSize: 13 }}
-                />
-              </Form.Item>
-            </Panel>
-          </Collapse>
+          {/* 中医四诊 */}
+          <TcmSection />
 
           <Form.Item
             style={fs}
@@ -776,182 +377,34 @@ export default function InquiryPanel() {
 
           <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
 
-          {/* ── 诊断 ── */}
-          <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <BulbOutlined style={{ color: '#7c3aed' }} />
-            <span>诊断</span>
-          </div>
-
-          <div
-            style={{
-              background: '#faf5ff',
-              border: '1px solid #e9d5ff',
-              borderRadius: 8,
-              padding: '10px 10px 4px',
-              marginBottom: 10,
-            }}
-          >
-            <Form.Item
-              style={fs}
-              name="tcm_disease_diagnosis"
-              label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医疾病诊断</span>}
-            >
-              <Input
-                placeholder="如：眩晕病、胸痹、感冒"
-                style={{ borderRadius: 6, fontSize: 13 }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              style={fs}
-              name="tcm_syndrome_diagnosis"
-              label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医证候诊断</span>}
-            >
-              <Input
-                placeholder="如：肝阳上亢证、痰热壅肺证"
-                style={{ borderRadius: 6, fontSize: 13 }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              style={{ marginBottom: 4 }}
-              name="western_diagnosis"
-              label={<span style={labelStyle}>西医诊断</span>}
-            >
-              <Input
-                placeholder="如：高血压3级（极高危），2型糖尿病"
-                style={{ borderRadius: 6, fontSize: 13 }}
-              />
-            </Form.Item>
-          </div>
-
-          <Form.Item
-            style={fs}
-            name="initial_impression"
-            label={<span style={labelStyle}>初步印象（补充）</span>}
-          >
-            <Input
-              placeholder="暂时无法明确时的印象或鉴别方向"
-              style={{ borderRadius: 6, fontSize: 13 }}
-            />
-          </Form.Item>
+          {/* 诊断区块 */}
+          <DiagnosisSection />
 
           <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
 
-          {/* ── 治疗意见 ── */}
-          <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <MedicineBoxOutlined style={{ color: '#059669' }} />
-            <span>治疗意见及措施</span>
-          </div>
+          {/* 治疗意见区块 */}
+          <TreatmentSection />
 
-          <div
-            style={{
-              background: '#f0fdf4',
-              border: '1px solid #bbf7d0',
-              borderRadius: 8,
-              padding: '10px 10px 4px',
-              marginBottom: 10,
-            }}
-          >
-            <Form.Item
-              style={fs}
-              name="treatment_method"
-              label={<span style={{ ...labelStyle, color: '#059669' }}>治则治法</span>}
-            >
-              <Input
-                placeholder="如：平肝潜阳、滋养肝肾；或：清热化痰、止咳平喘"
-                style={{ borderRadius: 6, fontSize: 13 }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              style={fs}
-              name="treatment_plan"
-              label={<span style={labelStyle}>处理意见</span>}
-            >
-              <TextArea
-                rows={3}
-                placeholder="检查建议、用药方案、中医治疗措施（针灸、推拿、中药等）"
-                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              style={fs}
-              name="followup_advice"
-              label={
-                <span style={labelStyle}>
-                  复诊建议 <span style={{ color: '#ef4444' }}>*</span>
-                </span>
-              }
-            >
-              <Input
-                placeholder="如：2周后复诊，监测血压；如症状加重随时就诊"
-                style={{ borderRadius: 6, fontSize: 13 }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              style={{ marginBottom: 4 }}
-              name="precautions"
-              label={<span style={labelStyle}>注意事项</span>}
-            >
-              <TextArea
-                rows={2}
-                placeholder="饮食、生活方式、服药注意等"
-                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-              />
-            </Form.Item>
-          </div>
-
-          {/* ── 急诊附加项 ── */}
-          {isEmergency && (
-            <>
-              <Divider style={{ margin: '8px 0 10px', borderColor: '#fecaca' }} />
-              <div
-                style={{
-                  ...sectionHeaderStyle,
-                  color: '#dc2626',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <AlertOutlined />
-                <span>急诊附加项</span>
-              </div>
-
-              <Form.Item
-                style={fs}
-                name="observation_notes"
-                label={<span style={labelStyle}>留观记录</span>}
-              >
-                <TextArea
-                  rows={3}
-                  placeholder="留观期间病情变化、处理措施..."
-                  style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-                />
-              </Form.Item>
-
-              <Form.Item
-                style={fs}
-                name="patient_disposition"
-                label={<span style={labelStyle}>患者去向</span>}
-              >
-                <Select placeholder="选择患者去向" style={{ borderRadius: 6, fontSize: 13 }}>
-                  <Select.Option value="回家观察">回家观察</Select.Option>
-                  <Select.Option value="留院观察">留院观察</Select.Option>
-                  <Select.Option value="收入住院">收入住院</Select.Option>
-                  <Select.Option value="转院">转院</Select.Option>
-                  <Select.Option value="手术室">手术室</Select.Option>
-                </Select>
-              </Form.Item>
-            </>
-          )}
+          {/* 急诊附加项 */}
+          {isEmergency && <EmergencySection />}
         </Form>
       </div>
 
-      {/* Save button */}
+      {/* 急诊流转提示栏 */}
+      {isEmergency && (
+        <EmergencyDispositionBar
+          savedDisposition={savedDisposition}
+          onAdmitToInpatient={handleAdmitToInpatient}
+          onAddObservationNote={handleAddObservationNote}
+        />
+      )}
+
+      {/* 1.6.3 统一保存按钮：合并问诊 + 患者档案两份数据的保存动作
+           组合状态优先级（任一脏即"待保存"）：
+             anyDirty=true                → 蓝色"保存（含未提交：档案/问诊/全部）"
+             !anyDirty + hasSavedInquiry  → 绿色"已保存"
+             !anyDirty + !hasSavedInquiry → 灰色"尚未填写"（disabled）
+           注：profile 单独保存过不算"已保存"，因为问诊是这块面板的主任务 */}
       <div
         style={{
           padding: '10px 16px',
@@ -960,25 +413,46 @@ export default function InquiryPanel() {
           flexShrink: 0,
         }}
       >
-        <Button
-          type="primary"
-          icon={isDirty ? <SaveOutlined /> : <CheckOutlined />}
-          block
-          disabled={isInputLocked || !isDirty}
-          loading={saving}
-          onClick={() => form.submit()}
-          style={{
-            borderRadius: 8,
-            height: 36,
-            fontWeight: 600,
-            background: isDirty ? 'linear-gradient(135deg, #2563eb, #3b82f6)' : '#86efac',
-            border: 'none',
-            color: isDirty ? '#fff' : '#166534',
-            transition: 'all 0.3s',
-          }}
-        >
-          {isDirty ? '保存问诊信息' : '已保存'}
-        </Button>
+        {(() => {
+          const anyDirty = isDirty || profileDirty
+          const anySaving = saving || profileSaving
+          let label: string
+          if (anyDirty) {
+            const parts: string[] = []
+            if (profileDirty) parts.push('档案')
+            if (isDirty) parts.push('问诊')
+            label = `保存${parts.join('+')}`
+          } else if (hasSavedInquiry) {
+            label = '已保存'
+          } else {
+            label = '尚未填写问诊'
+          }
+          return (
+            <Button
+              type="primary"
+              icon={anyDirty ? <SaveOutlined /> : hasSavedInquiry ? <CheckOutlined /> : undefined}
+              block
+              disabled={isInputLocked || !anyDirty}
+              loading={anySaving}
+              onClick={saveAll}
+              style={{
+                borderRadius: 8,
+                height: 36,
+                fontWeight: 600,
+                background: anyDirty
+                  ? 'linear-gradient(135deg, #2563eb, #3b82f6)'
+                  : hasSavedInquiry
+                    ? '#86efac'
+                    : '#e5e7eb',
+                border: 'none',
+                color: anyDirty ? '#fff' : hasSavedInquiry ? '#166534' : '#6b7280',
+                transition: 'all 0.3s',
+              }}
+            >
+              {label}
+            </Button>
+          )
+        })()}
       </div>
     </div>
   )

@@ -81,3 +81,36 @@ class PatientListResponse(BaseModel):
 
     total: int
     items: list[PatientResponse]
+
+
+class PatientProfile(BaseModel):
+    """患者档案（纵向持久数据）。
+
+    该档案跟随患者而非单次接诊，符合 FHIR 标准：
+    AllergyIntolerance / Condition / MedicationStatement 都挂在 Patient 上。
+
+    复诊时前端自动加载该档案，医生确认后可继承到当次接诊的问诊字段。
+    """
+
+    past_history: Optional[str] = None         # 既往史
+    allergy_history: Optional[str] = None      # 过敏史
+    family_history: Optional[str] = None       # 家族史
+    personal_history: Optional[str] = None     # 个人史
+    current_medications: Optional[str] = None  # 长期用药
+    marital_history: Optional[str] = None      # 婚育史
+    menstrual_history: Optional[str] = None    # 月经史
+    religion_belief: Optional[str] = None      # 宗教信仰
+    updated_at: Optional[datetime.datetime] = None  # 档案最后更新时间
+
+
+class PatientProfileUpdate(BaseModel):
+    """档案更新入参（所有字段可选，只更新传入的字段）。"""
+
+    past_history: Optional[str] = None
+    allergy_history: Optional[str] = None
+    family_history: Optional[str] = None
+    personal_history: Optional[str] = None
+    current_medications: Optional[str] = None
+    marital_history: Optional[str] = None
+    menstrual_history: Optional[str] = None
+    religion_belief: Optional[str] = None
