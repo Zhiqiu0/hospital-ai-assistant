@@ -14,6 +14,8 @@ export default defineConfig({
       '/api': {
         target: apiProxyTarget,
         changeOrigin: true,
+        // 开启 WebSocket 代理，供 /api/v1/ai/voice-stream 实时语音识别使用
+        ws: true,
       },
     },
   },

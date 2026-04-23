@@ -48,6 +48,28 @@ async def migrate():
                 print(f"    inquiry_inputs.{col} - SKIP ({e})")
         print()
 
+        # 2b. inquiry_inputs 新增生命体征结构化字段（从 physical_exam 文本分离）
+        print("[2b] inquiry_inputs 新增生命体征字段...")
+        vital_signs_columns = [
+            ("temperature",  "VARCHAR(10)"),
+            ("pulse",        "VARCHAR(10)"),
+            ("respiration",  "VARCHAR(10)"),
+            ("bp_systolic",  "VARCHAR(10)"),
+            ("bp_diastolic", "VARCHAR(10)"),
+            ("spo2",         "VARCHAR(10)"),
+            ("height",       "VARCHAR(10)"),
+            ("weight",       "VARCHAR(10)"),
+        ]
+        for col, col_type in vital_signs_columns:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    inquiry_inputs.{col} - OK")
+            except Exception as e:
+                print(f"    inquiry_inputs.{col} - SKIP ({e})")
+        print()
+
         # 3. Encounter 新增字段（如有需要）
         print("[3] Encounter 检查字段...")
         encounter_columns = [

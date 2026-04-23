@@ -32,8 +32,18 @@ export interface InquiryData {
   past_history: string
   allergy_history: string
   personal_history: string
+  // physical_exam 只存非生命体征的文字（心肺听诊等），生命体征由下方独立字段承载
   physical_exam: string
   initial_impression: string
+  // 生命体征（结构化独立字段，取代原先"体温36.5℃"混入 physical_exam 的做法）
+  temperature?: string       // 体温 ℃
+  pulse?: string             // 脉搏 次/分
+  respiration?: string       // 呼吸 次/分
+  bp_systolic?: string       // 血压 收缩压 mmHg
+  bp_diastolic?: string      // 血压 舒张压 mmHg
+  spo2?: string              // 血氧饱和度 %
+  height?: string            // 身高 cm
+  weight?: string            // 体重 kg
   marital_history?: string
   menstrual_history?: string
   family_history?: string
@@ -142,6 +152,12 @@ interface WorkbenchState {
   gradeScore: GradeScore | null
   examSuggestions: ExamSuggestion[]
   isExamLoading: boolean
+  /** 质控 AI 修复文本，key 为 issue 索引，刷新后保留 */
+  qcFixTexts: Record<number, string>
+  setQCFixTexts: (texts: Record<number, string>) => void
+  /** 已写入病历的 issue 索引，刷新后保留 */
+  qcWrittenIndices: number[]
+  setQCWrittenIndices: (indices: number[]) => void
   inquirySuggestions: InquirySuggestion[]
   setInquirySuggestions: (items: InquirySuggestion[]) => void
   /** AI 诊断建议列表，持久化到 localStorage（刷新后保留） */
@@ -224,6 +240,15 @@ const defaultInquiry: InquiryData = {
   patient_disposition: '',
   visit_time: '',
   onset_time: '',
+  // 生命体征（默认为空字符串，用户录入或 AI 语音分析后填充）
+  temperature: '',
+  pulse: '',
+  respiration: '',
+  bp_systolic: '',
+  bp_diastolic: '',
+  spo2: '',
+  height: '',
+  weight: '',
 }
 
 export const useWorkbenchStore = create<WorkbenchState>()(
@@ -249,6 +274,10 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       gradeScore: null,
       examSuggestions: [],
       isExamLoading: false,
+      qcFixTexts: {},
+      setQCFixTexts: texts => set({ qcFixTexts: texts }),
+      qcWrittenIndices: [],
+      setQCWrittenIndices: indices => set({ qcWrittenIndices: indices }),
       inquirySuggestions: [],
       setInquirySuggestions: items => set({ inquirySuggestions: items }),
       diagnosisSuggestions: [],
@@ -284,7 +313,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           qcPass: null,
           gradeScore: null,
           qcLlmLoading: false,
-          isQCStale: false, // 新一轮质控开始，重置过时标记
+          isQCStale: false,
+          qcFixTexts: {},
+          qcWrittenIndices: [],
         }),
       setQCResult: (issues, summary, pass, gradeScore = null) =>
         set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore }),
@@ -337,6 +368,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           qcPass: null,
           gradeScore: null,
           examSuggestions: [],
+          qcFixTexts: {},
+          qcWrittenIndices: [],
           inquirySuggestions: [],
           diagnosisSuggestions: [],
           appliedDiagnosis: null,
@@ -365,12 +398,14 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         appliedDiagnosis: state.appliedDiagnosis,
         // 检查建议持久化（含已开单状态）
         examSuggestions: state.examSuggestions,
-        // 质控结果持久化
+        // 质控结果持久化（含 AI 修复文本和已写入状态）
         qcIssues: state.qcIssues,
         qcSummary: state.qcSummary,
         qcPass: state.qcPass,
         gradeScore: state.gradeScore,
         isQCStale: state.isQCStale,
+        qcFixTexts: state.qcFixTexts,
+        qcWrittenIndices: state.qcWrittenIndices,
       }),
     }
   )

@@ -90,6 +90,8 @@ export default function DiagnosisSuggestionList({
                   borderRadius: 10,
                   padding: '12px 14px',
                   transition: 'all 0.2s',
+                  // 已写入病历时变灰，重新生成的新建议不受影响
+                  opacity: isApplied ? 0.5 : 1,
                 }}
               >
                 <div

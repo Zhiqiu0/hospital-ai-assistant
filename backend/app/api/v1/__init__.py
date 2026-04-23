@@ -1,11 +1,13 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream
 from app.api.v1.admin import users, departments, qc_rules, prompts, stats, records as admin_records, audit_logs, model_configs, voice_records as admin_voice_records
 
 router = APIRouter()
 
 router.include_router(auth.router, prefix="/auth", tags=["认证"])
 router.include_router(ai.router, prefix="/ai", tags=["AI生成"])
+# 实时语音识别 WebSocket（/api/v1/ai/voice-stream）
+router.include_router(ai_voice_stream.router, prefix="/ai", tags=["AI生成"])
 router.include_router(patients.router, prefix="/patients", tags=["患者"])
 router.include_router(encounters.router, prefix="/encounters", tags=["就诊"])
 router.include_router(medical_records.router, prefix="/medical-records", tags=["病历"])

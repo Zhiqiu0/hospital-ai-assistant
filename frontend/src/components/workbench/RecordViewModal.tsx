@@ -74,10 +74,20 @@ export default function RecordViewModal({
     <Modal
       title={
         record && (
-          <Space>
+          <Space wrap>
             <FileTextOutlined style={{ color: accentColor }} />
-            <span>{record.patient_name}</span>
-            <Tag color={tagColor}>{recordTypeLabel(record.record_type)}</Tag>
+            <span style={{ fontWeight: 600 }}>{record.patient_name}</span>
+            {record.patient_gender && record.patient_gender !== 'unknown' && (
+              <Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>
+                {record.patient_gender === 'male' ? '男' : '女'}
+              </Text>
+            )}
+            {record.patient_age != null && (
+              <Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>
+                {record.patient_age}岁
+              </Text>
+            )}
+            <Tag color={tagColor} style={{ margin: 0 }}>{recordTypeLabel(record.record_type)}</Tag>
             <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
               {record.submitted_at ? new Date(record.submitted_at).toLocaleString('zh-CN') : ''}
             </Text>

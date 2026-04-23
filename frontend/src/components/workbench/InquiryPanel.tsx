@@ -55,11 +55,9 @@ export default function InquiryPanel() {
     saveAll,
     setIsDirty,
     saving,
-    parsedVitals,
     onSave,
     applyVoiceInquiry,
     applyVoiceToRecord,
-    handleVitalFill,
     visitNatureColor,
     visitTypeLabel,
     visitTypeColor,
@@ -140,6 +138,7 @@ export default function InquiryPanel() {
           onFinish={onSave}
           onValuesChange={() => setIsDirty(true)}
           disabled={isInputLocked}
+          scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
         >
           {isInputLocked && (
             <div
@@ -337,10 +336,10 @@ export default function InquiryPanel() {
               >
                 <AlertOutlined /> 急诊生命体征（必填）
               </div>
-              <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
+              <VitalSignsInput />
             </div>
           ) : (
-            <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
+            <VitalSignsInput />
           )}
 
           <Form.Item

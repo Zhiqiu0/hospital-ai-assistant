@@ -24,6 +24,49 @@ from app.services.ai.task_logger import log_ai_task
 logger = logging.getLogger(__name__)
 
 
+def compose_physical_exam(
+    physical_exam: Optional[str] = "",
+    temperature: Optional[str] = "",
+    pulse: Optional[str] = "",
+    respiration: Optional[str] = "",
+    bp_systolic: Optional[str] = "",
+    bp_diastolic: Optional[str] = "",
+    spo2: Optional[str] = "",
+    height: Optional[str] = "",
+    weight: Optional[str] = "",
+) -> str:
+    """将独立的生命体征字段与 physical_exam 文字描述合并，供 AI 生成病历时作为完整体检段使用。
+
+    前端 UI 把生命体征数值和文字描述分成两部分输入（前者结构化，后者自由文本），
+    但 AI 生成病历时需要看到完整的体检段落。本函数生成标准格式的前缀：
+        T:36.5℃  P:72次/分  R:18次/分  BP:120/80mmHg  SpO₂:98%  身高:170cm  体重:65kg\n
+    后面拼接用户原本的 physical_exam 文字描述（心肺听诊/腹部触诊等）。
+
+    所有字段均为空时返回空串（让 prompt 侧显示"未提供"）。
+    """
+    parts: list[str] = []
+    if temperature:
+        parts.append(f"T:{temperature}℃")
+    if pulse:
+        parts.append(f"P:{pulse}次/分")
+    if respiration:
+        parts.append(f"R:{respiration}次/分")
+    if bp_systolic or bp_diastolic:
+        parts.append(f"BP:{bp_systolic or '__'}/{bp_diastolic or '__'}mmHg")
+    if spo2:
+        parts.append(f"SpO₂:{spo2}%")
+    if height:
+        parts.append(f"身高:{height}cm")
+    if weight:
+        parts.append(f"体重:{weight}kg")
+
+    vital_prefix = "  ".join(parts)
+    text = (physical_exam or "").strip()
+    if vital_prefix and text:
+        return f"{vital_prefix}\n{text}"
+    return vital_prefix or text
+
+
 def safe_format(template: str, **kwargs) -> str:
     """安全格式化 prompt 模板，转义值中的花括号以防 KeyError。
 

@@ -7,7 +7,7 @@ import { Form, message } from 'antd'
 import { useWorkbenchStore } from '@/store/workbenchStore'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
-import { mergeVitalText, applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
+import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
 
 // 1.6.2：8 个 profile 字段（past/allergy/personal/marital/family/menstrual/
 // current_medications/religion_belief）已迁出到 PatientProfileCard，本 hook 仅
@@ -45,8 +45,22 @@ export function useInpatientInquiryPanel() {
       psychology_assessment: inquiry.psychology_assessment,
       auxiliary_exam: inquiry.auxiliary_exam,
       admission_diagnosis: inquiry.admission_diagnosis || inquiry.initial_impression,
+      // 生命体征 8 字段（结构化独立字段，VitalSignsInput 通过 Form.Item name 绑定）
+      temperature: inquiry.temperature,
+      pulse: inquiry.pulse,
+      respiration: inquiry.respiration,
+      bp_systolic: inquiry.bp_systolic,
+      bp_diastolic: inquiry.bp_diastolic,
+      spo2: inquiry.spo2,
+      height: inquiry.height,
+      weight: inquiry.weight,
     })
-    setIsDirty(false)
+    // inquirySavedAt=0 且有数据说明是刷新前填了但未保存，保持 dirty 提示用户保存
+    if (inquirySavedAt === 0 && inquiry.chief_complaint) {
+      setIsDirty(true)
+    } else {
+      setIsDirty(false)
+    }
   }, [form, currentEncounterId, inquirySavedAt])
 
   // 追问建议修改现病史时同步表单并激活保存按钮
@@ -86,6 +100,15 @@ export function useInpatientInquiryPanel() {
       psychology_assessment: values.psychology_assessment || '',
       auxiliary_exam: values.auxiliary_exam || '',
       admission_diagnosis: values.admission_diagnosis || '',
+      // 生命体征结构化字段
+      temperature: values.temperature || '',
+      pulse: values.pulse || '',
+      respiration: values.respiration || '',
+      bp_systolic: values.bp_systolic || '',
+      bp_diastolic: values.bp_diastolic || '',
+      spo2: values.spo2 || '',
+      height: values.height || '',
+      weight: values.weight || '',
     }
 
     // 找出本次修改的字段，用于病历章节同步
@@ -182,13 +205,6 @@ export function useInpatientInquiryPanel() {
     setSaving(false)
   }
 
-  // 生命体征快填：合并或前插到 physical_exam 第一行
-  const handleVitalFill = (vitalText: string) => {
-    const newVal = mergeVitalText(form.getFieldValue('physical_exam') || '', vitalText)
-    form.setFieldValue('physical_exam', newVal)
-    setIsDirty(true)
-  }
-
   // 辅助检查文本插入（检验单 / 上传报告回调）
   const handleLabInsert = (text: string) => {
     const current = form.getFieldValue('auxiliary_exam') || ''
@@ -200,7 +216,13 @@ export function useInpatientInquiryPanel() {
   // 1.6.3：profile 8 字段路由到 patientProfileEditStore（统一保存按钮再提交），
   // 避免被丢弃；inquiry 字段照旧填表单
   const applyVoiceInquiry = (patch: any) => {
-    const nextValues = { ...form.getFieldsValue(), ...patch }
+    // AI 返回的 patch 可能含 vital_signs 结构体，铺平到 form 顶层字段
+    const flattened = { ...patch }
+    if (patch.vital_signs && typeof patch.vital_signs === 'object') {
+      Object.assign(flattened, patch.vital_signs)
+      delete flattened.vital_signs
+    }
+    const nextValues = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue({
       ...nextValues,
       pain_assessment: nextValues.pain_assessment ? Number(nextValues.pain_assessment) : 0,
@@ -220,6 +242,15 @@ export function useInpatientInquiryPanel() {
       psychology_assessment: nextValues.psychology_assessment || '',
       auxiliary_exam: nextValues.auxiliary_exam || '',
       admission_diagnosis: nextValues.admission_diagnosis || '',
+      // 生命体征结构化字段
+      temperature: nextValues.temperature || '',
+      pulse: nextValues.pulse || '',
+      respiration: nextValues.respiration || '',
+      bp_systolic: nextValues.bp_systolic || '',
+      bp_diastolic: nextValues.bp_diastolic || '',
+      spo2: nextValues.spo2 || '',
+      height: nextValues.height || '',
+      weight: nextValues.weight || '',
     }
     updateInquiryFields(data)
     setIsDirty(true)
@@ -266,7 +297,6 @@ export function useInpatientInquiryPanel() {
     saving,
     onSave,
     painMarks,
-    handleVitalFill,
     handleLabInsert,
     applyVoiceInquiry,
     applyVoiceToRecord,

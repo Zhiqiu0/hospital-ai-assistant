@@ -19,6 +19,19 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+/**
+ * 解码 JWT payload 并检查是否过期（不验证签名，仅客户端快速判断）
+ * 过期、格式错误、缺少 exp 字段均视为已过期
+ */
+export function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now()
+  } catch {
+    return true
+  }
+}
+
 interface UserInfo {
   id: string
   username: string
@@ -51,6 +64,14 @@ export const useAuthStore = create<AuthState>()(
       clearAuth: () => set({ token: null, user: null, systemType: 'outpatient' }),
       setSystemType: type => set({ systemType: type }),
     }),
-    { name: 'mediscribe-auth' }
+    {
+      name: 'mediscribe-auth',
+      // 应用启动时从 localStorage 恢复后，若 token 已过期则立即清除，避免假登录状态
+      onRehydrateStorage: () => state => {
+        if (state?.token && isTokenExpired(state.token)) {
+          state.clearAuth()
+        }
+      },
+    }
   )
 )

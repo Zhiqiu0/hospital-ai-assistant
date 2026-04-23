@@ -176,12 +176,25 @@ export const FIELD_NAME_LABEL: Record<string, string> = {
 
 /**
  * 将修复文本写入病历对应章节（找到 header 则替换，找不到则追加）
+ *
+ * 章节定位策略（优先级递减）：
+ *   1. 精确匹配目标 header
+ *   2. 关键词模糊匹配：从 header 中提取核心词（去掉「入院」「初步」等修饰词），
+ *      在记录中找含有该核心词的章节——自动兼容门诊/住院章节名差异，无需维护静态映射
+ *   3. 均未匹配：在末尾追加新章节
  */
 export function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
-  const header = FIELD_TO_SECTION[fieldName]
+  const primaryHeader = FIELD_TO_SECTION[fieldName]
   // content 类字段（全文规则）或未知字段：不做写入
-  if (header === undefined || header === '') return content
+  if (primaryHeader === undefined || primaryHeader === '') return content
 
+  // 从章节标题提取核心关键词（去掉「入院」「初步」「（入院前）」等修饰成分）
+  const coreKeyword = primaryHeader
+    .replace(/[【】]/g, '')
+    .replace(/入院|初步|（[^）]*）/g, '')
+    .trim()
+
+  // 找到记录里所有章节的位置
   const sectionPattern = /【[^】]+】/g
   const matches: Array<{ index: number; header: string }> = []
   let m: RegExpExecArray | null
@@ -189,7 +202,14 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
     matches.push({ index: m.index, header: m[0] })
   }
 
-  const targetIdx = matches.findIndex(s => s.header === header)
+  // 1. 精确匹配
+  let targetIdx = matches.findIndex(s => s.header === primaryHeader)
+  // 2. 核心关键词模糊匹配
+  if (targetIdx === -1 && coreKeyword) {
+    targetIdx = matches.findIndex(s => s.header.includes(coreKeyword))
+  }
+
+  const header = targetIdx !== -1 ? matches[targetIdx].header : primaryHeader
 
   // 取消写入（fixText 为空）：移除该章节内容
   if (!fixText.trim()) {
@@ -199,7 +219,7 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
     return (content.slice(0, start) + content.slice(end)).replace(/\n{3,}/g, '\n\n').trimEnd()
   }
 
-  // 写入：替换或插入章节
+  // 写入：替换已有章节，或在末尾追加新章节
   if (targetIdx === -1) {
     return content + '\n\n' + header + '\n' + fixText
   }

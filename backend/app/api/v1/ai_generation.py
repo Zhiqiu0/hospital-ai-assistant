@@ -29,7 +29,7 @@ from app.schemas.ai_request import (
     QuickGenerateRequest,
     SupplementRequest,
 )
-from app.services.ai.ai_utils import get_active_prompt, safe_format, stream_text
+from app.services.ai.ai_utils import compose_physical_exam, get_active_prompt, safe_format, stream_text
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
@@ -110,13 +110,25 @@ async def quick_generate(
     precautions_val = req.precautions or ""
     precautions_section = f"注意事项：{precautions_val}" if precautions_val else ""
 
+    # 合并生命体征数值与 physical_exam 文字描述成完整体检段，保证 prompt 拿到完整信息
+    composed_physical_exam = compose_physical_exam(
+        physical_exam=req.physical_exam,
+        temperature=req.temperature,
+        pulse=req.pulse,
+        respiration=req.respiration,
+        bp_systolic=req.bp_systolic,
+        bp_diastolic=req.bp_diastolic,
+        spo2=req.spo2,
+        height=req.height,
+        weight=req.weight,
+    )
     fmt_kwargs: dict = dict(
         chief_complaint=req.chief_complaint or "未提供",
         history_present_illness=req.history_present_illness or "未提供",
         past_history=req.past_history or "未提供",
         allergy_history=req.allergy_history or "未提供",
         personal_history=req.personal_history or "未提供",
-        physical_exam=req.physical_exam or "未提供",
+        physical_exam=composed_physical_exam or "未提供",
         auxiliary_exam=req.auxiliary_exam or "未提供",
         initial_impression=req.initial_impression or "未提供",
         patient_name=req.patient_name or "患者",
@@ -178,6 +190,17 @@ async def quick_continue(
 ):
     """续写病历未完成部分（流式）。"""
     record_type = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
+    composed_physical_exam = compose_physical_exam(
+        physical_exam=req.physical_exam,
+        temperature=req.temperature,
+        pulse=req.pulse,
+        respiration=req.respiration,
+        bp_systolic=req.bp_systolic,
+        bp_diastolic=req.bp_diastolic,
+        spo2=req.spo2,
+        height=req.height,
+        weight=req.weight,
+    )
     prompt = CONTINUE_PROMPT.format(
         record_type=record_type,
         patient_name=req.patient_name or "未知",
@@ -188,7 +211,7 @@ async def quick_continue(
         past_history=req.past_history or "未提供",
         allergy_history=req.allergy_history or "未提供",
         personal_history=req.personal_history or "未提供",
-        physical_exam=req.physical_exam or "未提供",
+        physical_exam=composed_physical_exam or "未提供",
         initial_impression=req.initial_impression or "未提供",
         current_content=req.current_content or "（暂无内容）",
     )
@@ -218,6 +241,17 @@ async def quick_supplement(
         f"（建议：{item.get('suggestion', '')}）"
         for item in req.qc_issues
     )
+    composed_physical_exam = compose_physical_exam(
+        physical_exam=req.physical_exam,
+        temperature=req.temperature,
+        pulse=req.pulse,
+        respiration=req.respiration,
+        bp_systolic=req.bp_systolic,
+        bp_diastolic=req.bp_diastolic,
+        spo2=req.spo2,
+        height=req.height,
+        weight=req.weight,
+    )
     prompt = SUPPLEMENT_PROMPT.format(
         record_type=record_type,
         patient_name=req.patient_name or "未知",
@@ -229,7 +263,7 @@ async def quick_supplement(
         allergy_history=req.allergy_history or "未提供",
         personal_history=req.personal_history or "未提供",
         family_history=req.family_history or "未提供",
-        physical_exam=req.physical_exam or "未提供",
+        physical_exam=composed_physical_exam or "未提供",
         auxiliary_exam=req.auxiliary_exam or "无",
         initial_impression=req.initial_impression or "未提供",
         onset_time=req.onset_time or "未提供",

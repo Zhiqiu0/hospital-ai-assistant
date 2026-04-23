@@ -103,13 +103,29 @@ async def quick_start_encounter(
     from app.models.encounter import Encounter as EncounterModel
     existing = await encounter_service.find_in_progress(patient["id"], current_user.id)
     if existing:
+        # 续接时也查上次已签发病历供参考（排除当前续接的接诊本身）
+        from app.models.medical_record import RecordVersion, MedicalRecord
+        resume_prev_stmt = (
+            select(RecordVersion.content)
+            .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
+            .join(EncounterModel, MedicalRecord.encounter_id == EncounterModel.id)
+            .where(
+                EncounterModel.patient_id == patient["id"],
+                EncounterModel.id != existing.id,
+                RecordVersion.content.isnot(None),
+            )
+            .order_by(desc(RecordVersion.created_at))
+            .limit(1)
+        )
+        resume_row = (await db.execute(resume_prev_stmt)).scalar_one_or_none()
+        resume_prev_content = (resume_row if isinstance(resume_row, dict) else {}).get("text") or None
         return {
             "encounter_id": existing.id,
             "patient": patient,
             "patient_profile": patient_profile,
             "visit_type": existing.visit_type,
             "patient_reused": patient_reused,
-            "previous_record_content": None,
+            "previous_record_content": resume_prev_content,
             "resumed": True,
         }
 
@@ -126,11 +142,44 @@ async def quick_start_encounter(
         current_user.id,
     )
 
-    # 复诊时查询该患者最近一次非空病历版本，作为本次生成的参考
+    # 复诊时查询该患者最近一次接诊的稳定问诊字段 + 病历参考
     previous_record_content: Optional[str] = None
+    previous_inquiry: Optional[dict] = None
     if patient_reused:
+        # 取最近一次接诊中最新版本问诊的稳定字段（既往史/过敏史/个人史等不随症状变化的信息）
+        from app.models.encounter import InquiryInput
+        stable_stmt = (
+            select(
+                InquiryInput.past_history,
+                InquiryInput.allergy_history,
+                InquiryInput.personal_history,
+                InquiryInput.marital_history,
+                InquiryInput.family_history,
+            )
+            .join(EncounterModel, InquiryInput.encounter_id == EncounterModel.id)
+            .where(
+                EncounterModel.patient_id == patient["id"],
+                EncounterModel.id != encounter.id,
+            )
+            .order_by(desc(InquiryInput.created_at))
+            .limit(1)
+        )
+        stable_row = (await db.execute(stable_stmt)).one_or_none()
+        if stable_row:
+            # 只带入非空字段，避免用空字符串覆盖当次新填的内容
+            previous_inquiry = {
+                k: v for k, v in {
+                    "past_history": stable_row.past_history,
+                    "allergy_history": stable_row.allergy_history,
+                    "personal_history": stable_row.personal_history,
+                    "marital_history": stable_row.marital_history,
+                    "family_history": stable_row.family_history,
+                }.items() if v
+            }
+
+        # 取最近一次签发病历版本的全文，供生成时参考
         from app.models.medical_record import RecordVersion
-        stmt = (
+        record_stmt = (
             select(RecordVersion.content)
             .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
             .join(EncounterModel, MedicalRecord.encounter_id == EncounterModel.id)
@@ -142,9 +191,10 @@ async def quick_start_encounter(
             .order_by(desc(RecordVersion.created_at))
             .limit(1)
         )
-        row = (await db.execute(stmt)).scalar_one_or_none()
+        row = (await db.execute(record_stmt)).scalar_one_or_none()
         if row:
-            previous_record_content = (row or {}).get("text") or None
+            # content 列是 JSONB，quick_save 格式为 {"text": "病历全文..."}
+            previous_record_content = (row if isinstance(row, dict) else {}).get("text") or None
 
     return {
         "encounter_id": encounter.id,
@@ -153,6 +203,7 @@ async def quick_start_encounter(
         "visit_type": data.visit_type,
         "patient_reused": patient_reused,
         "previous_record_content": previous_record_content,
+        "previous_inquiry": previous_inquiry,
         "resumed": False,
     }
 

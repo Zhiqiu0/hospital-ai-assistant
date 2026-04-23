@@ -70,8 +70,11 @@ export default function InquirySuggestionTab() {
   const isInputLocked = !!recordContent.trim() || isPolishing
   const isQCDone = !!qcRunId
   const suggestions = inquirySuggestions
+  // 函数式更新从 store 读最新值，避免异步回调里拿到 stale closure
   const setSuggestions = (v: Suggestion[] | ((prev: Suggestion[]) => Suggestion[])) =>
-    setInquirySuggestions(typeof v === 'function' ? v(inquirySuggestions) : v)
+    setInquirySuggestions(
+      typeof v === 'function' ? v(useWorkbenchStore.getState().inquirySuggestions) : v
+    )
 
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -169,15 +172,26 @@ export default function InquirySuggestionTab() {
   }
 
   const handleApplyDiagnosis = (name: string) => {
+    // 同步更新病历两处：【初步诊断】章节 + 【诊断】里的西医诊断行（润色生成）
+    const syncRecord = (content: string, value: string) => {
+      let updated = writeSectionToRecord(content, 'initial_impression', value)
+      // 替换润色生成的「西医诊断：XXX」行，保证两处一致
+      if (updated.includes('西医诊断：')) {
+        const replacement = value ? `西医诊断：${value}` : '西医诊断：[未填写，需补充]'
+        updated = updated.replace(/西医诊断：[^\n]*/g, replacement)
+      }
+      return updated
+    }
+
     if (appliedDiagnosis === name) {
       setInitialImpression('')
-      setRecordContent(writeSectionToRecord(recordContent, 'initial_impression', ''))
+      setRecordContent(syncRecord(recordContent, ''))
       setAppliedDiagnosis(null)
     } else {
       setInitialImpression(name)
-      setRecordContent(writeSectionToRecord(recordContent, 'initial_impression', name))
+      setRecordContent(syncRecord(recordContent, name))
       setAppliedDiagnosis(name)
-      message.success({ content: `已写入初步诊断：${name}`, duration: 2 })
+      message.success({ content: `已写入诊断：${name}`, duration: 2 })
     }
   }
 
@@ -246,7 +260,7 @@ export default function InquirySuggestionTab() {
           item={item}
           idx={idx}
           total={suggestions.length}
-          isQCDone={isQCDone}
+          isQCDone={false}
           onSelectOption={handleSelectOption}
         />
       ))}

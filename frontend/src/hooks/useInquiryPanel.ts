@@ -15,11 +15,11 @@ import { useWorkbenchStore } from '@/store/workbenchStore'
 import { applyQuickStartResult } from '@/store/encounterIntake'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
-import { mergeVitalText, applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
-import type { ParsedVitals } from '@/components/workbench/VitalSignsInput'
+import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
 
 // 门诊问诊表单"本次接诊"字段（不含纵向档案字段，那些由 PatientProfileCard 处理）
 // past_history / allergy_history / personal_history / menstrual_history 已迁出
+// 生命体征 8 个字段一并纳入，和其他字段一起保存到后端
 const allFields = [
   'chief_complaint',
   'history_present_illness',
@@ -41,6 +41,15 @@ const allFields = [
   'patient_disposition',
   'visit_time',
   'onset_time',
+  // 生命体征（结构化独立字段，与 physical_exam 文字完全分离）
+  'temperature',
+  'pulse',
+  'respiration',
+  'bp_systolic',
+  'bp_diastolic',
+  'spo2',
+  'height',
+  'weight',
 ] as const
 
 export function useInquiryPanel() {
@@ -72,32 +81,8 @@ export function useInquiryPanel() {
 
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [parsedVitals, setParsedVitals] = useState<ParsedVitals | undefined>(undefined)
   // 保存后的患者去向，用于驱动急诊流转提示
   const [savedDisposition, setSavedDisposition] = useState<string>('')
-
-  // 从语音识别文本中解析生命体征数值
-  const parseVitalsFromText = (text: string): ParsedVitals => {
-    const v: ParsedVitals = {}
-    const tM = text.match(/(?:体温|T)[:\s：]*(\d+\.?\d*)\s*℃/i)
-    if (tM) v.t = tM[1]
-    const pM = text.match(/(?:脉搏|P)[:\s：]*(\d+)\s*次/i)
-    if (pM) v.p = pM[1]
-    const rM = text.match(/(?:呼吸|R)[:\s：]*(\d+)\s*次/i)
-    if (rM) v.r = rM[1]
-    const bpM = text.match(/(?:血压|BP)[:\s：]*(\d+)\s*\/\s*(\d+)/i)
-    if (bpM) {
-      v.bpS = bpM[1]
-      v.bpD = bpM[2]
-    }
-    const spo2M = text.match(/SpO[₂2][:\s：]*(\d+)\s*%/i)
-    if (spo2M) v.spo2 = spo2M[1]
-    const hM = text.match(/身高[:\s：]*(\d+\.?\d*)\s*cm/i)
-    if (hM) v.h = hM[1]
-    const wM = text.match(/体重[:\s：]*(\d+\.?\d*)\s*kg/i)
-    if (wM) v.w = wM[1]
-    return v
-  }
 
   // 切换接诊或 inquirySavedAt 更新时全量同步表单
   useEffect(() => {
@@ -106,7 +91,12 @@ export function useInquiryPanel() {
       visit_time: inquiry.visit_time ? dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm') : dayjs(),
       onset_time: inquiry.onset_time ? dayjs(inquiry.onset_time, 'YYYY-MM-DD HH:mm') : null,
     })
-    setIsDirty(false)
+    // inquirySavedAt=0 且有数据说明是刷新前填了但未保存，保持 dirty 提示用户保存
+    if (inquirySavedAt === 0 && inquiry.chief_complaint) {
+      setIsDirty(true)
+    } else {
+      setIsDirty(false)
+    }
   }, [form, currentEncounterId, inquirySavedAt])
 
   // 辅助检查由外部（如追问建议）写入时同步表单
@@ -293,13 +283,16 @@ export function useInquiryPanel() {
   // 纵向档案，应路由到 PatientProfileCard（待医生确认后通过统一保存按钮提交），
   // 不再随 inquiry 一起 PUT 到接诊表
   const applyVoiceInquiry = (patch: any) => {
+    // AI 返回的 patch 可能含 vital_signs 结构体，铺平到 form 顶层字段
+    const flattened = { ...patch }
+    if (patch.vital_signs && typeof patch.vital_signs === 'object') {
+      Object.assign(flattened, patch.vital_signs)
+      delete flattened.vital_signs
+    }
     // 1) inquiry 字段填表单（profile 字段交给 form 也无影响，反正没对应 Form.Item）
-    const nextValues = { ...form.getFieldsValue(), ...patch }
+    const nextValues = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue(nextValues)
     updateInquiryFields(buildData(nextValues))
-    if (patch.physical_exam) {
-      setParsedVitals(parseVitalsFromText(patch.physical_exam))
-    }
     setIsDirty(true)
 
     // 2) profile 字段路由到 patientProfileEditStore
@@ -312,14 +305,6 @@ export function useInquiryPanel() {
   // 追记模式：语音结构化结果写入病历对应章节（锁定后专用）
   const applyVoiceToRecord = (patch: any) => {
     applyVoiceToRecordWithFeedback(recordContent, patch, setRecordContent)
-  }
-
-  // 生命体征快填：合并或前插到 physical_exam 第一行
-  const handleVitalFill = (vitalText: string) => {
-    const newVal = mergeVitalText(form.getFieldValue('physical_exam') || '', vitalText)
-    form.setFieldValue('physical_exam', newVal)
-    updateInquiryFields({ ...inquiry, physical_exam: newVal })
-    setIsDirty(true)
   }
 
   // 就诊类型标签颜色和文字
@@ -360,11 +345,9 @@ export function useInquiryPanel() {
     isDirty,
     setIsDirty,
     saving,
-    parsedVitals,
     onSave,
     applyVoiceInquiry,
     applyVoiceToRecord,
-    handleVitalFill,
     visitNatureColor,
     visitTypeLabel,
     visitTypeColor,

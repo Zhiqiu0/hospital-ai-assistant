@@ -1,38 +1,17 @@
 /**
- * 体征快速录入组件（components/workbench/VitalSignsInput.tsx）
+ * 生命体征快速录入组件（components/workbench/VitalSignsInput.tsx）
  *
- * 提供体征数据的快速文本录入与结构化解析：
- *   - 输入格式示例："T36.5 P80 R18 BP120/80 W65"
- *   - 点击「⚡解析」按钮将自由文本解析为 ParsedVitals 结构体
- *   - 解析结果同步到 workbenchStore.inquiry 中的体征字段
+ * 设计：
+ *   - 受控于 antd Form：所有字段（temperature/pulse/respiration/bp_systolic/bp_diastolic/spo2/height/weight）
+ *     通过 Form.Item 的 name 绑定到问诊表单，点"保存"时一起提交到后端。
+ *   - 生命体征数据与 physical_exam 文字描述完全分离：体征数值只存在这里，
+ *     AI 生成病历时后端会自动把体征合并到体检段前缀。
  *
- * ParsedVitals 字段：
- *   temperature（体温）/ pulse（脉搏）/ respiration（呼吸）
- *   blood_pressure / weight / height / spo2（血氧饱和度）
- *
- * 解析逻辑（纯前端，无 API 调用）：
- *   正则匹配各体征前缀（T/P/R/BP/W/H/SpO2），
- *   匹配失败的字段保留为空字符串（不覆盖已有值）。
+ * 交互：
+ *   用户可以手动录入数值，也可以由语音 AI 分析自动回填（语音返回 vital_signs
+ *   结构体后，调用方 setFieldsValue({temperature: "36.5", pulse: "72", ...})）。
  */
-import { useState, useEffect } from 'react'
-import { Button, Input, Tooltip } from 'antd'
-import { ThunderboltOutlined } from '@ant-design/icons'
-
-export interface ParsedVitals {
-  t?: string
-  p?: string
-  r?: string
-  bpS?: string
-  bpD?: string
-  spo2?: string
-  h?: string
-  w?: string
-}
-
-interface Props {
-  onFill: (vitalText: string) => void
-  parsedVitals?: ParsedVitals
-}
+import { Form, Input, Tooltip } from 'antd'
 
 const inputStyle: React.CSSProperties = {
   borderRadius: 5,
@@ -41,42 +20,9 @@ const inputStyle: React.CSSProperties = {
   padding: '2px 4px',
 }
 
-export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
-  const [t, setT] = useState('')
-  const [p, setP] = useState('')
-  const [r, setR] = useState('')
-  const [bpS, setBpS] = useState('')
-  const [bpD, setBpD] = useState('')
-  const [spo2, setSpo2] = useState('')
-  const [h, setH] = useState('')
-  const [w, setW] = useState('')
+const fieldStyle: React.CSSProperties = { marginBottom: 0 }
 
-  // 语音AI解析后回填生命体征字段
-  useEffect(() => {
-    if (!parsedVitals) return
-    if (parsedVitals.t !== undefined) setT(parsedVitals.t)
-    if (parsedVitals.p !== undefined) setP(parsedVitals.p)
-    if (parsedVitals.r !== undefined) setR(parsedVitals.r)
-    if (parsedVitals.bpS !== undefined) setBpS(parsedVitals.bpS)
-    if (parsedVitals.bpD !== undefined) setBpD(parsedVitals.bpD)
-    if (parsedVitals.spo2 !== undefined) setSpo2(parsedVitals.spo2)
-    if (parsedVitals.h !== undefined) setH(parsedVitals.h)
-    if (parsedVitals.w !== undefined) setW(parsedVitals.w)
-  }, [parsedVitals])
-
-  const handleFill = () => {
-    const parts: string[] = []
-    if (t) parts.push(`T:${t}℃`)
-    if (p) parts.push(`P:${p}次/分`)
-    if (r) parts.push(`R:${r}次/分`)
-    if (bpS || bpD) parts.push(`BP:${bpS || '__'}/${bpD || '__'}mmHg`)
-    if (spo2) parts.push(`SpO₂:${spo2}%`)
-    if (h) parts.push(`身高:${h}cm`)
-    if (w) parts.push(`体重:${w}kg`)
-    if (parts.length === 0) return
-    onFill(parts.join('  '))
-  }
-
+export default function VitalSignsInput() {
   return (
     <div
       style={{
@@ -98,12 +44,9 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="体温 ℃">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569', whiteSpace: 'nowrap' }}>T</span>
-            <Input
-              value={t}
-              onChange={e => setT(e.target.value)}
-              placeholder="36.5"
-              style={{ ...inputStyle, width: 52 }}
-            />
+            <Form.Item style={fieldStyle} name="temperature">
+              <Input placeholder="36.5" style={{ ...inputStyle, width: 52 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>℃</span>
           </div>
         </Tooltip>
@@ -111,12 +54,9 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="脉搏 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>P</span>
-            <Input
-              value={p}
-              onChange={e => setP(e.target.value)}
-              placeholder="72"
-              style={{ ...inputStyle, width: 46 }}
-            />
+            <Form.Item style={fieldStyle} name="pulse">
+              <Input placeholder="72" style={{ ...inputStyle, width: 46 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
           </div>
         </Tooltip>
@@ -124,12 +64,9 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="呼吸 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>R</span>
-            <Input
-              value={r}
-              onChange={e => setR(e.target.value)}
-              placeholder="18"
-              style={{ ...inputStyle, width: 40 }}
-            />
+            <Form.Item style={fieldStyle} name="respiration">
+              <Input placeholder="18" style={{ ...inputStyle, width: 40 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
           </div>
         </Tooltip>
@@ -137,19 +74,13 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="血压 mmHg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>BP</span>
-            <Input
-              value={bpS}
-              onChange={e => setBpS(e.target.value)}
-              placeholder="120"
-              style={{ ...inputStyle, width: 44 }}
-            />
+            <Form.Item style={fieldStyle} name="bp_systolic">
+              <Input placeholder="120" style={{ ...inputStyle, width: 44 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>/</span>
-            <Input
-              value={bpD}
-              onChange={e => setBpD(e.target.value)}
-              placeholder="80"
-              style={{ ...inputStyle, width: 40 }}
-            />
+            <Form.Item style={fieldStyle} name="bp_diastolic">
+              <Input placeholder="80" style={{ ...inputStyle, width: 40 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>mmHg</span>
           </div>
         </Tooltip>
@@ -157,28 +88,22 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="血氧饱和度 %">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>SpO₂</span>
-            <Input
-              value={spo2}
-              onChange={e => setSpo2(e.target.value)}
-              placeholder="98"
-              style={{ ...inputStyle, width: 40 }}
-            />
+            <Form.Item style={fieldStyle} name="spo2">
+              <Input placeholder="98" style={{ ...inputStyle, width: 40 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>%</span>
           </div>
         </Tooltip>
       </div>
 
-      {/* Row 2: H W + fill button */}
+      {/* Row 2: H W */}
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <Tooltip title="身高 cm">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>身高</span>
-            <Input
-              value={h}
-              onChange={e => setH(e.target.value)}
-              placeholder="170"
-              style={{ ...inputStyle, width: 46 }}
-            />
+            <Form.Item style={fieldStyle} name="height">
+              <Input placeholder="170" style={{ ...inputStyle, width: 46 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>cm</span>
           </div>
         </Tooltip>
@@ -186,31 +111,12 @@ export default function VitalSignsInput({ onFill, parsedVitals }: Props) {
         <Tooltip title="体重 kg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: '#475569' }}>体重</span>
-            <Input
-              value={w}
-              onChange={e => setW(e.target.value)}
-              placeholder="65"
-              style={{ ...inputStyle, width: 46 }}
-            />
+            <Form.Item style={fieldStyle} name="weight">
+              <Input placeholder="65" style={{ ...inputStyle, width: 46 }} />
+            </Form.Item>
             <span style={{ fontSize: 11, color: '#94a3b8' }}>kg</span>
           </div>
         </Tooltip>
-
-        <Button
-          size="small"
-          type="primary"
-          icon={<ThunderboltOutlined />}
-          onClick={handleFill}
-          style={{
-            marginLeft: 'auto',
-            background: '#0369a1',
-            border: 'none',
-            borderRadius: 6,
-            fontSize: 11,
-          }}
-        >
-          填入体格检查
-        </Button>
       </div>
     </div>
   )

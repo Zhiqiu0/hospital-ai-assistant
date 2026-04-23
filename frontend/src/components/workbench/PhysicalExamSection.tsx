@@ -20,8 +20,8 @@ const labelStyle: React.CSSProperties = {
 
 const fieldStyle = { marginBottom: 12 }
 
+// 生命体征已独立到 VitalSignsInput，这里的 placeholder 只包含文字体检部分
 const PHYSICAL_EXAM_PLACEHOLDER = [
-  'T:__ ℃  P:__ 次/分  R:__ 次/分  BP:__/__mmHg  SpO2:__%',
   '一般情况：发育正常，营养良好，神志清楚，自主体位，查体合作',
   '皮肤黏膜：无黄染，无皮疹，无出血点，无水肿',
   '全身浅表淋巴结：颈部、腋窝、腹股沟浅表淋巴结未触及肿大',
@@ -35,14 +35,13 @@ const PHYSICAL_EXAM_PLACEHOLDER = [
 ].join('\n')
 
 interface Props {
-  handleVitalFill: (vitalText: string) => void
   handleLabInsert: (text: string) => void
 }
 
-export default function PhysicalExamSection({ handleVitalFill, handleLabInsert }: Props) {
+export default function PhysicalExamSection({ handleLabInsert }: Props) {
   return (
     <>
-      <VitalSignsInput onFill={handleVitalFill} />
+      <VitalSignsInput />
 
       <Form.Item
         style={fieldStyle}
@@ -50,7 +49,7 @@ export default function PhysicalExamSection({ handleVitalFill, handleLabInsert }
         label={
           <span style={labelStyle}>
             体格检查{' '}
-            <span style={{ color: '#ef4444', fontSize: 10 }}>（需含各系统，缺项扣分）</span>
+            <span style={{ color: '#ef4444', fontSize: 10 }}>（仅文字描述，生命体征在上方录入）</span>
           </span>
         }
       >

@@ -72,6 +72,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     setVisitMeta,
     setPatientReused,
     setPreviousRecordContent,
+    updateInquiryFields,
     reset,
   } = useWorkbenchStore()
 
@@ -128,6 +129,11 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     setVisitMeta(!res.patient_reused, res.visit_type || visitType)
     setPatientReused(!!res.patient_reused)
     setPreviousRecordContent(res.previous_record_content || null)
+    // 复诊且非续接：把上次稳定字段（既往史/过敏史/个人史等）预填入问诊表单
+    if (res.patient_reused && !res.resumed && res.previous_inquiry) {
+      const current = useWorkbenchStore.getState().inquiry
+      updateInquiryFields({ ...current, ...res.previous_inquiry })
+    }
     if (res.resumed) {
       message.info(`「${res.patient.name}」有未完成的接诊，已自动恢复`)
     } else {

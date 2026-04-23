@@ -54,16 +54,34 @@ export default function QCIssuePanel() {
     recordContent,
     setRecordContent,
     inquiry,
+    qcFixTexts,
+    setQCFixTexts,
+    qcWrittenIndices,
+    setQCWrittenIndices,
   } = useWorkbenchStore()
 
-  const [fixTexts, setFixTexts] = useState<Record<number, string>>({})
-  const [fixLoading, setFixLoading] = useState<Record<number, boolean>>({})
-  const [writtenSet, setWrittenSet] = useState<Set<number>>(new Set())
+  // fixTexts 持久化到 store，刷新后保留；支持函数式更新
+  const fixTexts = qcFixTexts
+  const setFixTexts = (
+    updater: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)
+  ) => {
+    const next = typeof updater === 'function' ? updater(qcFixTexts) : updater
+    setQCFixTexts(next)
+  }
+  const writtenSet = new Set(qcWrittenIndices)
+  const setWrittenSet = (updater: Set<number> | ((prev: Set<number>) => Set<number>)) => {
+    const next = typeof updater === 'function' ? updater(writtenSet) : updater
+    setQCWrittenIndices(Array.from(next))
+  }
 
-  // 只在新一轮质控开始时清空，追加 LLM issues 不触发（qcRunId 变化代表新一轮）
+  const [fixLoading, setFixLoading] = useState<Record<number, boolean>>({})
+  // 写入前的病历快照，取消时用于还原（不需持久化，取消只在本次会话内有效）
+  const [originalSnapshots, setOriginalSnapshots] = useState<Record<number, string>>({})
+
+  // 只在新一轮质控开始时清空本地加载状态（store 侧由 startQCRun 清空）
   useEffect(() => {
-    setFixTexts({})
-    setWrittenSet(new Set())
+    setFixLoading({})
+    setOriginalSnapshots({})
   }, [qcRunId])
 
   const handleAIFix = async (item: QCIssue, idx: number) => {
@@ -87,17 +105,20 @@ export default function QCIssuePanel() {
 
   const handleWriteToRecord = (item: QCIssue, idx: number) => {
     if (writtenSet.has(idx)) {
-      // 取消写入：还原该字段
-      setRecordContent(writeSectionToRecord(recordContent, item.field_name, ''))
+      // 取消写入：还原到写入前的病历快照，而不是置空
+      const snapshot = originalSnapshots[idx]
+      if (snapshot !== undefined) setRecordContent(snapshot)
       setWrittenSet(prev => {
         const s = new Set(prev)
         s.delete(idx)
         return s
       })
-      message.info('已取消写入')
+      message.info('已取消写入，已还原原内容')
     } else {
       const fix = fixTexts[idx]?.trim() || ''
       if (!fix) return
+      // 写入前先保存当前病历快照
+      setOriginalSnapshots(prev => ({ ...prev, [idx]: recordContent }))
       setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
       setWrittenSet(prev => new Set(prev).add(idx))
       message.success('已写入病历')
@@ -201,7 +222,9 @@ export default function QCIssuePanel() {
               style={{
                 fontSize: 12,
                 borderRadius: 6,
-                ...(writtenSet.has(idx) ? { background: '#22c55e', borderColor: '#22c55e' } : {}),
+                ...(writtenSet.has(idx)
+                  ? { background: '#94a3b8', borderColor: '#94a3b8', color: '#fff' }
+                  : {}),
               }}
             >
               {writtenSet.has(idx) ? '已写入' : '写入病历'}

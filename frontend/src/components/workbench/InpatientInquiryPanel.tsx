@@ -46,7 +46,6 @@ export default function InpatientInquiryPanel() {
     saving,
     onSave,
     painMarks,
-    handleVitalFill,
     handleLabInsert,
     applyVoiceInquiry,
     applyVoiceToRecord,
@@ -87,6 +86,7 @@ export default function InpatientInquiryPanel() {
           onFinish={onSave}
           onValuesChange={() => setIsDirty(true)}
           disabled={isInputLocked}
+          scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
         >
           {isInputLocked && (
             <div
@@ -194,10 +194,7 @@ export default function InpatientInquiryPanel() {
 
           {/* 三、体格检查与辅助检查 */}
           <div style={sectionStyle}>三、体格检查与辅助检查</div>
-          <PhysicalExamSection
-            handleVitalFill={handleVitalFill}
-            handleLabInsert={handleLabInsert}
-          />
+          <PhysicalExamSection handleLabInsert={handleLabInsert} />
 
           <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
 

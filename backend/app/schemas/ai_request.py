@@ -24,6 +24,15 @@ class QuickGenerateRequest(BaseModel):
     physical_exam: Optional[str] = ""
     initial_impression: Optional[str] = ""
     auxiliary_exam: Optional[str] = ""
+    # 生命体征（独立字段，生成 prompt 时会合并进 physical_exam 的体检段前缀）
+    temperature: Optional[str] = ""
+    pulse: Optional[str] = ""
+    respiration: Optional[str] = ""
+    bp_systolic: Optional[str] = ""
+    bp_diastolic: Optional[str] = ""
+    spo2: Optional[str] = ""
+    height: Optional[str] = ""
+    weight: Optional[str] = ""
 
     # 病历类型与就诊性质
     record_type: Optional[str] = "outpatient"
@@ -92,6 +101,15 @@ class ContinueRequest(BaseModel):
     personal_history: Optional[str] = ""
     physical_exam: Optional[str] = ""
     initial_impression: Optional[str] = ""
+    # 生命体征（独立字段，生成 prompt 时合并到 physical_exam 前缀）
+    temperature: Optional[str] = ""
+    pulse: Optional[str] = ""
+    respiration: Optional[str] = ""
+    bp_systolic: Optional[str] = ""
+    bp_diastolic: Optional[str] = ""
+    spo2: Optional[str] = ""
+    height: Optional[str] = ""
+    weight: Optional[str] = ""
 
 
 class SupplementRequest(BaseModel):
@@ -114,6 +132,15 @@ class SupplementRequest(BaseModel):
     initial_impression: Optional[str] = ""
     onset_time: Optional[str] = ""
     visit_time: Optional[str] = ""
+    # 生命体征（独立字段）
+    temperature: Optional[str] = ""
+    pulse: Optional[str] = ""
+    respiration: Optional[str] = ""
+    bp_systolic: Optional[str] = ""
+    bp_diastolic: Optional[str] = ""
+    spo2: Optional[str] = ""
+    height: Optional[str] = ""
+    weight: Optional[str] = ""
 
 
 class PolishRequest(BaseModel):

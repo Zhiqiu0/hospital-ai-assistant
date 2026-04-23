@@ -232,6 +232,7 @@ class MedicalRecordService:
         rows = (await self.db.execute(q)).all()
 
         items = []
+        from datetime import date as date_cls
         for record, encounter, patient in rows:
             # 获取最新版本内容（用于生成预览摘要）
             ver_q = (
@@ -243,6 +244,13 @@ class MedicalRecordService:
             ver = (await self.db.execute(ver_q)).scalar_one_or_none()
             # quick_save 格式 {"text": "..."} 取 text；其他格式作空串处理
             content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
+            # 计算患者年龄
+            today = date_cls.today()
+            patient_age = None
+            if patient.birth_date:
+                patient_age = today.year - patient.birth_date.year - (
+                    (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
+                )
             items.append({
                 "id": record.id,
                 "record_type": record.record_type,
@@ -250,6 +258,7 @@ class MedicalRecordService:
                 "submitted_at": record.submitted_at,
                 "patient_name": patient.name,
                 "patient_gender": patient.gender,
+                "patient_age": patient_age,
                 "encounter_id": encounter.id,
                 "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
                 "content": content_text,

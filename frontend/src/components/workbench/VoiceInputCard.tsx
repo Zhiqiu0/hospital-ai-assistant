@@ -29,7 +29,6 @@ type VoiceInputCardProps = {
 export default function VoiceInputCard(props: VoiceInputCardProps) {
   const {
     isRecordMode,
-    speechSupported,
     recordingSupported,
     listening,
     uploadingAudio,
@@ -80,12 +79,12 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
         </Space>
       </div>
 
-      {(!speechSupported || !recordingSupported) && (
+      {!recordingSupported && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 10 }}
-          message="当前浏览器能力有限，建议使用最新版 Chrome / Edge；若不支持实时转写，仍可手动粘贴转写文本再点 AI 整理。"
+          message="当前浏览器不支持录音，建议使用最新版 Chrome / Edge；仍可手动粘贴转写文本后点 AI 整理。"
         />
       )}
 

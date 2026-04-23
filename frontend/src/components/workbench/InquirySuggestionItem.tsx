@@ -32,16 +32,16 @@ export default function InquirySuggestionItem({
   isQCDone,
   onSelectOption,
 }: Props) {
-  const isPastHistory = item.category === '既往信息'
-  const isDimmed = isPastHistory || isQCDone
+  // 已选答案说明信息已采集，视觉变灰提示"已处理"；与病历是否锁定无关
+  const isDimmed = item.selectedOptions.length > 0
 
   return (
     <div
       style={{
         borderBottom: idx < total - 1 ? '1px solid #f1f5f9' : 'none',
         padding: '12px 0',
-        opacity: isDimmed ? 0.45 : 1,
-        pointerEvents: isQCDone ? 'none' : 'auto',
+        opacity: isDimmed ? 0.5 : 1,
+        pointerEvents: 'auto',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
