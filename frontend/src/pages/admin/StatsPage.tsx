@@ -155,7 +155,7 @@ export default function StatsPage() {
             showInfo={false}
             size="small"
             style={{ flex: 1, maxWidth: 100 }}
-            strokeColor={i === 0 ? '#2563eb' : i === 1 ? '#059669' : '#94a3b8'}
+            strokeColor={i === 0 ? '#2563eb' : i === 1 ? '#059669' : 'var(--text-4)'}
           />
           <Text strong style={{ fontSize: 13 }}>
             {v}
@@ -252,7 +252,7 @@ export default function StatsPage() {
                         >
                           <Statistic
                             title={
-                              <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                              <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
                                 {c.title}
                               </span>
                             }
@@ -273,7 +273,7 @@ export default function StatsPage() {
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              color: '#fff',
+                              color: 'var(--surface)',
                               fontSize: 18,
                               flexShrink: 0,
                               opacity: 0.9,
@@ -311,7 +311,7 @@ export default function StatsPage() {
                           }}
                         >
                           <Text
-                            style={{ width: 72, fontSize: 12, color: '#475569', flexShrink: 0 }}
+                            style={{ width: 72, fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}
                           >
                             {item.type}
                           </Text>
@@ -407,7 +407,7 @@ export default function StatsPage() {
                         <div style={{ fontSize: 32, fontWeight: 700, color: c.color }}>
                           {c.value}
                         </div>
-                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
                           {c.label}
                         </div>
                       </Card>
@@ -468,7 +468,7 @@ export default function StatsPage() {
                             }}
                           >
                             <Text
-                              style={{ width: 80, fontSize: 12, color: '#64748b', flexShrink: 0 }}
+                              style={{ width: 80, fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}
                             >
                               {d.date}
                             </Text>

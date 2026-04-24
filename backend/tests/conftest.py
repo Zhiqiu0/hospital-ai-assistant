@@ -20,6 +20,8 @@ import app.models.patient       # noqa
 import app.models.encounter     # noqa
 import app.models.medical_record  # noqa
 import app.models.revoked_token   # noqa
+import app.models.inpatient       # noqa  # 含 VitalSign / ProblemItem
+import app.models.imaging         # noqa  # 含 ImagingStudy / ImagingReport
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 

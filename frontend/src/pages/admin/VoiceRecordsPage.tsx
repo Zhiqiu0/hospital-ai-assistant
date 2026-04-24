@@ -227,8 +227,8 @@ export default function VoiceRecordsPage() {
                 </Text>
                 <div
                   style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
                     borderRadius: 8,
                     padding: '10px 14px',
                     fontSize: 13,
@@ -247,13 +247,13 @@ export default function VoiceRecordsPage() {
                 </Text>
                 <div
                   style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
                     borderRadius: 8,
                     padding: '10px 14px',
                     fontSize: 13,
                     lineHeight: 1.7,
-                    color: '#475569',
+                    color: 'var(--text-2)',
                   }}
                 >
                   {detail.transcript_preview}

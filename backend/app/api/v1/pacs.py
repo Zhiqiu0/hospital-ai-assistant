@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
 from app.core.security import get_current_user
+from app.core.authz import assert_pacs_write, assert_patient_access
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingReport, ImagingStudy
@@ -195,6 +196,11 @@ async def upload_study(
     current_user=Depends(get_current_user),
 ):
     """上传 ZIP / RAR 压缩包，后台解压并生成缩略图"""
+    # 只允许影像科医生 + 管理员上传；临床医生看影像走只读路径
+    assert_pacs_write(current_user)
+    # 患者存在性隐式在上传路径前校验（之后 ImagingStudy 以 patient_id 存库；
+    # 若需要严格校验 patient 存在可以 await assert_patient_access(db, patient_id, current_user)
+    # 但 PACS_WRITE_ROLES 已直通，这里不再追加）
     fname_lower = file.filename.lower()
     if not (fname_lower.endswith(".zip") or fname_lower.endswith(".rar")):
         raise HTTPException(400, "只支持 ZIP / RAR 格式压缩包")
@@ -304,6 +310,8 @@ async def get_frames(
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
+    # 跨患者权限校验：放射科/管理员直通；普通医生必须对该患者有过接诊
+    await assert_patient_access(db, study.patient_id, current_user)
 
     dicom_dir = Path(study.storage_dir)
     dcm_files = sorted(list({f.name for f in dicom_dir.glob("*.DCM")} | {f.name for f in dicom_dir.glob("*.dcm")}))
@@ -331,12 +339,19 @@ async def get_thumbnail(
     wc: Optional[float] = None,
     ww: Optional[float] = None,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    """缩略图服务（含 PHI，必须鉴权）。
+
+    历史：曾完全无鉴权——任何人拿到 study_id+filename 即可下载缩略图，
+    属于 PHI 泄露级漏洞。已统一接入 assert_patient_access 修复。
+    """
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(400, "非法文件名")
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
+    await assert_patient_access(db, study.patient_id, current_user)
 
     dicom_dir = Path(study.storage_dir)
     dcm_path = dicom_dir / filename
@@ -379,12 +394,20 @@ async def get_dicom_file(
     study_id: str,
     filename: str,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    """原始 DCM 文件下载（供前端 cornerstone.js 加载，含完整 PHI，必须鉴权）。
+
+    历史：曾完全无鉴权——任何人凭 study_id+filename 即可拖走原始 DICOM
+    （含患者姓名、出生日期、检查日期、机器号），是医疗系统最敏感数据的
+    裸奔泄露。已接入 assert_patient_access。
+    """
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(400, "非法文件名")
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
+    await assert_patient_access(db, study.patient_id, current_user)
 
     dcm_path = Path(study.storage_dir) / filename
     if not dcm_path.exists():
@@ -407,6 +430,7 @@ async def analyze_study(
     current_user=Depends(get_current_user),
 ):
     """将选中帧发给千问 AI 分析，返回结构化报告"""
+    assert_pacs_write(current_user)
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
@@ -518,6 +542,7 @@ async def save_report(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    assert_pacs_write(current_user)
     result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
     report = result.scalar_one_or_none()
     if not report:
@@ -535,6 +560,14 @@ async def publish_report(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """发布影像报告。
+
+    审计链设计：
+      - radiologist_id：在 analyze_study 阶段写入，**本端点不应改它**——
+        否则会让"A 分析、B 复核签发"场景下分析人被误记为 B。
+      - published_by：本端点写入，记录实际签发责任人。
+    """
+    assert_pacs_write(current_user)
     result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
     report = result.scalar_one_or_none()
     if not report:
@@ -543,7 +576,8 @@ async def publish_report(
     report.final_report = body.final_report
     report.is_published = True
     report.published_at = datetime.utcnow()
-    report.radiologist_id = current_user.id
+    # 关键：只写 published_by，绝不覆盖 radiologist_id（保留分析人审计）
+    report.published_by = current_user.id
 
     study = await db.get(ImagingStudy, study_id)
     if study:

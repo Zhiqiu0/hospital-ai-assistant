@@ -44,9 +44,9 @@ function printRecord(record: any, recordTypeLabel: (type: string) => string) {
 <style>
   body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
   h2 { text-align: center; font-size: 20px; margin-bottom: 4px; }
-  .meta { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
+  .meta { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
   .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; }
-  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: right; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: #94a3b8; text-align: right; }
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
 <h2>${typeLabel}</h2>
@@ -112,8 +112,8 @@ export default function RecordViewModal({
     >
       <div
         style={{
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
           borderRadius: 8,
           padding: '20px 24px',
           maxHeight: 520,
@@ -122,7 +122,7 @@ export default function RecordViewModal({
           lineHeight: 1.9,
           whiteSpace: 'pre-wrap',
           fontFamily: "'PingFang SC', 'Microsoft YaHei', sans-serif",
-          color: '#1e293b',
+          color: 'var(--text-1)',
         }}
       >
         {record?.content || '（病历内容为空）'}

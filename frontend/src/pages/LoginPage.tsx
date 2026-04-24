@@ -126,7 +126,7 @@ export default function LoginPage() {
           }}
         />
 
-        <div style={{ position: 'relative', textAlign: 'center', color: '#fff' }}>
+        <div style={{ position: 'relative', textAlign: 'center', color: 'var(--surface)' }}>
           <div
             style={{
               width: 72,
@@ -141,7 +141,7 @@ export default function LoginPage() {
               border: '1px solid rgba(255,255,255,0.25)',
             }}
           >
-            <MedicineBoxOutlined style={{ fontSize: 34, color: '#fff' }} />
+            <MedicineBoxOutlined style={{ fontSize: 34, color: 'var(--surface)' }} />
           </div>
           <h1
             style={{
@@ -183,7 +183,7 @@ export default function LoginPage() {
                     alignItems: 'center',
                     justifyContent: 'center',
                     fontSize: 18,
-                    color: '#fff',
+                    color: 'var(--surface)',
                     flexShrink: 0,
                   }}
                 >

@@ -142,7 +142,7 @@ export default function AppShell({
                   marginBottom: 8,
                 }}
               >
-                <MedicineBoxOutlined style={{ color: '#fff', fontSize: 20 }} />
+                <MedicineBoxOutlined style={{ color: 'var(--surface)', fontSize: 20 }} />
               </div>
             </Tooltip>
 

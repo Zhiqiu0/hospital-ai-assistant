@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
 from app.database import get_db
+from app.services.audit_service import log_action
 from app.schemas.ai_request import (
     ContinueRequest,
     NormalizeFieldsRequest,
@@ -65,6 +66,15 @@ async def quick_generate(
     current_user=Depends(get_current_user),
 ):
     """根据问诊信息流式生成指定类型的病历草稿。"""
+    # 审计：记录医生对哪个病历类型调了 AI 生成（医疗场景合规要求）
+    await log_action(
+        action="ai_quick_generate",
+        user_id=current_user.id,
+        user_name=current_user.username,
+        user_role=current_user.role,
+        resource_type="medical_record",
+        detail=f"record_type={req.record_type or 'outpatient'}",
+    )
     # 急诊接诊自动使用急诊 prompt，除非医生已明确指定其他类型（如收入住院后切换为入院记录）
     is_emergency = (req.visit_type_detail or "outpatient") == "emergency"
     record_type = req.record_type or ("emergency" if is_emergency else "outpatient")
@@ -189,6 +199,14 @@ async def quick_continue(
     current_user=Depends(get_current_user),
 ):
     """续写病历未完成部分（流式）。"""
+    await log_action(
+        action="ai_quick_continue",
+        user_id=current_user.id,
+        user_name=current_user.username,
+        user_role=current_user.role,
+        resource_type="medical_record",
+        detail=f"record_type={req.record_type or 'outpatient'}",
+    )
     record_type = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
     composed_physical_exam = compose_physical_exam(
         physical_exam=req.physical_exam,
@@ -229,6 +247,14 @@ async def quick_supplement(
     current_user=Depends(get_current_user),
 ):
     """根据质控问题一键补全病历（流式）。"""
+    await log_action(
+        action="ai_quick_supplement",
+        user_id=current_user.id,
+        user_name=current_user.username,
+        user_role=current_user.role,
+        resource_type="medical_record",
+        detail=f"record_type={req.record_type or 'outpatient'} issues_count={len(req.qc_issues or [])}",
+    )
     if not req.qc_issues:
         return StreamingResponse(
             iter(['data: {"type":"done"}\n\n']),
@@ -285,6 +311,13 @@ async def quick_polish(
     current_user=Depends(get_current_user),
 ):
     """润色病历（流式）。"""
+    await log_action(
+        action="ai_quick_polish",
+        user_id=current_user.id,
+        user_name=current_user.username,
+        user_role=current_user.role,
+        resource_type="medical_record",
+    )
     db_prompt = await get_active_prompt(db, "polish")
     template = db_prompt or POLISH_PROMPT
     model_options = await get_model_options(db, "polish")

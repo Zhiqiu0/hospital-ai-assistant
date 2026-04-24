@@ -44,6 +44,18 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   pulse_condition: '【脉象】',
   treatment_method: '【治则治法】',
 
+  // ── 治疗意见 & 复诊 ──
+  treatment_plan: '【处理意见】',
+  followup_advice: '【复诊建议】',
+  precautions: '【注意事项】',
+
+  // ── 急诊 ──
+  observation_notes: '【留观记录】',
+  patient_disposition: '【患者去向】',
+
+  // ── 住院元信息 ──
+  history_informant: '【病史陈述者】',
+
   // ── 住院专项评估（各自独立章节，避免互相覆盖）──
   pain_assessment: '【疼痛评估】',
   vte_risk: '【VTE风险评估】',
@@ -69,6 +81,14 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   望诊: '【望诊】',
   闻诊: '【闻诊】',
   治则治法: '【治则治法】',
+  处理意见: '【处理意见】',
+  '治疗意见及措施': '【处理意见】',
+  复诊建议: '【复诊建议】',
+  随访建议: '【复诊建议】',
+  注意事项: '【注意事项】',
+  留观记录: '【留观记录】',
+  患者去向: '【患者去向】',
+  病史陈述者: '【病史陈述者】',
   初步诊断: '【初步诊断】',
   入院诊断: '【入院诊断】',
   诊断: '【入院诊断】',
@@ -172,6 +192,18 @@ export const FIELD_NAME_LABEL: Record<string, string> = {
   followup_advice: '复诊建议',
   precautions: '注意事项',
   admission_diagnosis: '入院诊断',
+  // 急诊 + 住院专项评估（补齐，原表缺失）
+  observation_notes: '留观记录',
+  patient_disposition: '患者去向',
+  history_informant: '病史陈述者',
+  pain_assessment: '疼痛评估',
+  vte_risk: 'VTE风险评估',
+  nutrition_assessment: '营养评估',
+  psychology_assessment: '心理评估',
+  rehabilitation_assessment: '康复评估',
+  current_medications: '当前用药',
+  religion_belief: '宗教信仰',
+  menstrual_history: '月经史',
 }
 
 /**
@@ -180,13 +212,25 @@ export const FIELD_NAME_LABEL: Record<string, string> = {
  * 章节定位策略（优先级递减）：
  *   1. 精确匹配目标 header
  *   2. 关键词模糊匹配：从 header 中提取核心词（去掉「入院」「初步」等修饰词），
- *      在记录中找含有该核心词的章节——自动兼容门诊/住院章节名差异，无需维护静态映射
+ *      在记录中找含有该核心词的章节——自动兼容门诊/住院章节名差异
  *   3. 均未匹配：在末尾追加新章节
+ *
+ * 字段分 3 类处理：
+ *   - primaryHeader === ''       → **明确跳过**（全文类规则，如 content / onset_time）
+ *   - primaryHeader === undefined → **fallback 追加**（未映射字段用 fieldName/中文标签当章节名）
+ *                                   避免"按了没反应"的静默失败
+ *   - 其他                       → 正常走章节定位
  */
 export function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
-  const primaryHeader = FIELD_TO_SECTION[fieldName]
-  // content 类字段（全文规则）或未知字段：不做写入
-  if (primaryHeader === undefined || primaryHeader === '') return content
+  const mapped = FIELD_TO_SECTION[fieldName]
+
+  // 明确跳过的字段（全文类）—— 保持原行为
+  if (mapped === '') return content
+
+  // 未映射字段：fallback 用 FIELD_NAME_LABEL 或 fieldName 本身当章节标题追加
+  // 这样即使漏了映射，内容不会丢，医生至少能在病历末尾看到一条"【XXX】"章节
+  const primaryHeader =
+    mapped ?? `【${FIELD_NAME_LABEL[fieldName] || fieldName}】`
 
   // 从章节标题提取核心关键词（去掉「入院」「初步」「（入院前）」等修饰成分）
   const coreKeyword = primaryHeader
@@ -211,12 +255,16 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
 
   const header = targetIdx !== -1 ? matches[targetIdx].header : primaryHeader
 
-  // 取消写入（fixText 为空）：移除该章节内容
+  // 取消写入（fixText 为空）：只清空章节内容，保留 header
+  //（之前是整节删除，导致再次写入时找不到原位置 → 被追加到末尾。Bug 修复 2026-04-25）
   if (!fixText.trim()) {
     if (targetIdx === -1) return content
     const start = matches[targetIdx].index
+    const headerEnd = start + matches[targetIdx].header.length
     const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
-    return (content.slice(0, start) + content.slice(end)).replace(/\n{3,}/g, '\n\n').trimEnd()
+    // 保留 header + 一个换行，让再次写入能定位到原位置
+    const tail = content.slice(end).replace(/^\s+/, '')
+    return content.slice(0, headerEnd) + '\n\n' + (tail ? tail : '')
   }
 
   // 写入：替换已有章节，或在末尾追加新章节

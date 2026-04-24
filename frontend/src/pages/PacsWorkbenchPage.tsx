@@ -19,6 +19,7 @@ import {
   Space,
   Alert,
   Progress,
+  Steps,
 } from 'antd'
 import {
   UploadOutlined,
@@ -30,7 +31,45 @@ import {
 } from '@ant-design/icons'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
+import { useAuthedImage } from '@/services/authedImage'
 import DicomViewer from '@/components/workbench/DicomViewer'
+
+/**
+ * 受鉴权 PACS 缩略图组件。
+ * 后端已要求 Authorization 头（修复 PHI 泄露漏洞），
+ * 这里用 useAuthedImage 把响应转成 blob URL 喂给原生 <img>。
+ */
+function AuthedThumbnail({
+  studyId,
+  filename,
+  style,
+}: {
+  studyId: string
+  filename: string
+  style?: React.CSSProperties
+}) {
+  const { src, error } = useAuthedImage(
+    `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}`
+  )
+  if (error) {
+    return (
+      <div
+        style={{
+          ...style,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#888',
+          fontSize: 11,
+          background: '#222',
+        }}
+      >
+        加载失败
+      </div>
+    )
+  }
+  return <img src={src ?? ''} alt={filename} style={style} loading="lazy" />
+}
 
 const { Header, Content } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -208,7 +247,7 @@ export default function PacsWorkbenchPage() {
         }}
       >
         <ScanOutlined style={{ color: '#1890ff', fontSize: 20 }} />
-        <Title level={5} style={{ color: '#fff', margin: 0 }}>
+        <Title level={5} style={{ color: 'var(--surface)', margin: 0 }}>
           PACS 影像工作台
         </Title>
         <div style={{ flex: 1 }} />
@@ -224,6 +263,22 @@ export default function PacsWorkbenchPage() {
       </Header>
 
       <Content style={{ padding: 24, overflow: 'auto' }}>
+        {/* 阶段指示器（非 list 阶段显示，让医生直观看到当前进度） */}
+        {stage !== 'list' && (
+          <Card size="small" style={{ marginBottom: 16 }}>
+            <Steps
+              size="small"
+              current={stage === 'select_frames' ? 0 : stage === 'analyzing' ? 1 : 2}
+              status={stage === 'analyzing' ? 'process' : 'finish'}
+              items={[
+                { title: '选择关键帧', description: stage === 'select_frames' ? '勾选需要 AI 分析的影像帧' : undefined },
+                { title: 'AI 分析', description: stage === 'analyzing' ? '通义千问视觉模型分析中' : undefined },
+                { title: '报告审核', description: stage === 'report' ? '核对并发布最终报告' : undefined },
+              ]}
+            />
+          </Card>
+        )}
+
         {/* 检查列表阶段 */}
         {stage === 'list' && (
           <>
@@ -392,16 +447,15 @@ export default function PacsWorkbenchPage() {
                           aspectRatio: '1',
                         }}
                       >
-                        <img
-                          src={`/api/v1/pacs/${currentStudy.study_id}/thumbnail/${encodeURIComponent(fname)}`}
-                          alt={fname}
+                        <AuthedThumbnail
+                          studyId={currentStudy.study_id}
+                          filename={fname}
                           style={{
                             width: '100%',
                             height: '100%',
                             objectFit: 'cover',
                             display: 'block',
                           }}
-                          loading="lazy"
                         />
                         {selectedFrames.has(fname) && (
                           <div
@@ -418,7 +472,7 @@ export default function PacsWorkbenchPage() {
                               justifyContent: 'center',
                             }}
                           >
-                            <CheckCircleOutlined style={{ color: '#fff', fontSize: 10 }} />
+                            <CheckCircleOutlined style={{ color: 'var(--surface)', fontSize: 10 }} />
                           </div>
                         )}
                       </div>
@@ -463,15 +517,26 @@ export default function PacsWorkbenchPage() {
 
         {/* AI 分析中 */}
         {stage === 'analyzing' && (
-          <div style={{ textAlign: 'center', padding: 80 }}>
-            <Spin size="large" />
-            <br />
-            <br />
-            <Title level={4}>AI 正在分析影像...</Title>
-            <Text type="secondary">
-              正在将 {selectedFrames.size} 张关键帧发送给通义千问分析，请稍候
+          <Card style={{ textAlign: 'center', padding: '48px 24px' }}>
+            <Progress
+              type="circle"
+              percent={99}
+              status="active"
+              format={() => <Spin size="large" />}
+              size={120}
+              strokeColor={{ '0%': '#0891B2', '100%': '#06b6d4' }}
+            />
+            <Title level={4} style={{ marginTop: 24, marginBottom: 8 }}>
+              AI 正在分析影像
+            </Title>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              共 {selectedFrames.size} 张关键帧发送给通义千问视觉模型，通常需要 15-30 秒
             </Text>
-          </div>
+            <div style={{ marginTop: 16 }}>
+              <Tag color="processing">模型推理中</Tag>
+              <Tag color="default">无需等待，可切到其他页面</Tag>
+            </div>
+          </Card>
         )}
 
         {/* 报告审核 */}

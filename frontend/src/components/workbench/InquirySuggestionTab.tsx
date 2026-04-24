@@ -64,11 +64,9 @@ export default function InquirySuggestionTab() {
     appliedDiagnosis,
     setAppliedDiagnosis,
     isPolishing,
-    qcRunId,
   } = useWorkbenchStore()
 
   const isInputLocked = !!recordContent.trim() || isPolishing
-  const isQCDone = !!qcRunId
   const suggestions = inquirySuggestions
   // 函数式更新从 store 读最新值，避免异步回调里拿到 stale closure
   const setSuggestions = (v: Suggestion[] | ((prev: Suggestion[]) => Suggestion[])) =>
@@ -201,7 +199,7 @@ export default function InquirySuggestionTab() {
     return (
       <div style={{ textAlign: 'center', padding: '40px 0' }}>
         <Spin size="small" />
-        <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>AI 分析中...</div>
+        <div style={{ marginTop: 8, color: 'var(--text-4)', fontSize: 12 }}>AI 分析中...</div>
       </div>
     )
   }
@@ -211,7 +209,7 @@ export default function InquirySuggestionTab() {
       <div style={{ textAlign: 'center', marginTop: 40 }}>
         <Empty
           description={
-            <span style={{ fontSize: 13, color: '#94a3b8' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-4)' }}>
               保存问诊信息后，点击下方按钮生成追问建议
             </span>
           }
@@ -260,7 +258,6 @@ export default function InquirySuggestionTab() {
           item={item}
           idx={idx}
           total={suggestions.length}
-          isQCDone={false}
           onSelectOption={handleSelectOption}
         />
       ))}
@@ -271,15 +268,15 @@ export default function InquirySuggestionTab() {
           size="small"
           loading={loadingMore}
           onClick={handleLoadMore}
-          style={{ fontSize: 12, borderRadius: 16, color: '#64748b' }}
+          style={{ fontSize: 12, borderRadius: 16, color: 'var(--text-3)' }}
         >
           获取更多追问
         </Button>
       </div>
 
-      <Divider style={{ margin: '16px 0 12px', borderColor: '#e2e8f0' }}>
+      <Divider style={{ margin: '16px 0 12px', borderColor: 'var(--border)' }}>
         <span
-          style={{ fontSize: 12, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4 }}
+          style={{ fontSize: 12, color: 'var(--text-4)', display: 'flex', alignItems: 'center', gap: 4 }}
         >
           <BulbOutlined /> 诊断建议
         </span>

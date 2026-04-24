@@ -107,7 +107,7 @@ export default function AdminLayout() {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          background: '#fff',
+          background: 'var(--surface)',
           position: 'relative',
         }}
       >
@@ -145,7 +145,7 @@ export default function AdminLayout() {
                 boxShadow: `0 2px 8px rgba(${brand.shadowRgba},0.3)`,
               }}
             >
-              <MedicineBoxOutlined style={{ color: '#fff', fontSize: 17 }} />
+              <MedicineBoxOutlined style={{ color: 'var(--surface)', fontSize: 17 }} />
             </div>
             <div>
               <div

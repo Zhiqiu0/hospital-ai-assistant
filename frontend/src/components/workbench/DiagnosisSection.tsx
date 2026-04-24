@@ -9,7 +9,7 @@ import { BulbOutlined } from '@ant-design/icons'
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
 }
@@ -17,7 +17,7 @@ const labelStyle: React.CSSProperties = {
 const sectionHeaderStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#64748b',
+  color: 'var(--text-3)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
   padding: '6px 0 4px',

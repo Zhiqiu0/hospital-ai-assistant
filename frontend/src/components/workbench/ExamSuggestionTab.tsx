@@ -79,7 +79,7 @@ export default function ExamSuggestionTab() {
     return (
       <div style={{ textAlign: 'center', padding: '40px 0' }}>
         <Spin size="small" />
-        <div style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>AI 分析中...</div>
+        <div style={{ marginTop: 8, color: 'var(--text-4)', fontSize: 12 }}>AI 分析中...</div>
       </div>
     )
   }
@@ -89,7 +89,7 @@ export default function ExamSuggestionTab() {
       <div style={{ textAlign: 'center', marginTop: 40 }}>
         <Empty
           description={
-            <span style={{ fontSize: 13, color: '#94a3b8' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-4)' }}>
               保存问诊信息后，点击下方按钮获取检查建议
             </span>
           }
@@ -112,7 +112,7 @@ export default function ExamSuggestionTab() {
     <List
       dataSource={examSuggestions}
       renderItem={(item: ExamSuggestion, idx) => (
-        <List.Item key={idx} style={{ padding: '10px 0', borderBlockEnd: '1px solid #f1f5f9' }}>
+        <List.Item key={idx} style={{ padding: '10px 0', borderBlockEnd: '1px solid var(--border-subtle)' }}>
           <div style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <Tag
@@ -127,7 +127,7 @@ export default function ExamSuggestionTab() {
                   fontSize: 13,
                   flex: 1,
                   // 已开单时文字变灰，视觉上区分
-                  color: item.isOrdered ? '#94a3b8' : '#0f172a',
+                  color: item.isOrdered ? 'var(--text-4)' : 'var(--text-1)',
                   textDecoration: item.isOrdered ? 'line-through' : 'none',
                 }}
               >
@@ -146,7 +146,7 @@ export default function ExamSuggestionTab() {
                   flexShrink: 0,
                   ...(item.isOrdered
                     ? { background: '#22c55e', borderColor: '#22c55e' }
-                    : { borderColor: '#e2e8f0', color: '#64748b' }),
+                    : { borderColor: 'var(--border)', color: 'var(--text-3)' }),
                 }}
               >
                 {item.isOrdered ? '已开单' : '开单'}

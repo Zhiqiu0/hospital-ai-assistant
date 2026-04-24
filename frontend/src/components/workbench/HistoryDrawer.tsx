@@ -54,7 +54,7 @@ export default function HistoryDrawer({
       styles={{ body: { padding: '8px 0' } }}
     >
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8' }}>加载中...</div>
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-4)' }}>加载中...</div>
       ) : records.length === 0 ? (
         <Empty
           description="暂无签发病历"
@@ -105,6 +105,15 @@ export default function HistoryDrawer({
                     <Text strong style={{ fontSize: 14 }}>
                       {record.patient_name}
                     </Text>
+                    {/* 初诊/复诊N 标识：只对门诊/急诊显示。visit_sequence=1 初诊；>=2 显示复诊 N（N=seq-1） */}
+                    {record.visit_type !== 'inpatient' && typeof record.visit_sequence === 'number' && (
+                      <Tag
+                        color={record.visit_sequence === 1 ? 'blue' : 'green'}
+                        style={{ fontSize: 11, margin: 0 }}
+                      >
+                        {record.visit_sequence === 1 ? '初诊' : `复诊 ${record.visit_sequence - 1}`}
+                      </Tag>
+                    )}
                     <Tag color={tagColor} style={{ fontSize: 11, margin: 0 }}>
                       {recordTypeLabel(record.record_type)}
                     </Tag>
@@ -117,7 +126,7 @@ export default function HistoryDrawer({
                         ? new Date(record.submitted_at).toLocaleString('zh-CN')
                         : '-'}
                     </Text>
-                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>
                       {record.content_preview || '（无内容预览）'}
                     </div>
                   </div>

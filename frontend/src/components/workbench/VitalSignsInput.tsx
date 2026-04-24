@@ -43,55 +43,55 @@ export default function VitalSignsInput() {
       >
         <Tooltip title="体温 ℃">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569', whiteSpace: 'nowrap' }}>T</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>T</span>
             <Form.Item style={fieldStyle} name="temperature">
               <Input placeholder="36.5" style={{ ...inputStyle, width: 52 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>℃</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>℃</span>
           </div>
         </Tooltip>
 
         <Tooltip title="脉搏 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>P</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>P</span>
             <Form.Item style={fieldStyle} name="pulse">
               <Input placeholder="72" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>次/分</span>
           </div>
         </Tooltip>
 
         <Tooltip title="呼吸 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>R</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>R</span>
             <Form.Item style={fieldStyle} name="respiration">
               <Input placeholder="18" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>次/分</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>次/分</span>
           </div>
         </Tooltip>
 
         <Tooltip title="血压 mmHg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>BP</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>BP</span>
             <Form.Item style={fieldStyle} name="bp_systolic">
               <Input placeholder="120" style={{ ...inputStyle, width: 44 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>/</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>/</span>
             <Form.Item style={fieldStyle} name="bp_diastolic">
               <Input placeholder="80" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>mmHg</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>mmHg</span>
           </div>
         </Tooltip>
 
         <Tooltip title="血氧饱和度 %">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>SpO₂</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>SpO₂</span>
             <Form.Item style={fieldStyle} name="spo2">
               <Input placeholder="98" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>%</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>%</span>
           </div>
         </Tooltip>
       </div>
@@ -100,21 +100,21 @@ export default function VitalSignsInput() {
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <Tooltip title="身高 cm">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>身高</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>身高</span>
             <Form.Item style={fieldStyle} name="height">
               <Input placeholder="170" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>cm</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>cm</span>
           </div>
         </Tooltip>
 
         <Tooltip title="体重 kg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: '#475569' }}>体重</span>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>体重</span>
             <Form.Item style={fieldStyle} name="weight">
               <Input placeholder="65" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>kg</span>
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>kg</span>
           </div>
         </Tooltip>
       </div>

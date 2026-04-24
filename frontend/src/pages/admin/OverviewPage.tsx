@@ -65,7 +65,7 @@ const NAV_ITEMS = [
   { label: '质控规则', path: '/admin/qc-rules', color: '#d97706', bg: '#fffbeb' },
   { label: 'Prompt 管理', path: '/admin/prompts', color: '#7c3aed', bg: '#f5f3ff' },
   { label: '模型配置', path: '/admin/model-configs', color: '#0f766e', bg: '#ecfeff' },
-  { label: '数据统计', path: '/admin/stats', color: '#64748b', bg: '#f8fafc' },
+  { label: '数据统计', path: '/admin/stats', color: 'var(--text-3)', bg: 'var(--surface-2)' },
   { label: '操作日志', path: '/admin/audit-logs', color: '#7c3aed', bg: '#f5f3ff' },
 ]
 
@@ -87,7 +87,7 @@ export default function OverviewPage() {
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0, color: '#0f172a' }}>
+        <Title level={4} style={{ margin: 0, color: 'var(--text-1)' }}>
           系统概览
         </Title>
         <Text type="secondary" style={{ fontSize: 13 }}>
@@ -125,7 +125,7 @@ export default function OverviewPage() {
               >
                 <Statistic
                   title={
-                    <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
                       {c.title}
                     </span>
                   }
@@ -141,7 +141,7 @@ export default function OverviewPage() {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#fff',
+                    color: 'var(--surface)',
                     fontSize: 18,
                     flexShrink: 0,
                     opacity: 0.9,
@@ -157,7 +157,7 @@ export default function OverviewPage() {
 
       {/* Quick nav */}
       <Card
-        title={<span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>快速导航</span>}
+        title={<span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>快速导航</span>}
         style={{ borderRadius: 10 }}
         styles={{ body: { padding: '16px 20px' } }}
       >

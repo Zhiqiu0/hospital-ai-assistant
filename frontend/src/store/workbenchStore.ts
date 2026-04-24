@@ -390,6 +390,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         currentVisitType: state.currentVisitType,
         currentPatient: state.currentPatient,
         currentEncounterId: state.currentEncounterId,
+        // 复诊的"上次病历参考"和复诊标志：刷新后应保留，否则参考卡片会消失（Bug 修复 2026-04-25）
+        previousRecordContent: state.previousRecordContent,
+        isPatientReused: state.isPatientReused,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         // 追问/诊断建议持久化，刷新后不丢失

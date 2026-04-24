@@ -66,9 +66,9 @@ export default function LabReportCard({
   return (
     <div
       style={{
-        border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : '#e2e8f0'}`,
+        border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : 'var(--border)'}`,
         borderRadius: 8,
-        background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : '#fff',
+        background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : 'var(--surface)',
         overflow: 'hidden',
       }}
     >
@@ -91,7 +91,7 @@ export default function LabReportCard({
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: '#1e293b',
+              color: 'var(--text-1)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -102,7 +102,7 @@ export default function LabReportCard({
           <div
             style={{
               fontSize: 10,
-              color: '#94a3b8',
+              color: 'var(--text-4)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -160,7 +160,7 @@ export default function LabReportCard({
 
       {/* 展开内容 */}
       {expanded && (
-        <div style={{ borderTop: '1px solid #f1f5f9' }}>
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <div
             style={{
               padding: '8px 10px',
@@ -185,10 +185,10 @@ export default function LabReportCard({
           display: 'flex',
           gap: 6,
           justifyContent: 'flex-end',
-          borderTop: '1px solid #f1f5f9',
+          borderTop: '1px solid var(--border-subtle)',
         }}
       >
-        <Text style={{ fontSize: 10, color: '#94a3b8', flex: 1, alignSelf: 'center' }}>
+        <Text style={{ fontSize: 10, color: 'var(--text-4)', flex: 1, alignSelf: 'center' }}>
           {report.created_at
             ? new Date(report.created_at).toLocaleString('zh-CN', {
                 month: '2-digit',

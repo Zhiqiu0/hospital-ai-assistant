@@ -1,9 +1,15 @@
 /**
  * DICOM 影像查看器（DicomViewer.tsx）
  * 基于 Canvas 渲染缩略图，支持窗位（WC）/窗宽（WW）拖动调节。
+ *
+ * 鉴权说明：
+ *   后端 thumbnail 端点要求 Authorization 头（修复 PHI 泄露漏洞），
+ *   原生 <img>/Image() 不会自动带 token，所以走 fetchAuthedBlobUrl
+ *   先拿到 blob URL，再喂给 Image+canvas。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Spin, Typography } from 'antd'
+import { fetchAuthedBlobUrl } from '@/services/authedImage'
 
 const { Text } = Typography
 
@@ -28,20 +34,35 @@ export default function DicomViewer({ studyId, filename }: Props) {
       const url = customWin
         ? `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}?wc=${wcVal}&ww=${wwVal}`
         : `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}`
-      const img = new Image()
-      img.onload = () => {
-        if (!canvasRef.current) return
-        const canvas = canvasRef.current
-        canvas.width = img.width
-        canvas.height = img.height
-        canvasRef.current.getContext('2d')?.drawImage(img, 0, 0)
-        setLoading(false)
-      }
-      img.onerror = () => {
-        setError('影像加载失败')
-        setLoading(false)
-      }
-      img.src = url
+
+      // 走鉴权 fetch + blob URL，避免 <img>/Image() 不带 token 导致 401
+      let objectUrl: string | null = null
+      fetchAuthedBlobUrl(url)
+        .then(u => {
+          objectUrl = u
+          const img = new Image()
+          img.onload = () => {
+            if (canvasRef.current) {
+              const canvas = canvasRef.current
+              canvas.width = img.width
+              canvas.height = img.height
+              canvas.getContext('2d')?.drawImage(img, 0, 0)
+            }
+            setLoading(false)
+            // canvas 已经持有像素数据，blob URL 可立即释放
+            if (objectUrl) URL.revokeObjectURL(objectUrl)
+          }
+          img.onerror = () => {
+            setError('影像加载失败')
+            setLoading(false)
+            if (objectUrl) URL.revokeObjectURL(objectUrl)
+          }
+          img.src = u
+        })
+        .catch(() => {
+          setError('影像加载失败')
+          setLoading(false)
+        })
     },
     [studyId, filename]
   )
@@ -97,7 +118,7 @@ export default function DicomViewer({ studyId, filename }: Props) {
             justifyContent: 'center',
           }}
         >
-          <Text style={{ color: '#fff' }}>{error}</Text>
+          <Text style={{ color: 'var(--surface)' }}>{error}</Text>
         </div>
       )}
       <canvas
@@ -122,7 +143,7 @@ export default function DicomViewer({ studyId, filename }: Props) {
           onChange={e => handleWcChange(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <Text style={{ color: '#fff', fontSize: 12, minWidth: 30 }}>{wc}</Text>
+        <Text style={{ color: 'var(--surface)', fontSize: 12, minWidth: 30 }}>{wc}</Text>
         <Text style={{ color: '#999', fontSize: 12 }}>窗宽(WW)</Text>
         <input
           type="range"
@@ -132,7 +153,7 @@ export default function DicomViewer({ studyId, filename }: Props) {
           onChange={e => handleWwChange(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <Text style={{ color: '#fff', fontSize: 12, minWidth: 40 }}>{ww}</Text>
+        <Text style={{ color: 'var(--surface)', fontSize: 12, minWidth: 40 }}>{ww}</Text>
       </div>
     </div>
   )

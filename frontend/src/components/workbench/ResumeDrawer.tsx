@@ -71,7 +71,7 @@ export default function ResumeDrawer({
       styles={{ body: { padding: '8px 0' } }}
     >
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8' }}>加载中...</div>
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-4)' }}>加载中...</div>
       ) : list.length === 0 ? (
         <Empty
           description={emptyText}
@@ -92,7 +92,7 @@ export default function ResumeDrawer({
                     borderRadius: 8,
                     background: accentColor,
                     borderColor: accentColor,
-                    color: '#fff',
+                    color: 'var(--surface)',
                   }}
                 >
                   恢复
@@ -126,7 +126,7 @@ export default function ResumeDrawer({
                       {item.patient?.name}
                     </Text>
                     {item.patient?.age && (
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>{item.patient.age}岁</Text>
+                      <Text style={{ fontSize: 12, color: 'var(--text-3)' }}>{item.patient.age}岁</Text>
                     )}
                     {fixedTag ? (
                       <Tag color={fixedTag.color} style={{ fontSize: 11, margin: 0 }}>
@@ -145,7 +145,7 @@ export default function ResumeDrawer({
                       {item.visited_at ? new Date(item.visited_at).toLocaleString('zh-CN') : '-'}
                     </Text>
                     {item.chief_complaint_brief && (
-                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
                         {item.chief_complaint_brief}
                       </div>
                     )}

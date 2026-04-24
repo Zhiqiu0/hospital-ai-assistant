@@ -79,7 +79,7 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         content: recordContent,
       })
 
-      message.success('病历已签发，可在「历史病历」中查看或打印')
+      message.success('病历已签发，可在「我的病历」中查看或打印')
       handleClose()
       reset()
     } catch (e: any) {
@@ -198,8 +198,8 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
       {/* Record preview */}
       <div
         style={{
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
           borderRadius: 8,
           padding: '20px 24px',
           maxHeight: 400,
@@ -209,7 +209,7 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
           whiteSpace: 'pre-wrap',
           margin: '16px 0',
           fontFamily: "'PingFang SC', 'Microsoft YaHei', sans-serif",
-          color: '#1e293b',
+          color: 'var(--text-1)',
         }}
       >
         {recordContent}

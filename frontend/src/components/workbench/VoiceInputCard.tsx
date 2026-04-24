@@ -69,7 +69,7 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
           <Tag color="blue" style={{ marginRight: 0 }}>
             语音录入
           </Tag>
-          <Text style={{ fontSize: 12, color: '#475569' }}>
+          <Text style={{ fontSize: 12, color: 'var(--text-2)' }}>
             保存原始录音与转写，并让 AI 识别对话结构
           </Text>
         </Space>
@@ -164,7 +164,7 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
 
       <SpeakerDialogueCard items={speakerDialogue} />
 
-      <Text style={{ fontSize: 12, color: '#64748b' }}>
+      <Text style={{ fontSize: 12, color: 'var(--text-3)' }}>
         {isRecordMode
           ? '语音原文会在后台保存；AI整理后展示预览，确认无误后点击「插入病历」写入对应章节。'
           : '语音原文会在后台保存；AI整理后会自动回填问诊字段，点击「保存问诊信息」后同步到病历编辑区。'}
@@ -182,7 +182,7 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
         <div style={{ marginTop: 8 }}>
           <div
             style={{
-              background: '#f1f5f9',
+              background: 'var(--border-subtle)',
               borderRadius: 8,
               padding: '8px 12px',
               display: 'flex',
@@ -190,8 +190,8 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
               gap: 10,
             }}
           >
-            <SaveOutlined style={{ color: '#64748b', fontSize: 13, flexShrink: 0 }} />
-            <Text style={{ fontSize: 12, color: '#475569', flexShrink: 0 }}>
+            <SaveOutlined style={{ color: 'var(--text-3)', fontSize: 13, flexShrink: 0 }} />
+            <Text style={{ fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}>
               录音 #{transcriptId.slice(-6).toUpperCase()}
             </Text>
             {audioToken ? (
@@ -201,7 +201,7 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
                 style={{ flex: 1, height: 32, minWidth: 0 }}
               />
             ) : (
-              <Text style={{ fontSize: 12, color: '#94a3b8' }}>音频加载中...</Text>
+              <Text style={{ fontSize: 12, color: 'var(--text-4)' }}>音频加载中...</Text>
             )}
           </div>
         </div>

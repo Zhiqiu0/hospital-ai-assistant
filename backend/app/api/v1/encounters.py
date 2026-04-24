@@ -33,7 +33,8 @@ from app.services.ai.exam_service import ExamService
 from app.services.ai.inquiry_service import InquiryService
 from app.services.encounter_service import EncounterService
 from app.services.patient_service import PatientService
-from app.models.medical_record import MedicalRecord
+from app.models.medical_record import MedicalRecord, RecordVersion
+from app.models.encounter import Encounter as EncounterModel, InquiryInput
 from sqlalchemy import select, desc
 
 logger = logging.getLogger(__name__)
@@ -100,11 +101,9 @@ async def quick_start_encounter(
     patient_profile = await patient_service.get_profile(patient["id"])
 
     # 若该医生对该患者已有进行中的接诊，直接续接，不再新建
-    from app.models.encounter import Encounter as EncounterModel
     existing = await encounter_service.find_in_progress(patient["id"], current_user.id)
     if existing:
         # 续接时也查上次已签发病历供参考（排除当前续接的接诊本身）
-        from app.models.medical_record import RecordVersion, MedicalRecord
         resume_prev_stmt = (
             select(RecordVersion.content)
             .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
@@ -147,7 +146,6 @@ async def quick_start_encounter(
     previous_inquiry: Optional[dict] = None
     if patient_reused:
         # 取最近一次接诊中最新版本问诊的稳定字段（既往史/过敏史/个人史等不随症状变化的信息）
-        from app.models.encounter import InquiryInput
         stable_stmt = (
             select(
                 InquiryInput.past_history,
@@ -178,7 +176,6 @@ async def quick_start_encounter(
             }
 
         # 取最近一次签发病历版本的全文，供生成时参考
-        from app.models.medical_record import RecordVersion
         record_stmt = (
             select(RecordVersion.content)
             .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)

@@ -25,7 +25,7 @@ const { TextArea } = Input
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
 }
@@ -127,6 +127,7 @@ export default function PatientProfileCard() {
 
   return (
     <div
+      className="profile-card"
       style={{
         background: '#fefce8',
         border: '1px solid #fde047',
@@ -187,7 +188,7 @@ export default function PatientProfileCard() {
 
       {/* 展开后的字段表单 */}
       {!collapsed && (
-        <div style={{ padding: '0 12px 10px', background: '#fffef7' }}>
+        <div className="profile-card-body" style={{ padding: '0 12px 10px', background: '#fffef7' }}>
           {FIELDS.map(f => {
             if (f.femaleOnly && !isFemale) return null
             return (

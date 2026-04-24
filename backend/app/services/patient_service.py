@@ -23,6 +23,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient import Patient
+from app.utils.age import calc_age
 from app.schemas.patient import PatientCreate, PatientProfileUpdate, PatientUpdate
 
 # 档案字段列表：用于序列化 profile 和批量赋值
@@ -156,21 +157,14 @@ class PatientService:
     def _to_response(self, patient: Patient) -> dict:
         """将 Patient ORM 对象转换为标准响应字典。
 
-        计算 age 字段（非 DB 字段，由 birth_date 实时计算）。
-        考虑了是否已过生日（同年月日比较），确保年龄计算准确。
+        age 字段非 DB 列，由 utils.calc_age 从 birth_date 实时算出。
         """
-        age = None
-        if patient.birth_date:
-            today = date.today()
-            age = today.year - patient.birth_date.year - (
-                (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
-            )
         return {
             "id": patient.id,
             "patient_no": patient.patient_no,
             "name": patient.name,
             "gender": patient.gender,
-            "age": age,
+            "age": calc_age(patient.birth_date),
             "phone": patient.phone,
             "birth_date": patient.birth_date,
         }

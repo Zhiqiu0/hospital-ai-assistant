@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
+from app.core.authz import assert_patient_access
 from app.database import get_db
 from app.schemas.medical_record import (
     MedicalRecordCreate,
@@ -75,6 +76,24 @@ async def list_my_records(
     """查询当前医生的历史签发病历"""
     service = MedicalRecordService(db)
     return await service.list_by_doctor(current_user.id, page, page_size)
+
+
+@router.get("/by-patient/{patient_id}")
+async def list_by_patient(
+    patient_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """查询某患者的全部已签发病历（门诊/急诊/住院）——住院医生查看患者来路用。
+
+    权限：admin / radiologist 直通；其他角色必须对该患者有过接诊关系。
+    返回字段包含 visit_type / is_first_visit 供前端打场景 Tag。
+    """
+    await assert_patient_access(db, patient_id, current_user)
+    service = MedicalRecordService(db)
+    return await service.list_by_patient(patient_id, page, page_size)
 
 
 @router.post("", response_model=MedicalRecordResponse, status_code=201)

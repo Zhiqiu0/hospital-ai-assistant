@@ -137,6 +137,21 @@ body {
   border-radius: 2px !important;
 }
 
+/* Tabs 高度自适应：当父容器设 height 时（工作台 Tabs），让 tabpane 填满剩余空间。
+ * antd 默认 tabpane 没有 height 100%，导致必须用 calc(100vh - Xpx) 硬编码。
+ * 这里改为 flex 自适应，状态栏高度或 header 变化都不用全局改 calc 常数。 */
+.ant-tabs-top > .ant-tabs-content-holder {
+  min-height: 0;
+  display: flex;
+}
+.ant-tabs-top > .ant-tabs-content-holder > .ant-tabs-content {
+  flex: 1;
+  min-height: 0;
+}
+.ant-tabs-top > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+}
+
 /* ─── Modal ──────────────────────────────────────────── */
 .ant-modal-content {
   border-radius: var(--radius-lg) !important;

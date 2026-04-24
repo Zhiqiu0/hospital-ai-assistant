@@ -1,11 +1,15 @@
 /**
  * 体格检查与辅助检查区块（PhysicalExamSection.tsx）
- * 包含生命体征录入、体格检查文本、辅助检查（含化验单上传和套餐快选）。
+ * 包含生命体征录入、体格检查文本、辅助检查（仅化验单上传 OCR 回填）。
  * 必须渲染在 Ant Design Form 上下文内。
+ *
+ * 历史：曾内嵌「快速开单」LabOrderPopover——会把"拟行检查"
+ * 写到"入院前辅助检查"字段，违反住院病历评分标准；且与右侧
+ * AISuggestionPanel 的 ExamSuggestionTab（AI 检查建议+开单）功能重复，
+ * 已下掉。开单走右侧"检查建议"Tab 即可。
  */
 import { Form, Input } from 'antd'
 import VitalSignsInput from './VitalSignsInput'
-import LabOrderPopover from './LabOrderPopover'
 import LabReportUploadButton from './LabReportUploadButton'
 
 const { TextArea } = Input
@@ -13,7 +17,7 @@ const { TextArea } = Input
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
 }
@@ -73,10 +77,7 @@ export default function PhysicalExamSection({ handleLabInsert }: Props) {
             }}
           >
             <span style={labelStyle}>辅助检查（入院前）</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <LabReportUploadButton onInsert={handleLabInsert} />
-              <LabOrderPopover onInsert={handleLabInsert} />
-            </div>
+            <LabReportUploadButton onInsert={handleLabInsert} />
           </div>
         }
       >

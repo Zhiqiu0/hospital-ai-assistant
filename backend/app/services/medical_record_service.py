@@ -25,6 +25,8 @@
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime
 
+from app.utils.age import calc_age
+
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import HTTPException
 from sqlalchemy import desc, select
@@ -232,7 +234,7 @@ class MedicalRecordService:
         rows = (await self.db.execute(q)).all()
 
         items = []
-        from datetime import date as date_cls
+        from sqlalchemy import func as _func
         for record, encounter, patient in rows:
             # 获取最新版本内容（用于生成预览摘要）
             ver_q = (
@@ -244,13 +246,20 @@ class MedicalRecordService:
             ver = (await self.db.execute(ver_q)).scalar_one_or_none()
             # quick_save 格式 {"text": "..."} 取 text；其他格式作空串处理
             content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
-            # 计算患者年龄
-            today = date_cls.today()
-            patient_age = None
-            if patient.birth_date:
-                patient_age = today.year - patient.birth_date.year - (
-                    (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
+            # 患者年龄实时算（utils.calc_age 内含未过生日修正）
+            patient_age = calc_age(patient.birth_date)
+            # 计算该接诊在"同患者同 visit_type"序列里的序号（1=初诊，2+=复诊次数+1）
+            # 用 count(<= visited_at) 算，单页 20 条可接受，避免 window function 复杂度
+            seq_q = (
+                select(_func.count())
+                .select_from(Encounter)
+                .where(
+                    Encounter.patient_id == encounter.patient_id,
+                    Encounter.visit_type == encounter.visit_type,
+                    Encounter.visited_at <= encounter.visited_at,
                 )
+            )
+            visit_sequence = (await self.db.execute(seq_q)).scalar() or 1
             items.append({
                 "id": record.id,
                 "record_type": record.record_type,
@@ -260,6 +269,84 @@ class MedicalRecordService:
                 "patient_gender": patient.gender,
                 "patient_age": patient_age,
                 "encounter_id": encounter.id,
+                # 前端历史病历列表需要用 is_first_visit 标"初诊/复诊"Tag
+                "is_first_visit": encounter.is_first_visit,
+                "visit_type": encounter.visit_type,
+                # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
+                "visit_sequence": visit_sequence,
+                "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
+                "content": content_text,
+            })
+        return {"total": total, "items": items}
+
+    async def list_by_patient(self, patient_id: str, page: int = 1, page_size: int = 30) -> dict:
+        """查询某患者的全部已签发病历（不限医生），按签发时间倒序分页。
+
+        住院医生接手患者时需要看其"来路"——包括其他医生之前的门诊/急诊/住院病历。
+        权限校验在路由层用 assert_patient_access 完成。
+        """
+        from app.models.patient import Patient
+        from sqlalchemy import func
+
+        offset = (page - 1) * page_size
+
+        count_q = (
+            select(func.count())
+            .select_from(MedicalRecord)
+            .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+            .where(Encounter.patient_id == patient_id, MedicalRecord.status == "submitted")
+        )
+        total = (await self.db.execute(count_q)).scalar() or 0
+
+        q = (
+            select(MedicalRecord, Encounter, Patient)
+            .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+            .join(Patient, Encounter.patient_id == Patient.id)
+            .where(Encounter.patient_id == patient_id, MedicalRecord.status == "submitted")
+            .order_by(desc(MedicalRecord.submitted_at))
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = (await self.db.execute(q)).all()
+
+        items = []
+        from sqlalchemy import func as _func
+        for record, encounter, patient in rows:
+            ver_q = (
+                select(RecordVersion)
+                .where(RecordVersion.medical_record_id == record.id)
+                .order_by(desc(RecordVersion.version_no))
+                .limit(1)
+            )
+            ver = (await self.db.execute(ver_q)).scalar_one_or_none()
+            content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
+            # 患者年龄实时算（utils.calc_age 内含未过生日修正）
+            patient_age = calc_age(patient.birth_date)
+            # 计算该接诊在"同患者同 visit_type"序列里的序号（1=初诊，2+=复诊次数+1）
+            seq_q = (
+                select(_func.count())
+                .select_from(Encounter)
+                .where(
+                    Encounter.patient_id == encounter.patient_id,
+                    Encounter.visit_type == encounter.visit_type,
+                    Encounter.visited_at <= encounter.visited_at,
+                )
+            )
+            visit_sequence = (await self.db.execute(seq_q)).scalar() or 1
+            items.append({
+                "id": record.id,
+                "record_type": record.record_type,
+                "status": record.status,
+                "submitted_at": record.submitted_at,
+                "patient_name": patient.name,
+                "patient_gender": patient.gender,
+                "patient_age": patient_age,
+                "patient_no": patient.patient_no,
+                "encounter_id": encounter.id,
+                "visit_type": encounter.visit_type,
+                "is_first_visit": encounter.is_first_visit,
+                # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
+                "visit_sequence": visit_sequence,
                 "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
                 "content": content_text,
             })

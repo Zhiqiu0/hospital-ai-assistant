@@ -195,10 +195,10 @@ export default function LabReportTab() {
         ) : (
           <div style={{ padding: '10px 0', textAlign: 'center' }}>
             <InboxOutlined style={{ fontSize: 22, color: '#7c3aed' }} />
-            <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
               点击或拖拽上传检验报告
             </div>
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>支持 JPG / PNG / PDF</div>
+            <div style={{ fontSize: 11, color: 'var(--text-4)' }}>支持 JPG / PNG / PDF</div>
           </div>
         )}
       </Dragger>
@@ -209,7 +209,7 @@ export default function LabReportTab() {
         </div>
       ) : reports.length === 0 ? (
         <Empty
-          description={<span style={{ fontSize: 12, color: '#94a3b8' }}>暂无检验报告</span>}
+          description={<span style={{ fontSize: 12, color: 'var(--text-4)' }}>暂无检验报告</span>}
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           style={{ margin: '16px 0' }}
         />
@@ -253,7 +253,7 @@ export default function LabReportTab() {
           size="small"
           icon={<ReloadOutlined />}
           onClick={fetchReports}
-          style={{ fontSize: 11, color: '#94a3b8' }}
+          style={{ fontSize: 11, color: 'var(--text-4)' }}
         >
           刷新
         </Button>

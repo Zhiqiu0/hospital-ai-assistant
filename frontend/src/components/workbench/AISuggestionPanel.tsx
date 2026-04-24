@@ -44,7 +44,7 @@ export default function AISuggestionPanel() {
           ),
           children: (
             <div
-              style={{ padding: '0 12px 16px', overflowY: 'auto', height: 'calc(100vh - 130px)' }}
+              style={{ padding: '0 12px 16px', overflowY: 'auto', height: '100%' }}
             >
               <InquirySuggestionTab />
             </div>
@@ -75,7 +75,7 @@ export default function AISuggestionPanel() {
             </Badge>
           ),
           children: (
-            <div style={{ padding: '8px 12px', overflowY: 'auto', height: 'calc(100vh - 130px)' }}>
+            <div style={{ padding: '8px 12px', overflowY: 'auto', height: '100%' }}>
               <QCIssuePanel />
             </div>
           ),

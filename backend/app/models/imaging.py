@@ -89,8 +89,14 @@ class ImagingReport(Base, TimestampMixin):
     study_id: Mapped[str] = mapped_column(
         ForeignKey("imaging_studies.id"), nullable=False, unique=True
     )
-    # 撰写报告的影像科医生（可空：AI 自动生成的报告暂无审核医生）
+    # 撰写/分析报告的影像科医生（可空：AI 自动生成的报告暂无审核医生）。
+    # 在 analyze_study 阶段写入，**不应被 publish 阶段覆盖**——历史 bug：
+    # 曾经 publish_report 直接 `report.radiologist_id = current_user.id`，
+    # 让"A 分析、B 发布"场景下分析人被误改为 B，造成审计断链。
     radiologist_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
+    # 实际签发（发布）报告的影像科医生，可与 radiologist_id 不同（如 A 分析 + B 复核签发）。
+    # 由 publish_report 端点写入，是审计链的"签发责任人"字段。
+    published_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
 
     # 用户选中的关键帧文件名列表（JSON 数组，如 ["0001.DCM", "0050.DCM"]）
     # 只有选中的帧会发送给 AI 分析，避免切片过多超出 token 限制

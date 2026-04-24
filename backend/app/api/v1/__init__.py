@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream
-from app.api.v1.admin import users, departments, qc_rules, prompts, stats, records as admin_records, audit_logs, model_configs, voice_records as admin_voice_records
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback
+from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
 
@@ -16,14 +16,10 @@ router.include_router(pacs.router, prefix="/pacs", tags=["PACS影像"])
 router.include_router(lab_reports.router, prefix="/lab-reports", tags=["检验报告"])
 # 住院专项：病区视图、体征、问题列表、时效合规
 router.include_router(inpatient.router, prefix="", tags=["住院专项"])
+# 病程记录 CRUD
+router.include_router(progress_notes.router, prefix="", tags=["病程记录"])
+# AI 建议反馈收集
+router.include_router(ai_feedback.router, prefix="/ai", tags=["AI反馈"])
 
-# 后台管理
-router.include_router(users.router, prefix="/admin/users", tags=["管理-用户"])
-router.include_router(departments.router, prefix="/admin/departments", tags=["管理-科室"])
-router.include_router(qc_rules.router, prefix="/admin/qc-rules", tags=["管理-质控规则"])
-router.include_router(prompts.router, prefix="/admin/prompts", tags=["管理-Prompt"])
-router.include_router(stats.router, prefix="/admin/stats", tags=["管理-统计"])
-router.include_router(admin_records.router, prefix="/admin/records", tags=["管理-病历"])
-router.include_router(audit_logs.router, prefix="/admin/audit-logs", tags=["管理-审计日志"])
-router.include_router(model_configs.router, prefix="/admin/model-configs", tags=["管理-模型配置"])
-router.include_router(admin_voice_records.router, prefix="/admin/voice-records", tags=["管理-语音记录"])
+# 后台管理：单一聚合 router，自带 audit_admin_action 依赖（修复"管理员操作零审计"硬伤）
+router.include_router(admin_router, prefix="/admin")
