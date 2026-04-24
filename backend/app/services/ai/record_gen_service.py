@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.models.medical_record import RecordVersion
 from app.schemas.medical_record import RecordContinueRequest, RecordGenerateRequest, RecordPolishRequest
+from app.services.ai.ai_utils import compose_physical_exam
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
@@ -87,6 +88,18 @@ class RecordGenService:
         inquiry = request.inquiry_input
         record_type_cn = RECORD_TYPE_MAP.get(record.record_type, "门诊")
 
+        # 合并生命体征与 physical_exam 文字描述成完整体检段
+        composed_physical_exam = compose_physical_exam(
+            physical_exam=inquiry.get("physical_exam", ""),
+            temperature=inquiry.get("temperature", ""),
+            pulse=inquiry.get("pulse", ""),
+            respiration=inquiry.get("respiration", ""),
+            bp_systolic=inquiry.get("bp_systolic", ""),
+            bp_diastolic=inquiry.get("bp_diastolic", ""),
+            spo2=inquiry.get("spo2", ""),
+            height=inquiry.get("height", ""),
+            weight=inquiry.get("weight", ""),
+        )
         prompt = GENERATE_PROMPT.format(
             record_type=record_type_cn,
             chief_complaint=inquiry.get("chief_complaint", ""),
@@ -94,7 +107,7 @@ class RecordGenService:
             past_history=inquiry.get("past_history", ""),
             allergy_history=inquiry.get("allergy_history", ""),
             personal_history=inquiry.get("personal_history", ""),
-            physical_exam=inquiry.get("physical_exam", ""),
+            physical_exam=composed_physical_exam,
             initial_impression=inquiry.get("initial_impression", ""),
         )
 

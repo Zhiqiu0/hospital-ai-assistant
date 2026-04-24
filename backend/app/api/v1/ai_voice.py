@@ -36,6 +36,7 @@ from app.services.ai.prompts import (
     VOICE_STRUCTURE_PROMPT_OUTPATIENT,
 )
 from app.services.ai.task_logger import log_ai_task
+from app.services.audit_service import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,15 @@ async def voice_structure(
     current_user=Depends(get_current_user),
 ):
     """将语音转写文本结构化为问诊字段 + 病历草稿（JSON 响应）。"""
+    await log_action(
+        action="ai_voice_structure",
+        user_id=current_user.id,
+        user_name=current_user.username,
+        user_role=current_user.role,
+        resource_type="voice_record",
+        resource_id=req.transcript_id,
+        detail=f"visit_type={req.visit_type or 'outpatient'} transcript_len={len(req.transcript or '')}",
+    )
     transcript = (req.transcript or "").strip()
     if not transcript:
         return {"transcript_summary": "", "inquiry": {}, "draft_record": ""}

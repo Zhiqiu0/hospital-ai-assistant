@@ -129,7 +129,7 @@ export default function RecordsPage() {
         }}
       >
         <div>
-          <Title level={4} style={{ margin: 0, color: '#0f172a' }}>
+          <Title level={4} style={{ margin: 0, color: 'var(--text-1)' }}>
             病历管理
           </Title>
           <Text type="secondary" style={{ fontSize: 13 }}>
@@ -137,7 +137,7 @@ export default function RecordsPage() {
           </Text>
         </div>
         <Input
-          prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+          prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
           placeholder="搜索患者姓名或医生"
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -161,7 +161,7 @@ export default function RecordsPage() {
           },
           showTotal: t => `共 ${t} 份病历`,
         }}
-        style={{ background: '#fff', borderRadius: 10 }}
+        style={{ background: 'var(--surface)', borderRadius: 10 }}
       />
 
       <Modal
@@ -192,8 +192,8 @@ export default function RecordsPage() {
         </Text>
         <div
           style={{
-            background: '#f8fafc',
-            border: '1px solid #e2e8f0',
+            background: 'var(--surface-2)',
+            border: '1px solid var(--border)',
             borderRadius: 8,
             padding: '20px 24px',
             maxHeight: 500,
@@ -203,7 +203,7 @@ export default function RecordsPage() {
             whiteSpace: 'pre-wrap',
             margin: '12px 0',
             fontFamily: "'PingFang SC', 'Microsoft YaHei', sans-serif",
-            color: '#1e293b',
+            color: 'var(--text-1)',
           }}
         >
           {viewRecord?.content || '（病历内容为空）'}

@@ -11,6 +11,7 @@ import VoiceInputCard from './VoiceInputCard'
 import PatientProfileCard from './PatientProfileCard'
 import SpecialAssessmentSection from './SpecialAssessmentSection'
 import PhysicalExamSection from './PhysicalExamSection'
+import CollapsibleSection from '@/components/common/CollapsibleSection'
 import { useInpatientInquiryPanel } from '@/hooks/useInpatientInquiryPanel'
 
 const { TextArea } = Input
@@ -18,21 +19,9 @@ const { TextArea } = Input
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
-}
-
-const sectionStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  color: '#2563eb',
-  background: '#eff6ff',
-  padding: '4px 8px',
-  borderRadius: 4,
-  marginBottom: 10,
-  marginTop: 4,
-  letterSpacing: 0.5,
 }
 
 const fieldStyle = { marginBottom: 12 }
@@ -46,7 +35,6 @@ export default function InpatientInquiryPanel() {
     saving,
     onSave,
     painMarks,
-    handleVitalFill,
     handleLabInsert,
     applyVoiceInquiry,
     applyVoiceToRecord,
@@ -62,18 +50,18 @@ export default function InpatientInquiryPanel() {
       <div
         style={{
           padding: '14px 16px 12px',
-          borderBottom: '1px solid #f1f5f9',
-          background: '#fff',
+          borderBottom: '1px solid var(--border-subtle)',
+          background: 'var(--surface)',
           flexShrink: 0,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>入院问诊录入</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>入院问诊录入</div>
           <Tag color="blue" style={{ fontSize: 10, lineHeight: '18px' }}>
             住院部
           </Tag>
         </div>
-        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
           依据浙江省2021版住院病历评分标准
         </div>
       </div>
@@ -87,6 +75,7 @@ export default function InpatientInquiryPanel() {
           onFinish={onSave}
           onValuesChange={() => setIsDirty(true)}
           disabled={isInputLocked}
+          scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
         >
           {isInputLocked && (
             <div
@@ -148,78 +137,71 @@ export default function InpatientInquiryPanel() {
             </Select>
           </Form.Item>
 
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+          <Divider style={{ margin: '8px 0 10px', borderColor: 'var(--border-subtle)' }} />
 
           {/* 一、主诉与现病史 */}
-          <div style={sectionStyle}>一、主诉与现病史</div>
-
-          <Form.Item
-            style={fieldStyle}
-            name="chief_complaint"
-            rules={[{ required: true, message: '请输入主诉' }]}
-            label={
-              <span style={labelStyle}>
-                主诉 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <TextArea
-              rows={2}
-              placeholder="症状 + 持续时间，能导出第一诊断，原则上不用诊断名称"
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            style={fieldStyle}
-            name="history_present_illness"
-            label={<span style={labelStyle}>现病史</span>}
-          >
-            <TextArea
-              rows={5}
-              placeholder={
-                '1.发病时间地点起病缓急及可能原因\n2.主要症状部位、性质、持续时间、程度、演变及伴随症状\n3.入院前诊治经过及效果\n4.一般情况（饮食、精神、睡眠、大小便）\n5.其他需治疗的疾病'
+          <CollapsibleSection title="一、主诉与现病史" accent="#2563eb" defaultOpen>
+            <Form.Item
+              style={fieldStyle}
+              name="chief_complaint"
+              rules={[{ required: true, message: '请输入主诉' }]}
+              label={
+                <span style={labelStyle}>
+                  主诉 <span style={{ color: '#ef4444' }}>*</span>
+                </span>
               }
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
+            >
+              <TextArea
+                rows={2}
+                placeholder="症状 + 持续时间，能导出第一诊断，原则上不用诊断名称"
+                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              />
+            </Form.Item>
 
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+            <Form.Item
+              style={fieldStyle}
+              name="history_present_illness"
+              label={<span style={labelStyle}>现病史</span>}
+            >
+              <TextArea
+                rows={5}
+                placeholder={
+                  '1.发病时间地点起病缓急及可能原因\n2.主要症状部位、性质、持续时间、程度、演变及伴随症状\n3.入院前诊治经过及效果\n4.一般情况（饮食、精神、睡眠、大小便）\n5.其他需治疗的疾病'
+                }
+                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              />
+            </Form.Item>
+          </CollapsibleSection>
 
           {/* 二、专项评估（住院本次评估，profile 字段在顶部 PatientProfileCard） */}
-          <div style={sectionStyle}>二、专项评估</div>
-          <SpecialAssessmentSection painMarks={painMarks} />
-
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+          <CollapsibleSection title="二、专项评估" accent="#2563eb" defaultOpen>
+            <SpecialAssessmentSection painMarks={painMarks} />
+          </CollapsibleSection>
 
           {/* 三、体格检查与辅助检查 */}
-          <div style={sectionStyle}>三、体格检查与辅助检查</div>
-          <PhysicalExamSection
-            handleVitalFill={handleVitalFill}
-            handleLabInsert={handleLabInsert}
-          />
-
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+          <CollapsibleSection title="三、体格检查与辅助检查" accent="#2563eb" defaultOpen>
+            <PhysicalExamSection handleLabInsert={handleLabInsert} />
+          </CollapsibleSection>
 
           {/* 四、入院诊断 */}
-          <div style={sectionStyle}>四、入院诊断</div>
-
-          <Form.Item
-            style={{ marginBottom: 0 }}
-            name="admission_diagnosis"
-            rules={[{ required: true, message: '请填写入院诊断' }]}
-            label={
-              <span style={labelStyle}>
-                入院诊断 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <TextArea
-              rows={3}
-              placeholder={'1. 主要诊断（使用规范中文术语，主要诊断放首位）\n2. 其他诊断...'}
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
+          <CollapsibleSection title="四、入院诊断" accent="#2563eb" defaultOpen>
+            <Form.Item
+              style={{ marginBottom: 0 }}
+              name="admission_diagnosis"
+              rules={[{ required: true, message: '请填写入院诊断' }]}
+              label={
+                <span style={labelStyle}>
+                  入院诊断 <span style={{ color: '#ef4444' }}>*</span>
+                </span>
+              }
+            >
+              <TextArea
+                rows={3}
+                placeholder={'1. 主要诊断（使用规范中文术语，主要诊断放首位）\n2. 其他诊断...'}
+                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              />
+            </Form.Item>
+          </CollapsibleSection>
         </Form>
       </div>
 
@@ -227,8 +209,8 @@ export default function InpatientInquiryPanel() {
       <div
         style={{
           padding: '10px 16px',
-          borderTop: '1px solid #f1f5f9',
-          background: '#fff',
+          borderTop: '1px solid var(--border-subtle)',
+          background: 'var(--surface)',
           flexShrink: 0,
         }}
       >
@@ -264,7 +246,7 @@ export default function InpatientInquiryPanel() {
                     ? '#86efac'
                     : '#e5e7eb',
                 border: 'none',
-                color: anyDirty ? '#fff' : hasSavedInquiry ? '#166534' : '#6b7280',
+                color: anyDirty ? 'var(--surface)' : hasSavedInquiry ? '#166534' : '#6b7280',
                 transition: 'all 0.3s',
               }}
             >

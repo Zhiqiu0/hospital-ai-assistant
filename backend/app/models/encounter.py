@@ -106,8 +106,22 @@ class InquiryInput(Base, TimestampMixin):
     past_history: Mapped[Optional[str]] = mapped_column(Text)              # 既往史
     allergy_history: Mapped[Optional[str]] = mapped_column(Text)           # 过敏史
     personal_history: Mapped[Optional[str]] = mapped_column(Text)          # 个人史
-    physical_exam: Mapped[Optional[str]] = mapped_column(Text)             # 体格检查
+    # 体格检查：仅存非生命体征的文字描述（心肺听诊、腹部触诊等）
+    # 生命体征数值通过独立字段（temperature/pulse/...）存储，AI 生成病历时自动合并到体检段
+    physical_exam: Mapped[Optional[str]] = mapped_column(Text)             # 体格检查（不含生命体征数值）
     initial_impression: Mapped[Optional[str]] = mapped_column(Text)        # 初步诊断
+
+    # ── 生命体征（结构化独立字段，取代原 physical_exam 文本内嵌模式）──────
+    # 存 String 便于直接承接前端用户输入（可能含 "36.5" / "37" 等多种格式），
+    # 未来做异常预警/趋势分析时再转 Float。
+    temperature: Mapped[Optional[str]] = mapped_column(String(10))          # 体温 ℃
+    pulse: Mapped[Optional[str]] = mapped_column(String(10))                # 脉搏 次/分
+    respiration: Mapped[Optional[str]] = mapped_column(String(10))          # 呼吸 次/分
+    bp_systolic: Mapped[Optional[str]] = mapped_column(String(10))          # 血压 收缩压 mmHg
+    bp_diastolic: Mapped[Optional[str]] = mapped_column(String(10))         # 血压 舒张压 mmHg
+    spo2: Mapped[Optional[str]] = mapped_column(String(10))                 # 血氧饱和度 %
+    height: Mapped[Optional[str]] = mapped_column(String(10))               # 身高 cm
+    weight: Mapped[Optional[str]] = mapped_column(String(10))               # 体重 kg
 
     # ── 住院病历扩展字段 ──────────────────────────────────────────────────────
     marital_history: Mapped[Optional[str]] = mapped_column(Text)           # 婚育史

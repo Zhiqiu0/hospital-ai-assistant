@@ -43,6 +43,8 @@ async def apply_schema_compatibility() -> None:
             # 时间
             "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS visit_time VARCHAR(30)",
             "ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS onset_time VARCHAR(50)",
+            # 影像报告：签发责任人（与分析人 radiologist_id 解耦），用于审计链
+            "ALTER TABLE imaging_reports ADD COLUMN IF NOT EXISTS published_by VARCHAR",
         ]
 
         for statement in statements:

@@ -35,7 +35,7 @@ export default function EmergencyDispositionBar({
             borderRadius: 8,
             background: '#dc2626',
             borderColor: '#dc2626',
-            color: '#fff',
+            color: 'var(--surface)',
             fontWeight: 600,
           }}
           onClick={onAdmitToInpatient}

@@ -22,11 +22,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
+from app.core.authz import assert_encounter_access
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.inpatient import ProblemItem, VitalSign
 from app.models.medical_record import MedicalRecord
-from app.models.patient import Patient
+from app.services import inpatient_service
 
 router = APIRouter()
 
@@ -70,32 +71,7 @@ async def get_ward_view(
     current_user=Depends(get_current_user),
 ):
     """返回当前医生负责的活跃住院接诊列表（用于病区视图）。"""
-    result = await db.execute(
-        select(Encounter, Patient)
-        .join(Patient, Encounter.patient_id == Patient.id)
-        .where(
-            Encounter.doctor_id == current_user.id,
-            Encounter.visit_type == "inpatient",
-            Encounter.status == "in_progress",
-        )
-        .order_by(Encounter.visited_at.desc())
-    )
-    rows = result.all()
-
-    items = []
-    for enc, pat in rows:
-        items.append({
-            "encounter_id": enc.id,
-            "patient_id": pat.id,
-            "patient_name": pat.name,
-            "gender": pat.gender,
-            "age": pat.age,
-            "bed_no": enc.bed_no,
-            "admission_route": enc.admission_route,
-            "admission_condition": enc.admission_condition,
-            "visited_at": enc.visited_at.isoformat() if enc.visited_at else None,
-            "chief_complaint": enc.chief_complaint_brief,
-        })
+    items = await inpatient_service.list_active_ward(db, current_user.id)
     return {"items": items}
 
 
@@ -109,30 +85,24 @@ async def record_vitals(
     current_user=Depends(get_current_user),
 ):
     """录入一次生命体征测量。"""
-    recorded_at = datetime.now()
-    if body.recorded_at:
-        try:
-            recorded_at = datetime.fromisoformat(body.recorded_at)
-        except ValueError:
-            pass
-
-    sign = VitalSign(
+    await assert_encounter_access(db, encounter_id, current_user)
+    sign = await inpatient_service.record_vital_sign(
+        db,
         encounter_id=encounter_id,
-        recorded_at=recorded_at,
-        temperature=body.temperature,
-        pulse=body.pulse,
-        respiration=body.respiration,
-        bp_systolic=body.bp_systolic,
-        bp_diastolic=body.bp_diastolic,
-        spo2=body.spo2,
-        weight=body.weight,
-        height=body.height,
-        notes=body.notes,
+        recorded_at_raw=body.recorded_at,
+        fields={
+            "temperature": body.temperature,
+            "pulse": body.pulse,
+            "respiration": body.respiration,
+            "bp_systolic": body.bp_systolic,
+            "bp_diastolic": body.bp_diastolic,
+            "spo2": body.spo2,
+            "weight": body.weight,
+            "height": body.height,
+            "notes": body.notes,
+        },
         recorded_by=current_user.real_name or current_user.username,
     )
-    db.add(sign)
-    await db.commit()
-    await db.refresh(sign)
     return _vital_to_dict(sign)
 
 
@@ -143,12 +113,8 @@ async def get_vitals(
     current_user=Depends(get_current_user),
 ):
     """获取该接诊的全部体征历史（按时间倒序）。"""
-    result = await db.execute(
-        select(VitalSign)
-        .where(VitalSign.encounter_id == encounter_id)
-        .order_by(VitalSign.recorded_at.desc())
-    )
-    signs = result.scalars().all()
+    await assert_encounter_access(db, encounter_id, current_user)
+    signs = await inpatient_service.list_vitals(db, encounter_id)
     return {"items": [_vital_to_dict(s) for s in signs]}
 
 
@@ -159,13 +125,8 @@ async def get_latest_vitals(
     current_user=Depends(get_current_user),
 ):
     """获取最新一次体征记录（用于 AI 生成时注入参考值）。"""
-    result = await db.execute(
-        select(VitalSign)
-        .where(VitalSign.encounter_id == encounter_id)
-        .order_by(VitalSign.recorded_at.desc())
-        .limit(1)
-    )
-    sign = result.scalars().first()
+    await assert_encounter_access(db, encounter_id, current_user)
+    sign = await inpatient_service.latest_vital(db, encounter_id)
     return _vital_to_dict(sign) if sign else {}
 
 
@@ -198,18 +159,9 @@ async def add_problem(
     current_user=Depends(get_current_user),
 ):
     """向问题列表新增一条诊断/问题。"""
-    # 新增主要诊断时，先清除同一接诊的其他主要诊断标记
-    if body.is_primary:
-        result = await db.execute(
-            select(ProblemItem).where(
-                ProblemItem.encounter_id == encounter_id,
-                ProblemItem.is_primary.is_(True),
-            )
-        )
-        for old in result.scalars().all():
-            old.is_primary = False
-
-    item = ProblemItem(
+    await assert_encounter_access(db, encounter_id, current_user)
+    item = await inpatient_service.add_problem(
+        db,
         encounter_id=encounter_id,
         problem_name=body.problem_name,
         icd_code=body.icd_code,
@@ -217,9 +169,6 @@ async def add_problem(
         is_primary=body.is_primary,
         added_by=current_user.real_name or current_user.username,
     )
-    db.add(item)
-    await db.commit()
-    await db.refresh(item)
     return _problem_to_dict(item)
 
 
@@ -230,12 +179,8 @@ async def get_problems(
     current_user=Depends(get_current_user),
 ):
     """获取问题列表（主要诊断优先，活跃问题优先）。"""
-    result = await db.execute(
-        select(ProblemItem)
-        .where(ProblemItem.encounter_id == encounter_id)
-        .order_by(ProblemItem.is_primary.desc(), ProblemItem.created_at.asc())
-    )
-    items = result.scalars().all()
+    await assert_encounter_access(db, encounter_id, current_user)
+    items = await inpatient_service.list_problems(db, encounter_id)
     return {"items": [_problem_to_dict(i) for i in items]}
 
 
@@ -248,36 +193,15 @@ async def update_problem(
     current_user=Depends(get_current_user),
 ):
     """更新问题状态（解决 / 设为主要诊断 / 修改 ICD 码）。"""
-    result = await db.execute(
-        select(ProblemItem).where(
-            ProblemItem.id == problem_id,
-            ProblemItem.encounter_id == encounter_id,
-        )
+    await assert_encounter_access(db, encounter_id, current_user)
+    item = await inpatient_service.update_problem(
+        db,
+        encounter_id=encounter_id,
+        problem_id=problem_id,
+        status=body.status,
+        icd_code=body.icd_code,
+        is_primary=body.is_primary,
     )
-    item = result.scalars().first()
-    if not item:
-        raise HTTPException(status_code=404, detail="问题条目不存在")
-
-    if body.status is not None:
-        item.status = body.status
-    if body.icd_code is not None:
-        item.icd_code = body.icd_code
-    if body.is_primary is not None:
-        if body.is_primary:
-            # 清除其他主要诊断标记
-            others = await db.execute(
-                select(ProblemItem).where(
-                    ProblemItem.encounter_id == encounter_id,
-                    ProblemItem.is_primary.is_(True),
-                    ProblemItem.id != problem_id,
-                )
-            )
-            for o in others.scalars().all():
-                o.is_primary = False
-        item.is_primary = body.is_primary
-
-    await db.commit()
-    await db.refresh(item)
     return _problem_to_dict(item)
 
 
@@ -289,17 +213,8 @@ async def delete_problem(
     current_user=Depends(get_current_user),
 ):
     """从问题列表删除一条记录。"""
-    result = await db.execute(
-        select(ProblemItem).where(
-            ProblemItem.id == problem_id,
-            ProblemItem.encounter_id == encounter_id,
-        )
-    )
-    item = result.scalars().first()
-    if not item:
-        raise HTTPException(status_code=404, detail="问题条目不存在")
-    await db.delete(item)
-    await db.commit()
+    await assert_encounter_access(db, encounter_id, current_user)
+    await inpatient_service.delete_problem(db, encounter_id, problem_id)
     return {"ok": True}
 
 
@@ -347,6 +262,7 @@ async def get_compliance(
 
     返回各类必须文书的完成状态与剩余时间。
     """
+    await assert_encounter_access(db, encounter_id, current_user)
     # 获取接诊信息（入院时间）
     enc_result = await db.execute(
         select(Encounter).where(Encounter.id == encounter_id)

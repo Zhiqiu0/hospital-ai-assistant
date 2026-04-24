@@ -9,7 +9,7 @@ import { Form, Select, Slider } from 'antd'
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
 }

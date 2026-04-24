@@ -105,7 +105,7 @@ export default function PatientsPage() {
       key: 'patient_no',
       width: 120,
       render: (v: string) => (
-        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: '#64748b' }}>{v || '—'}</Text>
+        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-3)' }}>{v || '—'}</Text>
       ),
     },
     {
@@ -203,7 +203,7 @@ export default function PatientsPage() {
             }}
             onPressEnter={handleSearch}
             style={{ width: 220 }}
-            prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
             allowClear
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
@@ -246,7 +246,7 @@ export default function PatientsPage() {
                 justifyContent: 'center',
               }}
             >
-              <EditOutlined style={{ color: '#fff', fontSize: 13 }} />
+              <EditOutlined style={{ color: 'var(--surface)', fontSize: 13 }} />
             </div>
             <span>编辑患者信息</span>
           </Space>

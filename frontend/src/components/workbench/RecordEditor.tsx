@@ -55,7 +55,7 @@ export default function RecordEditor() {
     <div
       style={{
         height: '100%',
-        background: '#fff',
+        background: 'var(--surface)',
         borderRadius: 12,
         border: '1px solid var(--border)',
         boxShadow: 'var(--shadow-sm)',
@@ -289,7 +289,7 @@ export default function RecordEditor() {
               height: 26,
               color: '#065f46',
               borderColor: '#86efac',
-              background: '#fff',
+              background: 'var(--surface)',
             }}
           >
             打印
@@ -329,8 +329,8 @@ export default function RecordEditor() {
           border: 'none',
           outline: 'none',
           padding: '12px 16px',
-          color: '#1e293b',
-          background: isFinal ? '#f8fafc' : '#fff',
+          color: 'var(--text-1)',
+          background: isFinal ? 'var(--surface-2)' : 'var(--surface)',
         }}
         variant="borderless"
       />

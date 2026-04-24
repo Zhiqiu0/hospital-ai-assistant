@@ -1,44 +1,47 @@
 /**
  * 住院工作台页面（pages/InpatientWorkbenchPage.tsx）
  *
- * 住院接诊专用工作台，相比门诊有以下差异：
- *   - 问诊面板：InpatientInquiryPanel（含入院诊断、体征等住院专属字段）
- *   - 病历类型默认：inpatient
- *   - 续接诊列表：visitTypeFilter='inpatient'，只加载住院类接诊
- *   - 布局增加「病程记录」标签页（Progress Notes）
+ * 住院接诊专用工作台。与门诊差异：
+ *   - 问诊面板：InpatientInquiryPanel（含入院诊断、体征等住院字段）
+ *   - 默认病历类型：admission_note（入院记录）
+ *   - 续接诊列表：visitTypeFilter='inpatient'
+ *   - 时间轴：病程记录 tab（InpatientTimeline + ProgressNotePanel）
  *
- * 与 WorkbenchPage 的关系：
- *   住院工作台独立实现（非 mode prop 复用），
- *   因字段结构差异较大（主页布局、问诊面板均不同）。
+ * 中间编辑区行为：
+ *   - 未选中时间轴条目 或 选中入院记录 → RecordEditor（主编辑器）
+ *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Typography, Space, Tag, message, Avatar, Divider, Empty, Tabs } from 'antd'
+import { Layout, Button, Empty, Tabs, message } from 'antd'
 import {
-  LogoutOutlined,
   PlusOutlined,
-  MedicineBoxOutlined,
-  CameraOutlined,
   UnorderedListOutlined,
   HeartOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkbenchStore } from '@/store/workbenchStore'
+import { applyQuickStartResult } from '@/store/encounterIntake'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
-import HistoryDrawer from '@/components/workbench/HistoryDrawer'
+import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
 import WardView from '@/components/workbench/WardView'
 import NewInpatientEncounterModal from '@/components/workbench/NewInpatientEncounterModal'
 import ComplianceBar from '@/components/workbench/ComplianceBar'
 import VitalsPanel from '@/components/workbench/VitalsPanel'
 import ProblemListPanel from '@/components/workbench/ProblemListPanel'
+import InpatientHeader from '@/components/workbench/InpatientHeader'
+import InpatientTimeline from '@/components/workbench/InpatientTimeline'
+import ProgressNotePanel from '@/components/workbench/ProgressNotePanel'
+import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
+import { TimelineItem } from '@/domain/inpatient'
 
-const { Header, Content } = Layout
-const { Text } = Typography
+const { Content } = Layout
 
 const ACCENT = '#059669'
 
@@ -53,8 +56,17 @@ const RECORD_TYPE_LABEL: Record<string, string> = {
 
 export default function InpatientWorkbenchPage() {
   const { user } = useAuthStore()
-  const { currentPatient, currentEncounterId, setCurrentEncounter, setRecordType, reset } =
-    useWorkbenchStore()
+  const {
+    currentPatient,
+    currentEncounterId,
+    setCurrentEncounter,
+    setRecordType,
+    setVisitMeta,
+    setPatientReused,
+    setPreviousRecordContent,
+    updateInquiryFields,
+    reset,
+  } = useWorkbenchStore()
 
   useEffect(() => {
     setRecordType('admission_note')
@@ -67,8 +79,6 @@ export default function InpatientWorkbenchPage() {
   const {
     historyOpen,
     setHistoryOpen,
-    historyRecords,
-    historyLoading,
     openHistory,
     viewRecord,
     setViewRecord,
@@ -83,16 +93,26 @@ export default function InpatientWorkbenchPage() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [imagingOpen, setImagingOpen] = useState(false)
+  // 时间轴选中项（null = 默认显示 RecordEditor；progress_note = 切到 ProgressNotePanel）
+  const [selectedNote, setSelectedNote] = useState<TimelineItem | null>(null)
+  // 外部触发时间轴刷新（签发/保存后 +1）
+  const [timelineRefresh, setTimelineRefresh] = useState(0)
+
+  // 切换患者时清空时间轴选中，避免跨患者串数据
+  useEffect(() => {
+    setSelectedNote(null)
+  }, [currentEncounterId])
 
   // 从病区列表选择患者，复用 handleResume 加载工作台快照
   const handleSelectWardPatient = async (p: any) => {
     await handleResume({ encounter_id: p.encounter_id, patient_name: p.patient_name })
   }
 
-  // 新建住院接诊成功回调
+  // 新建住院接诊成功回调（与门诊端对齐：写 patientCache、预填稳定字段、传递上次病历）
   const handleEncounterCreated = (res: any) => {
     reset()
     setRecordType('admission_note')
+    applyQuickStartResult(res)
     setCurrentEncounter(
       {
         id: res.patient.id,
@@ -102,181 +122,56 @@ export default function InpatientWorkbenchPage() {
       },
       res.encounter_id
     )
-    message.success(`已为「${res.patient.name}」开始住院接诊`)
+    setVisitMeta(!res.patient_reused, res.visit_type || 'inpatient')
+    setPatientReused(!!res.patient_reused)
+    setPreviousRecordContent(res.previous_record_content || null)
+    // 复诊且非续接：预填上次的稳定问诊字段
+    if (res.patient_reused && !res.resumed && res.previous_inquiry) {
+      const current = useWorkbenchStore.getState().inquiry
+      updateInquiryFields({ ...current, ...res.previous_inquiry })
+    }
+    if (res.resumed) {
+      message.info(`「${res.patient.name}」有未完成的住院接诊，已自动恢复`)
+    } else {
+      message.success(`已为「${res.patient.name}」开始住院接诊`)
+    }
+  }
+
+  // 中间编辑区：选中病程记录时切换到 ProgressNotePanel，否则保持 RecordEditor
+  const renderCenterEditor = () => {
+    if (selectedNote && selectedNote.type === 'progress_note') {
+      return (
+        <div
+          style={{
+            height: '100%',
+            background: 'var(--surface)',
+            borderRadius: 12,
+            border: '1px solid var(--border)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-sm)',
+          }}
+        >
+          <ProgressNotePanel
+            item={selectedNote}
+            onSaved={() => setTimelineRefresh(n => n + 1)}
+          />
+        </div>
+      )
+    }
+    return <RecordEditor />
   }
 
   return (
     <Layout style={{ height: '100vh', background: 'var(--bg)' }}>
-      {/* Header */}
-      <Header
-        style={{
-          height: 58,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: '#fff',
-          borderBottom: '1px solid var(--border)',
-          padding: '0 20px',
-          boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
-          zIndex: 100,
-          flexShrink: 0,
-          position: 'relative',
-        }}
-      >
-        {/* Top accent stripe — green for inpatient */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 3,
-            background: 'linear-gradient(90deg, #065f46, #059669, #34d399)',
-            borderRadius: '0 0 2px 2px',
-          }}
-        />
+      <InpatientHeader
+        currentPatient={currentPatient}
+        currentEncounterId={currentEncounterId}
+        user={user}
+        onOpenHistory={openHistory}
+        onOpenImaging={() => setImagingOpen(true)}
+        onLogout={handleLogout}
+      />
 
-        {/* Logo */}
-        <Space size={10}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 9,
-              background: 'linear-gradient(135deg, #065f46, #059669)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 8px rgba(5,150,105,0.35)',
-            }}
-          >
-            <MedicineBoxOutlined style={{ color: '#fff', fontSize: 16 }} />
-          </div>
-          <Text strong style={{ fontSize: 16, color: 'var(--text-1)', letterSpacing: '-0.4px' }}>
-            MediScribe
-          </Text>
-          <Tag color="green" style={{ margin: 0, borderRadius: 20 }}>
-            住院部
-          </Tag>
-        </Space>
-
-        {/* Patient info (center) */}
-        <div
-          style={{
-            position: 'absolute',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}
-        >
-          {currentPatient ? (
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
-                border: '1px solid #bbf7d0',
-                borderRadius: 8,
-                padding: '4px 12px',
-                boxShadow: '0 1px 4px rgba(5,150,105,0.1)',
-                lineHeight: 1,
-              }}
-            >
-              <div
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: '#22c55e',
-                  boxShadow: '0 0 0 2px rgba(34,197,94,0.25)',
-                  flexShrink: 0,
-                }}
-              />
-              <Text style={{ fontSize: 13, fontWeight: 700, color: '#065f46' }}>
-                {currentPatient.name}
-              </Text>
-              {currentPatient.gender && currentPatient.gender !== 'unknown' && (
-                <Text style={{ fontSize: 12, color: '#059669' }}>
-                  {currentPatient.gender === 'male' ? '男' : '女'}
-                </Text>
-              )}
-              {currentPatient.age != null && currentPatient.age > 0 && (
-                <Text style={{ fontSize: 12, color: '#059669' }}>{currentPatient.age}岁</Text>
-              )}
-              <Text
-                style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', marginLeft: 4 }}
-              >
-                住院 #{currentEncounterId?.slice(-6).toUpperCase()}
-              </Text>
-            </div>
-          ) : (
-            <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>从左侧病区选择患者</Text>
-          )}
-        </div>
-
-        {/* Right: user actions */}
-        <Space size={4}>
-          <Button
-            size="small"
-            type="text"
-            onClick={openHistory}
-            style={{ color: 'var(--text-3)', fontSize: 12, borderRadius: 8 }}
-          >
-            历史病历
-          </Button>
-          <Button
-            icon={<CameraOutlined />}
-            size="small"
-            type="text"
-            onClick={() => setImagingOpen(true)}
-            style={{ color: '#7c3aed', fontSize: 12, borderRadius: 8 }}
-          >
-            影像分析
-          </Button>
-          <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'var(--border)' }} />
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '4px 10px',
-              borderRadius: 8,
-              background: 'var(--surface-2)',
-            }}
-          >
-            <Avatar
-              size={26}
-              style={{
-                background: 'linear-gradient(135deg, #065f46, #34d399)',
-                fontSize: 11,
-                flexShrink: 0,
-              }}
-            >
-              {user?.real_name?.[0]}
-            </Avatar>
-            <div style={{ lineHeight: 1.3 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-                {user?.real_name}
-              </div>
-              {user?.department_name && (
-                <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{user.department_name}</div>
-              )}
-            </div>
-          </div>
-          <Button
-            icon={<LogoutOutlined />}
-            size="small"
-            type="text"
-            onClick={handleLogout}
-            style={{ color: 'var(--text-3)', borderRadius: 8 }}
-          />
-        </Space>
-      </Header>
-
-      {/* Content */}
       <Content
         style={{ display: 'flex', overflow: 'hidden', gap: 0, padding: 10, position: 'relative' }}
       >
@@ -284,7 +179,7 @@ export default function InpatientWorkbenchPage() {
         <div
           style={{
             width: 210,
-            background: '#fff',
+            background: 'var(--surface)',
             borderRadius: 12,
             border: '1px solid var(--border)',
             overflow: 'hidden',
@@ -320,14 +215,13 @@ export default function InpatientWorkbenchPage() {
               display: 'flex',
               gap: 10,
               overflow: 'hidden',
-              marginTop: currentEncounterId ? 0 : 0,
             }}
           >
             {/* 问诊面板 */}
             <div
               style={{
                 width: 300,
-                background: '#fff',
+                background: 'var(--surface)',
                 borderRadius: 12,
                 border: '1px solid var(--border)',
                 overflow: 'auto',
@@ -338,16 +232,16 @@ export default function InpatientWorkbenchPage() {
               <InpatientInquiryPanel />
             </div>
 
-            {/* 病历编辑器 */}
+            {/* 中间编辑区（入院记录 or 病程记录） */}
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-              <RecordEditor />
+              {renderCenterEditor()}
             </div>
 
-            {/* 右侧：AI建议 + 问题列表 + 生命体征 */}
+            {/* 右侧：AI建议 + 病程记录 + 问题列表 + 体征 */}
             <div
               style={{
                 width: 340,
-                background: '#fff',
+                background: 'var(--surface)',
                 borderRadius: 12,
                 border: '1px solid var(--border)',
                 overflow: 'hidden',
@@ -369,6 +263,24 @@ export default function InpatientWorkbenchPage() {
                     children: (
                       <div style={{ overflow: 'auto', height: '100%' }}>
                         <AISuggestionPanel />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'timeline',
+                    label: (
+                      <span>
+                        <FileTextOutlined /> 病程记录
+                      </span>
+                    ),
+                    children: (
+                      <div style={{ overflow: 'hidden', height: '100%' }}>
+                        <InpatientTimeline
+                          selectedId={selectedNote?.id || null}
+                          onSelect={setSelectedNote}
+                          onCreated={() => setTimelineRefresh(n => n + 1)}
+                          refreshToken={timelineRefresh}
+                        />
                       </div>
                     ),
                   },
@@ -428,7 +340,7 @@ export default function InpatientWorkbenchPage() {
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
-                <span style={{ fontSize: 14, color: '#64748b' }}>
+                <span style={{ fontSize: 14, color: 'var(--text-3)' }}>
                   从左侧病区选择患者，或新建住院接诊
                 </span>
               }
@@ -452,14 +364,15 @@ export default function InpatientWorkbenchPage() {
         onSuccess={handleEncounterCreated}
       />
 
-      <HistoryDrawer
+      {/* 住院端用"按患者聚焦"的历史病历抽屉：展示当前患者全部签发病历（门诊/急诊/住院混排） */}
+      <PatientHistoryDrawer
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        records={historyRecords}
-        loading={historyLoading}
+        patientId={currentPatient?.id || null}
+        patientName={currentPatient?.name}
+        patientGender={currentPatient?.gender}
+        patientAge={currentPatient?.age}
         onView={setViewRecord}
-        accentColor={ACCENT}
-        tagColor="green"
         recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
       />
 
@@ -472,6 +385,23 @@ export default function InpatientWorkbenchPage() {
       />
 
       <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />
+
+      {/* 底部状态栏：接诊状态 + 保存时间 */}
+      <div
+        style={{
+          minHeight: 32,
+          padding: '6px 16px',
+          background: 'var(--surface-2)',
+          borderTop: '1px solid var(--border)',
+          fontSize: 12,
+          lineHeight: 1.4,
+          display: 'flex',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <WorkbenchStatusBar />
+      </div>
     </Layout>
   )
 }

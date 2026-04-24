@@ -86,7 +86,7 @@ export default function AuditLogsPage() {
           <Text strong style={{ fontSize: 13 }}>
             {name || '—'}
           </Text>
-          {row.user_role && <div style={{ fontSize: 11, color: '#94a3b8' }}>{row.user_role}</div>}
+          {row.user_role && <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{row.user_role}</div>}
         </div>
       ),
     },
@@ -125,9 +125,9 @@ export default function AuditLogsPage() {
       render: (_: any, row: any) =>
         row.resource_type ? (
           <div>
-            <Text style={{ fontSize: 12, color: '#64748b' }}>{row.resource_type}</Text>
+            <Text style={{ fontSize: 12, color: 'var(--text-3)' }}>{row.resource_type}</Text>
             {row.resource_id && (
-              <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'monospace' }}>
                 {row.resource_id.slice(-8).toUpperCase()}
               </div>
             )}
@@ -140,7 +140,7 @@ export default function AuditLogsPage() {
       title: '详情',
       dataIndex: 'detail',
       key: 'detail',
-      render: (v: string) => <Text style={{ fontSize: 12, color: '#475569' }}>{v || '—'}</Text>,
+      render: (v: string) => <Text style={{ fontSize: 12, color: 'var(--text-2)' }}>{v || '—'}</Text>,
     },
     {
       title: 'IP',
@@ -148,7 +148,7 @@ export default function AuditLogsPage() {
       key: 'ip_address',
       width: 120,
       render: (v: string) => (
-        <Text style={{ fontSize: 11, fontFamily: 'monospace', color: '#94a3b8' }}>{v || '—'}</Text>
+        <Text style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-4)' }}>{v || '—'}</Text>
       ),
     },
   ]
@@ -175,7 +175,7 @@ export default function AuditLogsPage() {
               justifyContent: 'center',
             }}
           >
-            <AuditOutlined style={{ color: '#fff', fontSize: 15 }} />
+            <AuditOutlined style={{ color: 'var(--surface)', fontSize: 15 }} />
           </div>
           <Title level={4} style={{ margin: 0 }}>
             操作审计日志
@@ -199,7 +199,7 @@ export default function AuditLogsPage() {
             }}
             onPressEnter={handleSearch}
             style={{ width: 200 }}
-            prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
             allowClear
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>

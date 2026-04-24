@@ -125,7 +125,7 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
               justifyContent: 'center',
             }}
           >
-            <CameraOutlined style={{ color: '#fff', fontSize: 13 }} />
+            <CameraOutlined style={{ color: 'var(--surface)', fontSize: 13 }} />
           </div>
           <span>影像AI分析</span>
         </span>
@@ -228,7 +228,7 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
             style={{ borderRadius: 8, fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
           />
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Text style={{ fontSize: 12, color: '#94a3b8', alignSelf: 'center' }}>
+            <Text style={{ fontSize: 12, color: 'var(--text-4)', alignSelf: 'center' }}>
               {inserted ? '已插入辅助检查 ✓' : '可直接编辑后插入'}
             </Text>
             <Button

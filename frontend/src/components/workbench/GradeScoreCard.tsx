@@ -113,7 +113,7 @@ export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
           <Text strong style={{ fontSize: 14, color: cfg.color }}>
             {cfg.label}
           </Text>
-          <Text style={{ fontSize: 11, color: '#94a3b8' }}>
+          <Text style={{ fontSize: 11, color: 'var(--text-4)' }}>
             {score >= 90
               ? '（达到甲级标准）'
               : score >= 75

@@ -11,7 +11,7 @@ const { Text } = Typography
 const CONFIDENCE_CONFIG: Record<string, { color: string; label: string; bg: string }> = {
   high: { color: '#059669', label: '高度符合', bg: '#f0fdf4' },
   medium: { color: '#d97706', label: '可能符合', bg: '#fffbeb' },
-  low: { color: '#64748b', label: '待排除', bg: '#f8fafc' },
+  low: { color: 'var(--text-3)', label: '待排除', bg: 'var(--surface-2)' },
 }
 
 interface Props {
@@ -39,8 +39,8 @@ export default function DiagnosisSuggestionList({
         <div
           style={{
             fontSize: 12,
-            color: '#64748b',
-            background: '#f8fafc',
+            color: 'var(--text-3)',
+            background: 'var(--surface-2)',
             borderRadius: 8,
             padding: '8px 12px',
             marginBottom: 10,
@@ -86,10 +86,12 @@ export default function DiagnosisSuggestionList({
                 key={idx}
                 style={{
                   background: isApplied ? '#f0fdf4' : conf.bg,
-                  border: `1px solid ${isApplied ? '#86efac' : '#e2e8f0'}`,
+                  border: `1px solid ${isApplied ? '#86efac' : 'var(--border)'}`,
                   borderRadius: 10,
                   padding: '12px 14px',
                   transition: 'all 0.2s',
+                  // 已写入病历时变灰，重新生成的新建议不受影响
+                  opacity: isApplied ? 0.5 : 1,
                 }}
               >
                 <div
@@ -116,7 +118,7 @@ export default function DiagnosisSuggestionList({
                     >
                       {conf.label}
                     </Tag>
-                    <Text strong style={{ fontSize: 13, color: '#0f172a', lineHeight: 1.3 }}>
+                    <Text strong style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.3 }}>
                       {d.name}
                     </Text>
                   </div>

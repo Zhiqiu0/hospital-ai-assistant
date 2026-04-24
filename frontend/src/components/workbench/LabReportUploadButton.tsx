@@ -112,17 +112,17 @@ export default function LabReportUploadButton({ onInsert }: Props) {
             <p className="ant-upload-drag-icon">
               <InboxOutlined style={{ color: '#7c3aed', fontSize: 40 }} />
             </p>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>
               点击或拖拽上传检验报告
             </p>
-            <p style={{ fontSize: 12, color: '#94a3b8' }}>支持 JPG / PNG / PDF，AI 自动识别内容</p>
+            <p style={{ fontSize: 12, color: 'var(--text-4)' }}>支持 JPG / PNG / PDF，AI 自动识别内容</p>
           </Dragger>
         )}
 
         {uploading && (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <Spin size="large" />
-            <div style={{ marginTop: 12, fontSize: 13, color: '#475569' }}>
+            <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-2)' }}>
               AI 识别中，请稍候...
             </div>
           </div>
@@ -132,8 +132,8 @@ export default function LabReportUploadButton({ onInsert }: Props) {
           <div>
             <div
               style={{
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
                 borderRadius: 8,
                 padding: '10px 12px',
                 marginBottom: 12,
@@ -151,8 +151,8 @@ export default function LabReportUploadButton({ onInsert }: Props) {
 
             <div
               style={{
-                background: '#fff',
-                border: '1px solid #e2e8f0',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
                 borderRadius: 8,
                 padding: '10px 12px',
                 maxHeight: 280,
@@ -160,7 +160,7 @@ export default function LabReportUploadButton({ onInsert }: Props) {
                 fontSize: 13,
                 lineHeight: 1.7,
                 whiteSpace: 'pre-wrap',
-                color: '#1e293b',
+                color: 'var(--text-1)',
                 marginBottom: 14,
               }}
             >

@@ -26,6 +26,7 @@ import {
   PlusOutlined,
   MedicineBoxOutlined,
   CameraOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -38,9 +39,11 @@ import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import HistoryDrawer from '@/components/workbench/HistoryDrawer'
+import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
 import LabReportTab from '@/components/workbench/LabReportTab'
 import NewEncounterModal from '@/components/workbench/NewEncounterModal'
+import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
 
 const { Header, Content } = Layout
 const { Text } = Typography
@@ -72,6 +75,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     setVisitMeta,
     setPatientReused,
     setPreviousRecordContent,
+    updateInquiryFields,
     reset,
   } = useWorkbenchStore()
 
@@ -108,6 +112,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
 
   const [modalOpen, setModalOpen] = useState<'new' | 'returning' | null>(null)
   const [imagingOpen, setImagingOpen] = useState(false)
+  // "患者档案"抽屉：门诊医生可任意搜患者看其全量病历（不限自己开的）
+  const [patientLookupOpen, setPatientLookupOpen] = useState(false)
 
   // 新建接诊成功回调：更新 store 并处理住院跳转
   // resumed=true 表示后端检测到已有进行中接诊，直接续接而非新建
@@ -128,6 +134,11 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     setVisitMeta(!res.patient_reused, res.visit_type || visitType)
     setPatientReused(!!res.patient_reused)
     setPreviousRecordContent(res.previous_record_content || null)
+    // 复诊且非续接：把上次稳定字段（既往史/过敏史/个人史等）预填入问诊表单
+    if (res.patient_reused && !res.resumed && res.previous_inquiry) {
+      const current = useWorkbenchStore.getState().inquiry
+      updateInquiryFields({ ...current, ...res.previous_inquiry })
+    }
     if (res.resumed) {
       message.info(`「${res.patient.name}」有未完成的接诊，已自动恢复`)
     } else {
@@ -145,7 +156,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: '#fff',
+          background: 'var(--surface)',
           borderBottom: '1px solid var(--border)',
           padding: '0 20px',
           boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
@@ -181,7 +192,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
               boxShadow: `0 2px 8px ${isEmergency ? 'rgba(220,38,38,0.35)' : 'rgba(37,99,235,0.35)'}`,
             }}
           >
-            <MedicineBoxOutlined style={{ color: '#fff', fontSize: 16 }} />
+            <MedicineBoxOutlined style={{ color: 'var(--surface)', fontSize: 16 }} />
           </div>
           <Text strong style={{ fontSize: 16, color: 'var(--text-1)', letterSpacing: '-0.4px' }}>
             MediScribe
@@ -238,7 +249,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
                 <Text style={{ fontSize: 12, color: '#059669' }}>{currentPatient.age}岁</Text>
               )}
               <Text
-                style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', marginLeft: 4 }}
+                style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'monospace', marginLeft: 4 }}
               >
                 #{currentEncounterId?.slice(-6).toUpperCase()}
               </Text>
@@ -272,7 +283,16 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
             onClick={openHistory}
             style={{ color: 'var(--text-3)', fontSize: 12, borderRadius: 8 }}
           >
-            历史病历
+            我的病历
+          </Button>
+          <Button
+            icon={<UserOutlined />}
+            size="small"
+            type="text"
+            onClick={() => setPatientLookupOpen(true)}
+            style={{ color: '#059669', fontSize: 12, borderRadius: 8 }}
+          >
+            患者档案
           </Button>
           <Button
             icon={<CameraOutlined />}
@@ -344,7 +364,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         <div
           style={{
             width: 320,
-            background: '#fff',
+            background: 'var(--surface)',
             borderRadius: 12,
             border: '1px solid var(--border)',
             overflow: 'hidden',
@@ -364,7 +384,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
                 key: 'inquiry',
                 label: '问诊信息',
                 children: (
-                  <div style={{ height: 'calc(100vh - 116px)' }}>
+                  <div style={{ height: '100%', overflow: 'hidden' }}>
                     <InquiryPanel />
                   </div>
                 ),
@@ -373,7 +393,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
                 key: 'lab',
                 label: '检验报告',
                 children: (
-                  <div style={{ height: 'calc(100vh - 116px)' }}>
+                  <div style={{ height: '100%', overflow: 'hidden' }}>
                     <LabReportTab />
                   </div>
                 ),
@@ -391,7 +411,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         <div
           style={{
             width: 320,
-            background: '#fff',
+            background: 'var(--surface)',
             borderRadius: 12,
             border: '1px solid var(--border)',
             overflow: 'hidden',
@@ -422,7 +442,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
-                <span style={{ fontSize: 14, color: '#64748b' }}>
+                <span style={{ fontSize: 14, color: 'var(--text-3)' }}>
                   暂无接诊，请选择「初诊」或「复诊」开始
                 </span>
               }
@@ -470,6 +490,16 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
       />
 
+      {/* 患者档案抽屉：搜索任意患者看其全量签发病历（门诊医生临床决策看"来路"用） */}
+      <PatientHistoryDrawer
+        open={patientLookupOpen}
+        onClose={() => setPatientLookupOpen(false)}
+        patientId={null}
+        searchable
+        onView={setViewRecord}
+        recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
+      />
+
       <RecordViewModal
         record={viewRecord}
         onClose={() => setViewRecord(null)}
@@ -480,6 +510,23 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       />
 
       <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />
+
+      {/* 底部状态栏：接诊状态 + 保存时间 */}
+      <div
+        style={{
+          minHeight: 32,
+          padding: '6px 16px',
+          background: 'var(--surface-2)',
+          borderTop: '1px solid var(--border)',
+          fontSize: 12,
+          lineHeight: 1.4,
+          display: 'flex',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <WorkbenchStatusBar />
+      </div>
     </Layout>
   )
 }

@@ -8,35 +8,6 @@ import { message } from 'antd'
 import { writeSectionToRecord, FIELD_TO_SECTION } from '@/components/workbench/qcFieldMaps'
 
 /**
- * 生命体征文本合并：将新测量值合并或前插到体格检查第一行。
- * 若第一行已是体征行（以 T:/P:/BP: 等开头），则按指标 key 合并；否则前插。
- */
-export function mergeVitalText(current: string, vitalText: string): string {
-  const lines = current.split('\n')
-  const firstLine = lines[0] || ''
-  const isVitalLine = /^(T:|P:|R:|BP:|SpO|身高:|体重:)/.test(firstLine)
-  let mergedLine: string
-  if (isVitalLine) {
-    const getKey = (s: string) => s.split(':')[0]
-    const existingParts = firstLine.split(/\s{2,}/).filter(Boolean)
-    const newParts = vitalText.split(/\s{2,}/).filter(Boolean)
-    const result = [...existingParts]
-    for (const part of newParts) {
-      const key = getKey(part)
-      const idx = result.findIndex(p => getKey(p) === key)
-      if (idx >= 0) result[idx] = part
-      else result.push(part)
-    }
-    mergedLine = result.join('  ')
-  } else {
-    mergedLine = vitalText
-  }
-  return isVitalLine
-    ? [mergedLine, ...lines.slice(1)].join('\n')
-    : mergedLine + (current ? '\n' + current : '')
-}
-
-/**
  * 语音追记模式：将结构化字段写入病历对应章节，返回更新后的内容和写入数量。
  * 调用方负责将 updated 同步到 store/state。
  */

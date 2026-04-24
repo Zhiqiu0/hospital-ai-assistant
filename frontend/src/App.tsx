@@ -29,25 +29,26 @@ import EmergencyWorkbenchPage from '@/pages/EmergencyWorkbenchPage'
 import InpatientWorkbenchPage from '@/pages/InpatientWorkbenchPage'
 import PacsWorkbenchPage from '@/pages/PacsWorkbenchPage'
 import AdminLayout from '@/pages/admin/AdminLayout'
-import { useAuthStore } from '@/store/authStore'
+import { useAuthStore, isTokenExpired } from '@/store/authStore'
 
 const ADMIN_ROLES = ['super_admin', 'hospital_admin', 'dept_admin']
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuthStore()
-  return token ? <>{children}</> : <Navigate to="/login" replace />
+  const valid = token && !isTokenExpired(token)
+  return valid ? <>{children}</> : <Navigate to="/login" replace />
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuthStore()
-  if (!token) return <Navigate to="/login" replace />
+  if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
   if (!user || !ADMIN_ROLES.includes(user.role)) return <Navigate to="/workbench" replace />
   return <>{children}</>
 }
 
 function RootRedirect() {
   const { token, user, systemType } = useAuthStore()
-  if (!token) return <Navigate to="/login" replace />
+  if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
   if (user && ADMIN_ROLES.includes(user.role)) return <Navigate to="/admin" replace />
   if (user?.role === 'radiologist') return <Navigate to="/pacs" replace />
   if (systemType === 'inpatient') return <Navigate to="/inpatient" replace />

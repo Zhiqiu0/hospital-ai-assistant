@@ -136,7 +136,7 @@ export default function NewEncounterModal({
               justifyContent: 'center',
             }}
           >
-            <UserOutlined style={{ color: '#fff', fontSize: 13 }} />
+            <UserOutlined style={{ color: 'var(--surface)', fontSize: 13 }} />
           </div>
           <span>{titleText}</span>
         </Space>
@@ -180,7 +180,7 @@ export default function NewEncounterModal({
             <div
               style={{
                 marginTop: 10,
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border)',
                 borderRadius: 8,
                 overflow: 'hidden',
               }}
@@ -192,14 +192,14 @@ export default function NewEncounterModal({
                   style={{
                     padding: '10px 14px',
                     cursor: 'pointer',
-                    borderTop: i > 0 ? '1px solid #f1f5f9' : undefined,
+                    borderTop: i > 0 ? '1px solid var(--border-subtle)' : undefined,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
                     transition: 'background 0.15s',
                   }}
                   onMouseEnter={e => {
-                    ;(e.currentTarget as HTMLDivElement).style.background = '#f8fafc'
+                    ;(e.currentTarget as HTMLDivElement).style.background = 'var(--surface-2)'
                   }}
                   onMouseLeave={e => {
                     ;(e.currentTarget as HTMLDivElement).style.background = ''
@@ -210,7 +210,7 @@ export default function NewEncounterModal({
                   </Avatar>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
                       {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
                       {p.age ? ` · ${p.age}岁` : ''}
                       {p.phone ? ` · ${p.phone}` : ''}
@@ -224,7 +224,7 @@ export default function NewEncounterModal({
             </div>
           )}
           {keyword && !searching && results.length === 0 && (
-            <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 13, marginTop: 16 }}>
+            <div style={{ textAlign: 'center', color: 'var(--text-4)', fontSize: 13, marginTop: 16 }}>
               未找到匹配患者
             </div>
           )}
@@ -232,7 +232,7 @@ export default function NewEncounterModal({
             style={{
               marginTop: 20,
               paddingTop: 16,
-              borderTop: '1px solid #f1f5f9',
+              borderTop: '1px solid var(--border-subtle)',
               textAlign: 'center',
             }}
           >

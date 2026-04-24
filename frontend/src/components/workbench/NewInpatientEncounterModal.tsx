@@ -104,7 +104,7 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
               justifyContent: 'center',
             }}
           >
-            <UserOutlined style={{ color: '#fff', fontSize: 13 }} />
+            <UserOutlined style={{ color: 'var(--surface)', fontSize: 13 }} />
           </div>
           <span>新建住院接诊</span>
         </Space>

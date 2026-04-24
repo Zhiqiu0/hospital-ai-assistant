@@ -93,6 +93,15 @@ class InquiryInputUpdate(BaseModel):
     personal_history: Optional[str] = None
     physical_exam: Optional[str] = None
     initial_impression: Optional[str] = None
+    # 生命体征（结构化独立字段，不再混入 physical_exam 文本）
+    temperature: Optional[str] = None     # 体温 ℃
+    pulse: Optional[str] = None            # 脉搏 次/分
+    respiration: Optional[str] = None      # 呼吸 次/分
+    bp_systolic: Optional[str] = None      # 血压 收缩压 mmHg
+    bp_diastolic: Optional[str] = None     # 血压 舒张压 mmHg
+    spo2: Optional[str] = None             # 血氧饱和度 %
+    height: Optional[str] = None           # 身高 cm
+    weight: Optional[str] = None           # 体重 kg
     # 住院部扩展字段
     marital_history: Optional[str] = None
     menstrual_history: Optional[str] = None

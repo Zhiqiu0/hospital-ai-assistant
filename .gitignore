@@ -2,6 +2,12 @@
 .env
 .env.local
 
+# 个人代理订阅文件等敏感配置（不应进 git）
+sub_*.txt
+sub_*.yaml
+sub_*.yml
+*.subscription
+
 # Python
 __pycache__/
 *.py[cod]

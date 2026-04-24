@@ -11,7 +11,9 @@ import {
   HeartOutlined,
   AlertOutlined,
   ClockCircleOutlined,
+  MedicineBoxOutlined,
 } from '@ant-design/icons'
+import { Modal } from 'antd'
 import VoiceInputCard from './VoiceInputCard'
 import VitalSignsInput from './VitalSignsInput'
 import TcmSection from './TcmSection'
@@ -20,6 +22,7 @@ import TreatmentSection from './TreatmentSection'
 import EmergencySection from './EmergencySection'
 import EmergencyDispositionBar from './EmergencyDispositionBar'
 import PatientProfileCard from './PatientProfileCard'
+import CollapsibleSection from '@/components/common/CollapsibleSection'
 import { useInquiryPanel } from '@/hooks/useInquiryPanel'
 
 const { TextArea } = Input
@@ -27,18 +30,9 @@ const { TextArea } = Input
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#475569',
+  color: 'var(--text-2)',
   marginBottom: 4,
   display: 'block',
-}
-
-const sectionHeaderStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  color: '#64748b',
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-  padding: '6px 0 4px',
 }
 
 const fs: React.CSSProperties = { marginBottom: 10 }
@@ -55,11 +49,9 @@ export default function InquiryPanel() {
     saveAll,
     setIsDirty,
     saving,
-    parsedVitals,
     onSave,
     applyVoiceInquiry,
     applyVoiceToRecord,
-    handleVitalFill,
     visitNatureColor,
     visitTypeLabel,
     visitTypeColor,
@@ -80,15 +72,15 @@ export default function InquiryPanel() {
       <div
         style={{
           padding: '12px 16px 10px',
-          borderBottom: '1px solid #f1f5f9',
-          background: '#fff',
+          borderBottom: '1px solid var(--border-subtle)',
+          background: 'var(--surface)',
           flexShrink: 0,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>问诊录入</div>
-            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>问诊录入</div>
+            <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 1 }}>
               填写后保存，AI自动同步建议
             </div>
           </div>
@@ -140,6 +132,7 @@ export default function InquiryPanel() {
           onFinish={onSave}
           onValuesChange={() => setIsDirty(true)}
           disabled={isInputLocked}
+          scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
         >
           {isInputLocked && (
             <div
@@ -177,8 +170,8 @@ export default function InquiryPanel() {
           {/* 时间信息 */}
           <div
             style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
               borderRadius: 8,
               padding: '8px 10px',
               marginBottom: 10,
@@ -187,7 +180,7 @@ export default function InquiryPanel() {
               alignItems: 'flex-start',
             }}
           >
-            <ClockCircleOutlined style={{ color: '#64748b', marginTop: 6, flexShrink: 0 }} />
+            <ClockCircleOutlined style={{ color: 'var(--text-3)', marginTop: 6, flexShrink: 0 }} />
             <div style={{ flex: 1, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <Form.Item
                 style={{ marginBottom: 0, flex: '1 1 140px' }}
@@ -306,87 +299,82 @@ export default function InquiryPanel() {
 
           {/* 既往史/过敏史/个人史/月经史 已迁移至 PatientProfileCard（跟随患者纵向档案） */}
 
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+          <Divider style={{ margin: '8px 0 10px', borderColor: 'var(--border-subtle)' }} />
 
-          {/* 体格检查 */}
-          <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <HeartOutlined style={{ color: '#0284c7' }} />
-            <span>体格检查</span>
-          </div>
-
-          {isEmergency ? (
-            <div
-              style={{
-                background: '#fef2f2',
-                border: '1px solid #fecaca',
-                borderRadius: 8,
-                padding: '8px 10px',
-                marginBottom: 10,
-              }}
-            >
+          {/* 体格检查（可折叠） */}
+          <CollapsibleSection title="体格检查" icon={<HeartOutlined />} accent="#0284c7" defaultOpen>
+            {isEmergency ? (
               <div
                 style={{
-                  fontSize: 11,
-                  color: '#dc2626',
-                  fontWeight: 600,
-                  marginBottom: 6,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  marginBottom: 10,
                 }}
               >
-                <AlertOutlined /> 急诊生命体征（必填）
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: '#dc2626',
+                    fontWeight: 600,
+                    marginBottom: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <AlertOutlined /> 急诊生命体征（必填）
+                </div>
+                <VitalSignsInput />
               </div>
-              <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
-            </div>
-          ) : (
-            <VitalSignsInput onFill={handleVitalFill} parsedVitals={parsedVitals} />
-          )}
+            ) : (
+              <VitalSignsInput />
+            )}
 
-          <Form.Item
-            style={fs}
-            name="physical_exam"
-            label={<span style={labelStyle}>一般体检</span>}
-          >
-            <TextArea
-              rows={3}
-              placeholder="各系统体检结果、阳性体征、必要阴性体征"
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
+            <Form.Item
+              style={fs}
+              name="physical_exam"
+              label={<span style={labelStyle}>一般体检</span>}
+            >
+              <TextArea
+                rows={3}
+                placeholder="各系统体检结果、阳性体征、必要阴性体征"
+                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              />
+            </Form.Item>
 
-          {/* 中医四诊 */}
-          <TcmSection />
+            {/* 中医四诊 */}
+            <TcmSection />
 
-          <Form.Item
-            style={fs}
-            name="auxiliary_exam"
-            rules={[{ required: true, message: '请填写辅助检查，无检查项目请填写「暂无」' }]}
-            label={
-              <span style={labelStyle}>
-                辅助检查 <span style={{ color: '#ef4444' }}>*</span>
-              </span>
-            }
-          >
-            <TextArea
-              rows={3}
-              placeholder="已有检查结果原样填入；如无检查请填写「暂无」"
-              style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-            />
-          </Form.Item>
+            <Form.Item
+              style={fs}
+              name="auxiliary_exam"
+              rules={[{ required: true, message: '请填写辅助检查，无检查项目请填写「暂无」' }]}
+              label={
+                <span style={labelStyle}>
+                  辅助检查 <span style={{ color: '#ef4444' }}>*</span>
+                </span>
+              }
+            >
+              <TextArea
+                rows={3}
+                placeholder="已有检查结果原样填入；如无检查请填写「暂无」"
+                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              />
+            </Form.Item>
+          </CollapsibleSection>
 
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
+          {/* 诊断区块（可折叠） */}
+          <CollapsibleSection title="诊断" defaultOpen>
+            <DiagnosisSection />
+          </CollapsibleSection>
 
-          {/* 诊断区块 */}
-          <DiagnosisSection />
-
-          <Divider style={{ margin: '8px 0 10px', borderColor: '#f1f5f9' }} />
-
-          {/* 治疗意见区块 */}
-          <TreatmentSection />
-
-          {/* 急诊附加项 */}
-          {isEmergency && <EmergencySection />}
+          {/* 治疗意见区块（可折叠） */}
+          <CollapsibleSection title="治疗意见" defaultOpen>
+            <TreatmentSection />
+            {isEmergency && <EmergencySection />}
+          </CollapsibleSection>
         </Form>
       </div>
 
@@ -408,8 +396,8 @@ export default function InquiryPanel() {
       <div
         style={{
           padding: '10px 16px',
-          borderTop: '1px solid #f1f5f9',
-          background: '#fff',
+          borderTop: '1px solid var(--border-subtle)',
+          background: 'var(--surface)',
           flexShrink: 0,
         }}
       >
@@ -427,30 +415,60 @@ export default function InquiryPanel() {
           } else {
             label = '尚未填写问诊'
           }
+          // 转住院按钮的二次确认（门诊/急诊都显示；住院工作台不渲染 InquiryPanel，不会错触发）
+          const confirmAdmit = () => {
+            Modal.confirm({
+              title: '转入住院',
+              content: '确认将当前患者转入住院？已填的问诊信息和已签发的病历会作为入院参考带入。',
+              okText: '确认转住院',
+              cancelText: '取消',
+              onOk: () => handleAdmitToInpatient(),
+            })
+          }
           return (
-            <Button
-              type="primary"
-              icon={anyDirty ? <SaveOutlined /> : hasSavedInquiry ? <CheckOutlined /> : undefined}
-              block
-              disabled={isInputLocked || !anyDirty}
-              loading={anySaving}
-              onClick={saveAll}
-              style={{
-                borderRadius: 8,
-                height: 36,
-                fontWeight: 600,
-                background: anyDirty
-                  ? 'linear-gradient(135deg, #2563eb, #3b82f6)'
-                  : hasSavedInquiry
-                    ? '#86efac'
-                    : '#e5e7eb',
-                border: 'none',
-                color: anyDirty ? '#fff' : hasSavedInquiry ? '#166534' : '#6b7280',
-                transition: 'all 0.3s',
-              }}
-            >
-              {label}
-            </Button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {/* 转住院按钮：低频但关键，二级样式，左侧放置，避免抢主 CTA */}
+              <Button
+                size="middle"
+                icon={<MedicineBoxOutlined />}
+                onClick={confirmAdmit}
+                disabled={isInputLocked}
+                style={{
+                  borderRadius: 8,
+                  height: 36,
+                  fontWeight: 500,
+                  color: '#059669',
+                  borderColor: '#bbf7d0',
+                  background: 'var(--surface)',
+                  flexShrink: 0,
+                }}
+              >
+                转住院
+              </Button>
+              <Button
+                type="primary"
+                icon={anyDirty ? <SaveOutlined /> : hasSavedInquiry ? <CheckOutlined /> : undefined}
+                block
+                disabled={isInputLocked || !anyDirty}
+                loading={anySaving}
+                onClick={saveAll}
+                style={{
+                  borderRadius: 8,
+                  height: 36,
+                  fontWeight: 600,
+                  background: anyDirty
+                    ? 'linear-gradient(135deg, #2563eb, #3b82f6)'
+                    : hasSavedInquiry
+                      ? '#86efac'
+                      : '#e5e7eb',
+                  border: 'none',
+                  color: anyDirty ? 'var(--surface)' : hasSavedInquiry ? '#166534' : '#6b7280',
+                  transition: 'all 0.3s',
+                }}
+              >
+                {label}
+              </Button>
+            </div>
           )
         })()}
       </div>

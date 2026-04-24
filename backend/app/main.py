@@ -13,9 +13,11 @@ FastAPI 应用入口（main.py）
 """
 
 import logging
+import traceback
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.v1 import router as api_v1_router
@@ -50,6 +52,30 @@ app.add_middleware(
 # ── 路由挂载 ──────────────────────────────────────────────────────────────────
 # 所有业务 API 均挂载在 /api/v1 前缀下
 app.include_router(api_v1_router, prefix="/api/v1")
+
+
+# ── 全局异常处理器 ────────────────────────────────────────────────────────────
+# 未被路由层捕获的异常（500 Internal Server Error）会落到这里。
+# 默认 FastAPI 只返 500 不记录堆栈——排查 bug 时一筹莫展。
+# 这里把完整 traceback 写入 error.log，并给前端一个清晰的 detail（不泄露内部细节）。
+@app.exception_handler(Exception)
+async def catch_all_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    logger.error(
+        "Unhandled exception on %s %s: %s: %s\n%s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        str(exc)[:200],
+        tb,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "服务器内部错误，请稍后重试（技术细节已记录到服务端日志）",
+            "error_type": type(exc).__name__,
+        },
+    )
 
 
 # ── 生命周期钩子 ──────────────────────────────────────────────────────────────

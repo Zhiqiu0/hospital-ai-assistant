@@ -15,9 +15,9 @@
   组装成完整的 JSON 快照一次性返回。
 """
 
-from datetime import date
-
 from fastapi import HTTPException
+
+from app.utils.age import calc_age
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -102,11 +102,10 @@ class EncounterService:
                     "id": e.patient.id,
                     "name": e.patient.name,
                     "gender": e.patient.gender,
-                    "age": (
-                        date.today().year - e.patient.birth_date.year
-                        if e.patient.birth_date
-                        else None
-                    ),
+                    # 历史此处只用 year 相减，未减去未过生日的修正——
+                    # 与 snapshot/详情接口算法不一致会让同一患者在不同页显示差 1 岁，
+                    # 统一走 calc_age 顺带修复
+                    "age": calc_age(e.patient.birth_date),
                 } if e.patient else None,
             }
             for e in encounters
@@ -234,14 +233,9 @@ class EncounterService:
         )
         latest_voice = voice_result.scalar_one_or_none()
 
-        # 计算患者年龄（实时计算，考虑是否已过生日）
+        # 患者年龄实时算（utils.calc_age 内含未过生日修正）
         patient = encounter.patient
-        patient_age = None
-        if patient and patient.birth_date:
-            today = date.today()
-            patient_age = today.year - patient.birth_date.year - (
-                (today.month, today.day) < (patient.birth_date.month, patient.birth_date.day)
-            )
+        patient_age = calc_age(patient.birth_date) if patient else None
 
         # 患者档案（纵向持久数据，跟随患者不跟随接诊）
         profile_fields = (
@@ -272,6 +266,15 @@ class EncounterService:
                 "personal_history": inquiry.personal_history or "",
                 "physical_exam": inquiry.physical_exam or "",
                 "initial_impression": inquiry.initial_impression or "",
+                # 生命体征（结构化独立字段）
+                "temperature": inquiry.temperature or "",
+                "pulse": inquiry.pulse or "",
+                "respiration": inquiry.respiration or "",
+                "bp_systolic": inquiry.bp_systolic or "",
+                "bp_diastolic": inquiry.bp_diastolic or "",
+                "spo2": inquiry.spo2 or "",
+                "height": inquiry.height or "",
+                "weight": inquiry.weight or "",
                 "marital_history": inquiry.marital_history or "",
                 "menstrual_history": inquiry.menstrual_history or "",
                 "family_history": inquiry.family_history or "",

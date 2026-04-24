@@ -147,7 +147,7 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
                         borderRadius: '50%',
                         background: isSelected
                           ? 'linear-gradient(135deg, #065f46, #059669)'
-                          : '#e2e8f0',
+                          : 'var(--border)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -155,7 +155,7 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
                       }}
                     >
                       <UserOutlined
-                        style={{ fontSize: 11, color: isSelected ? '#fff' : '#94a3b8' }}
+                        style={{ fontSize: 11, color: isSelected ? 'var(--surface)' : 'var(--text-4)' }}
                       />
                     </div>
                     <Text
@@ -189,8 +189,8 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
                       style={{
                         fontSize: 10,
                         fontWeight: 600,
-                        color: CONDITION_COLOR[p.admission_condition] || '#64748b',
-                        background: `${CONDITION_COLOR[p.admission_condition] || '#64748b'}18`,
+                        color: CONDITION_COLOR[p.admission_condition] || 'var(--text-3)',
+                        background: `${CONDITION_COLOR[p.admission_condition] || 'var(--text-3)'}18`,
                         padding: '1px 5px',
                         borderRadius: 4,
                       }}
@@ -231,7 +231,7 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
             borderRadius: 8,
             background: '#059669',
             borderColor: '#059669',
-            color: '#fff',
+            color: 'var(--surface)',
             fontWeight: 600,
           }}
         >

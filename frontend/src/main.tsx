@@ -6,6 +6,7 @@
  *   - ErrorBoundary（捕获组件级错误，防止白屏）
  *
  * 主题采用 design tokens 单一来源（theme/tokens.ts），禁止在此处硬编码颜色。
+ * 仅维护浅色一套设计，不做深浅切换。
  */
 
 import React from 'react'
@@ -63,10 +64,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             rowHoverBg: neutral.surface2,
             borderColor: neutral.borderSubtle,
           },
-          Card: {
-            paddingLG: 20,
-            headerHeight: 52,
-          },
+          Card: { paddingLG: 20, headerHeight: 52 },
           Button: {
             fontWeight: 500,
             primaryShadow: `0 2px 6px rgba(${outpatient.shadowRgba},0.25)`,
@@ -76,38 +74,20 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             paddingInline: 10,
             activeShadow: `0 0 0 3px rgba(${outpatient.shadowRgba},0.12)`,
           },
-          Select: {
-            selectorBg: neutral.surface,
-          },
-          Modal: {
-            borderRadiusLG: 14,
-          },
+          Select: { selectorBg: neutral.surface },
+          Modal: { borderRadiusLG: 14 },
           Tabs: {
             horizontalItemGutter: 20,
             inkBarColor: outpatient.primary,
             itemActiveColor: outpatient.primary,
             itemSelectedColor: outpatient.primary,
           },
-          Form: {
-            labelColor: neutral.text2,
-            labelFontSize: typography.fontSize.sm,
-          },
-          Divider: {
-            colorSplit: neutral.borderSubtle,
-          },
-          Badge: {
-            colorBgContainer: neutral.surface,
-          },
-          Tag: {
-            defaultBg: neutral.surface3,
-            defaultColor: neutral.text3,
-          },
-          Alert: {
-            borderRadiusLG: 10,
-          },
-          Drawer: {
-            paddingLG: 20,
-          },
+          Form: { labelColor: neutral.text2, labelFontSize: typography.fontSize.sm },
+          Divider: { colorSplit: neutral.borderSubtle },
+          Badge: { colorBgContainer: neutral.surface },
+          Tag: { defaultBg: neutral.surface3, defaultColor: neutral.text3 },
+          Alert: { borderRadiusLG: 10 },
+          Drawer: { paddingLG: 20 },
         },
       }}
     >

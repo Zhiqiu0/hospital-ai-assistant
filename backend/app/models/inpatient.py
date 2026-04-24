@@ -41,6 +41,29 @@ class VitalSign(Base, TimestampMixin):
     recorded_by: Mapped[Optional[str]] = mapped_column(String(50)) # 记录医生姓名
 
 
+class ProgressNote(Base, TimestampMixin):
+    """病程记录表（住院期间每次书写的病程）。
+
+    note_type 取值：
+      first_course  : 首次病程记录（入院后 8 小时内）
+      daily_course  : 日常病程记录
+      surgery_pre   : 术前小结
+      surgery_post  : 术后病程
+      discharge     : 出院小结
+    """
+
+    __tablename__ = "progress_notes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    encounter_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    note_type: Mapped[str] = mapped_column(String(30), default="daily_course")
+    title: Mapped[Optional[str]] = mapped_column(String(200))      # 标题（可选，默认用 note_type 标签）
+    content: Mapped[str] = mapped_column(Text, default="")         # 正文
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 书写时间
+    recorded_by: Mapped[Optional[str]] = mapped_column(String(50)) # 书写医生姓名
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft / submitted
+
+
 class ProblemItem(Base, TimestampMixin):
     """问题列表条目（住院期间活跃诊断 / 临床问题）。
 

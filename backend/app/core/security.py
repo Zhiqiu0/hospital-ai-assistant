@@ -127,6 +127,32 @@ def verify_audio_token(token: str) -> tuple[str, str]:
         raise HTTPException(status_code=401, detail="音频令牌无效或已过期")
 
 
+def verify_token_str(token: str) -> str:
+    """纯字符串级别的 JWT 校验，返回 user_id。
+
+    专为 WebSocket 等不走 FastAPI 依赖注入的场景设计：
+      - 不查数据库（吊销检查在后续业务接口中完成，不影响 WebSocket 建连）
+      - 仅校验签名与有效期，失败抛 ValueError
+
+    Args:
+        token: JWT 令牌字符串。
+
+    Returns:
+        JWT 载荷中的 sub（用户 ID）。
+
+    Raises:
+        ValueError: token 无效或已过期。
+    """
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+    except JWTError as exc:
+        raise ValueError(f"invalid token: {exc}") from exc
+    user_id = payload.get("sub")
+    if not user_id:
+        raise ValueError("token missing sub")
+    return user_id
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),

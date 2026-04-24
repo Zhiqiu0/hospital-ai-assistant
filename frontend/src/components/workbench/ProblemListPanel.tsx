@@ -178,7 +178,7 @@ export default function ProblemListPanel() {
                   <Button
                     type="text"
                     size="small"
-                    icon={<DeleteOutlined style={{ color: '#94a3b8' }} />}
+                    icon={<DeleteOutlined style={{ color: 'var(--text-4)' }} />}
                     style={{ padding: 2 }}
                   />
                 </Popconfirm>,

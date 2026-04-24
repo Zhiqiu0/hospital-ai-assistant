@@ -54,16 +54,34 @@ export default function QCIssuePanel() {
     recordContent,
     setRecordContent,
     inquiry,
+    qcFixTexts,
+    setQCFixTexts,
+    qcWrittenIndices,
+    setQCWrittenIndices,
   } = useWorkbenchStore()
 
-  const [fixTexts, setFixTexts] = useState<Record<number, string>>({})
-  const [fixLoading, setFixLoading] = useState<Record<number, boolean>>({})
-  const [writtenSet, setWrittenSet] = useState<Set<number>>(new Set())
+  // fixTexts 持久化到 store，刷新后保留；支持函数式更新
+  const fixTexts = qcFixTexts
+  const setFixTexts = (
+    updater: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)
+  ) => {
+    const next = typeof updater === 'function' ? updater(qcFixTexts) : updater
+    setQCFixTexts(next)
+  }
+  const writtenSet = new Set(qcWrittenIndices)
+  const setWrittenSet = (updater: Set<number> | ((prev: Set<number>) => Set<number>)) => {
+    const next = typeof updater === 'function' ? updater(writtenSet) : updater
+    setQCWrittenIndices(Array.from(next))
+  }
 
-  // 只在新一轮质控开始时清空，追加 LLM issues 不触发（qcRunId 变化代表新一轮）
+  const [fixLoading, setFixLoading] = useState<Record<number, boolean>>({})
+  // 写入前的病历快照，取消时用于还原（不需持久化，取消只在本次会话内有效）
+  const [originalSnapshots, setOriginalSnapshots] = useState<Record<number, string>>({})
+
+  // 只在新一轮质控开始时清空本地加载状态（store 侧由 startQCRun 清空）
   useEffect(() => {
-    setFixTexts({})
-    setWrittenSet(new Set())
+    setFixLoading({})
+    setOriginalSnapshots({})
   }, [qcRunId])
 
   const handleAIFix = async (item: QCIssue, idx: number) => {
@@ -87,18 +105,28 @@ export default function QCIssuePanel() {
 
   const handleWriteToRecord = (item: QCIssue, idx: number) => {
     if (writtenSet.has(idx)) {
-      // 取消写入：还原该字段
-      setRecordContent(writeSectionToRecord(recordContent, item.field_name, ''))
+      // 取消写入：还原到写入前的病历快照，而不是置空
+      const snapshot = originalSnapshots[idx]
+      if (snapshot !== undefined) setRecordContent(snapshot)
       setWrittenSet(prev => {
         const s = new Set(prev)
         s.delete(idx)
         return s
       })
-      message.info('已取消写入')
+      message.info('已取消写入，已还原原内容')
     } else {
       const fix = fixTexts[idx]?.trim() || ''
       if (!fix) return
-      setRecordContent(writeSectionToRecord(recordContent, item.field_name, fix))
+      // 写入前先保存当前病历快照
+      setOriginalSnapshots(prev => ({ ...prev, [idx]: recordContent }))
+      const nextContent = writeSectionToRecord(recordContent, item.field_name, fix)
+      // 安全网：若内容完全没变（映射缺失或 field_name 是全文类 "content" 等），
+      // 不静默跳过，明确提示医生，避免"按了没反应"的体验
+      if (nextContent === recordContent) {
+        message.warning(`未能定位到章节"${item.field_name}"，建议手动粘贴修复文本到病历`)
+        return
+      }
+      setRecordContent(nextContent)
       setWrittenSet(prev => new Set(prev).add(idx))
       message.success('已写入病历')
     }
@@ -108,8 +136,8 @@ export default function QCIssuePanel() {
     <div
       key={idx}
       style={{
-        background: '#fff',
-        border: `1px solid ${item.source === 'rule' || item.source == null ? '#fca5a5' : '#e2e8f0'}`,
+        background: 'var(--surface)',
+        border: `1px solid ${item.source === 'rule' || item.source == null ? '#fca5a5' : 'var(--border)'}`,
         borderRadius: 10,
         padding: '12px 14px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
@@ -155,7 +183,7 @@ export default function QCIssuePanel() {
           lineHeight: 1.5,
           display: 'block',
           marginBottom: 8,
-          color: '#1e293b',
+          color: 'var(--text-1)',
         }}
       >
         {item.issue_description}
@@ -201,7 +229,9 @@ export default function QCIssuePanel() {
               style={{
                 fontSize: 12,
                 borderRadius: 6,
-                ...(writtenSet.has(idx) ? { background: '#22c55e', borderColor: '#22c55e' } : {}),
+                ...(writtenSet.has(idx)
+                  ? { background: 'var(--text-4)', borderColor: 'var(--text-4)', color: 'var(--surface)' }
+                  : {}),
               }}
             >
               {writtenSet.has(idx) ? '已写入' : '写入病历'}
@@ -218,7 +248,7 @@ export default function QCIssuePanel() {
         {gradeScore != null && <GradeScoreCard gradeScore={gradeScore} />}
         <Empty
           description={
-            <span style={{ fontSize: 13, color: '#94a3b8' }}>点击「AI质控」进行病历质量检查</span>
+            <span style={{ fontSize: 13, color: 'var(--text-4)' }}>点击「AI质控」进行病历质量检查</span>
           }
           style={{ marginTop: gradeScore ? 16 : 40 }}
           image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -285,7 +315,7 @@ export default function QCIssuePanel() {
                 : ''}
               {qcLlmLoading && <Spin size="small" style={{ marginLeft: 4 }} />}
               {qcLlmLoading && (
-                <span style={{ fontWeight: 400, color: '#94a3b8' }}>AI 分析中...</span>
+                <span style={{ fontWeight: 400, color: 'var(--text-4)' }}>AI 分析中...</span>
               )}
             </Text>
             {suggestionIssues.map(item => renderIssue(item, qcIssues.indexOf(item)))}

@@ -15,7 +15,8 @@ from sqlalchemy import text
 # 导入所有模型，确保 Base.metadata 包含全部表定义
 from app.models import user, patient, encounter, medical_record, config, audit_log  # noqa
 from app.models.voice_record import VoiceRecord  # noqa
-from app.models.inpatient import VitalSign, ProblemItem  # noqa
+from app.models.inpatient import VitalSign, ProblemItem, ProgressNote  # noqa
+from app.models.ai_feedback import AISuggestionFeedback  # noqa
 # config.py 里已有 ModelConfig，上面 config 导入已覆盖
 
 
@@ -39,6 +40,28 @@ async def migrate():
             ("religion_belief",          "TEXT"),
         ]
         for col, col_type in new_inquiry_columns:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    inquiry_inputs.{col} - OK")
+            except Exception as e:
+                print(f"    inquiry_inputs.{col} - SKIP ({e})")
+        print()
+
+        # 2b. inquiry_inputs 新增生命体征结构化字段（从 physical_exam 文本分离）
+        print("[2b] inquiry_inputs 新增生命体征字段...")
+        vital_signs_columns = [
+            ("temperature",  "VARCHAR(10)"),
+            ("pulse",        "VARCHAR(10)"),
+            ("respiration",  "VARCHAR(10)"),
+            ("bp_systolic",  "VARCHAR(10)"),
+            ("bp_diastolic", "VARCHAR(10)"),
+            ("spo2",         "VARCHAR(10)"),
+            ("height",       "VARCHAR(10)"),
+            ("weight",       "VARCHAR(10)"),
+        ]
+        for col, col_type in vital_signs_columns:
             try:
                 await conn.execute(text(
                     f"ALTER TABLE inquiry_inputs ADD COLUMN IF NOT EXISTS {col} {col_type}"
@@ -171,6 +194,35 @@ async def migrate():
                 print(f"    qc_rules.{col} - OK")
             except Exception as e:
                 print(f"    qc_rules.{col} - SKIP ({e})")
+        print()
+
+        # 7. ai_suggestion_feedback 新增地基字段（为未来档次 2/3 优化做准备）
+        # prompt_version: 按 prompt 模板版本区分反馈（跨版本反馈不能混用）
+        # prompt_scene:   记录生成 prompt 的场景（inquiry_suggestion / generate / qc 等）
+        # model_name:     记录生成该建议的模型（模型换了，旧反馈价值打折）
+        print("[7] ai_suggestion_feedback 新增 prompt_version / prompt_scene / model_name 字段...")
+        feedback_columns = [
+            ("prompt_version", "VARCHAR(20)"),
+            ("prompt_scene",   "VARCHAR(50)"),
+            ("model_name",     "VARCHAR(100)"),
+        ]
+        for col, col_type in feedback_columns:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE ai_suggestion_feedback ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    ai_suggestion_feedback.{col} - OK")
+            except Exception as e:
+                print(f"    ai_suggestion_feedback.{col} - SKIP ({e})")
+        # 索引：按 prompt_version 查历史反馈（未来档次 2 按版本分层最常用）
+        try:
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_ai_feedback_prompt_version "
+                "ON ai_suggestion_feedback (prompt_version)"
+            ))
+            print("    index ix_ai_feedback_prompt_version - OK")
+        except Exception as e:
+            print(f"    index ix_ai_feedback_prompt_version - SKIP ({e})")
         print()
 
     print("=== 迁移完成 ===")

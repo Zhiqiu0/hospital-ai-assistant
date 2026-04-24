@@ -1,11 +1,17 @@
 /**
  * 语音录入卡片逻辑 hook（hooks/useVoiceInputCard.ts）
  * 管理录音、上传、结构化的全部状态与处理函数。
+ *
+ * 语音识别方案：
+ *   主路径 — 阿里云 Paraformer 实时 ASR（via 后端 WebSocket 代理 /api/v1/ai/voice-stream）
+ *   兜底路径 — WebSocket 建连失败时，停止录音后音频文件上传到后端由 Qwen-Audio 整段转写
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, message } from 'antd'
 import { InquiryData, useWorkbenchStore } from '@/store/workbenchStore'
 import { useVoiceTranscriptStore, type DialogueItem } from '@/store/voiceTranscriptStore'
+import { useAuthStore } from '@/store/authStore'
+import { startVoiceStream, type VoiceStreamHandle } from '@/services/voiceStream'
 import api from '@/services/api'
 
 interface Props {
@@ -25,17 +31,17 @@ export function useVoiceInputCard({
   const { inquiry, currentPatient, currentEncounterId } = useWorkbenchStore()
 
   const [audioToken, setAudioToken] = useState<string | null>(null)
-  const recognitionRef = useRef<any>(null)
+  // 实时 ASR 流句柄（含 stop 方法），录音期间存活
+  const voiceStreamRef = useRef<VoiceStreamHandle | null>(null)
+  // 录音音频文件采集器（用于存档 + 作为 WebSocket 失败时的兜底转写源）
   const mediaRecorderRef = useRef<any>(null)
   const mediaChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const transcriptRef = useRef('')
+  // 本次录音阿里云实时 ASR 是否可用。false 则停止后走后端整段转写兜底
+  const streamFallbackRef = useRef(false)
 
-  const [speechSupported] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-  )
+  // 浏览器是否支持 MediaRecorder（录音存档的基础能力）
   const [recordingSupported] = useState(
     () => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined'
   )
@@ -46,12 +52,13 @@ export function useVoiceInputCard({
   const [transcriptId, setTranscriptId] = useState<string | null>(null)
   const [transcript, setTranscript] = useState('')
   const [lastAnalyzedTranscript, setLastAnalyzedTranscript] = useState('')
+  // 最近一次实时识别的中间结果（partial），附加在 transcript 末尾渲染
   const [interimText, setInterimText] = useState('')
   const [summary, setSummary] = useState('')
   const [speakerDialogue, setSpeakerDialogue] = useState<DialogueItem[]>([])
 
   const fullTranscript = useMemo(() => {
-    return [transcript.trim(), interimText.trim()].filter(Boolean).join('\n').trim()
+    return [transcript.trim(), interimText.trim()].filter(Boolean).join(' ').trim()
   }, [transcript, interimText])
 
   useEffect(() => {
@@ -159,6 +166,11 @@ export function useVoiceInputCard({
     streamRef.current = null
   }
 
+  /**
+   * 上传录音音频文件。
+   * - transcriptText 非空：仅归档（后端跳过整段转写）
+   * - transcriptText 为空：后端 Qwen-Audio 兜底转写（仅当实时 ASR 未成功时触发）
+   */
   const uploadAudioBlob = async (blob: Blob, transcriptText: string) => {
     if (!blob.size) return
     setUploadingAudio(true)
@@ -183,9 +195,18 @@ export function useVoiceInputCard({
     }
   }
 
-  const stopListening = () => {
-    recognitionRef.current?.stop?.()
-    recognitionRef.current = null
+  const stopListening = async () => {
+    // 先停实时 ASR（发送 finish + 等待 finished，最多 3s）
+    const voiceStream = voiceStreamRef.current
+    voiceStreamRef.current = null
+    if (voiceStream) {
+      try {
+        await voiceStream.stop()
+      } catch {
+        // stop 过程失败不阻塞后续录音文件上传
+      }
+    }
+    // 再停 MediaRecorder（onstop 中会触发音频文件上传）
     const mr = mediaRecorderRef.current
     if (mr && mr.state !== 'inactive') mr.stop()
     else stopTracks()
@@ -203,9 +224,17 @@ export function useVoiceInputCard({
       message.warning('请先新建接诊，再开始语音录入')
       return
     }
+    const token = useAuthStore.getState().token
+    if (!token) {
+      message.error('登录状态已失效，请重新登录')
+      return
+    }
     try {
+      streamFallbackRef.current = false
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
+
+      // MediaRecorder 始终启动，用于录音存档 + WebSocket 失败时的兜底转写源
       const mediaRecorder = new MediaRecorder(stream)
       mediaChunksRef.current = []
       mediaRecorder.ondataavailable = (e: BlobEvent) => {
@@ -217,53 +246,41 @@ export function useVoiceInputCard({
         })
         mediaChunksRef.current = []
         stopTracks()
-        await uploadAudioBlob(blob, transcriptRef.current)
+        // 实时 ASR 可用时把已识别文本附上，后端跳过整段转写；失败时传空串触发兜底
+        const transcriptForUpload = streamFallbackRef.current ? '' : transcriptRef.current
+        await uploadAudioBlob(blob, transcriptForUpload)
       }
       mediaRecorder.start()
       mediaRecorderRef.current = mediaRecorder
 
-      if (speechSupported) {
-        const RecognitionCtor =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-        const recognition = new RecognitionCtor()
-        recognition.lang = 'zh-CN'
-        recognition.continuous = true
-        recognition.interimResults = true
-        recognition.onresult = (event: any) => {
-          let finalText = ''
-          let interim = ''
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const text = event.results[i][0]?.transcript || ''
-            if (event.results[i].isFinal) finalText += text
-            else interim += text
-          }
-          if (finalText.trim())
-            setTranscript(prev => [prev, finalText.trim()].filter(Boolean).join('\n'))
-          setInterimText(interim.trim())
-        }
-        recognition.onerror = (event: any) => {
-          if (['no-speech', 'network', 'audio-capture', 'aborted'].includes(event.error)) return
-          recognitionRef.current = null
-          setListening(false)
-          setInterimText('')
-          message.error('语音识别中断，请重试')
-        }
-        recognition.onend = () => {
-          if (recognitionRef.current === recognition) {
-            try {
-              recognition.start()
-              return
-            } catch {}
-          }
-          recognitionRef.current = null
-          setListening(false)
-          setInterimText('')
-        }
-        recognition.start()
-        recognitionRef.current = recognition
-      } else {
-        message.info('浏览器不支持实时转写，但会继续录音保存，你也可以手动补充转写文本')
+      // 启动实时 ASR；失败则走兜底（录音照常进行，停止后整段转写）
+      try {
+        const handle = await startVoiceStream(token, {
+          onPartial: text => setInterimText(text),
+          onFinal: text => {
+            // 终稿句追加到主 transcript，partial 清空等待下一句
+            if (text.trim()) {
+              setTranscript(prev => [prev, text.trim()].filter(Boolean).join(' '))
+            }
+            setInterimText('')
+          },
+          onError: msg => {
+            // 连接中途失败：标记走兜底；UI 提示一次即可
+            if (!streamFallbackRef.current) {
+              streamFallbackRef.current = true
+              message.warning(`实时转写中断：${msg}，录音继续进行，停止后自动云端转写`, 5)
+            }
+          },
+        })
+        voiceStreamRef.current = handle
+      } catch (err: any) {
+        streamFallbackRef.current = true
+        message.warning(
+          `实时转写未启用（${err?.message || '连接失败'}），录音继续，停止后自动云端转写`,
+          5
+        )
       }
+
       setListening(true)
       message.success('已开始语音录入')
     } catch {
@@ -368,7 +385,6 @@ export function useVoiceInputCard({
 
   return {
     isRecordMode,
-    speechSupported,
     recordingSupported,
     listening,
     uploadingAudio,
