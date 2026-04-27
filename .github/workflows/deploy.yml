@@ -113,6 +113,19 @@ jobs:
             docker compose exec -T backend python migrate.py
             # seed_config 维护质控规则与 Prompt 模板（重复执行幂等）
             docker compose exec -T backend python seed_config.py
+
+            # ── 自动配置 crontab：每天凌晨 3 点跑 backup.sh 备份 PG + Orthanc + uploads
+            # 检查 crontab 是否已含 backup.sh，没有则追加（幂等，不会重复加）
+            BACKUP_CRON="0 3 * * * /app/backend/scripts/backup.sh >> /var/log/mediscribe-backup.log 2>&1"
+            if ! crontab -l 2>/dev/null | grep -qF "/app/backend/scripts/backup.sh"; then
+              echo "[deploy] 配置每日备份 crontab..."
+              # 给脚本可执行权限
+              chmod +x /app/backend/scripts/backup.sh
+              # 追加到现有 crontab（保留之前的）
+              (crontab -l 2>/dev/null; echo "$BACKUP_CRON") | crontab -
+              echo "[deploy] crontab 已配置：$BACKUP_CRON"
+            fi
+
             echo "Deploy finished at $(date) release=$SENTRY_RELEASE"
 
       - name: Health check
