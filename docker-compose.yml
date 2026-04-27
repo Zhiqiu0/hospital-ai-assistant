@@ -48,7 +48,9 @@ services:
   # 替代 pacs.py 的本地 DICOM 处理：负责 DICOM 文件存储、Study/Series 索引、
   # 缩略图渲染、窗位窗宽、DIMSE 直传等。FastAPI 通过 DICOMweb HTTP 调用。
   orthanc:
-    image: docker.m.daocloud.io/orthancteam/orthanc:25.6.2
+    # daocloud 有第三方镜像白名单，orthancteam 不在内（issue #2328）
+    # 改用 docker.1ms.run（无白名单，支持任意 namespace）
+    image: docker.1ms.run/orthancteam/orthanc:25.6.2
     restart: unless-stopped
     depends_on:
       db:
