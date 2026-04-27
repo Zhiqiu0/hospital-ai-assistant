@@ -38,6 +38,9 @@ Thumbs.db
 backend/logs/
 backend/uploads/
 backend/etc/
+# 服务器上 docker-compose 把 /app/logs 作为 bind mount 挂给 backend 容器写日志
+# 项目根的 logs/ 是运行时产物，与 backend/logs/ 区分
+/logs/
 
 # Claude Code 本地配置
 .claude/

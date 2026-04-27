@@ -53,7 +53,13 @@ jobs:
           script: |
             set -e
             cd /app
-            git pull origin main
+            # 用 fetch + reset --hard 替代 git pull：
+            # 1) 强一致——服务器是 production checkout，不应该有任何手动改动；
+            #    git pull 遇到 working tree dirty 会拒绝，整个 deploy 卡死
+            # 2) 任何被人手工改的文件都被强制覆盖回 origin/main 版本，单一真相源
+            # 3) untracked files 不动（不会误删 logs/ 等运行时产物）
+            git fetch origin main
+            git reset --hard origin/main
             export SENTRY_RELEASE
 
             # 清理之前 deploy 中断留下的僵尸 container（名字前缀带随机 hash 的）
@@ -127,11 +133,9 @@ jobs:
             sudo touch /var/log/mediscribe-backup.log
             sudo chown "$(id -u):$(id -g)" /var/log/mediscribe-backup.log
 
-            # backup.sh 每次部署都加 +x（git pull 不保留 executable bit，
-            # 没这行的话 cron 跑会 Permission denied）
-            chmod +x /app/backend/scripts/backup.sh
-
             # ── 自动配置 crontab：每天凌晨 3 点跑 backup.sh 备份 PG + Orthanc + uploads
+            # backup.sh 的 +x 已在 git 仓库里标记为 100755（git update-index --chmod=+x）
+            # reset --hard 会保留 mode bit，不需要再 chmod
             # 检查 crontab 是否已含 backup.sh，没有则追加（幂等，不会重复加）
             BACKUP_CRON="0 3 * * * /app/backend/scripts/backup.sh >> /var/log/mediscribe-backup.log 2>&1"
             if ! crontab -l 2>/dev/null | grep -qF "/app/backend/scripts/backup.sh"; then
