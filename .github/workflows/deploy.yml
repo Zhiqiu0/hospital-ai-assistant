@@ -114,6 +114,14 @@ jobs:
             # seed_config 维护质控规则与 Prompt 模板（重复执行幂等）
             docker compose exec -T backend python seed_config.py
 
+            # ── 备份基础设施前置条件（幂等，每次部署都跑）─────────────────
+            # /var/backups 默认 root:root，ubuntu 写不进去 → 备份脚本 mkdir 会 fail
+            # /var/log/mediscribe-backup.log 同理（cron 用 >> 追加要可写）
+            # 用 install -d 一次性建目录并 chown 给当前 ssh user（ubuntu）
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 750 /var/backups/mediscribe
+            sudo touch /var/log/mediscribe-backup.log
+            sudo chown "$(id -u):$(id -g)" /var/log/mediscribe-backup.log
+
             # ── 自动配置 crontab：每天凌晨 3 点跑 backup.sh 备份 PG + Orthanc + uploads
             # 检查 crontab 是否已含 backup.sh，没有则追加（幂等，不会重复加）
             BACKUP_CRON="0 3 * * * /app/backend/scripts/backup.sh >> /var/log/mediscribe-backup.log 2>&1"

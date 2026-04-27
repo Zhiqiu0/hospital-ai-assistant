@@ -67,7 +67,11 @@ services:
       - ./backend/orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
       - orthanc_storage:/var/lib/orthanc/db
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --user=mediscribe --password=mediscribe-orthanc-2026 http://localhost:8042/system | grep -q Name"]
+      # orthanc 25 镜像里没装 wget / curl，原来的 wget healthcheck 永远失败
+      # （进 unhealthy 但服务实际正常，docker compose ps 误报）。
+      # 改用 bash /dev/tcp 做 TCP 端口探测：进程在 listen 8042 = 服务存活，
+      # 不需要密码、不依赖外部工具，镜像里 bash 一直在。
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8042'"]
       interval: 10s
       timeout: 5s
       retries: 12
