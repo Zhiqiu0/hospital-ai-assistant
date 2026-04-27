@@ -66,7 +66,12 @@ jobs:
             # 镜像走 daocloud（library/*）+ 1ms.run（orthancteam）反代
             # 在 docker-compose.yml 与 Dockerfile 里写死前缀，不依赖 daemon mirror
             # （SSH user 无 root 权限改不了 /etc/docker/daemon.json）
-            docker compose pull --ignore-buildable
+            #
+            # pull 加 || true 容错：1ms.run 偶尔把镜像下架（如 orthanc 25.6.2
+            # 已被反代删除要付费），但本地 image 还在跑，不需要每次 deploy
+            # 都重新拉。失败时降级到本地缓存，up -d 默认 --pull missing 不会
+            # 二次尝试。代价：image 升级需要在 compose 文件里改 tag 触发重建。
+            docker compose pull --ignore-buildable || echo "[deploy] WARN: 部分 image pull 失败，使用本地缓存继续"
             docker compose build backend frontend
 
             # 先单独起 db 等它 healthy（其他 service 都依赖 db；orthanc 需要 db
