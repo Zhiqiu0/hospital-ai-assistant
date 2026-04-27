@@ -21,6 +21,8 @@
          ...
 """
 
+import os as _os
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -34,10 +36,14 @@ async_db_url = settings.database_url.replace(
 )
 
 # ── 异步引擎 ──────────────────────────────────────────────────────────────────
-# echo=settings.app_debug: 开发环境打印 SQL 语句，生产环境关闭（app_debug=False）
+# echo: 默认关闭 SQL 打印！每条 SQL stdout 输出会阻塞 asyncio event loop，
+#       PACS 单端点叠加 4 个表查询时实测延迟 5s+ 都来自这里。需要 SQL 调试时
+#       设环境变量 DB_ECHO=true 临时打开（仅排障用，平时 app_debug=True 不再触发）
+_db_echo = _os.environ.get("DB_ECHO", "").lower() in {"1", "true", "yes"}
+
 # pool_size/max_overflow 仅 PostgreSQL/MySQL 等支持连接池的驱动适用；
 # SQLite (含 CI 的 sqlite+aiosqlite:///:memory:) 用 StaticPool，不接受这两个参数
-_engine_kwargs: dict = {"echo": settings.app_debug}
+_engine_kwargs: dict = {"echo": _db_echo}
 if not async_db_url.startswith("sqlite"):
     _engine_kwargs["pool_size"] = 10        # 连接池核心大小
     _engine_kwargs["max_overflow"] = 20     # 超出 pool_size 时最多额外创建的连接数

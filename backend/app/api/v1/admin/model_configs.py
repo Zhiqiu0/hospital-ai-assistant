@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import require_admin
 from app.database import get_db
 from app.models.config import ModelConfig
+from app.services.ai.model_options import invalidate_model_options
 
 router = APIRouter()
 
@@ -102,4 +103,6 @@ async def update_model_config(
         config.description = data.description
     await db.commit()
     await db.refresh(config)
+    # 失效该 scene 的模型配置缓存（每次 AI 调用前都查这个）
+    await invalidate_model_options(config.scene)
     return {"message": "保存成功", "scene": config.scene}

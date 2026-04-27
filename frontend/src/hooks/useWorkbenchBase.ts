@@ -2,7 +2,7 @@
  * 工作台基础逻辑 Hook（hooks/useWorkbenchBase.ts）
  *
  * 提取三个工作台页面（门诊/急诊/住院）共同的逻辑：
- *   - 历史病历面板（historyOpen/loadHistory/openHistory）
+ *   - 历史病历抽屉开关（historyOpen/openHistory）—— 数据由 PatientHistoryDrawer 自拉
  *   - 续接诊面板（resumeOpen/openResume/handleResume）
  *   - 登出操作（handleLogout）
  *
@@ -14,11 +14,11 @@
  *
  * 恢复接诊（handleResume）流程：
  *   1. 调用 GET /encounters/{id}/workspace 获取完整快照
- *   2. 若病历已签发（status='submitted'），警告并退出（不允许修改）
- *   3. 依次恢复：reset → setCurrentEncounter → setInquiry → setRecordContent/Type
+ *   2. 若病历已签发（status='submitted'），打开历史病历抽屉而非编辑器
+ *   3. 否则依次恢复：reset → setCurrentEncounter → setInquiry → setRecordContent/Type
  */
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -48,10 +48,8 @@ export function useWorkbenchBase({
   const { setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset } =
     useWorkbenchStore()
 
-  // History drawer
+  // History drawer 开关（数据由 PatientHistoryDrawer 自己拉，不再走本 hook）
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [historyRecords, setHistoryRecords] = useState<any[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
   const [viewRecord, setViewRecord] = useState<any>(null)
 
   // Resume drawer
@@ -59,21 +57,8 @@ export function useWorkbenchBase({
   const [resumeList, setResumeList] = useState<any[]>([])
   const [resumeLoading, setResumeLoading] = useState(false)
 
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true)
-    try {
-      const data: any = await api.get('/medical-records/my')
-      setHistoryRecords(data.items || [])
-    } catch {
-      message.error('加载历史病历失败')
-    } finally {
-      setHistoryLoading(false)
-    }
-  }, [])
-
   const openHistory = () => {
     setHistoryOpen(true)
-    loadHistory()
   }
 
   const openResume = async () => {
@@ -97,8 +82,18 @@ export function useWorkbenchBase({
     try {
       const snapshot: any = await api.get(`/encounters/${item.encounter_id}/workspace`)
       if (snapshot.active_record?.status === 'submitted') {
+        // 已签发病历不可继续编辑：不再让用户自己去找历史病历入口（住院端 PatientHistoryDrawer
+        // 需要先选中病区患者才能查看，而签发后该患者已从"进行中"列表移除，会陷入死循环）。
+        // 直接帮用户：① 把患者塞进 currentEncounter 让历史抽屉能识别 patientId
+        //          ② 同步档案到本地缓存
+        //          ③ 关续接诊抽屉、打开历史病历抽屉
+        applySnapshotResult(snapshot)
+        if (snapshot.patient) {
+          setCurrentEncounter(snapshot.patient, snapshot.encounter_id)
+        }
         setResumeOpen(false)
-        message.warning('该接诊病历已签发，不可修改，请在「历史病历」中查看')
+        setHistoryOpen(true)
+        message.info(`「${snapshot.patient?.name || ''}」的本次病历已签发，已为您打开历史病历`)
         return
       }
       reset()
@@ -138,11 +133,9 @@ export function useWorkbenchBase({
   }
 
   return {
-    // History
+    // History drawer 开关（PatientHistoryDrawer 共用此开关）
     historyOpen,
     setHistoryOpen,
-    historyRecords,
-    historyLoading,
     openHistory,
     // View record
     viewRecord,

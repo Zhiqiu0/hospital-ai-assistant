@@ -22,6 +22,7 @@ import TreatmentSection from './TreatmentSection'
 import EmergencySection from './EmergencySection'
 import EmergencyDispositionBar from './EmergencyDispositionBar'
 import PatientProfileCard from './PatientProfileCard'
+import ImagingReportsCard from './ImagingReportsCard'
 import CollapsibleSection from '@/components/common/CollapsibleSection'
 import { useInquiryPanel } from '@/hooks/useInquiryPanel'
 
@@ -50,6 +51,7 @@ export default function InquiryPanel() {
     setIsDirty,
     saving,
     onSave,
+    currentPatient,
     applyVoiceInquiry,
     applyVoiceToRecord,
     visitNatureColor,
@@ -158,6 +160,9 @@ export default function InquiryPanel() {
 
           {/* 患者档案卡片（既往/过敏/个人/家族/月经/婚育/用药/宗教 8 字段，纵向跟随患者） */}
           <PatientProfileCard />
+
+          {/* R1 sprint F-1：既往影像报告卡片，0 条时不渲染 */}
+          <ImagingReportsCard patientId={currentPatient?.id} />
 
           {/* 语音录入卡片：未锁定时填左侧表单，锁定后追记到病历章节 */}
           <VoiceInputCard

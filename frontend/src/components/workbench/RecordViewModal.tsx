@@ -38,6 +38,14 @@ function printRecord(record: any, recordTypeLabel: (type: string) => string) {
     .filter(Boolean)
     .join(' · ')
   const signedAt = record.submitted_at ? new Date(record.submitted_at).toLocaleString('zh-CN') : ''
+  // 责任医生：按《病历书写规范》必须显示。优先用接诊医生，签发者不同时附注。
+  const doctorLine = record.doctor_name
+    ? `接诊医生：${record.doctor_name}${
+        record.submitted_by_name && record.submitted_by_name !== record.doctor_name
+          ? `（签发：${record.submitted_by_name}）`
+          : ''
+      }`
+    : ''
   const formatted = (record.content || '').replace(/\n/g, '<br>')
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <title>${typeLabel} - ${patientDesc}</title>
@@ -46,13 +54,13 @@ function printRecord(record: any, recordTypeLabel: (type: string) => string) {
   h2 { text-align: center; font-size: 20px; margin-bottom: 4px; }
   .meta { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
   .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; }
-  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: #94a3b8; text-align: right; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: #94a3b8; display: flex; justify-content: space-between; }
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
 <h2>${typeLabel}</h2>
 <div class="meta">${patientDesc}${signedAt ? `&nbsp;&nbsp;|&nbsp;&nbsp;签发时间：${signedAt}` : ''}</div>
 <div class="content">${formatted}</div>
-<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
+<div class="footer"><span>${doctorLine}</span><span>MediScribe 智能病历系统 · 本病历由医生审核签发</span></div>
 <script>window.onload = function() { window.print(); }<\/script>
 </body></html>`
   const w = window.open('', '_blank')
@@ -127,20 +135,44 @@ export default function RecordViewModal({
       >
         {record?.content || '（病历内容为空）'}
       </div>
+      {/* 已签发标识 + 责任医生 + 签发时间。
+          按《病历书写规范》要求展示责任医生姓名；后端从 list_by_patient 返回。
+          submitted_by_name = 实际触发签发的医生（可能与接诊医生不同：管床代签等）；
+          doctor_name = 接诊医生（接诊创建者，主要责任人）。一般情况下两者相同。 */}
       <div
         style={{
           marginTop: 12,
-          padding: '8px 12px',
+          padding: '10px 14px',
           background: '#f0fdf4',
           border: '1px solid #bbf7d0',
           borderRadius: 8,
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: 12,
+          flexWrap: 'wrap',
+          fontSize: 12,
+          color: '#166534',
         }}
       >
-        <CheckOutlined style={{ color: '#22c55e' }} />
-        <Text style={{ fontSize: 12, color: '#166534' }}>已签发病历 · 不可修改</Text>
+        <Space size={6}>
+          <CheckOutlined style={{ color: '#22c55e' }} />
+          <span>已签发病历 · 不可修改</span>
+        </Space>
+        {record?.doctor_name && (
+          <span style={{ color: '#065f46' }}>
+            接诊医生：<b>{record.doctor_name}</b>
+            {record.submitted_by_name && record.submitted_by_name !== record.doctor_name && (
+              <span style={{ color: '#6b7280', marginLeft: 6 }}>
+                （签发：{record.submitted_by_name}）
+              </span>
+            )}
+          </span>
+        )}
+        {record?.submitted_at && (
+          <span style={{ color: '#065f46' }}>
+            签发于：{new Date(record.submitted_at).toLocaleString('zh-CN')}
+          </span>
+        )}
       </div>
     </Modal>
   )

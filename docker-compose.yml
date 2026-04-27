@@ -8,6 +8,8 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-medassist123}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 容器首次初始化时自动建 orthanc 数据库（已有数据卷的环境不会跑这个，需手动 CREATE DATABASE）
+      - ./backend/db_init:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
@@ -15,6 +17,48 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # ───── Redis 缓存（PACS 缩略图加速 + 后续通用缓存）───────
+  # 单 study 537 帧每张 0.6s 走 Orthanc 渲染 → 总计 5+ 分钟才出齐缩略图
+  # 接入 Redis 后第一次走 Orthanc，后续命中缓存 < 5ms，缩略图列表秒开
+  # 也为后续 session / 限流 / 异步任务队列预留通用缓存层
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # PACS 缩略图最大占内存 256MB，超出 LRU 自动驱逐最久没用的
+    # save "" 关闭 RDB 持久化（缓存丢了能重新生成，不需要持久化拖慢写入）
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ───── Orthanc DICOM 服务器（R1 迁移）─────────────────────
+  # 替代 pacs.py 的本地 DICOM 处理：负责 DICOM 文件存储、Study/Series 索引、
+  # 缩略图渲染、窗位窗宽、DIMSE 直传等。FastAPI 通过 DICOMweb HTTP 调用。
+  orthanc:
+    image: orthancteam/orthanc:25.6.2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4242:4242"   # DIMSE（CT/MR 设备直推用）
+      - "8042:8042"   # HTTP REST + DICOMweb（FastAPI / OHIF 用）
+    volumes:
+      - ./backend/orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+      - orthanc_storage:/var/lib/orthanc/db
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --user=mediscribe --password=mediscribe-orthanc-2026 http://localhost:8042/system | grep -q Name"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   backend:
     build: ./backend
@@ -35,9 +79,17 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       ALIYUN_API_KEY: ${ALIYUN_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
       APP_ENV: production
       APP_DEBUG: "false"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://mediscribe.cn,http://localhost}
+      # Sentry 错误监控：DSN/环境/性能采样率从 .env 读，留空时自动跳过初始化
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.05}
+      # release 标识：CI deploy 时由 deploy.yml 注入 git short SHA
+      # 本地手动 docker compose up 不传，event 没有 release tag 但不影响功能
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     volumes:
       - uploads_data:/app/uploads
       - /app/logs:/app/logs
@@ -66,3 +118,5 @@ services:
 volumes:
   postgres_data:
   uploads_data:
+  orthanc_storage:
+  redis_data:

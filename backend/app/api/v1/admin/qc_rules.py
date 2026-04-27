@@ -15,6 +15,7 @@ from app.core.security import require_admin
 from app.database import get_db
 from app.models.config import QCRule
 from app.schemas.config import QCRuleCreate, QCRuleResponse, QCRuleUpdate
+from app.services.qc_rules_cache import invalidate_qc_rules
 
 router = APIRouter()
 
@@ -41,6 +42,7 @@ async def create_rule(
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
+    await invalidate_qc_rules(rule.rule_type)
     return rule
 
 
@@ -60,6 +62,7 @@ async def update_rule(
         setattr(rule, field, value)
     await db.commit()
     await db.refresh(rule)
+    await invalidate_qc_rules(rule.rule_type)
     return rule
 
 
@@ -77,6 +80,7 @@ async def toggle_rule(
     rule.is_active = not rule.is_active
     await db.commit()
     await db.refresh(rule)
+    await invalidate_qc_rules(rule.rule_type)
     return rule
 
 
@@ -91,5 +95,7 @@ async def delete_rule(
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="QC rule not found")
+    rule_type = rule.rule_type
     await db.delete(rule)
     await db.commit()
+    await invalidate_qc_rules(rule_type)

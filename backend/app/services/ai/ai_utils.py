@@ -20,8 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.config import PromptTemplate
 from app.services.ai.llm_client import llm_client
 from app.services.ai.task_logger import log_ai_task
+from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
+
+# Prompt 模板缓存 key 前缀，按 scene 维度。admin 写模板后调
+# invalidate_active_prompt 失效。
+_PROMPT_CACHE_KEY = "ai:prompt:{scene}"
+_PROMPT_CACHE_TTL = 60
 
 
 def compose_physical_exam(
@@ -82,7 +88,7 @@ def safe_format(template: str, **kwargs) -> str:
 
 
 async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
-    """从数据库读取指定场景的激活 prompt 模板内容。
+    """从数据库读取指定场景的激活 prompt 模板内容（带 Redis 缓存）。
 
     Args:
         db: 异步数据库会话。
@@ -90,7 +96,18 @@ async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
 
     Returns:
         激活模板的内容字符串，不存在时返回 None（调用方使用内置默认值）。
+
+    缓存：
+      Redis 60 秒 TTL；admin 修改 PromptTemplate 后调用
+      invalidate_active_prompt(scene) 主动失效。
+      "无模板"（None）也缓存为 {"none": True} 避免穿透打 DB。
     """
+    cache_key = _PROMPT_CACHE_KEY.format(scene=scene)
+    cached = await redis_cache.get_json(cache_key)
+    if cached is not None:
+        # 用占位对象表示"明确无模板"，区分缓存未命中与"DB 中确实没有"
+        return None if cached.get("none") else cached.get("content")
+
     result = await db.execute(
         select(PromptTemplate)
         .where(PromptTemplate.scene == scene, PromptTemplate.is_active.is_(True))
@@ -98,7 +115,42 @@ async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
         .limit(1)
     )
     tpl = result.scalar_one_or_none()
-    return tpl.content if tpl else None
+    content = tpl.content if tpl else None
+    await redis_cache.set_json(
+        cache_key,
+        {"content": content} if content else {"none": True},
+        ttl=_PROMPT_CACHE_TTL,
+    )
+    return content
+
+
+async def invalidate_active_prompt(scene: str | None = None) -> None:
+    """admin 修改 PromptTemplate 后调用，立即让所有进程看到新模板。"""
+    if scene:
+        await redis_cache.delete(_PROMPT_CACHE_KEY.format(scene=scene))
+    else:
+        await redis_cache.delete_prefix("ai:prompt:")
+
+
+async def stream_with_lock(generator, lock_key: str, lock_token: str):
+    """包装 SSE 生成器，在流结束/异常时释放锁。
+
+    用法：
+        token = await redis_cache.acquire_lock(key, ttl=120)
+        if not token: raise HTTPException(429, "...")
+        return StreamingResponse(
+            stream_with_lock(stream_text(...), key, token),
+            media_type="text/event-stream",
+        )
+
+    LLM 流式接口可能跑 30-60s，期间用户重复点击会发起新流；用锁包住整个流，
+    第二次请求看到锁存在直接 409，避免烧 token + 写库冲突。
+    """
+    try:
+        async for chunk in generator:
+            yield chunk
+    finally:
+        await redis_cache.release_lock(lock_key, lock_token)
 
 
 async def stream_text(
@@ -129,7 +181,7 @@ async def stream_text(
             payload = json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False)
             yield f"data: {payload}\n\n"
     except Exception as exc:
-        logger.error("stream_text LLM error: %s", exc, exc_info=True)
+        logger.exception("ai.stream_text: failed err=%s", exc)
         yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
     yield 'data: {"type":"done"}\n\n'

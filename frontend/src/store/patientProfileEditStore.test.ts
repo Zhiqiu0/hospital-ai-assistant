@@ -117,6 +117,7 @@ describe('profileToForm helper', () => {
     const form = profileToForm({ allergy_history: 'X' })
     expect(form.allergy_history).toBe('X')
     expect(form.past_history).toBe('')
-    expect(form.menstrual_history).toBe('')
+    // 注：月经史已从档案移除，profileToForm 不再返回该字段
+    expect(form.religion_belief).toBe('')
   })
 })

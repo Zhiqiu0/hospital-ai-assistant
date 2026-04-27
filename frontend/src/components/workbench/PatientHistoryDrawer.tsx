@@ -24,7 +24,6 @@ import {
   Typography,
   Avatar,
   Spin,
-  AutoComplete,
   Input,
 } from 'antd'
 import {
@@ -43,6 +42,10 @@ interface SelectedPatient {
   name: string
   gender?: string
   age?: number | null
+  /** 是否有进行中的住院接诊；驱动头部"在院中"绿色标签 */
+  hasActiveInpatient?: boolean
+  /** 是否曾住过院（含已出院）；不在院 + 有历史 → 显示"已出院"灰色标签 */
+  hasAnyInpatientHistory?: boolean
 }
 
 interface Props {
@@ -54,6 +57,8 @@ interface Props {
   patientAge?: number | null
   /** 开启搜索模式：门诊端点"患者档案"→ 可任意搜患者看档案 */
   searchable?: boolean
+  /** 父级传入的"当前患者是否在院"（住院端选中病区患者时一定为 true） */
+  patientHasActiveInpatient?: boolean
   onView: (record: any) => void
   recordTypeLabel: (t: string) => string
 }
@@ -79,6 +84,7 @@ export default function PatientHistoryDrawer({
   patientGender,
   patientAge,
   searchable = false,
+  patientHasActiveInpatient,
   onView,
   recordTypeLabel,
 }: Props) {
@@ -88,9 +94,10 @@ export default function PatientHistoryDrawer({
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
 
-  // 搜索模式状态
+  // 搜索模式状态：未选中患者时显示一个可滚动的患者列表 + 顶部搜索框
+  // 搜索框是"过滤这个列表"的语义，不是 dropdown autocomplete
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [searchOptions, setSearchOptions] = useState<any[]>([])
+  const [patientList, setPatientList] = useState<any[]>([])
   const [searching, setSearching] = useState(false)
 
   // props 里的 patientId 改变或抽屉打开时，同步 selected
@@ -100,16 +107,22 @@ export default function PatientHistoryDrawer({
       if (searchable) {
         setSelected(null)
         setSearchKeyword('')
-        setSearchOptions([])
+        setPatientList([])
       }
       return
     }
     if (patientId && patientName) {
-      setSelected({ id: patientId, name: patientName, gender: patientGender, age: patientAge })
+      setSelected({
+        id: patientId,
+        name: patientName,
+        gender: patientGender,
+        age: patientAge,
+        hasActiveInpatient: patientHasActiveInpatient,
+      })
     } else if (!searchable) {
       setSelected(null)
     }
-  }, [open, patientId, patientName, patientGender, patientAge, searchable])
+  }, [open, patientId, patientName, patientGender, patientAge, searchable, patientHasActiveInpatient])
 
   // selected 变化时加载病历
   useEffect(() => {
@@ -132,50 +145,37 @@ export default function PatientHistoryDrawer({
       .finally(() => setLoading(false))
   }, [open, selected])
 
-  // 搜索框输入防抖（300ms）
+  // 搜索/列表加载：抽屉打开 + 搜索模式 + 没选中患者时拉患者列表
+  // 关键词为空 → 拉前 50 个（按建档时间倒序，最近建档的医生更可能想点）
+  // 关键词非空 → 拉对应过滤结果（防抖 300ms）
   useEffect(() => {
-    if (!searchable || !searchKeyword.trim()) {
-      setSearchOptions([])
+    if (!open || !searchable || selected) {
+      // 已选中患者后右侧展示病历列表，不需要再拉患者列表
       return
     }
     const kw = searchKeyword.trim()
     const t = setTimeout(() => {
       setSearching(true)
       api
-        .get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=8`)
+        .get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=50`)
         .then((res: any) => {
-          const items = res?.items || res || []
-          setSearchOptions(
-            items.map((p: any) => ({
-              value: p.id,
-              label: (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Avatar size={24} style={{ background: '#0891B2', fontSize: 12 }}>
-                    {p.name?.[0]}
-                  </Avatar>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-4)' }}>
-                    {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
-                    {p.age != null ? ` · ${p.age}岁` : ''}
-                    {p.patient_no ? ` · ${p.patient_no}` : ''}
-                  </span>
-                </div>
-              ),
-              patient: p,
-            }))
-          )
+          setPatientList(res?.items || [])
         })
-        .catch(() => setSearchOptions([]))
+        .catch(() => setPatientList([]))
         .finally(() => setSearching(false))
-    }, 300)
+    }, kw ? 300 : 0)  // 空 keyword 立即拉，有 keyword 防抖 300ms
     return () => clearTimeout(t)
-  }, [searchKeyword, searchable])
+  }, [open, searchable, selected, searchKeyword])
 
-  const handlePickPatient = (_value: string, option: any) => {
-    const p = option.patient
-    setSelected({ id: p.id, name: p.name, gender: p.gender, age: p.age })
-    setSearchKeyword('')
-    setSearchOptions([])
+  const handlePickPatient = (p: any) => {
+    setSelected({
+      id: p.id,
+      name: p.name,
+      gender: p.gender,
+      age: p.age,
+      hasActiveInpatient: !!p.has_active_inpatient,
+      hasAnyInpatientHistory: !!p.has_any_inpatient_history,
+    })
   }
 
   return (
@@ -192,24 +192,19 @@ export default function PatientHistoryDrawer({
       onClose={onClose}
       styles={{ body: { padding: 0 } }}
     >
-      {/* 搜索模式：顶部搜索框 + （已选患者后可点"换患者"） */}
-      {searchable && (
+      {/* 搜索模式 + 未选中：顶部搜索框 + 下方滚动患者列表
+          搜索框是"过滤这个列表"语义；空关键词时显示前 50 个（按建档时间倒序）。
+          医生记不住名字也可以滚动找。 */}
+      {searchable && !selected && (
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
-          <AutoComplete
-            style={{ width: '100%' }}
+          <Input
+            prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
+            placeholder="输入姓名 / 病案号 过滤列表"
+            allowClear
+            size="middle"
             value={searchKeyword}
-            onChange={setSearchKeyword}
-            options={searchOptions}
-            onSelect={handlePickPatient}
-            notFoundContent={searching ? <Spin size="small" /> : (searchKeyword.trim() ? '未找到患者' : null)}
-          >
-            <Input
-              prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
-              placeholder="输入姓名 / 病案号 搜索患者"
-              allowClear
-              size="middle"
-            />
-          </AutoComplete>
+            onChange={e => setSearchKeyword(e.target.value)}
+          />
         </div>
       )}
 
@@ -232,7 +227,25 @@ export default function PatientHistoryDrawer({
             {selected.name?.[0]}
           </Avatar>
           <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{selected.name}</div>
+            <Space size={6} align="center">
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{selected.name}</span>
+              {/* 住院状态标签：在院中（绿）/ 已出院（灰）。
+                  仅在 has_active_inpatient 为明确布尔值时显示，undefined 不显示
+                  避免老接口/未带字段时误标。 */}
+              {/* 三态住院 Tag：
+                  active=true                  → 在院中（绿）
+                  active=false + history=true  → 已出院（灰）
+                  history=false                → 不打 Tag（纯门诊或新患者） */}
+              {selected.hasActiveInpatient === true ? (
+                <Tag color="green" style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 18, lineHeight: '16px' }}>
+                  在院中
+                </Tag>
+              ) : selected.hasAnyInpatientHistory === true ? (
+                <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 18, lineHeight: '16px', background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}>
+                  已出院
+                </Tag>
+              ) : null}
+            </Space>
             <Space size={6} style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
               {selected.gender && selected.gender !== 'unknown' && (
                 <span>{selected.gender === 'male' ? '男' : '女'}</span>
@@ -255,12 +268,65 @@ export default function PatientHistoryDrawer({
         </div>
       ) : null}
 
-      {/* 列表 or 空态 */}
-      {!selected ? (
+      {/* 未选中患者：搜索模式显示患者列表，非搜索模式显示空态提示 */}
+      {!selected && searchable ? (
+        <div style={{ padding: '8px 12px' }}>
+          {searching && patientList.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32 }}><Spin size="small" /></div>
+          ) : patientList.length === 0 ? (
+            <Empty description={searchKeyword ? '未找到匹配患者' : '暂无患者'} style={{ padding: '40px 0' }} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            patientList.map((p: any) => (
+              <div
+                key={p.id}
+                onClick={() => handlePickPatient(p)}
+                style={{
+                  padding: '10px 12px',
+                  marginBottom: 6,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'var(--surface-2)'
+                  e.currentTarget.style.borderColor = '#86efac'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'var(--surface)'
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                }}
+              >
+                <Avatar size={32} style={{ background: '#0891B2', flexShrink: 0 }}>{p.name?.[0]}</Avatar>
+                <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
+                  <Space size={6} align="center">
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</span>
+                    {/* 三态住院 Tag（与抽屉头部、复诊搜索保持一致） */}
+                    {p.has_active_inpatient ? (
+                      <Tag color="green" style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px' }}>在院中</Tag>
+                    ) : p.has_any_inpatient_history ? (
+                      <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px', background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}>已出院</Tag>
+                    ) : null}
+                  </Space>
+                  <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
+                    {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
+                    {p.age != null ? ` · ${p.age}岁` : ''}
+                    {p.patient_no ? ` · ${p.patient_no}` : ''}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ) : !selected ? (
         <div style={{ padding: '80px 20px', textAlign: 'center' }}>
           <UserOutlined style={{ fontSize: 40, color: 'var(--text-4)', marginBottom: 12 }} />
           <div style={{ color: 'var(--text-3)', fontSize: 13 }}>
-            {searchable ? '在上方搜索框输入患者姓名，查看其所有病历' : '请先从左侧病区选择患者，才能查看其历史病历'}
+            请先从左侧病区选择患者，才能查看其历史病历
           </div>
         </div>
       ) : loading ? (

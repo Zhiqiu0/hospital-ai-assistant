@@ -14,6 +14,7 @@
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 from datetime import datetime, timezone
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
@@ -30,6 +31,10 @@ from app.models.revoked_token import RevokedToken
 from app.schemas.auth import LoginRequest, TokenResponse
 from app.services.audit_service import log_action
 from app.services.auth_service import AuthService
+
+# 模块级 logger：登录/登出是高频运维关注点，单独 INFO 级埋点
+# 与 audit_service.log_action 并存：audit 写 DB（合规），logger 写文件（运维）
+logger = logging.getLogger(__name__)
 
 # OAuth2 scheme：auto_error=False 使 logout 在无 token 时不报错（幂等）
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -48,7 +53,7 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
         但只在确认非爆破（已通过限速）后才向前端暴露具体原因
     """
     # 按用户名维度限速：防爆破单个账号，不影响同网段其他医生
-    login_limiter.check(http_request, key_override=f"login:{request.username}")
+    await login_limiter.check(http_request, key_override=f"login:{request.username}")
 
     service = AuthService(db)
     result = await service.login(request.username, request.password)
@@ -62,6 +67,8 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
             ip_address=http_request.client.host if http_request.client else None,
             status="error",
         )
+        # 运行日志：仅 username + 失败原因，不带密码 / 任何 PII
+        logger.info("auth.login: failed user=%s reason=%s", request.username, detail or "credentials_invalid")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=detail or "登录失败",
@@ -75,6 +82,8 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
         detail="登录成功",
         ip_address=http_request.client.host if http_request.client else None,
     )
+    user_id = result.get("user", {}).get("id") if isinstance(result, dict) else None
+    logger.info("auth.login: success user=%s user_id=%s", request.username, user_id)
     return result
 
 
@@ -96,14 +105,21 @@ async def logout(
             jti = payload.get("jti")
             exp = payload.get("exp")
             if jti and exp:
-                # 将 jti 写入黑名单，expires_at 用于定期清理过期条目
+                # 双写：DB 作为权威存档（审计、Redis 不可用兜底），Redis 作为热路径
+                # （每个受保护请求都校验黑名单，DB 查询是瓶颈）。
                 db.add(RevokedToken(
                     jti=jti,
                     expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
                 ))
                 await db.commit()
+                # Redis TTL 设到 token 自然过期时刻，过期后自动清理
+                from app.services.redis_cache import redis_cache
+                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+                await redis_cache.set_bytes(f"auth:revoked:{jti}", b"1", ttl=ttl)
+                logger.info("auth.logout: success jti=%s", jti)
         except JWTError:
-            pass  # token 已无效（格式错误/签名不符），无需加黑名单
+            # token 已无效（格式错误/签名不符），无需加黑名单。用 debug 而非 pass 留痕
+            logger.debug("auth.logout: invalid token, skip blacklist")
     return {"ok": True}
 
 

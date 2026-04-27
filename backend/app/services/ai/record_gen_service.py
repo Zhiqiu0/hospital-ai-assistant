@@ -7,6 +7,7 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import json
+import logging
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,65 @@ from app.services.ai.ai_utils import compose_physical_exam
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
+
+# 模块级 logger：SSE 流里的异常 yield 给前端但后端原本无痕，靠这条上 Sentry
+logger = logging.getLogger(__name__)
+
+
+# AI 引言常见前缀，正文里出现这些就剥离
+# prompt 已经强约束禁止，本清洗作为兜底（LLM 偶尔越界）
+_AI_INTRO_PATTERNS = (
+    "根据您提供的信息",
+    "根据以上信息",
+    "现为您生成",
+    "以下是",
+    "以下为",
+    "请您查看",
+    "请医生审核",
+    "希望对您有帮助",
+)
+
+
+def _clean_ai_intro(text: str) -> str:
+    """剥离 AI 输出里的引言、Markdown 装饰、章节名包裹的星号。
+
+    医生看到的应该是纯病历内容，不要 AI "我现在为您生成..."这类元描述。
+
+    步骤：
+      1. 如果文本含 `【` 章节标题，剥离第一个 `【` 之前的所有前言（最干净）
+      2. 如果不含章节标题（如润色场景返回纯文本），按行剥离引言/装饰
+      3. 全文范围去掉 `**【XXX】**` 的多余星号包裹
+    """
+    if not text:
+        return text
+
+    # 步骤 0：先把 `**【XXX】**` → `【XXX】`，避免后面找 `【` 时残留前面的 `**`
+    import re as _re
+    text = _re.sub(r"\*\*(【[^】]+】)\*\*", r"\1", text)
+
+    # 优先方案：找到第一个 【 章节作为正文起点
+    # 这是入院记录、首次病程等结构化文档的明显特征
+    bracket_idx = text.find("【")
+    if bracket_idx > 0:
+        text = text[bracket_idx:].strip()
+
+    # 兜底：按行剥离开头的空行 / 装饰符号 / 引言行
+    lines = text.split("\n")
+    skip_idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            skip_idx = i + 1
+            continue
+        if stripped in {"---", "###", "**"} or stripped.startswith("---") or stripped.startswith("###"):
+            skip_idx = i + 1
+            continue
+        if any(p in stripped for p in _AI_INTRO_PATTERNS):
+            skip_idx = i + 1
+            continue
+        break
+    cleaned = "\n".join(lines[skip_idx:]).strip()
+    return cleaned
 
 
 GENERATE_PROMPT = """你是一名专业的临床病历书写助手。根据以下问诊信息，生成标准化的{record_type}病历草稿。
@@ -136,11 +196,23 @@ class RecordGenService:
             await self.db.commit()
 
             for field, value in result.items():
-                data = json.dumps({"type": "field_done", "field": field, "content": value}, ensure_ascii=False)
+                # 清洗 AI 引言/装饰符号（prompt 已禁止但 LLM 偶尔越界）
+                cleaned_value = _clean_ai_intro(value) if isinstance(value, str) else value
+                if cleaned_value != value and field in result:
+                    result[field] = cleaned_value  # 更新 result 让 version 也存清洗后的
+                data = json.dumps({"type": "field_done", "field": field, "content": cleaned_value}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
             done_data = json.dumps({"type": "done", "version_no": new_version_no}, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
+            # 业务里程碑：AI 生成成功（不含病历正文，仅 record_id + 版本号）
+            logger.info(
+                "ai.generate: done record_id=%s version_no=%s fields=%d",
+                record_id, new_version_no, len(result),
+            )
         except Exception as exc:
+            # 后端记日志（含堆栈）→ LoggingIntegration 自动转成 Sentry event
+            # 之前 yield 给前端但后端零痕迹，定位 LLM 异常时无线索
+            logger.exception("ai.generate: failed record_id=%s err=%s", record_id, exc)
             record.status = "draft"
             await self.db.commit()
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
@@ -175,6 +247,7 @@ class RecordGenService:
             )
             yield f"data: {data}\n\n"
         except Exception as exc:
+            logger.exception("ai.continue: failed record_id=%s err=%s", record_id, exc)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
     async def stream_polish(self, record_id: str, request: RecordPolishRequest, user_id: str):
@@ -201,4 +274,5 @@ class RecordGenService:
             data = json.dumps({"type": "done", "content": result}, ensure_ascii=False)
             yield f"data: {data}\n\n"
         except Exception as exc:
+            logger.exception("ai.polish: failed record_id=%s err=%s", record_id, exc)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"

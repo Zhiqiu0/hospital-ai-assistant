@@ -16,7 +16,8 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, String, Text
+from sqlalchemy import Boolean, Date, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -71,21 +72,18 @@ class Patient(Base, TimestampMixin):
     # 血型
     blood_type: Mapped[Optional[str]] = mapped_column(String(10))
 
-    # ── 患者档案（Longitudinal Patient Record）────────────────────────────────
-    # 这些字段跟随患者，不跟随单次接诊。符合 FHIR 标准：
-    # AllergyIntolerance/Condition/MedicationStatement 都挂在 Patient 上，
-    # 复诊时自动加载，医生不用每次重新问。
-    # 新架构通过 GET/PUT /patients/:id/profile 管理。
-    profile_past_history: Mapped[Optional[str]] = mapped_column(Text)         # 既往史
-    profile_allergy_history: Mapped[Optional[str]] = mapped_column(Text)       # 过敏史
-    profile_family_history: Mapped[Optional[str]] = mapped_column(Text)        # 家族史
-    profile_personal_history: Mapped[Optional[str]] = mapped_column(Text)      # 个人史
-    profile_current_medications: Mapped[Optional[str]] = mapped_column(Text)   # 长期用药
-    profile_marital_history: Mapped[Optional[str]] = mapped_column(Text)       # 婚育史
-    profile_menstrual_history: Mapped[Optional[str]] = mapped_column(Text)     # 月经史
-    profile_religion_belief: Mapped[Optional[str]] = mapped_column(Text)       # 宗教信仰（影响用药）
-    # 档案最后更新时间（前端展示"最后更新于 xx 时"）
-    profile_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    # ── 患者档案（Longitudinal Patient Record，JSONB 重构后）─────────────────
+    # 单一 JSONB 字段存全部档案，支持字段级 updated_at + updated_by（FHIR
+    # verificationStatus 思路）。结构：
+    #   {
+    #     "past_history":     {"value": "高血压5年", "updated_at": "...", "updated_by": "doc_xxx"},
+    #     "allergy_history":  {"value": "否认",       "updated_at": "...", "updated_by": "..."},
+    #     ... 共 7 个字段（月经史已移除——时变信息走 inquiry_inputs.menstrual_history）
+    #   }
+    # 字段不存在 = 该项档案从未录入；字段存在但 value 为空 = 显式置空。
+    # 旧的 profile_past_history 等 8 个 TEXT 列在 DB 中保留作历史归档，model 不再映射，
+    # 由 schema_compat 的迁移 SQL 把数据搬到本字段。
+    profile: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
 
     # 该患者的所有接诊记录（按时间倒序使用时在服务层处理）
     encounters: Mapped[list["Encounter"]] = relationship(back_populates="patient")

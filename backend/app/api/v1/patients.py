@@ -21,6 +21,7 @@ from app.schemas.patient import (
     PatientCreate,
     PatientListResponse,
     PatientProfile,
+    PatientProfileFieldConfirm,
     PatientProfileUpdate,
     PatientResponse,
     PatientUpdate,
@@ -106,6 +107,23 @@ async def update_patient_profile(
     """更新患者档案。只覆盖传入的非 None 字段，已有数据保留。
 
     医生在问诊时发现新过敏史/新用药等，写入该接口持久化到患者档案。
+    每个被改动的字段独立刷新 updated_at + updated_by（FHIR 字段级 verification 思路）。
     """
     service = PatientService(db)
-    return await service.update_profile(patient_id, data)
+    return await service.update_profile(patient_id, data, doctor_id=current_user.id)
+
+
+@router.post("/{patient_id}/profile/confirm", response_model=PatientProfile)
+async def confirm_patient_profile_field(
+    patient_id: str,
+    data: PatientProfileFieldConfirm,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """确认档案字段仍准确（"✓ 仍准确"按钮）：仅刷新该字段 updated_at + updated_by。
+
+    用于场景：医生看了既往史，确认 3 年前录入的内容现在还是这样，点一下让"X 天前确认"
+    重新计时，但不需要真的修改值。对应 FHIR verificationStatus: confirmed。
+    """
+    service = PatientService(db)
+    return await service.confirm_profile_field(patient_id, data.field, doctor_id=current_user.id)

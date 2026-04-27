@@ -172,9 +172,10 @@ export const usePatientProfileEditStore = create<State>()(
             personal_history: updated.personal_history ?? null,
             current_medications: updated.current_medications ?? null,
             marital_history: updated.marital_history ?? null,
-            menstrual_history: updated.menstrual_history ?? null,
             religion_belief: updated.religion_belief ?? null,
+            // 月经史已移出档案（地基重构），从 inquiry.menstrual_history 取
             updated_at: updated.updated_at ?? null,
+            fields_meta: updated.fields_meta ?? null,
           })
           set({ isDirty: false, saving: false })
           return true

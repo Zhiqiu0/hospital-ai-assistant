@@ -183,12 +183,24 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    # 检查 token 是否已被吊销（登出后 jti 会写入 revoked_tokens 表）
+    # 检查 token 是否已被吊销：先查 Redis 黑名单（每个 API 请求都走这里，
+    # DB 查询是性能瓶颈），未命中再 fallback 查 DB（应对 Redis 重启后还存活的旧 jti）。
+    # 登出时双写 Redis + DB，DB 作为权威存档兼容审计与 Redis 不可用场景。
     jti = payload.get("jti")
     if jti:
+        from app.services.redis_cache import redis_cache
+        revoked_in_redis = await redis_cache.get_bytes(f"auth:revoked:{jti}")
+        if revoked_in_redis is not None:
+            raise credentials_exception
+        # Redis 没命中（不代表"未吊销"——可能 Redis 刚重启）：再查 DB 兜底
         from app.models.revoked_token import RevokedToken
         revoked = await db.get(RevokedToken, jti)
         if revoked:
+            # DB 有但 Redis 没有（Redis 数据丢失），回填一下，下次直接命中 Redis
+            exp = payload.get("exp")
+            if exp:
+                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+                await redis_cache.set_bytes(f"auth:revoked:{jti}", b"1", ttl=ttl)
             raise credentials_exception
 
     from app.services.user_service import UserService
@@ -196,6 +208,11 @@ async def get_current_user(
     user = await service.get_by_id(user_id)
     if not user or not user.is_active:
         raise credentials_exception
+
+    # 鉴权成功：把 user_id / username 绑定到当前请求上下文
+    # 后续日志自动带 [uid=xxx]，Sentry event 自动带 user 字段
+    from app.core.request_context import bind_user_context
+    bind_user_context(user.id, user.username)
     return user
 
 

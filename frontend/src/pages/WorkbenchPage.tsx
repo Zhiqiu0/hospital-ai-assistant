@@ -11,7 +11,7 @@
  *
  * 顶栏功能：
  *   - 登记新患者（PatientSearch + 接诊登记）
- *   - 历史病历查看（HistoryDrawer）
+ *   - 历史病历查看（PatientHistoryDrawer，按患者维度）
  *   - 续接诊（ResumeDrawer）
  *   - 登出（useWorkbenchBase.handleLogout）
  *
@@ -38,7 +38,6 @@ import InquiryPanel from '@/components/workbench/InquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
-import HistoryDrawer from '@/components/workbench/HistoryDrawer'
 import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
 import LabReportTab from '@/components/workbench/LabReportTab'
@@ -100,8 +99,6 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   const {
     historyOpen,
     setHistoryOpen,
-    historyRecords,
-    historyLoading,
     openHistory,
     viewRecord,
     setViewRecord,
@@ -112,8 +109,6 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
 
   const [modalOpen, setModalOpen] = useState<'new' | 'returning' | null>(null)
   const [imagingOpen, setImagingOpen] = useState(false)
-  // "患者档案"抽屉：门诊医生可任意搜患者看其全量病历（不限自己开的）
-  const [patientLookupOpen, setPatientLookupOpen] = useState(false)
 
   // 新建接诊成功回调：更新 store 并处理住院跳转
   // resumed=true 表示后端检测到已有进行中接诊，直接续接而非新建
@@ -277,22 +272,17 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
 
         {/* Right: user actions */}
         <Space size={4} style={{ flexShrink: 0 }}>
-          <Button
-            size="small"
-            type="text"
-            onClick={openHistory}
-            style={{ color: 'var(--text-3)', fontSize: 12, borderRadius: 8 }}
-          >
-            我的病历
-          </Button>
+          {/* 历史病历：门诊端一个入口看全部签发病历，与住院端命名一致。
+              抽屉默认显示患者列表（按最近就诊倒序）+ 搜索过滤 + 点患者看其全部病历。
+              替代了原来的「我的病历」+「患者档案」两个按钮，避免功能重叠。 */}
           <Button
             icon={<UserOutlined />}
             size="small"
             type="text"
-            onClick={() => setPatientLookupOpen(true)}
+            onClick={openHistory}
             style={{ color: '#059669', fontSize: 12, borderRadius: 8 }}
           >
-            患者档案
+            历史病历
           </Button>
           <Button
             icon={<CameraOutlined />}
@@ -479,21 +469,11 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         onSuccess={handleEncounterCreated}
       />
 
-      <HistoryDrawer
+      {/* 历史病历抽屉：默认显示患者列表（按最近就诊倒序）+ 搜索过滤 +
+          点患者看其全部签发病历。门诊/住院共用同一组件，命名统一为"历史病历"。 */}
+      <PatientHistoryDrawer
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        records={historyRecords}
-        loading={historyLoading}
-        onView={setViewRecord}
-        accentColor={accentColor}
-        tagColor={isEmergency ? 'red' : 'blue'}
-        recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
-      />
-
-      {/* 患者档案抽屉：搜索任意患者看其全量签发病历（门诊医生临床决策看"来路"用） */}
-      <PatientHistoryDrawer
-        open={patientLookupOpen}
-        onClose={() => setPatientLookupOpen(false)}
         patientId={null}
         searchable
         onView={setViewRecord}

@@ -18,7 +18,7 @@ from datetime import date
 from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,7 @@ from app.services.ai.exam_service import ExamService
 from app.services.ai.inquiry_service import InquiryService
 from app.services.encounter_service import EncounterService
 from app.services.patient_service import PatientService
+from app.services.redis_cache import redis_cache
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.encounter import Encounter as EncounterModel, InquiryInput
 from sqlalchemy import select, desc
@@ -49,15 +50,30 @@ async def quick_start_encounter(
     current_user=Depends(get_current_user),
 ):
     """快速开始接诊：创建患者（如已存在则复用）并创建接诊记录。"""
-    # 解析出生日期：优先使用 birth_date 字符串，其次从 age 推算
+    # 幂等锁：防止用户双击「开始接诊」时建出两条 encounter / 两条 patient。
+    # 锁 key 选择：优先 patient_id，其次身份证号，再次姓名（最弱，但有总比没有强）。
+    # ttl 5s 够走完整个 quick-start 流程；崩溃也会自动释放。
+    lock_id = data.patient_id or data.id_card or data.patient_name or "anon"
+    lock_key = f"lock:quickstart:{current_user.id}:{lock_id}"
+    lock_token = await redis_cache.acquire_lock(lock_key, ttl=5)
+    if lock_token is None:
+        raise HTTPException(status_code=409, detail="操作过于频繁，请稍候再试")
+
+    try:
+        return await _quick_start_inner(data, db, current_user)
+    finally:
+        await redis_cache.release_lock(lock_key, lock_token)
+
+
+async def _quick_start_inner(data, db, current_user):
+    """quick-start 主体逻辑（外层包了幂等锁）。"""
+    # 解析出生日期（前端统一传 YYYY-MM-DD），格式无效则忽略，patient 仍可创建
     birth_date_val: Optional[date] = None
     if data.birth_date:
         try:
             birth_date_val = date.fromisoformat(data.birth_date)
         except ValueError:
-            logger.warning("birth_date 格式无效，已忽略: %r", data.birth_date)
-    elif data.age:
-        birth_date_val = date(date.today().year - data.age, 1, 1)
+            logger.warning("encounter.quick_start: invalid birth_date=%r ignored", data.birth_date)
 
     patient_service = PatientService(db)
 
@@ -118,6 +134,11 @@ async def quick_start_encounter(
         )
         resume_row = (await db.execute(resume_prev_stmt)).scalar_one_or_none()
         resume_prev_content = (resume_row if isinstance(resume_row, dict) else {}).get("text") or None
+        # 业务里程碑：自动续接进行中的接诊（避免重复创建）
+        logger.info(
+            "encounter.quick_start: resumed encounter_id=%s patient_id=%s",
+            existing.id, patient["id"],
+        )
         return {
             "encounter_id": existing.id,
             "patient": patient,
@@ -193,6 +214,11 @@ async def quick_start_encounter(
             # content 列是 JSONB，quick_save 格式为 {"text": "病历全文..."}
             previous_record_content = (row if isinstance(row, dict) else {}).get("text") or None
 
+    # 业务里程碑：接诊创建（区分初诊/复诊；患者复用与否）
+    logger.info(
+        "encounter.quick_start: created encounter_id=%s patient_id=%s visit_type=%s first_visit=%s reused=%s",
+        encounter.id, patient["id"], data.visit_type, is_first_visit, patient_reused,
+    )
     return {
         "encounter_id": encounter.id,
         "patient": patient,
@@ -224,6 +250,50 @@ async def get_my_encounters(
     """获取当前医生进行中的接诊列表。"""
     service = EncounterService(db)
     return await service.get_my_encounters(current_user.id)
+
+
+@router.post("/{encounter_id}/discharge")
+async def discharge_encounter(
+    encounter_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """办理出院：把住院接诊状态置为 completed，从病区列表移除。
+
+    业务规则：
+      - 仅住院类型（visit_type='inpatient'）才需要走此接口
+      - 仅当前主治医生（doctor_id 匹配）可办理
+      - 重复调用幂等：已 completed 的接诊不报错，直接返回
+      - 关闭后失效 my_encounters 缓存 + 接诊快照缓存
+    """
+    result = await db.execute(
+        select(EncounterModel).where(EncounterModel.id == encounter_id)
+    )
+    encounter = result.scalar_one_or_none()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="接诊不存在")
+    if encounter.doctor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="只有主治医生可办理出院")
+    if encounter.visit_type != "inpatient":
+        raise HTTPException(status_code=400, detail="仅住院接诊可办理出院")
+
+    if encounter.status == "completed":
+        return {"ok": True, "already_discharged": True, "encounter_id": encounter_id}
+
+    encounter.status = "completed"
+    await db.commit()
+
+    # 失效缓存：接诊列表 + 快照 + 该患者基本信息（has_active_inpatient 变了 → 在院/已出院 标签会变）
+    from app.services.encounter_service import (
+        invalidate_encounter_snapshot,
+        invalidate_my_encounters,
+    )
+    from app.services.patient_service import _invalidate_patient_cache
+    await invalidate_encounter_snapshot(encounter_id)
+    await invalidate_my_encounters(current_user.id)
+    await _invalidate_patient_cache(encounter.patient_id)
+
+    return {"ok": True, "already_discharged": False, "encounter_id": encounter_id}
 
 
 @router.get("/{encounter_id}", response_model=EncounterResponse)

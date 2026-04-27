@@ -2,7 +2,7 @@
  * PACS 影像工作台页面（pages/PacsWorkbenchPage.tsx）
  * DicomViewer 已提取至 components/workbench/DicomViewer.tsx。
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Layout,
   Button,
@@ -28,7 +28,9 @@ import {
   SendOutlined,
   ArrowLeftOutlined,
   ReloadOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
+import { Popconfirm } from 'antd'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { useAuthedImage } from '@/services/authedImage'
@@ -36,39 +38,83 @@ import DicomViewer from '@/components/workbench/DicomViewer'
 
 /**
  * 受鉴权 PACS 缩略图组件。
+ * R1 后路径参数为 SOPInstanceUID（DICOM 标准），不是文件名。
  * 后端已要求 Authorization 头（修复 PHI 泄露漏洞），
  * 这里用 useAuthedImage 把响应转成 blob URL 喂给原生 <img>。
  */
 function AuthedThumbnail({
   studyId,
-  filename,
+  instanceUid,
+  seriesUid,
   style,
 }: {
   studyId: string
-  filename: string
+  instanceUid: string
+  /** 可选：传上来后端免一次反查（537 帧 study 加载从分钟级降到秒级） */
+  seriesUid?: string
   style?: React.CSSProperties
 }) {
-  const { src, error } = useAuthedImage(
-    `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(filename)}`
-  )
-  if (error) {
-    return (
-      <div
-        style={{
-          ...style,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#888',
-          fontSize: 11,
-          background: '#222',
-        }}
-      >
-        加载失败
-      </div>
+  // IntersectionObserver lazy-fetch：未进入视口的缩略图不发请求。
+  // rootMargin=0 仅视口内才加载，避免 537 张同时挤进浏览器 6 路并发队列。
+  // 滚动时图按需补，比预加载远端图更重要——后端单帧 0.6s + 6 路并发，
+  // 一屏 16 张图 ~2s 出齐，预加载只会把后面的请求排队压死前面的。
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || inView) return
+    const io = new IntersectionObserver(
+      entries => {
+        if (entries.some(e => e.isIntersecting)) {
+          setInView(true)
+          io.disconnect()
+        }
+      },
+      { rootMargin: '50px' }, // 仅视口边缘 50px 提前加载（滚动时不至于太突兀）
     )
-  }
-  return <img src={src ?? ''} alt={filename} style={style} loading="lazy" />
+    io.observe(el)
+    return () => io.disconnect()
+  }, [inView])
+
+  const url =
+    inView && (seriesUid
+      ? `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(instanceUid)}?series_uid=${encodeURIComponent(seriesUid)}`
+      : `/api/v1/pacs/${studyId}/thumbnail/${encodeURIComponent(instanceUid)}`)
+
+  const { src, error } = useAuthedImage(url || null)
+  return (
+    <div ref={containerRef} style={style}>
+      {error ? (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#888',
+            fontSize: 11,
+            background: '#222',
+          }}
+        >
+          加载失败
+        </div>
+      ) : src ? (
+        <img
+          src={src}
+          alt={instanceUid.slice(-12)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** R1 后端返回的帧描述：SOPInstanceUID + 所属 series + DICOM InstanceNumber */
+interface Frame {
+  instance_uid: string
+  series_uid: string
+  instance_number: number
 }
 
 const { Header, Content } = Layout
@@ -98,7 +144,9 @@ export default function PacsWorkbenchPage() {
   const [selectedPatient, setSelectedPatient] = useState<string>('')
   const [currentStudy, setCurrentStudy] = useState<any>(null)
   const [stage, setStage] = useState<Stage>('list')
-  const [frames, setFrames] = useState<string[]>([])
+  // R1：frames 由 instance_uid + series_uid + instance_number 组成
+  const [frames, setFrames] = useState<Frame[]>([])
+  // selectedFrames / previewFrame 内容均为 instance_uid（字符串）
   const [selectedFrames, setSelectedFrames] = useState<Set<string>>(new Set())
   const [previewFrame, setPreviewFrame] = useState<string>('')
   const [loadingFrames, setLoadingFrames] = useState(false)
@@ -142,11 +190,21 @@ export default function PacsWorkbenchPage() {
         onUploadProgress: (e: any) => setUploadProgress(Math.round((e.loaded / e.total) * 100)),
         timeout: 300000,
       })
-      message.success(`上传成功！共 ${res.total_frames} 张切片，正在后台生成缩略图...`)
+      // 后端返回 duplicate=true 表示同患者同 DICOM 包二次上传，幂等返回原 study_id
+      if (res.duplicate) {
+        message.info(res.message || '该影像之前已上传过，已为你定位到原记录')
+      } else {
+        message.success(`上传成功！共 ${res.total_frames} 张切片，正在后台生成缩略图...`)
+      }
       loadStudies()
       openStudy(res.study_id, res.total_frames <= 10)
     } catch (e: any) {
-      message.error(e?.detail || '上传失败')
+      // 跨患者重复（HTTP 409）单独提示，让医生意识到是选错了患者
+      if (e?.status === 409 || e?.response?.status === 409) {
+        message.warning(e?.detail || e?.response?.data?.detail || '该影像已绑定其他患者')
+      } else {
+        message.error(e?.detail || '上传失败')
+      }
     } finally {
       setUploading(false)
       setUploadProgress(0)
@@ -159,10 +217,13 @@ export default function PacsWorkbenchPage() {
     try {
       const res: any = await api.get(`/pacs/${studyId}/frames`)
       setCurrentStudy({ study_id: studyId, ...res })
-      setFrames(res.frames || [])
-      const suggested: string[] = res.suggested || []
-      setSelectedFrames(new Set(autoAll ? res.frames : suggested))
-      setPreviewFrame(res.frames?.[0] || '')
+      const allFrames: Frame[] = res.frames || []
+      // 后端 suggested 是 instance_uid 字符串数组（已做智能非均匀抽样）
+      const suggestedUids: string[] = res.suggested || []
+      setFrames(allFrames)
+      const allUids = allFrames.map(f => f.instance_uid)
+      setSelectedFrames(new Set(autoAll ? allUids : suggestedUids))
+      setPreviewFrame(allFrames[0]?.instance_uid || '')
       setStage('select_frames')
     } catch {
       message.error('加载切片列表失败')
@@ -171,16 +232,19 @@ export default function PacsWorkbenchPage() {
     }
   }
 
-  const selectAll = () => setSelectedFrames(new Set(frames))
+  const selectAll = () => setSelectedFrames(new Set(frames.map(f => f.instance_uid)))
+  /** 调用后端 suggested 列表的本地兜底：等距抽样 10 帧 */
   const selectSuggested = () => {
     const step = Math.max(1, Math.floor(frames.length / 10))
-    setSelectedFrames(new Set(frames.filter((_, i) => i % step === 0).slice(0, 10)))
+    setSelectedFrames(
+      new Set(frames.filter((_, i) => i % step === 0).slice(0, 10).map(f => f.instance_uid))
+    )
   }
   const clearSelection = () => setSelectedFrames(new Set())
-  const toggleFrame = (fname: string) =>
+  const toggleFrame = (uid: string) =>
     setSelectedFrames(prev => {
       const next = new Set(prev)
-      next.has(fname) ? next.delete(fname) : next.add(fname)
+      next.has(uid) ? next.delete(uid) : next.add(uid)
       return next
     })
 
@@ -203,6 +267,19 @@ export default function PacsWorkbenchPage() {
       setStage('select_frames')
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  /** 删除影像研究（含 Orthanc 端数据 + 业务表）。
+   *  已发布的 study 后端会拒绝（409），前端只在未发布的状态下显示按钮。 */
+  const deleteStudy = async (studyId: string) => {
+    try {
+      await api.delete(`/pacs/${studyId}`)
+      message.success('已删除')
+      loadStudies()
+    } catch (e: any) {
+      const detail = e?.detail || e?.response?.data?.detail || '删除失败'
+      message.error(detail)
     }
   }
 
@@ -304,7 +381,7 @@ export default function PacsWorkbenchPage() {
                 </Col>
                 <Col>
                   <Upload
-                    accept=".zip,.rar"
+                    accept=".zip,.rar,.7z,.tar,.tar.gz,.tgz,.tar.bz2,.tbz,.tbz2,.tar.xz,.txz,.iso,.gz,.bz2,.xz"
                     showUploadList={false}
                     beforeUpload={handleUpload}
                     disabled={uploading || !selectedPatient}
@@ -315,7 +392,7 @@ export default function PacsWorkbenchPage() {
                       type="primary"
                       disabled={!selectedPatient}
                     >
-                      上传 ZIP / RAR
+                      上传压缩包
                     </Button>
                   </Upload>
                 </Col>
@@ -326,7 +403,7 @@ export default function PacsWorkbenchPage() {
                 )}
               </Row>
               <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
-                支持将 DCM 文件打包成 ZIP 或 RAR 后上传，系统自动解压生成缩略图
+                支持 ZIP / RAR / 7Z / TAR / TAR.GZ / TBZ / ISO 等常见压缩格式，系统自动解压并 STOW 到 Orthanc
               </Text>
             </Card>
 
@@ -384,6 +461,28 @@ export default function PacsWorkbenchPage() {
                           {s.status === 'analyzed' ? '审核报告' : '开始分析'}
                         </Button>
                       )}
+                      {/* 已发布的不可删（医疗审计合规），其他状态可删 */}
+                      {s.status !== 'published' && (
+                        <Popconfirm
+                          title="确认删除该影像？"
+                          description="将同时清理 Orthanc 中的 DICOM 文件和业务记录，不可恢复。"
+                          okText="删除"
+                          cancelText="取消"
+                          okType="danger"
+                          onConfirm={e => {
+                            e?.stopPropagation()
+                            deleteStudy(s.study_id)
+                          }}
+                          onCancel={e => e?.stopPropagation()}
+                        >
+                          <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={e => e.stopPropagation()}
+                          />
+                        </Popconfirm>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -428,62 +527,84 @@ export default function PacsWorkbenchPage() {
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
-                    {frames.map(fname => (
-                      <div
-                        key={fname}
-                        onClick={() => {
-                          toggleFrame(fname)
-                          setPreviewFrame(fname)
-                        }}
-                        style={{
-                          cursor: 'pointer',
-                          border: selectedFrames.has(fname)
-                            ? '2px solid #1890ff'
-                            : '2px solid transparent',
-                          borderRadius: 4,
-                          overflow: 'hidden',
-                          position: 'relative',
-                          background: '#111',
-                          aspectRatio: '1',
-                        }}
-                      >
-                        <AuthedThumbnail
-                          studyId={currentStudy.study_id}
-                          filename={fname}
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                            display: 'block',
+                    {frames.map(frame => {
+                      const uid = frame.instance_uid
+                      const selected = selectedFrames.has(uid)
+                      return (
+                        <div
+                          key={uid}
+                          onClick={() => {
+                            toggleFrame(uid)
+                            setPreviewFrame(uid)
                           }}
-                        />
-                        {selectedFrames.has(fname) && (
+                          style={{
+                            cursor: 'pointer',
+                            border: selected
+                              ? '2px solid #1890ff'
+                              : '2px solid transparent',
+                            borderRadius: 4,
+                            overflow: 'hidden',
+                            position: 'relative',
+                            background: '#111',
+                            aspectRatio: '1',
+                          }}
+                        >
+                          <AuthedThumbnail
+                            studyId={currentStudy.study_id}
+                            instanceUid={uid}
+                            seriesUid={frame.series_uid}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              display: 'block',
+                            }}
+                          />
+                          {/* 左下角标 InstanceNumber，便于医生定位切片 */}
                           <div
                             style={{
                               position: 'absolute',
-                              top: 2,
-                              right: 2,
-                              background: '#1890ff',
-                              borderRadius: '50%',
-                              width: 16,
-                              height: 16,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
+                              bottom: 2,
+                              left: 4,
+                              color: '#fff',
+                              fontSize: 10,
+                              textShadow: '0 0 2px #000',
                             }}
                           >
-                            <CheckCircleOutlined style={{ color: 'var(--surface)', fontSize: 10 }} />
+                            #{frame.instance_number}
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {selected && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: 2,
+                                right: 2,
+                                background: '#1890ff',
+                                borderRadius: '50%',
+                                width: 16,
+                                height: 16,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <CheckCircleOutlined style={{ color: 'var(--surface)', fontSize: 10 }} />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </Card>
             </Col>
             <Col span={14}>
               <Card
-                title={`预览：${previewFrame}`}
+                title={(() => {
+                  // 把当前预览的 instance UID 翻成 InstanceNumber，更直观（UID 太长）
+                  const cur = frames.find(f => f.instance_uid === previewFrame)
+                  return `预览：第 ${cur?.instance_number ?? '-'} 帧`
+                })()}
                 extra={
                   <Button
                     type="primary"
@@ -495,17 +616,34 @@ export default function PacsWorkbenchPage() {
                   </Button>
                 }
                 style={{ height: 'calc(100vh - 140px)' }}
-                bodyStyle={{ padding: 12 }}
+                styles={{
+                  body: {
+                    padding: 12,
+                    height: 'calc(100% - 57px)', // 减去 ant-card-head 高度
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                  },
+                }}
               >
-                {previewFrame ? (
-                  <DicomViewer studyId={currentStudy.study_id} filename={previewFrame} />
-                ) : (
-                  <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
-                    点击左侧缩略图预览
-                  </div>
-                )}
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  {previewFrame ? (
+                    <DicomViewer
+                      studyId={currentStudy.study_id}
+                      instanceUid={previewFrame}
+                      seriesUid={frames.find(f => f.instance_uid === previewFrame)?.series_uid}
+                      // 把所有帧 UID + series UID 传过去做预加载
+                      // 用户点缩略图切换时直接命中内存缓存，瞬时显示
+                      preloadInstanceUids={frames.map(f => f.instance_uid)}
+                      preloadSeriesUids={frames.map(f => f.series_uid)}
+                    />
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                      点击左侧缩略图预览
+                    </div>
+                  )}
+                </div>
                 <Alert
-                  style={{ marginTop: 12 }}
                   type="info"
                   showIcon
                   message={`共 ${frames.length} 张切片，已选 ${selectedFrames.size} 张送 AI 分析`}

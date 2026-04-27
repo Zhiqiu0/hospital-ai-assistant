@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Department
 from app.schemas.department import DepartmentCreate
+from app.services.redis_cache import redis_cache
+
+_LIST_KEY = "department:list_active"
+_LIST_TTL = 300  # 5 分钟，新建/停用时主动失效
 
 
 class DepartmentService:
@@ -37,19 +41,37 @@ class DepartmentService:
         return result.scalar_one_or_none()
 
     async def list_all(self):
-        """查询所有已启用的科室列表。
+        """查询所有已启用的科室列表（带 Redis 缓存 5 分钟）。
 
         仅返回 is_active=True 的科室，已停用的科室不出现在接诊页的科室选择下拉列表中。
         前端根据 parent_id 字段自行组装树形选择器。
 
         Returns:
-            {"items": [Department ORM 对象列表]}
+            {"items": [科室字典列表]}
         """
+        cached = await redis_cache.get_json(_LIST_KEY)
+        if cached is not None:
+            return cached
+
         result = await self.db.execute(
             select(Department).where(Department.is_active.is_(True))
         )
         items = result.scalars().all()
-        return {"items": items}
+        # 显式 dict 序列化（ORM 不能直接 JSON 化），便于走 Redis 缓存
+        data = {
+            "items": [
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "code": d.code,
+                    "parent_id": d.parent_id,
+                    "is_active": d.is_active,
+                }
+                for d in items
+            ]
+        }
+        await redis_cache.set_json(_LIST_KEY, data, ttl=_LIST_TTL)
+        return data
 
     async def create(self, data: DepartmentCreate) -> Department:
         """新建科室。
@@ -67,6 +89,7 @@ class DepartmentService:
         self.db.add(dept)
         await self.db.commit()
         await self.db.refresh(dept)
+        await redis_cache.delete(_LIST_KEY)
         return dept
 
     async def deactivate(self, dept_id: str) -> None:
@@ -83,3 +106,4 @@ class DepartmentService:
             raise HTTPException(status_code=404, detail="科室不存在")
         dept.is_active = False
         await self.db.commit()
+        await redis_cache.delete(_LIST_KEY)

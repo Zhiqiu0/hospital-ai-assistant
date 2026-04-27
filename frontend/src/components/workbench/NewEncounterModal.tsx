@@ -92,7 +92,7 @@ export default function NewEncounterModal({
             patient_name: values.patient_name,
             gender: values.gender || 'unknown',
             birth_date: values.birth_date ? values.birth_date.format('YYYY-MM-DD') : undefined,
-            age: values.birth_date ? dayjs().diff(values.birth_date, 'year') : undefined,
+            id_card: values.id_card || undefined,
             phone: values.phone || undefined,
             visit_type: values.visit_type || 'outpatient',
             ethnicity: values.ethnicity || undefined,
@@ -209,7 +209,22 @@ export default function NewEncounterModal({
                     {p.name?.[0]}
                   </Avatar>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                    <Space size={6} align="center">
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                      {/* 三态住院 Tag：
+                          active=true       → 在院中（绿）：还在住院，门诊医生可能要跨科会诊
+                          active=false + history=true → 已出院（灰）：术后复查/慢病随访常见
+                          history=false     → 不打 Tag（纯门诊或新患者，无住院信息可显示） */}
+                      {p.has_active_inpatient === true ? (
+                        <Tag color="green" style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px' }}>
+                          在院中
+                        </Tag>
+                      ) : p.has_any_inpatient_history === true ? (
+                        <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px', background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}>
+                          已出院
+                        </Tag>
+                      ) : null}
+                    </Space>
                     <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
                       {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
                       {p.age ? ` · ${p.age}岁` : ''}
@@ -328,14 +343,21 @@ export default function NewEncounterModal({
                   />
                 </Form.Item>
               </div>
+              {/* 身份证号：门诊选填，但建议填——是患者主索引，未来转住院时
+                  patient_service.find_existing 优先按身份证号去重，避免门诊→住院
+                  重复建档（参考 backend/app/services/patient_service.py 注释）。 */}
+              <Form.Item
+                name="id_card"
+                label="身份证号"
+                rules={[
+                  { pattern: /^\d{17}[\dXx]$/, message: '请输入有效的18位身份证号' },
+                ]}
+              >
+                <Input placeholder="选填，建议录入以便复诊/转住院去重" maxLength={18} />
+              </Form.Item>
               <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item
-                  name="ethnicity"
-                  label="民族"
-                  style={{ flex: 1 }}
-                  rules={[{ required: true, message: '请选择民族' }]}
-                >
-                  <Select placeholder="请选择民族" showSearch>
+                <Form.Item name="ethnicity" label="民族" style={{ flex: 1 }}>
+                  <Select placeholder="请选择民族（选填）" allowClear showSearch>
                     {[
                       '汉族',
                       '满族',
@@ -364,13 +386,8 @@ export default function NewEncounterModal({
                     ))}
                   </Select>
                 </Form.Item>
-                <Form.Item
-                  name="marital_status"
-                  label="婚姻状况"
-                  style={{ flex: 1 }}
-                  rules={[{ required: true, message: '请选择婚姻状况' }]}
-                >
-                  <Select placeholder="请选择">
+                <Form.Item name="marital_status" label="婚姻状况" style={{ flex: 1 }}>
+                  <Select placeholder="请选择（选填）" allowClear>
                     {['未婚', '已婚', '离异', '丧偶'].map(v => (
                       <Select.Option key={v} value={v}>
                         {v}
@@ -380,31 +397,18 @@ export default function NewEncounterModal({
                 </Form.Item>
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item
-                  name="occupation"
-                  label="职业"
-                  style={{ flex: 1 }}
-                  rules={[{ required: true, message: '请输入职业' }]}
-                >
-                  <Input placeholder="请输入职业" />
+                <Form.Item name="occupation" label="职业" style={{ flex: 1 }}>
+                  <Input placeholder="选填" />
                 </Form.Item>
                 <Form.Item name="phone" label="联系电话" style={{ flex: 1 }}>
                   <Input placeholder="选填" />
                 </Form.Item>
               </div>
-              <Form.Item
-                name="workplace"
-                label="工作单位"
-                rules={[{ required: true, message: '请输入工作单位' }]}
-              >
-                <Input placeholder="请输入工作单位（无业/退休可填无）" />
+              <Form.Item name="workplace" label="工作单位">
+                <Input placeholder="选填（无业/退休可填无）" />
               </Form.Item>
-              <Form.Item
-                name="address"
-                label="住址"
-                rules={[{ required: true, message: '请输入住址' }]}
-              >
-                <Input placeholder="请输入住址" />
+              <Form.Item name="address" label="住址">
+                <Input placeholder="选填" />
               </Form.Item>
             </>
           )}

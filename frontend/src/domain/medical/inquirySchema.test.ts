@@ -16,18 +16,17 @@ describe('getInquiryGroups', () => {
     expect(groups.find(g => g.key === 'emergency_only')).toBeDefined()
   })
 
-  it('男性患者住院场景不显示月经史字段', () => {
-    const groups = getInquiryGroups('inpatient', { patientGender: 'male' })
-    const profile = groups.find(g => g.key === 'patient_profile')
-    const menstrual = profile?.fields.find(f => f.key === 'menstrual_history')
-    expect(menstrual).toBeUndefined()
-  })
-
-  it('女性患者住院场景显示月经史字段', () => {
-    const groups = getInquiryGroups('inpatient', { patientGender: 'female' })
-    const profile = groups.find(g => g.key === 'patient_profile')
-    const menstrual = profile?.fields.find(f => f.key === 'menstrual_history')
-    expect(menstrual).toBeDefined()
+  it('档案分组不再含月经史字段（地基重构：移到接诊问诊侧）', () => {
+    // 月经史是时变信息（每月都变），跟主诉/生命体征一类，每次接诊重填。
+    // 不属于纵向档案；男性女性都不应在档案里出现。
+    const groupsMale = getInquiryGroups('inpatient', { patientGender: 'male' })
+    const groupsFemale = getInquiryGroups('inpatient', { patientGender: 'female' })
+    expect(
+      groupsMale.find(g => g.key === 'patient_profile')?.fields.find(f => f.key === 'menstrual_history')
+    ).toBeUndefined()
+    expect(
+      groupsFemale.find(g => g.key === 'patient_profile')?.fields.find(f => f.key === 'menstrual_history')
+    ).toBeUndefined()
   })
 
   it('非中医场景中医四诊分组被过滤掉', () => {

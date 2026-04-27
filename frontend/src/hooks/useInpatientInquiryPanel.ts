@@ -195,7 +195,7 @@ export function useInpatientInquiryPanel() {
       if (updated !== recordContent) setRecordContent(updated)
     }
 
-    // 病历为空且已填主诉时，触发自动生成
+    // 病历为空且已填主诉时，触发自动生成（门诊也是这套逻辑）
     if (!recordContent.trim() && inquiryData.chief_complaint) {
       setPendingGenerate(true)
     }

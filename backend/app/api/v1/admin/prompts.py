@@ -14,6 +14,7 @@ from app.core.security import require_admin
 from app.database import get_db
 from app.models.config import PromptTemplate
 from app.schemas.config import PromptTemplateCreate, PromptTemplateResponse, PromptTemplateUpdate
+from app.services.ai.ai_utils import invalidate_active_prompt
 
 router = APIRouter()
 
@@ -43,6 +44,8 @@ async def create_prompt(
     db.add(template)
     await db.commit()
     await db.refresh(template)
+    # 该 scene 下激活模板可能变了，立即失效缓存让新配置生效
+    await invalidate_active_prompt(template.scene)
     return template
 
 
@@ -61,6 +64,7 @@ async def update_prompt(
         setattr(template, field, value)
     await db.commit()
     await db.refresh(template)
+    await invalidate_active_prompt(template.scene)
     return template
 
 
@@ -74,5 +78,7 @@ async def delete_prompt(
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="Prompt template not found")
+    scene = template.scene
     await db.delete(template)
     await db.commit()
+    await invalidate_active_prompt(scene)

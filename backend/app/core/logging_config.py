@@ -7,7 +7,8 @@
   3. logs/error.log      : WARNING+ 级，按天轮转，保留 30 天，只含告警和错误
 
 日志格式：
-  "2024-01-01 12:00:00 [INFO] app.api.v1.auth: 用户登录成功"
+  "2024-01-01 12:00:00 [INFO] [rid=abc12345] app.api.v1.auth: 用户登录成功"
+  rid 段是 RequestIDMiddleware 注入的请求 ID，非 HTTP 上下文时显示 "-"
 
 热重载兼容：
   检查 root.handlers 是否为空，避免 uvicorn --reload 时重复添加 handler。
@@ -25,6 +26,10 @@ import logging
 import logging.handlers
 from pathlib import Path
 
+# RequestIDFilter 把 contextvar 里的 request_id 注入到每条日志记录
+# formatter 用 %(request_id)s 才能渲染出 [rid=xxx] 段
+from app.core.request_context import RequestIDFilter
+
 # 日志目录：backend/logs/（相对于本文件向上三级）
 LOGS_DIR = Path(__file__).parent.parent.parent / "logs"
 
@@ -39,15 +44,21 @@ def setup_logging(log_level: str = "INFO") -> None:
     # 确保日志目录存在（首次部署时自动创建）
     LOGS_DIR.mkdir(exist_ok=True)
 
-    # 统一日志格式：时间 + 级别 + 模块路径 + 消息
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    # 统一日志格式：时间 + 级别 + request_id + user_id + 模块路径 + 消息
+    # [rid=xxx] 单请求全链路 grep；[uid=xxx] 用户维度筛选；均为 "-" 表示无上下文
+    fmt = "%(asctime)s [%(levelname)s] [rid=%(request_id)s uid=%(user_id)s] %(name)s: %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt, datefmt=datefmt)
+
+    # 所有 handler 都要挂 RequestIDFilter，否则 LogRecord 缺 request_id 字段
+    # 会让 formatter 报 KeyError
+    rid_filter = RequestIDFilter()
 
     # ── 控制台 handler ─────────────────────────────────────────────────────────
     console = logging.StreamHandler()
     console.setLevel(logging.DEBUG)  # 控制台输出所有级别，方便开发调试
     console.setFormatter(formatter)
+    console.addFilter(rid_filter)
 
     # ── app.log handler（完整运行日志）────────────────────────────────────────
     # when="midnight": 每天 0 点切换到新文件，旧文件追加日期后缀
@@ -60,6 +71,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
     app_file.setLevel(logging.INFO)
     app_file.setFormatter(formatter)
+    app_file.addFilter(rid_filter)
 
     # ── error.log handler（仅告警和错误）──────────────────────────────────────
     # 排查线上问题时只看 error.log，信噪比高
@@ -71,6 +83,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
     err_file.setLevel(logging.WARNING)
     err_file.setFormatter(formatter)
+    err_file.addFilter(rid_filter)
 
     # ── 根 logger 配置 ─────────────────────────────────────────────────────────
     root = logging.getLogger()
