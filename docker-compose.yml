@@ -1,6 +1,12 @@
+# 镜像源说明：
+#   生产服务器在国内，到 registry-1.docker.io 网络持续超时，
+#   且 SSH 部署用户无 root 权限不能改 /etc/docker/daemon.json 全局 mirror。
+#   解决方案：所有 image 都加 docker.m.daocloud.io 前缀，绕开 docker hub。
+#   DaoCloud 反代支持任意 namespace（library/* + 第三方），稳定性较好。
+#   本地开发也可用——daocloud 反代的 image 与官方完全等价。
 services:
   db:
-    image: postgres:16-alpine
+    image: docker.m.daocloud.io/library/postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: medassist
@@ -23,7 +29,7 @@ services:
   # 接入 Redis 后第一次走 Orthanc，后续命中缓存 < 5ms，缩略图列表秒开
   # 也为后续 session / 限流 / 异步任务队列预留通用缓存层
   redis:
-    image: redis:7-alpine
+    image: docker.m.daocloud.io/library/redis:7-alpine
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -42,7 +48,7 @@ services:
   # 替代 pacs.py 的本地 DICOM 处理：负责 DICOM 文件存储、Study/Series 索引、
   # 缩略图渲染、窗位窗宽、DIMSE 直传等。FastAPI 通过 DICOMweb HTTP 调用。
   orthanc:
-    image: orthancteam/orthanc:25.6.2
+    image: docker.m.daocloud.io/orthancteam/orthanc:25.6.2
     restart: unless-stopped
     depends_on:
       db:

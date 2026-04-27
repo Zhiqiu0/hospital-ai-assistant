@@ -56,37 +56,8 @@ jobs:
             git pull origin main
             export SENTRY_RELEASE
 
-            # ── 自动配置 docker registry mirror ────────────────────────────
-            # 关键认知：腾讯云 / 中科大 / 网易这种"半官方" mirror 只支持 library/*
-            # （docker official images），不支持第三方 namespace（如 orthancteam/）。
-            # 所以必须叠加 daocloud / 1ms / 1panel 这种通用反代，
-            # docker daemon 会按顺序试每一个 mirror，直到找到镜像。
-            #
-            # 检查标识用 daocloud：旧版 daemon.json 没有，触发重写 + restart。
-            if ! grep -q "daocloud\|1ms\|1panel" /etc/docker/daemon.json 2>/dev/null; then
-              echo "[deploy] 配置 docker registry mirror（含第三方镜像代理）..."
-              mkdir -p /etc/docker
-              cat > /etc/docker/daemon.json <<'DAEMON_EOF'
-            {
-              "registry-mirrors": [
-                "https://docker.m.daocloud.io",
-                "https://docker.1ms.run",
-                "https://docker.1panel.live",
-                "https://mirror.ccs.tencentyun.com",
-                "https://docker.mirrors.ustc.edu.cn",
-                "https://hub-mirror.c.163.com"
-              ]
-            }
-            DAEMON_EOF
-              systemctl restart docker
-              # 等 docker daemon 起来 + 重连所有 container
-              sleep 15
-              echo "[deploy] docker daemon 已重启，mirror 生效"
-            fi
-
-            # ── 拉镜像 + 构建 + 启动 ─────────────────────────────────────────
-            # pull 走 mirror（不会再超时），ignore-buildable 跳过 backend/frontend
-            # 这两个 build-only 的服务（它们不需要 pull 完整 image）
+            # 镜像走 daocloud 反代（在 docker-compose.yml 与各 Dockerfile 里写死前缀）
+            # 不需要配 daemon.json registry-mirrors（SSH user 无 root 权限改不了）
             docker compose pull --ignore-buildable
             docker compose build backend frontend
             docker compose up -d --wait

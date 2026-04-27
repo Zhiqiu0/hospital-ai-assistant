@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# 走 daocloud 反代避开 docker.io 网络超时（国内服务器无法直连）
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 WORKDIR /app
 
