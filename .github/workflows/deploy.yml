@@ -56,16 +56,22 @@ jobs:
             git pull origin main
             export SENTRY_RELEASE
 
-            # ── 自动配置 docker registry mirror（一次性，已配置则跳过）──────
-            # 国内服务器到 registry-1.docker.io 网络不稳，每次拉镜像超时。
-            # 配置多个国内 mirror（腾讯云内网最快 / 中科大 / 网易备用），
-            # daemon 自动按顺序 fallback。
-            if [ ! -f /etc/docker/daemon.json ] || ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
-              echo "[deploy] 首次配置 docker registry mirror..."
+            # ── 自动配置 docker registry mirror ────────────────────────────
+            # 关键认知：腾讯云 / 中科大 / 网易这种"半官方" mirror 只支持 library/*
+            # （docker official images），不支持第三方 namespace（如 orthancteam/）。
+            # 所以必须叠加 daocloud / 1ms / 1panel 这种通用反代，
+            # docker daemon 会按顺序试每一个 mirror，直到找到镜像。
+            #
+            # 检查标识用 daocloud：旧版 daemon.json 没有，触发重写 + restart。
+            if ! grep -q "daocloud\|1ms\|1panel" /etc/docker/daemon.json 2>/dev/null; then
+              echo "[deploy] 配置 docker registry mirror（含第三方镜像代理）..."
               mkdir -p /etc/docker
               cat > /etc/docker/daemon.json <<'DAEMON_EOF'
             {
               "registry-mirrors": [
+                "https://docker.m.daocloud.io",
+                "https://docker.1ms.run",
+                "https://docker.1panel.live",
                 "https://mirror.ccs.tencentyun.com",
                 "https://docker.mirrors.ustc.edu.cn",
                 "https://hub-mirror.c.163.com"
