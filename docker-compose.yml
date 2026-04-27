@@ -58,6 +58,11 @@ services:
     ports:
       - "4242:4242"   # DIMSE（CT/MR 设备直推用）
       - "8042:8042"   # HTTP REST + DICOMweb（FastAPI / OHIF 用）
+    # orthanc 25+ 支持 ORTHANC__SECTION__KEY 环境变量覆盖 JSON 配置
+    # 必须用 env 注入 PostgreSQL 密码（orthanc.json 里写死的默认值会被生产
+    # .env 的 DB_PASSWORD 覆盖，不再因为密码不匹配启动失败）
+    environment:
+      ORTHANC__POSTGRESQL__PASSWORD: ${DB_PASSWORD:-medassist123}
     volumes:
       - ./backend/orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
       - orthanc_storage:/var/lib/orthanc/db
