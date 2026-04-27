@@ -56,8 +56,16 @@ jobs:
             git pull origin main
             export SENTRY_RELEASE
 
-            # 镜像走 daocloud 反代（在 docker-compose.yml 与各 Dockerfile 里写死前缀）
-            # 不需要配 daemon.json registry-mirrors（SSH user 无 root 权限改不了）
+            # 清理之前 deploy 中断留下的僵尸 container（名字前缀带随机 hash 的）
+            # 例如 "c88ced3f53af_app-backend-1"——是 docker compose 重建中崩溃残留
+            # 不影响健康容器（健康容器名字不带 hash 前缀）
+            docker ps -a --format "{{.Names}}" 2>/dev/null \
+              | grep -E "^[a-f0-9]{12}_app-" \
+              | xargs -r docker rm -f 2>&1 || true
+
+            # 镜像走 daocloud（library/*）+ 1ms.run（orthancteam）反代
+            # 在 docker-compose.yml 与 Dockerfile 里写死前缀，不依赖 daemon mirror
+            # （SSH user 无 root 权限改不了 /etc/docker/daemon.json）
             docker compose pull --ignore-buildable
             docker compose build backend frontend
             docker compose up -d --wait
