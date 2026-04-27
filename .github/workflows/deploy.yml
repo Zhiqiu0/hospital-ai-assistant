@@ -55,15 +55,35 @@ jobs:
             cd /app
             git pull origin main
             export SENTRY_RELEASE
-            # 分两步走，避开国内服务器到 docker.io 的网络抖动：
-            # 1. 只 build 我们维护的服务（backend / frontend），三方 image
-            #    不参与 build 过程
-            # 2. up 不带 --build 不会触发 docker.io manifest 检查
-            #    --pull never 进一步保险：即使 image 缺失也不去 pull
-            #    （首次部署如缺三方 image，需服务器先一次性 docker pull；
-            #     但本部署流程不会因 docker hub 网络抖动失败）
+
+            # ── 自动配置 docker registry mirror（一次性，已配置则跳过）──────
+            # 国内服务器到 registry-1.docker.io 网络不稳，每次拉镜像超时。
+            # 配置多个国内 mirror（腾讯云内网最快 / 中科大 / 网易备用），
+            # daemon 自动按顺序 fallback。
+            if [ ! -f /etc/docker/daemon.json ] || ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
+              echo "[deploy] 首次配置 docker registry mirror..."
+              mkdir -p /etc/docker
+              cat > /etc/docker/daemon.json <<'DAEMON_EOF'
+            {
+              "registry-mirrors": [
+                "https://mirror.ccs.tencentyun.com",
+                "https://docker.mirrors.ustc.edu.cn",
+                "https://hub-mirror.c.163.com"
+              ]
+            }
+            DAEMON_EOF
+              systemctl restart docker
+              # 等 docker daemon 起来 + 重连所有 container
+              sleep 15
+              echo "[deploy] docker daemon 已重启，mirror 生效"
+            fi
+
+            # ── 拉镜像 + 构建 + 启动 ─────────────────────────────────────────
+            # pull 走 mirror（不会再超时），ignore-buildable 跳过 backend/frontend
+            # 这两个 build-only 的服务（它们不需要 pull 完整 image）
+            docker compose pull --ignore-buildable
             docker compose build backend frontend
-            docker compose up -d --wait --pull never
+            docker compose up -d --wait
             # alembic 主迁移（迁移脚本在 alembic/versions 下）
             docker compose exec -T backend alembic upgrade head
             # 兜底：migrate.py 增量补字段 / 回填（schema_compat 已在启动时跑，
