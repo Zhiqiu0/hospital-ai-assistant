@@ -172,7 +172,7 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> str:
         )
         return content.strip()
     except Exception as exc:
-        logger.error("qc_fix failed: %s", exc, exc_info=True)
+        logger.exception("ai.qc_fix: failed err=%s", exc)
         return req.suggestion or ""
 
 
@@ -235,6 +235,11 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
             else:
                 grade_level = "丙级"
 
+        # 业务里程碑：质控评分完成（监控质控成功率 + 评分分布）
+        logger.info(
+            "ai.qc_grade: done score=%s level=%s deductions=%d",
+            estimated, grade_level, len(deductions),
+        )
         return {
             "grade_score": estimated,
             "grade_level": grade_level,
@@ -253,7 +258,7 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
             "summary": llm_result.get("summary", ""),
         }
     except Exception as exc:
-        logger.error("grade_score failed: %s", exc, exc_info=True)
+        logger.exception("ai.qc_grade: failed err=%s", exc)
         score_val, level = calc_grade_score(rule_issues)
         return {
             "grade_score": score_val,

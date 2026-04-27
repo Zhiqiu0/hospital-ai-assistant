@@ -19,6 +19,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -62,10 +63,14 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
         return
 
     await websocket.accept()
-    logger.info("voice-stream 接入 user=%s", user_id)
+    logger.info("voice_stream.start: user=%s", user_id)
 
     task_id = uuid.uuid4().hex
     upstream: Optional[websockets.WebSocketClientProtocol] = None
+    # 连接级统计：用 list 装计数器，闭包内可直接修改（避免 nonlocal 散开）
+    # [audio_chunks_recv, sentences_final]
+    stats = [0, 0]
+    conn_start = time.perf_counter()
 
     try:
         # 3. 连接阿里云（鉴权通过 Authorization 头）
@@ -120,6 +125,8 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
                     event = header.get("event")
                     payload = msg.get("payload", {})
                     if event == "task-started":
+                        # 上行链路 ready：埋点便于复盘"用户说语音不出字" → 是否到了 task-started
+                        logger.info("voice_stream.task_started: task=%s", task_id)
                         await _safe_send_json(websocket, {"type": "started"})
                     elif event == "result-generated":
                         sentence = payload.get("output", {}).get("sentence", {})
@@ -130,6 +137,8 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
                             and sentence["words"][-1].get("fixed")
                         )
                         msg_type = "final" if is_final else "partial"
+                        if is_final:
+                            stats[1] += 1  # 累计 final 句子数
                         await _safe_send_json(websocket, {"type": msg_type, "text": text})
                     elif event == "task-finished":
                         await _safe_send_json(websocket, {"type": "finished"})
@@ -137,6 +146,8 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
                         return
                     elif event == "task-failed":
                         err_msg = header.get("error_message") or "阿里云识别任务失败"
+                        # 上游识别失败单独埋点（warning 级，Sentry 会聚合"哪些 task 失败"）
+                        logger.warning("voice_stream.task_failed: task=%s err=%s", task_id, err_msg)
                         await _safe_send_json(websocket, {"type": "error", "message": err_msg})
                         client_closed.set()
                         return
@@ -155,6 +166,7 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
                     if msg.get("type") == "websocket.disconnect":
                         break
                     if "bytes" in msg and msg["bytes"] is not None:
+                        stats[0] += 1
                         await upstream.send(msg["bytes"])
                     elif "text" in msg and msg["text"] is not None:
                         if msg["text"] == "finish":
@@ -170,27 +182,33 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
             except WebSocketDisconnect:
                 pass
             except Exception as exc:
-                logger.warning("pump_uplink 异常: %s", exc)
+                logger.warning("voice_stream.pump_uplink: failed err=%s", exc)
             finally:
                 client_closed.set()
 
         await asyncio.gather(pump_downlink(), pump_uplink())
 
     except Exception as exc:
-        logger.error("voice-stream 主流程异常: %s", exc, exc_info=True)
+        logger.exception("voice_stream.main: failed err=%s", exc)
         await _safe_send_json(websocket, {"type": "error", "message": str(exc)})
     finally:
         if upstream is not None:
             try:
                 await upstream.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # 清理路径异常不阻断也不上 Sentry，仅留 debug 痕迹
+                logger.debug("voice_stream.upstream_close: failed err=%s", exc)
         if websocket.client_state != WebSocketState.DISCONNECTED:
             try:
                 await websocket.close()
-            except Exception:
-                pass
-        logger.info("voice-stream 结束 task=%s", task_id)
+            except Exception as exc:
+                logger.debug("voice_stream.ws_close: failed err=%s", exc)
+        # 连接结束打统计：复盘"为什么用户说卡了"时能看到收到了多少音频/出了几句最终稿/连了多久
+        elapsed_ms = int((time.perf_counter() - conn_start) * 1000)
+        logger.info(
+            "voice_stream.end: task=%s elapsed_ms=%d audio_chunks=%d sentences=%d",
+            task_id, elapsed_ms, stats[0], stats[1],
+        )
 
 
 async def _safe_send_json(ws: WebSocket, data: dict) -> None:
@@ -199,5 +217,6 @@ async def _safe_send_json(ws: WebSocket, data: dict) -> None:
         return
     try:
         await ws.send_json(data)
-    except Exception:
-        pass
+    except Exception as exc:
+        # 设计上是 safe send，连接已关时静默是预期，仅 debug 留痕
+        logger.debug("voice_stream.send: failed err=%s", exc)

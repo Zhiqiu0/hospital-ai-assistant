@@ -23,9 +23,8 @@
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 from datetime import datetime
-
-from app.utils.age import calc_age
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import HTTPException
@@ -36,6 +35,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.schemas.medical_record import MedicalRecordCreate, RecordContentUpdate
+from app.utils.age import calc_age
+
+# 模块级 logger：病历签发是核心业务里程碑，单独 INFO 级埋点便于运维复盘
+logger = logging.getLogger(__name__)
 
 
 class MedicalRecordService:
@@ -135,6 +138,9 @@ class MedicalRecordService:
         record.current_version = new_version_no
         record.status = "editing"     # 重置为编辑中（如曾被 AI 标为其他状态）
         await self.db.commit()
+        # 病历变更，工作台快照失效
+        from app.services.encounter_service import invalidate_encounter_snapshot
+        await invalidate_encounter_snapshot(record.encounter_id)
         return {"ok": True, "version_no": new_version_no}
 
     async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str) -> MedicalRecord:
@@ -186,16 +192,36 @@ class MedicalRecordService:
         record.status = "submitted"
         record.submitted_at = datetime.now()
 
-        # 同步完成接诊状态，使其从「进行中」列表消失
+        # 接诊关闭策略：
+        #   - 门诊/急诊：一次接诊 = 一份病历，签发即结束 → 关闭接诊
+        #   - 住院：一次住院会有多份病历（入院记录/病程/查房/出院小结...），
+        #     签发一份不代表出院，接诊状态保持 in_progress；将来由
+        #     专门的"办理出院"动作关闭接诊。
         enc_result = await self.db.execute(
             select(Encounter).where(Encounter.id == encounter_id)
         )
         encounter = enc_result.scalar_one_or_none()
-        if encounter:
+        encounter_closed = False
+        if encounter and encounter.visit_type != "inpatient":
             encounter.status = "completed"
+            encounter_closed = True
 
         await self.db.commit()
         await self.db.refresh(record)
+        # 失效缓存：snapshot 一定要失效（病历内容变了）；
+        # my_encounters 列表缓存只在接诊真的关闭时才失效
+        from app.services.encounter_service import (
+            invalidate_encounter_snapshot,
+            invalidate_my_encounters,
+        )
+        await invalidate_encounter_snapshot(encounter_id)
+        if encounter_closed:
+            await invalidate_my_encounters(encounter.doctor_id)
+        # 业务里程碑：签发完成后埋点（不含病历正文，仅 ID/类型/接诊关闭状态）
+        logger.info(
+            "record.sign: submitted record_id=%s encounter_id=%s type=%s closed_encounter=%s",
+            record.id, encounter_id, record_type, encounter_closed,
+        )
         return record
 
     async def list_by_doctor(self, doctor_id: str, page: int = 1, page_size: int = 20) -> dict:
@@ -282,10 +308,14 @@ class MedicalRecordService:
     async def list_by_patient(self, patient_id: str, page: int = 1, page_size: int = 30) -> dict:
         """查询某患者的全部已签发病历（不限医生），按签发时间倒序分页。
 
-        住院医生接手患者时需要看其"来路"——包括其他医生之前的门诊/急诊/住院病历。
-        权限校验在路由层用 assert_patient_access 完成。
+        任意登录医生都可查阅（同一患者初诊/复诊可能不同医生，复诊看历史是诊疗刚需）。
+        审计日志在路由层写。
+
+        每条返回含 `doctor_name`（接诊医生）+ `submitted_by_name`（签发版本责任人）
+        + `submitted_at`，前端详情页据此显示"接诊医生 张三 · 签发于 ..."。
         """
         from app.models.patient import Patient
+        from app.models.user import User
         from sqlalchemy import func
 
         offset = (page - 1) * page_size
@@ -309,16 +339,41 @@ class MedicalRecordService:
         )
         rows = (await self.db.execute(q)).all()
 
+        # 先批量查所有相关版本（一次 IN 查询），避免循环里 N+1
+        record_ids = [record.id for record, _, _ in rows]
+        ver_map: dict = {}
+        if record_ids:
+            ver_rows = (await self.db.execute(
+                select(RecordVersion)
+                .where(
+                    RecordVersion.medical_record_id.in_(record_ids),
+                )
+            )).scalars().all()
+            # 每个 record 取 version_no 最大的（最新签发版本）
+            for v in ver_rows:
+                cur = ver_map.get(v.medical_record_id)
+                if cur is None or v.version_no > cur.version_no:
+                    ver_map[v.medical_record_id] = v
+
+        # 收集所有涉及的医生 ID（接诊医生 + 签发版本触发人），一次性查 users 表
+        doctor_ids: set[str] = set()
+        for record, encounter, _ in rows:
+            if encounter.doctor_id:
+                doctor_ids.add(encounter.doctor_id)
+            ver = ver_map.get(record.id)
+            if ver and ver.triggered_by:
+                doctor_ids.add(ver.triggered_by)
+        user_map: dict[str, str] = {}
+        if doctor_ids:
+            user_rows = (await self.db.execute(
+                select(User.id, User.real_name).where(User.id.in_(doctor_ids))
+            )).all()
+            user_map = {uid: name for uid, name in user_rows}
+
         items = []
         from sqlalchemy import func as _func
         for record, encounter, patient in rows:
-            ver_q = (
-                select(RecordVersion)
-                .where(RecordVersion.medical_record_id == record.id)
-                .order_by(desc(RecordVersion.version_no))
-                .limit(1)
-            )
-            ver = (await self.db.execute(ver_q)).scalar_one_or_none()
+            ver = ver_map.get(record.id)
             content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
             # 患者年龄实时算（utils.calc_age 内含未过生日修正）
             patient_age = calc_age(patient.birth_date)
@@ -349,6 +404,12 @@ class MedicalRecordService:
                 "visit_sequence": visit_sequence,
                 "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
                 "content": content_text,
+                # 接诊医生（接诊创建者）—— 前端详情页展示责任医生
+                "doctor_id": encounter.doctor_id,
+                "doctor_name": user_map.get(encounter.doctor_id) if encounter.doctor_id else None,
+                # 签发版本责任人（可能与接诊医生不同：如住院主管医生让管床医生代签发）
+                "submitted_by_id": ver.triggered_by if ver else None,
+                "submitted_by_name": user_map.get(ver.triggered_by) if (ver and ver.triggered_by) else None,
             })
         return {"total": total, "items": items}
 

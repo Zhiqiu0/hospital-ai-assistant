@@ -74,8 +74,10 @@ def _extract_pdf_text(content: bytes) -> Optional[str]:
         doc = fitz.open(stream=content, filetype="pdf")
         text = "\n".join(doc[i].get_text() for i in range(len(doc))).strip()
         return text if len(text) > 80 else None
-    except Exception as e:
-        logger.warning(f"_extract_pdf_text failed: {e}")
+    except Exception as exc:
+        # 用 %s 占位符让 Sentry 能按"消息模板"聚合同类错误
+        # （f-string 在调用前已格式化，每条 message 都不一样，无法分组）
+        logger.warning("lab_reports.pdf_extract: failed err=%s", exc)
         return None
 
 
@@ -95,8 +97,9 @@ async def _parse_text_with_llm(raw_text: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error(f"_parse_text_with_llm failed: {e}", exc_info=True)
+    except Exception as exc:
+        # logger.exception 自带堆栈采集，比 error+exc_info=True 更简洁
+        logger.exception("lab_reports.parse_llm: failed err=%s", exc)
     return None
 
 
@@ -124,8 +127,8 @@ async def _ocr_image(content: bytes, mime_type: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error(f"_ocr_image failed: {e}", exc_info=True)
+    except Exception as exc:
+        logger.exception("lab_reports.ocr_image: failed err=%s", exc)
     return None
 
 
@@ -142,8 +145,8 @@ async def _ocr_pdf_as_images(content: bytes) -> Optional[str]:
             if text:
                 results.append(text)
         return "\n\n---\n\n".join(results) if results else None
-    except Exception as e:
-        logger.error(f"_ocr_pdf_as_images failed: {e}", exc_info=True)
+    except Exception as exc:
+        logger.exception("lab_reports.ocr_pdf: failed err=%s", exc)
         return None
 
 

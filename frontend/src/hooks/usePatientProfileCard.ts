@@ -52,7 +52,7 @@ export function usePatientProfileCard() {
   return {
     /** 当前活动患者 ID；为 null 时组件应渲染空态 */
     patientId,
-    /** 当前活动患者的 gender（驱动月经史字段是否显示） */
+    /** 当前活动患者的 gender（月经史已移到接诊侧，但保留 isFemale 给将来其他场景用） */
     isFemale,
     /** 表单本地值（来自 store） */
     form,
@@ -62,8 +62,10 @@ export function usePatientProfileCard() {
     isDirty,
     /** 保存请求进行中 */
     saving,
-    /** 后端最近一次写入档案的时间，用于"上次更新于"提示 */
+    /** 后端最近一次写入档案的时间（各字段最大值），用于卡片头部"最近更新于"提示 */
     updatedAt: profile?.updated_at ?? null,
+    /** 字段级元数据：{<field>: {updated_at, updated_by}}，用于"X 天前确认"提示 */
+    fieldsMeta: profile?.fields_meta ?? null,
     /** 后端 profile 是否已有内容（驱动卡片初始折叠态） */
     hasAnyProfileContent,
   }

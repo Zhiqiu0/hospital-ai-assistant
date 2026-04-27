@@ -26,6 +26,27 @@ from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.voice_record import VoiceRecord
 from app.schemas.encounter import EncounterCreate, InquiryInputUpdate
+from app.services.redis_cache import redis_cache
+
+# Redis 缓存 key（snapshot 是 5+ 张表关联，是工作台启动热路径）
+_SNAPSHOT_KEY = "encounter:snapshot:{eid}"
+_SNAPSHOT_TTL = 60  # 60 秒，保存任意子数据时主动失效
+_MY_ENCOUNTERS_KEY = "encounter:my:{doctor_id}"
+_MY_ENCOUNTERS_TTL = 30
+
+
+async def invalidate_encounter_snapshot(encounter_id: str) -> None:
+    """保存 inquiry / 病历版本 / 语音 / 接诊状态变化后调用，失效 snapshot 缓存。
+
+    放到模块级别是为了让其他 service（medical_record / voice / inpatient）
+    能直接 import 失效，无需绕回 EncounterService 实例。
+    """
+    await redis_cache.delete(_SNAPSHOT_KEY.format(eid=encounter_id))
+
+
+async def invalidate_my_encounters(doctor_id: str) -> None:
+    """新建/关闭接诊后调用，失效"我的进行中接诊列表"缓存。"""
+    await redis_cache.delete(_MY_ENCOUNTERS_KEY.format(doctor_id=doctor_id))
 
 
 class EncounterService:
@@ -57,6 +78,12 @@ class EncounterService:
         self.db.add(encounter)
         await self.db.commit()
         await self.db.refresh(encounter)
+        # 新接诊会出现在该医生的进行中列表里，失效缓存
+        await invalidate_my_encounters(doctor_id)
+        # 住院接诊会改变患者的 has_active_inpatient 字段，失效该患者基本信息 + 搜索缓存
+        if data.visit_type == "inpatient":
+            from app.services.patient_service import _invalidate_patient_cache
+            await _invalidate_patient_cache(data.patient_id)
         return encounter
 
     async def find_in_progress(self, patient_id: str, doctor_id: str):
@@ -74,7 +101,7 @@ class EncounterService:
         return result.scalar_one_or_none()
 
     async def get_my_encounters(self, doctor_id: str, limit: int = 20):
-        """获取当前医生进行中的接诊列表（按接诊时间倒序）。
+        """获取当前医生进行中的接诊列表（带 Redis 缓存 30s）。
 
         Args:
             doctor_id: 医生用户 ID。
@@ -83,6 +110,12 @@ class EncounterService:
         Returns:
             接诊列表，每项含接诊基本信息和患者概况。
         """
+        # 列表是医生工作台首屏，每次切回都重读；新建/关闭接诊时主动失效
+        cache_key = _MY_ENCOUNTERS_KEY.format(doctor_id=doctor_id)
+        cached = await redis_cache.get_json(cache_key)
+        if cached is not None:
+            return cached
+
         result = await self.db.execute(
             select(Encounter)
             .options(selectinload(Encounter.patient))  # 预加载患者，避免 N+1
@@ -91,7 +124,7 @@ class EncounterService:
             .limit(limit)
         )
         encounters = result.scalars().all()
-        return [
+        data = [
             {
                 "encounter_id": e.id,
                 "visit_type": e.visit_type,
@@ -110,6 +143,8 @@ class EncounterService:
             }
             for e in encounters
         ]
+        await redis_cache.set_json(cache_key, data, ttl=_MY_ENCOUNTERS_TTL)
+        return data
 
     async def get_by_id(self, encounter_id: str) -> Encounter:
         """按 ID 查询接诊记录。
@@ -137,7 +172,22 @@ class EncounterService:
 
         Raises:
             HTTPException(404): 接诊不存在或无权访问。
+
+        缓存策略：
+          5+ 张表关联，是工作台启动热路径。Redis 缓存 60s；保存 inquiry / 病历版本 /
+          语音 / 接诊状态变化时由各 service 调 invalidate_encounter_snapshot 主动
+          失效。注意：缓存 key 不带 doctor_id，但读时仍校验 doctor_id 才返回，
+          避免把别的医生的快照当成命中。
         """
+        cache_key = _SNAPSHOT_KEY.format(eid=encounter_id)
+        cached = await redis_cache.get_json(cache_key)
+        if cached is not None:
+            # 缓存里也存了 doctor_id，校验后返回，防止越权读到他人接诊
+            if cached.get("_doctor_id") == doctor_id:
+                # 返回时去掉内部字段
+                return {k: v for k, v in cached.items() if k != "_doctor_id"}
+            # doctor_id 不匹配（极少发生：同一 encounter_id 不同医生不可能同时进行中），
+            # 走原始查询，404 由权限层抛
         encounter_result = await self.db.execute(
             select(Encounter)
             .options(selectinload(Encounter.patient))
@@ -237,17 +287,15 @@ class EncounterService:
         patient = encounter.patient
         patient_age = calc_age(patient.birth_date) if patient else None
 
-        # 患者档案（纵向持久数据，跟随患者不跟随接诊）
-        profile_fields = (
-            "past_history", "allergy_history", "family_history", "personal_history",
-            "current_medications", "marital_history", "menstrual_history", "religion_belief",
-        )
-        patient_profile = {
-            **{f: getattr(patient, f"profile_{f}") for f in profile_fields},
-            "updated_at": patient.profile_updated_at,
-        } if patient else None
+        # 患者档案（纵向持久数据）：JSONB 重构后统一走 PatientService.get_profile
+        # 拿到扁平结构 + fields_meta（每字段 updated_at 用于前端展示"X 天前确认"）。
+        # 月经史已不在档案里，需要的话从 inquiry_inputs.menstrual_history 取（snapshot.inquiry 已带）。
+        patient_profile = None
+        if patient:
+            from app.services.patient_service import PatientService
+            patient_profile = await PatientService(self.db).get_profile(patient.id)
 
-        return {
+        snapshot = {
             "encounter_id": encounter.id,
             "visit_type": encounter.visit_type,
             "status": encounter.status,
@@ -320,6 +368,13 @@ class EncounterService:
                 "draft_record": latest_voice.draft_record or "",
             } if latest_voice else None,
         }
+        # 缓存时附带 doctor_id 用于二次校验，防止其他医生命中别人的快照
+        await redis_cache.set_json(
+            cache_key,
+            {**snapshot, "_doctor_id": doctor_id},
+            ttl=_SNAPSHOT_TTL,
+        )
+        return snapshot
 
     async def save_inquiry(self, encounter_id: str, data: InquiryInputUpdate):
         """保存或更新问诊输入（upsert 逻辑，自动版本号递增）。
@@ -350,6 +405,8 @@ class EncounterService:
 
         await self.db.commit()
         await self.db.refresh(inquiry)
+        # 失效 snapshot 缓存：问诊改了，下次进工作台必须重新拼装
+        await invalidate_encounter_snapshot(encounter_id)
         return {
             "message": "保存成功",
             "version": inquiry.version,

@@ -82,7 +82,7 @@ async def inquiry_suggestions(
         )
         return result
     except Exception as exc:
-        logger.error("inquiry_suggestions failed: %s", exc, exc_info=True)
+        logger.exception("ai.inquiry_suggestions: failed err=%s", exc)
         return {"suggestions": []}
 
 
@@ -118,7 +118,7 @@ async def exam_suggestions(
         )
         return result
     except Exception as exc:
-        logger.error("exam_suggestions failed: %s", exc, exc_info=True)
+        logger.exception("ai.exam_suggestions: failed err=%s", exc)
         return {"suggestions": []}
 
 
@@ -164,5 +164,5 @@ async def diagnosis_suggestion(
         )
         return result
     except Exception as exc:
-        logger.error("diagnosis_suggestion failed: %s", exc, exc_info=True)
+        logger.exception("ai.diagnosis_suggestion: failed err=%s", exc)
         return {"diagnoses": []}

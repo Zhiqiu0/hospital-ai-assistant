@@ -32,6 +32,8 @@ interface Props {
   onNewEncounter: () => void
   onSelectPatient: (p: WardPatient) => void
   selectedEncounterId?: string | null
+  /** 父组件 +1 触发重新拉取（出院 / 新接诊后用） */
+  refreshSignal?: number
 }
 
 const CONDITION_COLOR: Record<string, string> = {
@@ -40,7 +42,12 @@ const CONDITION_COLOR: Record<string, string> = {
   一般: '#16a34a',
 }
 
-export default function WardView({ onNewEncounter, onSelectPatient, selectedEncounterId }: Props) {
+export default function WardView({
+  onNewEncounter,
+  onSelectPatient,
+  selectedEncounterId,
+  refreshSignal,
+}: Props) {
   const { currentEncounterId } = useWorkbenchStore()
   const [patients, setPatients] = useState<WardPatient[]>([])
   const [loading, setLoading] = useState(false)
@@ -67,7 +74,7 @@ export default function WardView({ onNewEncounter, onSelectPatient, selectedEnco
 
   useEffect(() => {
     fetchWard()
-  }, [fetchWard])
+  }, [fetchWard, refreshSignal])
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

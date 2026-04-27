@@ -97,6 +97,14 @@ export default function InpatientWorkbenchPage() {
   const [selectedNote, setSelectedNote] = useState<TimelineItem | null>(null)
   // 外部触发时间轴刷新（签发/保存后 +1）
   const [timelineRefresh, setTimelineRefresh] = useState(0)
+  // 外部触发病区列表刷新（出院 / 新建接诊后 +1）
+  const [wardRefresh, setWardRefresh] = useState(0)
+
+  // 出院成功回调：清空当前接诊，触发病区列表重新拉取
+  const handleDischarged = () => {
+    reset()
+    setWardRefresh(n => n + 1)
+  }
 
   // 切换患者时清空时间轴选中，避免跨患者串数据
   useEffect(() => {
@@ -170,6 +178,7 @@ export default function InpatientWorkbenchPage() {
         onOpenHistory={openHistory}
         onOpenImaging={() => setImagingOpen(true)}
         onLogout={handleLogout}
+        onDischarged={handleDischarged}
       />
 
       <Content
@@ -191,6 +200,7 @@ export default function InpatientWorkbenchPage() {
           <WardView
             onNewEncounter={() => setModalOpen(true)}
             onSelectPatient={handleSelectWardPatient}
+            refreshSignal={wardRefresh}
             selectedEncounterId={currentEncounterId}
           />
         </div>
@@ -364,7 +374,10 @@ export default function InpatientWorkbenchPage() {
         onSuccess={handleEncounterCreated}
       />
 
-      {/* 住院端用"按患者聚焦"的历史病历抽屉：展示当前患者全部签发病历（门诊/急诊/住院混排） */}
+      {/* 住院端历史病历抽屉：
+          - 选中病区患者时 → 按患者聚焦，直接显示该患者全部签发病历
+          - 未选中患者（如刚办理出院后）→ 自动切到搜索模式，能搜到已出院患者
+            避免出现"出院后无法查看其签发病历"的死循环 */}
       <PatientHistoryDrawer
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
@@ -372,6 +385,9 @@ export default function InpatientWorkbenchPage() {
         patientName={currentPatient?.name}
         patientGender={currentPatient?.gender}
         patientAge={currentPatient?.age}
+        searchable={!currentPatient?.id}
+        // 住院端选中病区患者时一定在院（出院后 currentPatient 已被清空走搜索路径）
+        patientHasActiveInpatient={currentPatient?.id ? true : undefined}
         onView={setViewRecord}
         recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
       />

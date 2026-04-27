@@ -57,6 +57,11 @@ async def upload_lab_report(
         encounter_id=encounter_id,
         doctor_id=current_user.id,
     )
+    # 业务里程碑：检验报告上传成功（含 OCR 状态，便于复盘 OCR 失败率）
+    logger.info(
+        "lab_report.upload: ok report_id=%s encounter_id=%s mime=%s size=%d ocr_status=%s",
+        report.id, encounter_id, file.content_type, len(content), report.status,
+    )
     return _report_to_dict(report)
 
 

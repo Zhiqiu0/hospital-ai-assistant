@@ -16,6 +16,7 @@
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
     "@cornerstonejs/core": "^4.20.0",
+    "@cornerstonejs/dicom-image-loader": "^4.22.2",
     "@cornerstonejs/tools": "^4.20.0",
     "antd": "^5.21.0",
     "axios": "^1.7.7",

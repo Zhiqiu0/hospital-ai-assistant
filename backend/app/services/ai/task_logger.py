@@ -57,7 +57,7 @@ async def log_ai_task(
             await db.commit()
         except Exception as exc:
             # 日志写入失败不影响主流程，仅记录错误供排查
-            logger.error("log_ai_task commit failed: %s", exc)
+            logger.error("ai_task.log: commit_failed err=%s", exc)
     return task_id
 
 
@@ -123,7 +123,7 @@ async def save_qc_issues(
             await db.commit()
         except Exception as exc:
             # 持久化失败不影响前端实时展示（前端通过 SSE 已收到结果）
-            logger.error("save_qc_issues commit failed: %s", exc)
+            logger.error("qc_issues.save: commit_failed err=%s", exc)
 
 
 def calc_grade_score(issues: list[dict]) -> tuple[float, str]:

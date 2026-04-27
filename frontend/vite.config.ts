@@ -24,6 +24,27 @@ export default defineConfig({
       '@': '/src',
     },
   },
+  // R1 sprint E：cornerstone3D 的 dicom-image-loader 内部 worker 使用 ESM
+  // 动态加载 codec 包；Vite 默认 worker.format='iife' 不支持 code-splitting，
+  // 必须显式切到 'es' 才能 build 通过
+  worker: {
+    format: 'es',
+  },
+  optimizeDeps: {
+    // 强制预打包 dicom-image-loader 全套：codec 包是 UMD/emscripten 产物，
+    // 需要 vite 的 commonjs 插件转 ESM 才能正常 default import。
+    // dev 模式下 vite 不会自动追踪 dynamic import 的子依赖，必须显式列出
+    // 每个 codec 包，否则首次解码 .dcm 时会报 "no default export"
+    include: [
+      '@cornerstonejs/dicom-image-loader',
+      '@cornerstonejs/codec-charls',
+      '@cornerstonejs/codec-charls/decode',
+      '@cornerstonejs/codec-charls/decodewasmjs',
+      '@cornerstonejs/codec-libjpeg-turbo-8bit',
+      '@cornerstonejs/codec-openjpeg',
+      '@cornerstonejs/codec-openjph',
+    ],
+  },
   test: {
     globals: true,
     environment: 'jsdom',

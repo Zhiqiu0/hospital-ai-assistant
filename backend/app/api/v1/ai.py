@@ -20,9 +20,9 @@ from app.api.v1.ai_suggestions import router as suggestions_router
 from app.api.v1.ai_qc import router as qc_router
 
 
-def _ai_rate_limit(request: Request) -> None:
+async def _ai_rate_limit(request: Request) -> None:
     """全局 AI 接口限速依赖（防止滥用 LLM 接口）。"""
-    ai_limiter.check(request)
+    await ai_limiter.check(request)
 
 
 _rate_limit_dep = [Depends(_ai_rate_limit)]

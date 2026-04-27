@@ -86,6 +86,11 @@ async def create_progress_note(
         recorded_at_raw=data.recorded_at,
         recorded_by=getattr(current_user, "real_name", None) or current_user.username,
     )
+    # 业务里程碑：病程记录创建（不打 content，仅 ID/类型用于复盘谁建的）
+    logger.info(
+        "progress_note.create: ok note_id=%s encounter_id=%s type=%s",
+        note.id, encounter_id, data.note_type,
+    )
     return _note_to_dict(note)
 
 
@@ -108,6 +113,12 @@ async def update_progress_note(
         status=data.status,
         recorded_at_raw=data.recorded_at,
     )
+    # 业务里程碑：病程记录签发（status=submitted 是冻结点）
+    if data.status == "submitted":
+        logger.info(
+            "progress_note.sign: submitted note_id=%s encounter_id=%s type=%s",
+            note_id, encounter_id, note.note_type,
+        )
     return _note_to_dict(note)
 
 

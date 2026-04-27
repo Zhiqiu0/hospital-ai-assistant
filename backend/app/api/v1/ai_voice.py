@@ -141,6 +141,9 @@ async def upload_voice_record(
     db.add(record)
     await db.commit()
     await db.refresh(record)
+    # 工作台快照含 latest_voice_record，新上传需失效缓存
+    from app.services.encounter_service import invalidate_encounter_snapshot
+    await invalidate_encounter_snapshot(encounter_id)
     return {
         "voice_record_id": record.id,
         "status": record.status,
@@ -246,8 +249,13 @@ async def delete_voice_record(
         if audio_path.exists():
             audio_path.unlink()
 
+    eid = record.encounter_id
     await db.delete(record)
     await db.commit()
+    # 删除语音也要失效快照（latest_voice_record 字段会变）
+    if eid:
+        from app.services.encounter_service import invalidate_encounter_snapshot
+        await invalidate_encounter_snapshot(eid)
     return {"success": True}
 
 
@@ -323,6 +331,10 @@ async def voice_structure(
             voice_record.draft_record = result.get("draft_record", "")
             voice_record.status = "structured"
             await db.commit()
+            # 语音结构化结果会被工作台快照引用，失效缓存
+            from app.services.encounter_service import invalidate_encounter_snapshot
+            if voice_record.encounter_id:
+                await invalidate_encounter_snapshot(voice_record.encounter_id)
 
         return {
             "transcript_id": voice_record.id if voice_record else req.transcript_id,
@@ -332,7 +344,7 @@ async def voice_structure(
             "draft_record": result.get("draft_record", ""),
         }
     except Exception as exc:
-        logger.error("voice_structure failed: %s", exc, exc_info=True)
+        logger.exception("voice.structure: failed err=%s", exc)
         return {
             "transcript_id": req.transcript_id,
             "transcript_summary": "",

@@ -26,11 +26,9 @@
 import logging
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.models.config import QCRule
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +85,12 @@ async def check_insurance_risk(content: str, db: AsyncSession) -> list[dict]:
     if not content or len(content.strip()) < 20:
         return []
 
-    # 加载所有激活的医保风险规则（按 rule_code 排序保证输出顺序稳定）
+    # 加载所有激活的医保风险规则（Redis 缓存 60s，admin 写时主动失效）
     try:
-        result = await db.execute(
-            select(QCRule).where(
-                QCRule.rule_type == "insurance",
-                QCRule.is_active.is_(True),
-            ).order_by(QCRule.rule_code)
-        )
-        rules: list[QCRule] = list(result.scalars().all())
+        from app.services.qc_rules_cache import get_active_qc_rules
+        rules = await get_active_qc_rules(db, "insurance")
     except Exception as exc:
-        logger.error("check_insurance_risk: failed to load rules from DB: %s", exc)
+        logger.error("rules.insurance: load_failed err=%s", exc)
         return []
 
     issues: list[dict] = []

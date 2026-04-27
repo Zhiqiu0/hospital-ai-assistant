@@ -13,7 +13,6 @@ FastAPI 应用入口（main.py）
 """
 
 import logging
-import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,12 +22,24 @@ from sqlalchemy import text
 from app.api.v1 import router as api_v1_router
 from app.config import settings
 from app.core.logging_config import setup_logging
+from app.core.request_context import RequestIDMiddleware
+from app.core.sentry_init import init_sentry
 from app.database import AsyncSessionLocal
 from app.schema_compat import apply_schema_compatibility
 
 # 初始化日志：级别从 settings 读取（默认 INFO），格式由 setup_logging 统一配置
 setup_logging(log_level=getattr(settings, "log_level", "INFO"))
 logger = logging.getLogger(__name__)
+
+# 初始化 Sentry：DSN 留空则跳过（本地开发默认不上报）
+# 必须在 FastAPI 实例创建前调用，否则 FastApiIntegration 不会自动挂中间件
+# release 由 CI deploy 注入 git SHA，本地开发留空（event 无 release tag）
+init_sentry(
+    dsn=settings.sentry_dsn,
+    environment=settings.sentry_environment or settings.app_env,
+    traces_sample_rate=settings.sentry_traces_sample_rate,
+    release=settings.sentry_release or None,
+)
 
 # ── FastAPI 实例 ──────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -38,6 +49,12 @@ app = FastAPI(
     docs_url="/docs",      # Swagger UI，仅开发环境开放
     redoc_url="/redoc",    # ReDoc 文档
 )
+
+# ── 请求 ID 中间件 ─────────────────────────────────────────────────────────────
+# 给每个请求生成短 UUID 注入 contextvar，让所有日志能 grep "rid=xxx" 串成链。
+# 注意：必须在 CORSMiddleware 之前 add（Starlette 中间件后注册先执行），
+# 这样 OPTIONS 预检请求也会带上 request_id，前端报错截图能直接定位。
+app.add_middleware(RequestIDMiddleware)
 
 # ── CORS 跨域中间件 ────────────────────────────────────────────────────────────
 # allowed_origins 从 settings 读取（支持逗号分隔多域名），生产环境需精确配置
@@ -56,18 +73,15 @@ app.include_router(api_v1_router, prefix="/api/v1")
 
 # ── 全局异常处理器 ────────────────────────────────────────────────────────────
 # 未被路由层捕获的异常（500 Internal Server Error）会落到这里。
-# 默认 FastAPI 只返 500 不记录堆栈——排查 bug 时一筹莫展。
-# 这里把完整 traceback 写入 error.log，并给前端一个清晰的 detail（不泄露内部细节）。
+# logger.exception 写堆栈到 error.log；Sentry LoggingIntegration 会自动转成 event。
+# 不再手工 traceback.format_exc()——SDK 自带堆栈采集，避免双写。
 @app.exception_handler(Exception)
 async def catch_all_exception_handler(request: Request, exc: Exception):
-    tb = traceback.format_exc()
-    logger.error(
-        "Unhandled exception on %s %s: %s: %s\n%s",
+    logger.exception(
+        "app.unhandled_exception: method=%s path=%s type=%s",
         request.method,
         request.url.path,
         type(exc).__name__,
-        str(exc)[:200],
-        tb,
     )
     return JSONResponse(
         status_code=500,
@@ -86,7 +100,7 @@ async def startup_event():
     1. 打印启动日志
     2. 执行 schema_compat 兼容性检查（自动为旧版 DB 补充缺失字段）
     """
-    logger.info("MedAssist 后端启动")
+    logger.info("app.startup: ok")
     await apply_schema_compatibility()
 
 
@@ -107,8 +121,8 @@ async def health_check():
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         db_status = "ok"
-    except Exception as e:
-        logger.error("Health check: DB unreachable: %s", e)
+    except Exception as exc:
+        logger.error("health.db: failed err=%s", exc)
         db_status = "error"
 
     status = "ok" if db_status == "ok" else "degraded"

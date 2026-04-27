@@ -9,10 +9,12 @@ import { Form, Input, Button, Divider, Select, Tag } from 'antd'
 import { SaveOutlined, CheckOutlined } from '@ant-design/icons'
 import VoiceInputCard from './VoiceInputCard'
 import PatientProfileCard from './PatientProfileCard'
+import ImagingReportsCard from './ImagingReportsCard'
 import SpecialAssessmentSection from './SpecialAssessmentSection'
 import PhysicalExamSection from './PhysicalExamSection'
 import CollapsibleSection from '@/components/common/CollapsibleSection'
 import { useInpatientInquiryPanel } from '@/hooks/useInpatientInquiryPanel'
+import { useWorkbenchStore } from '@/store/workbenchStore'
 
 const { TextArea } = Input
 
@@ -43,6 +45,8 @@ export default function InpatientInquiryPanel() {
     profileSaving,
     saveAll,
   } = useInpatientInquiryPanel()
+  // 直接从 workbench store 拿当前患者（hook 没暴露），传给 ImagingReportsCard
+  const currentPatient = useWorkbenchStore(s => s.currentPatient)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -101,6 +105,10 @@ export default function InpatientInquiryPanel() {
 
           {/* 患者档案卡片：8 字段纵向跟随患者，与门诊共用同一个组件 */}
           <PatientProfileCard />
+
+          {/* R1 sprint F-1：既往影像报告卡片（与门诊接诊面板共用同一组件，
+              0 条时不渲染） */}
+          <ImagingReportsCard patientId={currentPatient?.id} />
 
           {/* 语音录入卡片 */}
           <VoiceInputCard
@@ -175,7 +183,7 @@ export default function InpatientInquiryPanel() {
 
           {/* 二、专项评估（住院本次评估，profile 字段在顶部 PatientProfileCard） */}
           <CollapsibleSection title="二、专项评估" accent="#2563eb" defaultOpen>
-            <SpecialAssessmentSection painMarks={painMarks} />
+            <SpecialAssessmentSection painMarks={painMarks} patientGender={currentPatient?.gender} />
           </CollapsibleSection>
 
           {/* 三、体格检查与辅助检查 */}
@@ -215,16 +223,17 @@ export default function InpatientInquiryPanel() {
         }}
       >
         {(() => {
+          // 与门诊 InquiryPanel 保存按钮保持完全一致的视觉/文案
           const anyDirty = isDirty || profileDirty
           const anySaving = saving || profileSaving
           let label: string
           if (anyDirty) {
             const parts: string[] = []
             if (profileDirty) parts.push('档案')
-            if (isDirty) parts.push('入院问诊')
+            if (isDirty) parts.push('问诊')
             label = `保存${parts.join('+')}`
           } else if (hasSavedInquiry) {
-            label = '已保存 ✓'
+            label = '已保存'
           } else {
             label = '尚未填写问诊'
           }
@@ -241,7 +250,7 @@ export default function InpatientInquiryPanel() {
                 height: 36,
                 fontWeight: 600,
                 background: anyDirty
-                  ? 'linear-gradient(135deg, #0369a1, #0ea5e9)'
+                  ? 'linear-gradient(135deg, #2563eb, #3b82f6)'
                   : hasSavedInquiry
                     ? '#86efac'
                     : '#e5e7eb',

@@ -14,9 +14,39 @@ jobs:
     environment: production
 
     steps:
+      # checkout 必须 fetch-depth: 0，否则 sentry-cli set-commits --auto
+      # 拿不到完整 git 历史，无法关联 release 与 commits
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 计算本次部署的 release 标识：用 git short SHA（如 a7873b2），
+      # 同一份代码的 release 名字在 Sentry 里全局唯一，不会重复创建
+      - name: Compute release version
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # 创建 Sentry release：自动关联本次 commits、finalize、标记 production 部署
+      # 在 SSH deploy 之前执行：保证应用启动后上报 event 时 release object 已存在
+      # 否则 event 上的 release tag 会"挂空"，关联不到 commits
+      - name: Create Sentry release
+        uses: getsentry/action-release@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: mediscribe-s0
+          SENTRY_PROJECT: python-fastapi
+        with:
+          environment: production
+          version: ${{ steps.vars.outputs.sha }}
+
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
+        # SENTRY_RELEASE 通过 envs 字段穿透到 ssh 脚本里，
+        # 再 export 给 docker compose，docker-compose.yml 用 ${SENTRY_RELEASE:-} 接收
+        env:
+          SENTRY_RELEASE: ${{ steps.vars.outputs.sha }}
         with:
+          envs: SENTRY_RELEASE
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -24,10 +54,16 @@ jobs:
             set -e
             cd /app
             git pull origin main
+            export SENTRY_RELEASE
             docker compose up --build -d --wait
+            # alembic 主迁移（迁移脚本在 alembic/versions 下）
             docker compose exec -T backend alembic upgrade head
+            # 兜底：migrate.py 增量补字段 / 回填（schema_compat 已在启动时跑，
+            # 这里再显式调一次保证一定执行 + 把 deploy 日志里能看到结果）
+            docker compose exec -T backend python migrate.py
+            # seed_config 维护质控规则与 Prompt 模板（重复执行幂等）
             docker compose exec -T backend python seed_config.py
-            echo "Deploy finished at $(date)"
+            echo "Deploy finished at $(date) release=$SENTRY_RELEASE"
 
       - name: Health check
         run: |

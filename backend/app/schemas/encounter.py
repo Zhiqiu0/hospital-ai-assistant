@@ -33,8 +33,9 @@ class QuickStartRequest(BaseModel):
     # 患者基本信息
     patient_name: str                      # 患者姓名（必填）
     gender: Optional[str] = "unknown"     # 性别："男"/"女"/"unknown"
-    age: Optional[int] = None             # 年龄（用于推算出生年份，精度到年）
-    birth_date: Optional[str] = None      # 精确出生日期（YYYY-MM-DD，优先级高于 age）
+    # 出生日期（YYYY-MM-DD）；前端展示年龄时用 dayjs().diff(birth_date, 'year') 计算，
+    # 不再接受 age 字段，避免推算导致出生日期被劣化为"当年 1 月 1 日"。
+    birth_date: Optional[str] = None
     id_card: Optional[str] = None         # 身份证号（精确查重用）
     phone: Optional[str] = None
     address: Optional[str] = None

@@ -21,22 +21,36 @@ export interface Patient {
   age?: number | null
   phone?: string | null
   birth_date?: string | null // ISO date
+  /** 是否有进行中的住院接诊；驱动"在院中"绿色 Tag */
+  has_active_inpatient?: boolean | null
+  /** 是否曾经住过院（含已出院）；区分"已出院"(true) vs "纯门诊从未住过院"(false) */
+  has_any_inpatient_history?: boolean | null
 }
 
-// ── PatientProfile (Longitudinal Record) ─────────────────────────────────────
+// ── PatientProfile (Longitudinal Record，JSONB 重构后) ──────────────────────
+/**
+ * 单字段元数据：何时更新 / 谁更新（FHIR verificationStatus 思路）。
+ * 后端用 JSONB 字段级存储，前端展示"X 天前由某医生确认"。
+ */
+export interface ProfileFieldMeta {
+  updated_at?: string | null // ISO datetime
+  updated_by?: string | null // doctor user id
+}
+
 export interface PatientProfile {
   past_history?: string | null // 既往史
   allergy_history?: string | null // 过敏史
   family_history?: string | null // 家族史
   personal_history?: string | null // 个人史
-  current_medications?: string | null // 长期用药
+  current_medications?: string | null // 长期用药（变化稍快，>30 天前端高亮提示）
   marital_history?: string | null // 婚育史
-  menstrual_history?: string | null // 月经史
   religion_belief?: string | null // 宗教信仰
-  updated_at?: string | null // 档案最后更新时间 ISO
+  // 月经史已移除：时变信息，每次接诊在 inquiry_inputs.menstrual_history 重填
+  updated_at?: string | null // 各字段最大 updated_at 聚合（兼容旧"档案最后更新于"展示）
+  fields_meta?: Record<string, ProfileFieldMeta> | null // 字段级元数据
 }
 
-/** 档案字段名清单，便于遍历与序列化 */
+/** 档案字段名清单（共 7 个，月经史已剔除） */
 export const PROFILE_FIELD_KEYS = [
   'past_history',
   'allergy_history',
@@ -44,7 +58,6 @@ export const PROFILE_FIELD_KEYS = [
   'personal_history',
   'current_medications',
   'marital_history',
-  'menstrual_history',
   'religion_belief',
 ] as const satisfies ReadonlyArray<keyof PatientProfile>
 

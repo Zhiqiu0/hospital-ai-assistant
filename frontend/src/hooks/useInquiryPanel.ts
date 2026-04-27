@@ -367,5 +367,7 @@ export function useInquiryPanel() {
     profileSaving,
     /** 统一保存按钮调用入口 */
     saveAll,
+    /** 当前接诊患者（供子组件按 patient_id 拉数据用，如影像报告） */
+    currentPatient,
   }
 }

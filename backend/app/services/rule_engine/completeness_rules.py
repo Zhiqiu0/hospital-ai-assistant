@@ -23,7 +23,6 @@ scope 过滤：
 import logging
 import re
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.config import QCRule
@@ -133,17 +132,12 @@ async def check_completeness(
     # 一次性解析章节，供所有规则复用
     sections = parse_sections(text)
 
-    # 加载所有激活的完整性规则
+    # 加载所有激活的完整性规则（Redis 缓存 60s，admin 写时主动失效）
     try:
-        result = await db.execute(
-            select(QCRule).where(
-                QCRule.rule_type == "completeness",
-                QCRule.is_active.is_(True),
-            ).order_by(QCRule.rule_code)
-        )
-        rules: list[QCRule] = list(result.scalars().all())
+        from app.services.qc_rules_cache import get_active_qc_rules
+        rules = await get_active_qc_rules(db, "completeness")
     except Exception as exc:
-        logger.error("check_completeness: failed to load rules from DB: %s", exc)
+        logger.error("rules.completeness: load_failed err=%s", exc)
         return []
 
     is_tcm = _is_tcm_record(text, sections)

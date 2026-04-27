@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
-from app.core.authz import assert_patient_access
 from app.database import get_db
 from app.schemas.medical_record import (
     MedicalRecordCreate,
@@ -66,18 +65,6 @@ async def quick_save_record(
     return {"ok": True, "record_id": record.id}
 
 
-@router.get("/my")
-async def list_my_records(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, le=50),
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """查询当前医生的历史签发病历"""
-    service = MedicalRecordService(db)
-    return await service.list_by_doctor(current_user.id, page, page_size)
-
-
 @router.get("/by-patient/{patient_id}")
 async def list_by_patient(
     patient_id: str,
@@ -86,12 +73,24 @@ async def list_by_patient(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """查询某患者的全部已签发病历（门诊/急诊/住院）——住院医生查看患者来路用。
+    """查询某患者的全部已签发病历（门诊/急诊/住院），任意登录医生可读。
 
-    权限：admin / radiologist 直通；其他角色必须对该患者有过接诊关系。
-    返回字段包含 visit_type / is_first_visit 供前端打场景 Tag。
+    权限设计：
+      已签发病历是医院共享医疗数据，任意登录医生为诊疗目的均可查阅
+      （初诊/复诊可能不同医生，复诊看历史是刚需）。本接口不做接诊关系拦截。
+      写入仍受限：只能改自己开的接诊/病历（在 save_content / quick_save 拦）。
+      合规：每次查阅都写审计日志（action='view_records'），admin 可在
+      "操作日志"页面追溯任何医生何时查阅了哪个患者，符合等保 2.0 三级要求。
     """
-    await assert_patient_access(db, patient_id, current_user)
+    await log_action(
+        action="view_records",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient_record",
+        resource_id=patient_id,
+        detail=f"查阅患者 {patient_id} 的全部签发病历列表（page={page}）",
+    )
     service = MedicalRecordService(db)
     return await service.list_by_patient(patient_id, page, page_size)
 

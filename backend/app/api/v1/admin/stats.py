@@ -5,6 +5,7 @@
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 from datetime import date, datetime, timedelta
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
@@ -20,12 +21,26 @@ from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.medical_record import AITask, QCIssue
 from app.models.user import Department
+from app.services.redis_cache import redis_cache
+
+# 模块级 logger：admin 后台请求量低，异常都值得上 Sentry
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
 @router.get("/overview")
 async def overview(db: AsyncSession = Depends(get_db), current_user=Depends(require_admin)):
+    """运营概览：6 个全表聚合 count，admin 仪表盘首屏。
+
+    Redis 缓存 30 秒；管理后台不会因为 30s 旧数据出问题（业务用户也看不到）。
+    缓存命中时仪表盘秒开。
+    """
+    cache_key = "admin:stats:overview"
+    cached = await redis_cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+
     today = date.today()
 
     # Total / today encounters
@@ -55,7 +70,7 @@ async def overview(db: AsyncSession = Depends(get_db), current_user=Depends(requ
     )
     risk_counts: dict[str, int] = {row.risk_level: row.cnt for row in risk_level_result}
 
-    return {
+    overview_data = {
         "today_encounters": today_encounters,
         "total_encounters": total_encounters,
         "total_ai_tasks": total_ai_tasks,
@@ -75,6 +90,8 @@ async def overview(db: AsyncSession = Depends(get_db), current_user=Depends(requ
         "medium_risk_issues": risk_counts.get("medium", 0),
         "low_risk_issues": risk_counts.get("low", 0),
     }
+    await redis_cache.set_json(cache_key, overview_data, ttl=30)
+    return overview_data
 
 
 @router.get("/usage")
@@ -157,8 +174,10 @@ async def token_usage(
                 infos = data.get("balance_infos", [])
                 if infos:
                     balance_info = infos[0]
-    except Exception:
-        pass
+    except Exception as exc:
+        # 余额查询挂了不阻断后台首屏，但要写日志（之前 pass 导致 0 线索）
+        # 用 warning 级别——这是外部依赖问题，不是代码 bug，避免 Sentry 误告警
+        logger.warning("admin.deepseek_balance: failed err=%s", exc)
 
     # 1b. 阿里云：连接检测 + AccessKey 余额查询
     aliyun_status = {"connected": False, "model": settings.aliyun_model, "error": None, "balance": None}
@@ -181,8 +200,10 @@ async def token_usage(
                     aliyun_status["connected"] = True
                 else:
                     aliyun_status["error"] = f"HTTP {resp.status_code}"
-        except Exception as e:
-            aliyun_status["error"] = str(e)
+        except Exception as exc:
+            # 错误透传给前端展示外，同时写日志（之前只透传 → Sentry 看不到聚合）
+            aliyun_status["error"] = str(exc)
+            logger.warning("admin.aliyun_check: failed err=%s", exc)
     else:
         aliyun_status["error"] = "未配置 ALIYUN_API_KEY"
 
@@ -208,8 +229,9 @@ async def token_usage(
                 "credit_amount": d.credit_amount,
                 "currency": d.currency,
             }
-        except Exception as e:
-            aliyun_status["balance_error"] = str(e)
+        except Exception as exc:
+            aliyun_status["balance_error"] = str(exc)
+            logger.warning("admin.aliyun_balance: failed err=%s", exc)
 
     # 2. 从本地 ai_tasks 表统计 token 消耗
     total_input = await db.execute(select(func.coalesce(func.sum(AITask.token_input), 0)))

@@ -1,10 +1,14 @@
 /**
  * 专项评估区块（SpecialAssessmentSection.tsx）
- * 仅含住院本次接诊的评估字段：康复需求 / 疼痛评分（NRS）/ VTE风险 / 营养评估 / 心理评估。
+ * 仅含住院本次接诊的评估字段：康复需求 / 疼痛评分（NRS）/ VTE风险 / 营养评估 / 心理评估
+ *                              + 月经史（女性）。
  * 1.6.2：当前用药、宗教信仰已迁到 PatientProfileCard（属于患者纵向档案）。
+ * 地基重构：月经史从档案移到本组件（时变信息，每次接诊重填）。仅女性显示。
  * 必须渲染在 Ant Design Form 上下文内。
  */
-import { Form, Select, Slider } from 'antd'
+import { Form, Input, Select, Slider } from 'antd'
+
+const { TextArea } = Input
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
@@ -18,9 +22,12 @@ const fieldStyle = { marginBottom: 12 }
 
 interface Props {
   painMarks: Record<number, string>
+  /** 患者性别：女性才显示月经史输入框 */
+  patientGender?: string | null
 }
 
-export default function SpecialAssessmentSection({ painMarks }: Props) {
+export default function SpecialAssessmentSection({ painMarks, patientGender }: Props) {
+  const isFemale = patientGender === 'female'
   return (
     <>
       <Form.Item
@@ -94,6 +101,30 @@ export default function SpecialAssessmentSection({ painMarks }: Props) {
           </Select.Option>
         </Select>
       </Form.Item>
+
+      {/* 月经史（女性）：地基重构后从患者档案搬到本次接诊侧。
+          末次月经是时变信息（每月都变），跟生命体征/主诉一样，每次接诊重新询问，
+          不能像过敏史那样长期跟着患者。后端字段：inquiry_inputs.menstrual_history。 */}
+      {isFemale && (
+        <Form.Item
+          style={fieldStyle}
+          name="menstrual_history"
+          label={
+            <span style={labelStyle}>
+              月经史
+              <span style={{ fontSize: 10, color: '#a16207', marginLeft: 6, fontWeight: 'normal' }}>
+                （时变信息，本次接诊填写）
+              </span>
+            </span>
+          }
+        >
+          <TextArea
+            rows={2}
+            placeholder="末次月经日期、本次月经特点（量/痛经/异常）；如：LMP 2026-04-15，量正常无痛经"
+            style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+          />
+        </Form.Item>
+      )}
     </>
   )
 }

@@ -62,13 +62,8 @@ export const INQUIRY_GROUPS: InquiryGroup[] = [
       { key: 'family_history', label: '家族史', owner: 'patient', rows: 1, scenes: ['inpatient'] },
       { key: 'current_medications', label: '长期用药', owner: 'patient', rows: 2 },
       { key: 'marital_history', label: '婚育史', owner: 'patient', scenes: ['inpatient'] },
-      {
-        key: 'menstrual_history',
-        label: '月经史',
-        owner: 'patient',
-        scenes: ['inpatient'],
-        genderScope: 'female',
-      },
+      // 月经史已移出档案：是时变信息（每月都变），跟主诉/生命体征一类，
+      // 每次接诊重填。在 InpatientInquiryPanel 的"专项评估"段以 inquiry 字段呈现。
       { key: 'religion_belief', label: '宗教信仰', owner: 'patient', scenes: ['inpatient'] },
     ],
   },

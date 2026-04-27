@@ -45,7 +45,16 @@ class ImagingStudy(Base, TimestampMixin):
     # 上传该影像的医生（必填）
     uploaded_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
 
-    # ── 影像元数据（从 DICOM 文件头提取）────────────────────────────────────
+    # ── DICOM 标准 UID（R1 迁移：Orthanc 用此 UID 索引 study）───────────
+    # 由 DICOM 文件元数据提供（Tag 0020,000D），全局唯一。
+    # 业务表的 id 仍是自生成 UUID（前端引用用），study_instance_uid 是与
+    # Orthanc/外部 PACS 互通的标准 ID。Nullable 是为了向后兼容旧数据，
+    # 新建的 ImagingStudy 必须填这个字段。
+    study_instance_uid: Mapped[Optional[str]] = mapped_column(
+        String(128), unique=True, index=True
+    )
+
+    # ── 影像元数据（缓存 Orthanc 常用字段，避免每次 QIDO 远程查询）──────────
     # 检查设备类型："CT" / "MR" / "DR" / "US"
     modality: Mapped[Optional[str]] = mapped_column(String(20))
     # 检查部位，如："胸部" / "腹部" / "头颅"
@@ -54,12 +63,13 @@ class ImagingStudy(Base, TimestampMixin):
     series_description: Mapped[Optional[str]] = mapped_column(String(200))
     # 检查日期（从 DICOM 元数据读取）
     study_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    # 总切片数（DICOM 文件数量），用于前端进度展示
+    # 总切片数（缓存 Orthanc 实例总数，用于前端进度展示；详细切片信息走 QIDO 查 Orthanc）
     total_frames: Mapped[int] = mapped_column(Integer, default=0)
 
-    # ── 文件存储 ──────────────────────────────────────────────────────────────
-    # DICOM 解压后的目录路径（存储在服务器本地）
-    storage_dir: Mapped[str] = mapped_column(String(500))
+    # ── 旧字段（R1 迁移后弃用，保留是为了兼容旧数据，不再写入）────────────
+    # 历史含义：DICOM 解压后的本地目录路径
+    # R1 后所有文件都在 Orthanc 里，本字段对新记录恒为 NULL
+    storage_dir: Mapped[Optional[str]] = mapped_column(String(500))
 
     # ── 状态流转 ──────────────────────────────────────────────────────────────
     # pending   : 刚上传，等待 AI 分析

@@ -20,6 +20,10 @@ numpy
 pydicom
 Pillow
 
+# 错误监控（Sentry，FastAPI/SQLAlchemy/Logging 集成）
+# 仅当环境变量 SENTRY_DSN 非空时初始化，开发环境默认不上报
+sentry-sdk[fastapi]==2.18.0
+
 # 测试依赖
 pytest>=9.0
 pytest-asyncio>=1.0

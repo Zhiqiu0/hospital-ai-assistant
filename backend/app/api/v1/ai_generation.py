@@ -15,7 +15,7 @@ import logging
 import re
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +30,13 @@ from app.schemas.ai_request import (
     QuickGenerateRequest,
     SupplementRequest,
 )
-from app.services.ai.ai_utils import compose_physical_exam, get_active_prompt, safe_format, stream_text
+from app.services.ai.ai_utils import (
+    compose_physical_exam,
+    get_active_prompt,
+    safe_format,
+    stream_text,
+    stream_with_lock,
+)
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
@@ -40,8 +46,26 @@ from app.services.ai.prompts import (
     RECORD_TYPE_LABELS,
     SUPPLEMENT_PROMPT,
 )
+from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
+
+
+async def _acquire_ai_gen_lock(user_id: str, scope: str) -> tuple[str, str]:
+    """为 AI 流式生成接口拿锁，已被占用则直接 409。
+
+    锁 key 含 user_id + scope，让同一医生同时只能跑一个生成任务（极少有合理用例
+    要并行跑两份病历草稿）；ttl=120s 覆盖正常 LLM 流耗时。
+    """
+    lock_key = f"lock:ai_gen:{user_id}:{scope}"
+    token = await redis_cache.acquire_lock(lock_key, ttl=120)
+    if token is None:
+        raise HTTPException(
+            status_code=429,
+            detail="您有一个 AI 生成任务正在进行中，请等待完成后再试",
+        )
+    return lock_key, token
+
 
 router = APIRouter()
 
@@ -186,8 +210,12 @@ async def quick_generate(
         )
         prompt += previous_record_section
 
+    lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "generate")
     return StreamingResponse(
-        stream_text(prompt, task_type="generate", model_options=model_options),
+        stream_with_lock(
+            stream_text(prompt, task_type="generate", model_options=model_options),
+            lock_key, lock_token,
+        ),
         media_type="text/event-stream",
     )
 
@@ -234,8 +262,12 @@ async def quick_continue(
         current_content=req.current_content or "（暂无内容）",
     )
     model_options = await get_model_options(db, "generate")
+    lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "continue")
     return StreamingResponse(
-        stream_text(prompt, task_type="generate", model_options=model_options),
+        stream_with_lock(
+            stream_text(prompt, task_type="generate", model_options=model_options),
+            lock_key, lock_token,
+        ),
         media_type="text/event-stream",
     )
 
@@ -298,8 +330,12 @@ async def quick_supplement(
         qc_issues=issues_text,
     )
     model_options = await get_model_options(db, "generate")
+    lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "supplement")
     return StreamingResponse(
-        stream_text(prompt, task_type="generate", model_options=model_options),
+        stream_with_lock(
+            stream_text(prompt, task_type="generate", model_options=model_options),
+            lock_key, lock_token,
+        ),
         media_type="text/event-stream",
     )
 
@@ -322,8 +358,12 @@ async def quick_polish(
     template = db_prompt or POLISH_PROMPT
     model_options = await get_model_options(db, "polish")
     prompt = safe_format(template, content=req.content)
+    lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "polish")
     return StreamingResponse(
-        stream_text(prompt, task_type="polish", model_options=model_options),
+        stream_with_lock(
+            stream_text(prompt, task_type="polish", model_options=model_options),
+            lock_key, lock_token,
+        ),
         media_type="text/event-stream",
     )
 
@@ -368,5 +408,5 @@ async def normalize_fields(
         result = json.loads(match.group())
         return {"fields": {k: result[k] for k in req.fields if k in result and result[k]}}
     except Exception as exc:
-        logger.error("normalize_fields failed: %s", exc, exc_info=True)
+        logger.exception("ai.normalize: failed err=%s", exc)
         return {"fields": req.fields}  # 失败时原样返回，不阻塞保存

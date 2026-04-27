@@ -2,9 +2,17 @@
  * 住院工作台顶栏（components/workbench/InpatientHeader.tsx）
  * 从 InpatientWorkbenchPage 提取，避免页面文件过长。
  */
-import { Button, Space, Tag, Typography, Avatar, Divider } from 'antd'
+import { useState } from 'react'
+import { Button, Space, Tag, Typography, Avatar, Divider, Modal, message } from 'antd'
 import { Layout } from 'antd'
-import { LogoutOutlined, CameraOutlined, MedicineBoxOutlined } from '@ant-design/icons'
+import {
+  LogoutOutlined,
+  CameraOutlined,
+  MedicineBoxOutlined,
+  LogoutOutlined as DischargeIcon,
+  ExclamationCircleOutlined,
+} from '@ant-design/icons'
+import api from '@/services/api'
 
 const { Header } = Layout
 const { Text } = Typography
@@ -16,6 +24,8 @@ interface Props {
   onOpenHistory: () => void
   onOpenImaging: () => void
   onLogout: () => void
+  /** 出院成功回调：父级负责清空当前选中患者 + 刷新病区列表 */
+  onDischarged?: () => void
 }
 
 export default function InpatientHeader({
@@ -25,7 +35,46 @@ export default function InpatientHeader({
   onOpenHistory,
   onOpenImaging,
   onLogout,
+  onDischarged,
 }: Props) {
+  const [discharging, setDischarging] = useState(false)
+
+  // 办理出院：二次确认弹窗 → POST /encounters/{id}/discharge → 成功回调
+  // 注：出院 ≠ 删除，已签发病历仍可在「历史病历」抽屉中查阅。
+  const handleDischarge = () => {
+    if (!currentEncounterId || !currentPatient) return
+    Modal.confirm({
+      title: '办理出院',
+      icon: <ExclamationCircleOutlined style={{ color: '#f59e0b' }} />,
+      content: (
+        <div>
+          <div style={{ marginBottom: 8 }}>
+            确认让 <b>{currentPatient.name}</b> 办理出院？
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            出院后该接诊将从病区列表移除，已签发病历可在「历史病历」中查阅。
+          </div>
+        </div>
+      ),
+      okText: '确认出院',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDischarging(true)
+        try {
+          await api.post(`/encounters/${currentEncounterId}/discharge`)
+          message.success(`${currentPatient.name} 已办理出院`)
+          onDischarged?.()
+        } catch (e: any) {
+          const detail = e?.response?.data?.detail || '办理出院失败，请重试'
+          message.error(detail)
+        } finally {
+          setDischarging(false)
+        }
+      },
+    })
+  }
+
   return (
     <Header
       style={{
@@ -73,8 +122,21 @@ export default function InpatientHeader({
       </div>
 
       <Space size={4}>
-        <Button size="small" type="text" onClick={onOpenHistory} style={{ color: '#059669', fontSize: 12, borderRadius: 8 }}>患者档案</Button>
+        <Button size="small" type="text" onClick={onOpenHistory} style={{ color: '#059669', fontSize: 12, borderRadius: 8 }}>历史病历</Button>
         <Button icon={<CameraOutlined />} size="small" type="text" onClick={onOpenImaging} style={{ color: '#7c3aed', fontSize: 12, borderRadius: 8 }}>影像分析</Button>
+        {/* 办理出院：仅在选中住院患者时显示。出院后患者从病区列表移除。 */}
+        {currentPatient && currentEncounterId && (
+          <Button
+            icon={<DischargeIcon rotate={-90} />}
+            size="small"
+            type="text"
+            loading={discharging}
+            onClick={handleDischarge}
+            style={{ color: '#dc2626', fontSize: 12, borderRadius: 8 }}
+          >
+            办理出院
+          </Button>
+        )}
         <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'var(--border)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 8, background: 'var(--surface-2)' }}>
           <Avatar size={26} style={{ background: 'linear-gradient(135deg, #065f46, #34d399)', fontSize: 11, flexShrink: 0 }}>
