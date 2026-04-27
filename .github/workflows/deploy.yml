@@ -68,7 +68,29 @@ jobs:
             # （SSH user 无 root 权限改不了 /etc/docker/daemon.json）
             docker compose pull --ignore-buildable
             docker compose build backend frontend
-            docker compose up -d --wait
+            # 不用 --wait（避免 orthanc 健康问题阻塞主流程 alembic / migrate）
+            # 改成显式 up + 自己轮询 backend / frontend 关键服务 healthy
+            docker compose up -d
+            for i in $(seq 1 30); do
+              backend_h=$(docker inspect --format='{{.State.Health.Status}}' app-backend-1 2>/dev/null || echo "starting")
+              frontend_h=$(docker inspect --format='{{.State.Health.Status}}' app-frontend-1 2>/dev/null || echo "starting")
+              echo "[deploy] poll $i: backend=$backend_h frontend=$frontend_h"
+              if [ "$backend_h" = "healthy" ] && [ "$frontend_h" = "healthy" ]; then
+                break
+              fi
+              sleep 5
+            done
+            if [ "$backend_h" != "healthy" ] || [ "$frontend_h" != "healthy" ]; then
+              echo "[deploy] FATAL: backend / frontend 未在 150s 内 healthy"
+              docker compose logs --tail=50 backend frontend
+              exit 1
+            fi
+            # orthanc unhealthy 不 fatal（PACS 影像功能可单独修），仅 dump 日志便于排查
+            orthanc_h=$(docker inspect --format='{{.State.Health.Status}}' app-orthanc-1 2>/dev/null || echo "missing")
+            if [ "$orthanc_h" != "healthy" ]; then
+              echo "[deploy] WARNING: orthanc=$orthanc_h（PACS 影像功能可能不可用）"
+              docker compose logs --tail=40 orthanc 2>&1 | tail -40 || true
+            fi
             # alembic 主迁移（迁移脚本在 alembic/versions 下）
             docker compose exec -T backend alembic upgrade head
             # 兜底：migrate.py 增量补字段 / 回填（schema_compat 已在启动时跑，
