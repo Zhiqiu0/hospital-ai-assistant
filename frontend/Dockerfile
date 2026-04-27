@@ -1,4 +1,5 @@
-FROM node:20-slim AS builder
+# 走 daocloud 反代避开 docker.io 网络超时（国内服务器无法直连）
+FROM docker.m.daocloud.io/library/node:20-slim AS builder
 
 WORKDIR /app
 
@@ -12,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # --- 生产镜像 ---
-FROM nginx:alpine
+FROM docker.m.daocloud.io/library/nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
