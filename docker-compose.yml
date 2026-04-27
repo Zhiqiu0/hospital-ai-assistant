@@ -65,8 +65,10 @@ services:
       test: ["CMD-SHELL", "wget -qO- --user=mediscribe --password=mediscribe-orthanc-2026 http://localhost:8042/system | grep -q Name"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 20s
+      retries: 12
+      # 首次启动 orthanc 需要建索引、扫 db、初始化 DICOM web 端点；
+      # 在低配服务器上可能 60s 都不够，给 90s 充裕预热
+      start_period: 90s
 
   backend:
     build: ./backend
