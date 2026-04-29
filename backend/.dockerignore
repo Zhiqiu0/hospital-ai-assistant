@@ -5,5 +5,8 @@ __pycache__/
 .env
 uploads/
 *.log
-alembic/versions/
 tests/
+
+# 注：alembic/versions/ 必须进镜像——deploy 流程依赖
+# `alembic upgrade head` 跑 schema 迁移；之前误排除导致容器里没迁移文件，
+# schema 漂移（patients.name_pinyin 列缺失等），生产 500。
