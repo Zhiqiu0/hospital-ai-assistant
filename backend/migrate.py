@@ -212,11 +212,20 @@ async def migrate():
             except Exception as e:
                 print(f"    qc_rules.{col} - SKIP ({e})")
         # 兜底：早期版本里 keywords/indication_keywords 是 TEXT，老数据库里
-        # 列类型仍是 TEXT。改不动 ADD COLUMN（已存在），需要显式 ALTER TYPE。
-        # USING ::jsonb 把已有字符串内容当 JSON 解析；空串 / 非法 JSON 会失败，
-        # 但 seed_config 写入的都是合法 JSON 数组，OK。
+        # 列类型可能仍是 TEXT。需要显式 ALTER TYPE 转 JSONB。
+        # 先查 information_schema 确认当前类型，已是 jsonb 就跳过——不能盲跑
+        # ALTER TYPE，因为 USING 子句会对每行做 text→jsonb 转换，列已是 jsonb
+        # 再走一遍会重新 stringify 内容触发 InvalidTextRepresentationError。
         for col in ("keywords", "indication_keywords"):
             try:
+                check = await conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name='qc_rules' AND column_name=:c"
+                ), {"c": col})
+                current_type = check.scalar()
+                if current_type == "jsonb":
+                    print(f"    qc_rules.{col} TYPE 已是 JSONB - SKIP")
+                    continue
                 await conn.execute(text(
                     f"ALTER TABLE qc_rules ALTER COLUMN {col} TYPE JSONB "
                     f"USING CASE WHEN {col} IS NULL OR {col} = '' "
@@ -224,7 +233,6 @@ async def migrate():
                 ))
                 print(f"    qc_rules.{col} TYPE → JSONB - OK")
             except Exception as e:
-                # 已经是 JSONB 的话 ALTER 会成功（无变化），其他情况打日志不阻断
                 print(f"    qc_rules.{col} TYPE - SKIP ({str(e)[:80]})")
         print()
 
