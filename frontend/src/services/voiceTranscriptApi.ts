@@ -30,7 +30,9 @@ export interface VoiceStructureResult {
 /** 拉一次性 audio token（给 <audio> 标签鉴权播放原始录音）。 */
 export async function fetchAudioToken(transcriptId: string): Promise<string | null> {
   try {
-    const res: any = await api.get(`/ai/voice-records/${transcriptId}/audio-token`)
+    const res = (await api.get(`/ai/voice-records/${transcriptId}/audio-token`)) as {
+      audio_token?: string
+    } | null
     return res?.audio_token || null
   } catch {
     return null

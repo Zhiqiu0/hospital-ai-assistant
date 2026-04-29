@@ -18,6 +18,7 @@ export interface SSEHandlers {
   /** 文本块到达（type=chunk）。最常见的 onChunk 封装为短路，避免每个调用方都写 type 判断。 */
   onChunk?: (text: string) => void
   /** 通用事件分发：所有非 chunk/error 事件（如 QC 的 rule_issues / llm_issues / done）走这里。 */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onEvent?: (event: { type: string; [key: string]: any }) => void
 }
 
@@ -65,7 +66,7 @@ export async function streamSSE(
     buf = lines.pop() ?? ''
     for (const line of lines) {
       if (!line.startsWith('data:')) continue
-      let obj: any
+      let obj: { type: string; [key: string]: unknown }
       try {
         obj = JSON.parse(line.slice(5).trim())
       } catch {
@@ -73,11 +74,12 @@ export async function streamSSE(
         continue
       }
       if (obj.type === 'error') {
-        throw new Error(obj.message || 'STREAM_ERROR')
+        throw new Error(typeof obj.message === 'string' ? obj.message : 'STREAM_ERROR')
       }
       if (obj.type === 'chunk') {
-        handlers.onChunk?.(obj.text ?? '')
+        handlers.onChunk?.(typeof obj.text === 'string' ? obj.text : '')
       }
+      // onEvent 的 event 字段签名仍是 any（见接口注释），调用方按 obj.xxx 访问
       handlers.onEvent?.(obj)
     }
   }

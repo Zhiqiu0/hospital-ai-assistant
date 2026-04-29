@@ -63,21 +63,9 @@ export function useAutoSaveDraft({
   // 切接诊时重置基线
   const lastEncounterRef = useRef<string | null>(null)
 
-  // 接诊切换：上一份草稿不再相关，重置所有内部状态
-  useEffect(() => {
-    if (encounterId !== lastEncounterRef.current) {
-      lastEncounterRef.current = encounterId
-      lastSavedContentRef.current = ''
-      lastUpdatedAtRef.current = null
-      setSavedAt(0)
-      setSavingState('idle')
-      // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）
-      void flushDraftQueue(performSave)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [encounterId])
-
   // 实际保存逻辑（被防抖 + 失败队列 flush 共用）
+  // 必须声明在 useEffect 之前——effect 闭包里引用 performSave，
+  // 后置 const 会触发 ESLint react-hooks/set-state-in-effect TDZ 报错
   const performSave = async (payload: DraftPayload): Promise<boolean> => {
     setSavingState('saving')
     try {
@@ -108,12 +96,25 @@ export function useAutoSaveDraft({
         setSavingState('queued')
       } catch {
         // IndexedDB 也挂了——只能记日志，下次防抖触发还是会试
-        // eslint-disable-next-line no-console
+
         console.warn('autosave: enqueue failed', err)
       }
       return false
     }
   }
+
+  // 接诊切换：上一份草稿不再相关，重置所有内部状态
+  useEffect(() => {
+    if (encounterId !== lastEncounterRef.current) {
+      lastEncounterRef.current = encounterId
+      lastSavedContentRef.current = ''
+      lastUpdatedAtRef.current = null
+      setSavedAt(0)
+      setSavingState('idle')
+      // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）
+      void flushDraftQueue(performSave)
+    }
+  }, [encounterId])
 
   // 主防抖循环
   useEffect(() => {
@@ -135,7 +136,6 @@ export function useAutoSaveDraft({
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordContent, encounterId, recordType, isFinal])
 
   return { savedAt, savingState }
