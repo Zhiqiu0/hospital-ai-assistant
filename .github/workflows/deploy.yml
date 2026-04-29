@@ -118,6 +118,27 @@ jobs:
               docker compose logs --tail=40 orthanc 2>&1 | tail -40 || true
             fi
             # alembic 主迁移（迁移脚本在 alembic/versions 下）
+            #
+            # 历史背景：早期 schema 全靠 migrate.py 增量 ALTER 维护，alembic
+            # 后期才接入。生产 DB 的 alembic_version 表可能空（从未跑过 alembic）
+            # 但 schema 已经被 migrate.py 改到 c2d3e4f5a6b7（add_gender_scope）
+            # 之后的水平。直接 alembic upgrade head 会从 ad93f93fec62 重跑
+            # 老迁移 → ADD COLUMN rule_code 等已存在的列 → DuplicateColumnError。
+            #
+            # 修法：alembic_version 空且 qc_rules.gender_scope 已存在（migrate.py
+            # 维护到这里的标志）→ stamp c2d3e4f5a6b7 表示"现状已到这"，跳过老迁移
+            # 只跑新加的 d3e4f5a6b7c8 / e4f5a6b7c8d9。
+            # 全新数据库（gender_scope 不存在）→ 不 stamp，alembic 从头跑建表。
+            STAMP_BASELINE="c2d3e4f5a6b7"
+            ALEMBIC_EMPTY=$(docker compose exec -T db psql -U medassist -d medassist -tA \
+              -c "SELECT count(*) FROM alembic_version" 2>/dev/null || echo "0")
+            HAS_GENDER_SCOPE=$(docker compose exec -T db psql -U medassist -d medassist -tA \
+              -c "SELECT count(*) FROM information_schema.columns WHERE table_name='qc_rules' AND column_name='gender_scope'" \
+              2>/dev/null || echo "0")
+            if [ "$ALEMBIC_EMPTY" = "0" ] && [ "$HAS_GENDER_SCOPE" = "1" ]; then
+              echo "[deploy] alembic_version 空 + schema 已到 $STAMP_BASELINE，stamp 后只跑新迁移"
+              docker compose exec -T backend alembic stamp "$STAMP_BASELINE"
+            fi
             docker compose exec -T backend alembic upgrade head
             # 兜底：migrate.py 增量补字段 / 回填（schema_compat 已在启动时跑，
             # 这里再显式调一次保证一定执行 + 把 deploy 日志里能看到结果）
