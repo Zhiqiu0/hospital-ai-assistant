@@ -21,15 +21,27 @@ from app.models.ai_feedback import AISuggestionFeedback  # noqa
 
 
 async def migrate():
+    """增量迁移主入口。
+
+    事务粒度（治本于 2026-04-30）：
+      - 第 [1] 步 create_all 必须事务保护（建表是原子操作） → 走 engine.begin()
+      - 第 [2]+ 步全部 ALTER / UPDATE 改用 AUTOCOMMIT 隔离级别：
+          每条 SQL 独立事务，单条失败不污染后续——之前是单一 begin()
+          包裹整个函数，任何一条失败 → PG 整个事务 abort →
+          后续所有 SQL 抛 InFailedSQLTransactionError 全部 SKIP（误报噪音）
+    """
     print("=== MediScribe 增量迁移 ===\n")
 
+    # 第 [1] 步 create_all 需要事务原子性（建表中途失败要回滚）
     async with engine.begin() as conn:
-
-        # 1. 新建缺失的表（create_all 对已存在的表不做任何修改）
         print("[1] 创建缺失的表（已存在的跳过）...")
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
         await conn.run_sync(Base.metadata.create_all)
         print("    OK\n")
+
+    # 第 [2]+ 步用 AUTOCOMMIT：每条 SQL 单独事务，失败相互独立
+    async with engine.connect() as raw_conn:
+        conn = await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
 
         # 2. InquiryInput 新增字段（住院部扩展字段，旧库可能没有）
         print("[2] InquiryInput 新增住院扩展字段...")
