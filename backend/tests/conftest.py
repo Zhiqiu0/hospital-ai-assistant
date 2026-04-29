@@ -62,15 +62,29 @@ async def async_db():
 
 # Session 末尾清理 module-level 单例的 async 资源——CI 上 pytest 跑完不退出
 # 实测：184 个测试 8.6s 跑完后 pytest 进程 hang 5 分钟才被 step timeout 杀
-# 根因：redis_cache 等模块级单例创建了连接池/连接对象，event loop 关闭时
-# 这些 async resource 没正确 close，asyncio 选择 selector 等终结回调 hang
-# 修复：session 级 autouse finalizer 显式 close，让 pytest 正常退出
+# 根因：模块级单例（redis_cache 连接池 / llm_client 内部 httpx pool /
+#       database engine）创建了 async resource，event loop 关闭时 selector
+#       等连接终结回调，pytest 进程 hang
+# 修复：session 级 autouse finalizer 全部显式 close，让 pytest 正常退出
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _cleanup_module_singletons():
     yield
-    # 清理 redis_cache 单例的连接池
+    # 1) redis 单例连接池
     try:
         from app.services.redis_cache import redis_cache
         await redis_cache.close()
     except Exception:
-        pass  # 单例未初始化或已 close，不阻断 session teardown
+        pass
+    # 2) LLM 单例（AsyncOpenAI 内部持有 httpx AsyncClient pool，必须 close
+    #    否则 asyncio event loop 关闭时等 httpx pool finalize 卡住）
+    try:
+        from app.services.ai.llm_client import llm_client
+        await llm_client.client.close()
+    except Exception:
+        pass
+    # 3) database engine（async-pg / asyncio sqlite 也持有连接）
+    try:
+        from app.database import engine
+        await engine.dispose()
+    except Exception:
+        pass
