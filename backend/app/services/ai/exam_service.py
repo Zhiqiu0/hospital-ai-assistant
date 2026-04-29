@@ -72,6 +72,18 @@ class ExamService:
                 max_tokens=opts["max_tokens"],
                 model_name=opts["model_name"],
             )
+            # 写 ai_tasks（合规追溯，自动从 RequestContext 取 encounter_id）
+            from app.services.ai.task_logger import log_ai_task
+            usage = llm_client._last_usage
+            try:
+                await log_ai_task(
+                    "exam_suggestion",
+                    token_input=usage.prompt_tokens if usage else 0,
+                    token_output=usage.completion_tokens if usage else 0,
+                )
+            except Exception:
+                pass
+
             return {"code": 0, "data": {"suggestions": result.get("suggestions", [])}}
         except Exception as exc:
             return {"code": 503, "message": f"AI服务异常: {str(exc)}", "data": {"suggestions": []}}

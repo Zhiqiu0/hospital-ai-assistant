@@ -39,6 +39,10 @@ class QuickGenerateRequest(BaseModel):
     visit_type_detail: Optional[str] = "outpatient"
     is_first_visit: Optional[bool] = True
 
+    # 接诊维度——让 ai_tasks 写入时能绑定接诊（合规追溯 + 后续 snapshot 恢复）
+    encounter_id: Optional[str] = None
+    medical_record_id: Optional[str] = None
+
     # 患者基本信息
     patient_name: Optional[str] = ""
     patient_gender: Optional[str] = ""
@@ -158,7 +162,14 @@ class NormalizeFieldsRequest(BaseModel):
 # ── 语音结构化 ─────────────────────────────────────────────────────────────────
 
 class VoiceStructureRequest(BaseModel):
-    """语音转写结构化的入参。"""
+    """语音转写结构化的入参。
+
+    existing_record / existing_inquiry 用于"续录场景增量分析"——告诉 LLM 哪些信息
+    已经存在，让它只输出新增/修正字段而不是整段重新覆盖：
+      - existing_record：右侧病历草稿全文（**权威基线**，含医生手改痕迹）
+      - existing_inquiry：左侧问诊字段（次选基线，未生成病历草稿时使用）
+    路由层优先使用 existing_record；为空时退回 existing_inquiry。
+    """
 
     transcript: str = ""
     transcript_id: Optional[str] = None
@@ -167,6 +178,7 @@ class VoiceStructureRequest(BaseModel):
     patient_gender: Optional[str] = ""
     patient_age: Optional[str] = ""
     existing_inquiry: Optional[dict] = None
+    existing_record: Optional[str] = None
 
 
 # ── 问诊 / 检查 / 诊断建议 ────────────────────────────────────────────────────
@@ -177,6 +189,8 @@ class InquirySuggestionsRequest(BaseModel):
     chief_complaint: Optional[str] = ""
     history_present_illness: Optional[str] = ""
     initial_impression: Optional[str] = ""
+    # 接诊维度——让 ai_tasks 写入时能绑定接诊（合规追溯 + snapshot 恢复）
+    encounter_id: Optional[str] = None
 
 
 class ExamSuggestionsRequest(BaseModel):
@@ -186,6 +200,7 @@ class ExamSuggestionsRequest(BaseModel):
     history_present_illness: Optional[str] = ""
     initial_impression: Optional[str] = ""
     department: Optional[str] = ""
+    encounter_id: Optional[str] = None
 
 
 class DiagnosisSuggestionRequest(BaseModel):
@@ -195,6 +210,7 @@ class DiagnosisSuggestionRequest(BaseModel):
     history_present_illness: Optional[str] = ""
     initial_impression: Optional[str] = ""
     inquiry_answers: Optional[list] = []  # [{"question": "...", "answer": "..."}]
+    encounter_id: Optional[str] = None
 
 
 # ── 质控（QC）─────────────────────────────────────────────────────────────────
@@ -241,6 +257,31 @@ class QuickQCRequest(BaseModel):
     followup_advice: Optional[str] = ""
     precautions: Optional[str] = ""
     onset_time: Optional[str] = ""
+
+
+# QC 类请求中"非 inquiry 字段"集合：content / 路由参数 / 病历类型等
+# extract_inquiry_dict 用此反向过滤，新增 inquiry 字段时无需改本表
+_NON_INQUIRY_FIELDS: set[str] = {
+    "content",
+    "record_type",
+    "encounter_id",
+    "is_first_visit",
+    "patient_gender",
+}
+
+
+def extract_inquiry_dict(req: BaseModel) -> dict[str, str]:
+    """从 QC 类请求中提取 inquiry 字段 dict（用于规则引擎 B-lite 双源校验）。
+
+    QuickQCRequest / GradeScoreRequest 共用本工具：模型里所有 str 类型字段，
+    去掉 _NON_INQUIRY_FIELDS 后即为 inquiry 字段集合。空字符串保留——
+    completeness_rules._check_inquiry_field 会自行过滤占位/空值。
+    """
+    data = req.model_dump()
+    return {
+        k: v for k, v in data.items()
+        if k not in _NON_INQUIRY_FIELDS and isinstance(v, str)
+    }
 
 
 class QCFixRequest(BaseModel):

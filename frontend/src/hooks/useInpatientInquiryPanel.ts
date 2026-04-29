@@ -1,30 +1,34 @@
 /**
  * 住院问诊面板逻辑（hooks/useInpatientInquiryPanel.ts）
+ *
  * 从 InpatientInquiryPanel 提取的业务逻辑 hook。
+ * Audit Round 4 M6 拆分：
+ *   - 字段构建 / changed-fields 计算 / 病历章节同步 / 语音 patch 铺平 → utils/inpatientInquirySync.ts
+ *   - 本 hook 仅留 React 状态 + Form 编排 + 副作用 + API 调度
  */
 import { useEffect, useState } from 'react'
 import { Form, message } from 'antd'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
 import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
+import {
+  buildInpatientInquiryData,
+  diffInpatientChangedFields,
+  flattenVoicePatch,
+  syncInpatientToRecord,
+} from '@/utils/inpatientInquirySync'
 
 // 1.6.2：8 个 profile 字段（past/allergy/personal/marital/family/menstrual/
 // current_medications/religion_belief）已迁出到 PatientProfileCard，本 hook 仅
 // 处理"住院本次接诊"字段：主诉/现病史/体格/辅助/入院诊断/专项评估/陈述者
 export function useInpatientInquiryPanel() {
   const [form] = Form.useForm()
-  const {
-    inquiry,
-    inquirySavedAt,
-    setInquiry,
-    updateInquiryFields,
-    setPendingGenerate,
-    currentEncounterId,
-    recordContent,
-    setRecordContent,
-    isPolishing,
-  } = useWorkbenchStore()
+  const { inquiry, inquirySavedAt, setInquiry, updateInquiryFields } = useInquiryStore()
+  const { recordContent, setRecordContent, setPendingGenerate, isPolishing } = useRecordStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
 
   // 润色期间 recordContent 会短暂清空，isPolishing 防止表单闪烁解锁
   const isInputLocked = !!recordContent.trim() || isPolishing
@@ -84,114 +88,19 @@ export function useInpatientInquiryPanel() {
 
   const onSave = async (values: any) => {
     setSaving(true)
-    const painScore = values.pain_assessment ?? 0
 
     // 本次接诊字段：profile 8 字段已迁出，由 PatientProfileCard 单独 PUT
-    const inquiryData = {
-      chief_complaint: values.chief_complaint || '',
-      history_present_illness: values.history_present_illness || '',
-      physical_exam: values.physical_exam || '',
-      initial_impression: values.admission_diagnosis || '',
-      history_informant: values.history_informant || '',
-      rehabilitation_assessment: values.rehabilitation_assessment || '',
-      pain_assessment: String(painScore),
-      vte_risk: values.vte_risk || '',
-      nutrition_assessment: values.nutrition_assessment || '',
-      psychology_assessment: values.psychology_assessment || '',
-      auxiliary_exam: values.auxiliary_exam || '',
-      admission_diagnosis: values.admission_diagnosis || '',
-      // 生命体征结构化字段
-      temperature: values.temperature || '',
-      pulse: values.pulse || '',
-      respiration: values.respiration || '',
-      bp_systolic: values.bp_systolic || '',
-      bp_diastolic: values.bp_diastolic || '',
-      spo2: values.spo2 || '',
-      height: values.height || '',
-      weight: values.weight || '',
-    }
-
-    // 找出本次修改的字段，用于病历章节同步
-    const changedFields = new Set<string>()
-    const fieldKeys = [
-      'chief_complaint',
-      'history_present_illness',
-      'physical_exam',
-      'history_informant',
-      'rehabilitation_assessment',
-      'pain_assessment',
-      'vte_risk',
-      'nutrition_assessment',
-      'psychology_assessment',
-      'auxiliary_exam',
-      'admission_diagnosis',
-      'initial_impression',
-    ] as const
-    for (const key of fieldKeys) {
-      const val = (inquiryData[key as keyof typeof inquiryData] ?? '') as string
-      if (val && val !== ((inquiry[key as keyof typeof inquiry] ?? '') as string)) {
-        changedFields.add(key)
-      }
-    }
+    const inquiryData = buildInpatientInquiryData(values)
+    const changedFields = diffInpatientChangedFields(inquiryData, inquiry)
 
     setInquiry({ ...inquiry, ...inquiryData })
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
     }
 
-    // 将已改动的字段同步到右侧病历对应章节
-    // profile 字段（既往/过敏/个人/婚育/月经/家族/用药/宗教）章节由 PatientProfileCard 维护
+    // 把已改动的字段同步到右侧病历对应章节（profile 字段章节由 PatientProfileCard 维护）
     if (recordContent) {
-      const escReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const replaceSection = (content: string, header: string, value: string) =>
-        content.replace(
-          new RegExp(`${escReg(header)}[^\\S\\n]*\\n?[\\s\\S]*?(?=\\n【|$)`),
-          `${header}\n${value}`
-        )
-
-      const fieldMap: [string, string, string | string[]][] = [
-        ['【主诉】', inquiryData.chief_complaint, 'chief_complaint'],
-        ['【现病史】', inquiryData.history_present_illness, 'history_present_illness'],
-        ['【体格检查】', inquiryData.physical_exam, 'physical_exam'],
-        ['【辅助检查（入院前）】', inquiryData.auxiliary_exam || '', 'auxiliary_exam'],
-        [
-          '【入院诊断】',
-          inquiryData.admission_diagnosis || '',
-          ['admission_diagnosis', 'initial_impression'],
-        ],
-      ]
-
-      // 专项评估：仅含住院本次评估字段（用药/宗教已迁出 PatientProfileCard）
-      const assessmentKeys = [
-        'pain_assessment',
-        'rehabilitation_assessment',
-        'psychology_assessment',
-        'nutrition_assessment',
-        'vte_risk',
-      ]
-      const assessmentChanged = assessmentKeys.some(k => changedFields.has(k))
-      const assessmentText = [
-        `· 疼痛评估（NRS评分）：${inquiryData.pain_assessment || '0'}分`,
-        inquiryData.rehabilitation_assessment
-          ? `· 康复需求：${inquiryData.rehabilitation_assessment}`
-          : '',
-        inquiryData.psychology_assessment ? `· 心理状态：${inquiryData.psychology_assessment}` : '',
-        inquiryData.nutrition_assessment ? `· 营养风险：${inquiryData.nutrition_assessment}` : '',
-        inquiryData.vte_risk ? `· VTE风险：${inquiryData.vte_risk}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
-
-      let updated = recordContent
-      for (const [header, value, keys] of fieldMap) {
-        const keyArr = Array.isArray(keys) ? keys : [keys]
-        if (!keyArr.some(k => changedFields.has(k))) continue
-        if (!value || !updated.includes(header)) continue
-        updated = replaceSection(updated, header, value)
-      }
-      if (assessmentChanged && assessmentText && updated.includes('【专项评估】')) {
-        updated = replaceSection(updated, '【专项评估】', assessmentText)
-      }
+      const updated = syncInpatientToRecord(recordContent, inquiryData, changedFields)
       if (updated !== recordContent) setRecordContent(updated)
     }
 
@@ -216,42 +125,14 @@ export function useInpatientInquiryPanel() {
   // 1.6.3：profile 8 字段路由到 patientProfileEditStore（统一保存按钮再提交），
   // 避免被丢弃；inquiry 字段照旧填表单
   const applyVoiceInquiry = (patch: any) => {
-    // AI 返回的 patch 可能含 vital_signs 结构体，铺平到 form 顶层字段
-    const flattened = { ...patch }
-    if (patch.vital_signs && typeof patch.vital_signs === 'object') {
-      Object.assign(flattened, patch.vital_signs)
-      delete flattened.vital_signs
-    }
+    const flattened = flattenVoicePatch(patch)
     const nextValues = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue({
       ...nextValues,
       pain_assessment: nextValues.pain_assessment ? Number(nextValues.pain_assessment) : 0,
       admission_diagnosis: nextValues.admission_diagnosis || nextValues.initial_impression,
     })
-    const data = {
-      ...inquiry,
-      chief_complaint: nextValues.chief_complaint || '',
-      history_present_illness: nextValues.history_present_illness || '',
-      physical_exam: nextValues.physical_exam || '',
-      initial_impression: nextValues.admission_diagnosis || '',
-      history_informant: nextValues.history_informant || '',
-      rehabilitation_assessment: nextValues.rehabilitation_assessment || '',
-      pain_assessment: String(nextValues.pain_assessment ?? 0),
-      vte_risk: nextValues.vte_risk || '',
-      nutrition_assessment: nextValues.nutrition_assessment || '',
-      psychology_assessment: nextValues.psychology_assessment || '',
-      auxiliary_exam: nextValues.auxiliary_exam || '',
-      admission_diagnosis: nextValues.admission_diagnosis || '',
-      // 生命体征结构化字段
-      temperature: nextValues.temperature || '',
-      pulse: nextValues.pulse || '',
-      respiration: nextValues.respiration || '',
-      bp_systolic: nextValues.bp_systolic || '',
-      bp_diastolic: nextValues.bp_diastolic || '',
-      spo2: nextValues.spo2 || '',
-      height: nextValues.height || '',
-      weight: nextValues.weight || '',
-    }
+    const data = { ...inquiry, ...buildInpatientInquiryData(nextValues) }
     updateInquiryFields(data)
     setIsDirty(true)
 
@@ -278,9 +159,10 @@ export function useInpatientInquiryPanel() {
   const profileSaving = usePatientProfileEditStore(s => s.saving)
 
   const saveAll = async () => {
-    const { currentPatient } = useWorkbenchStore.getState()
+    // 当前患者 ID 走 activeEncounterStore；详情对象不需要，直接拿 ID 调 profile save
+    const patientId = useActiveEncounterStore.getState().patientId || ''
     const profilePromise = profileDirty
-      ? usePatientProfileEditStore.getState().save(currentPatient?.id || '')
+      ? usePatientProfileEditStore.getState().save(patientId)
       : Promise.resolve('noop' as const)
     if (isDirty) form.submit()
     const profileResult = await profilePromise

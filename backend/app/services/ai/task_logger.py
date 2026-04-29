@@ -31,17 +31,30 @@ async def log_ai_task(
     task_type: str,
     token_input: int = 0,
     token_output: int = 0,
+    output_result: Optional[dict] = None,
 ) -> str:
     """将一次 AI 调用写入 ai_tasks 表，使用独立 DB 会话避免污染主事务。
 
+    encounter_id / medical_record_id 从 RequestContext contextvar 自动读取
+    （路由层在调 AI service 前必须先 bind_encounter_context），调用方不再
+    需要层层传参。这是合规底线：每条 AI 任务都能追溯到具体接诊。
+
     Args:
-        task_type:    任务类型，如 "qc"、"generate"、"polish" 等。
-        token_input:  本次调用消耗的输入 token 数；无法获取时传 0。
-        token_output: 本次调用消耗的输出 token 数；无法获取时传 0。
+        task_type:     任务类型，如 "qc"、"generate"、"polish" 等。
+        token_input:   本次调用消耗的输入 token 数；无法获取时传 0。
+        token_output:  本次调用消耗的输出 token 数；无法获取时传 0。
+        output_result: LLM 返回的 JSON 结果。snapshot 恢复时能拿回前端，
+                       让医生 logout 重登后追问/检查/诊断建议都还在。
 
     Returns:
         新建 AITask 记录的 UUID，供后续 save_qc_issues 关联使用。
     """
+    # 从请求 context 读接诊维度——若路由层未 bind，则字段为 NULL（少数
+    # 内部调用场景如 admin 后台批量任务可接受，业务路径必须 bind）
+    from app.core.request_context import get_encounter_id, get_medical_record_id
+    encounter_id = get_encounter_id()
+    medical_record_id = get_medical_record_id()
+
     task_id = generate_uuid()
     async with AsyncSessionLocal() as db:
         task = AITask(
@@ -51,6 +64,9 @@ async def log_ai_task(
             token_input=token_input,
             token_output=token_output,
             model_name=llm_client.model,
+            encounter_id=encounter_id,
+            medical_record_id=medical_record_id,
+            output_result=output_result,
         )
         db.add(task)
         try:
@@ -126,7 +142,7 @@ async def save_qc_issues(
             logger.error("qc_issues.save: commit_failed err=%s", exc)
 
 
-def calc_grade_score(issues: list[dict]) -> tuple[float, str]:
+def calc_grade_score(issues: list[dict]) -> tuple[float, str, int]:
     """根据质控问题列表计算甲级评分及病历等级。
 
     扣分规则（参考浙江省病历质量评分标准）：
@@ -140,12 +156,23 @@ def calc_grade_score(issues: list[dict]) -> tuple[float, str]:
       ≥ 90 分 → 甲级
       75-89 分 → 乙级
       < 75 分  → 丙级
+      ▲ 任何分数 + 存在 source=='rule' 的"必须修复"项 → 强制覆盖为「待整改」
+
+    为什么需要"待整改"等级（2026-04-30）：
+      原本 5 项必须修复 × -1.3 分 ≈ -6.5 分，仍可能 ≥ 90 分被判甲级，导致
+      「93.5 分甲级病历」+「需修复才可出具」并存的悖论。分数和合规是两个
+      维度——分数衡量质量，等级衡量"是否可签发"。规则引擎产出的 source=='rule'
+      项是确定性必填项，存在即不合规，无论分数多高都不能出具，故强制覆盖为
+      「待整改」，让等级语义重新对齐"是否可出具"。
 
     Args:
-        issues: 质控问题字典列表，每项含 risk_level / issue_description / score_impact。
+        issues: 质控问题字典列表，每项含 risk_level / issue_description / score_impact / source。
 
     Returns:
-        (score_float, level_str) 元组，score_float 为 0-100 浮点数（保留实际精度）。
+        (score_float, level_str, must_fix_count) 三元组：
+          - score_float    ：0-100 浮点数（保留实际精度，待整改时也展示真实分数）
+          - level_str      ：甲级 / 乙级 / 丙级 / 待整改
+          - must_fix_count ：source=='rule' 的项数，前端用于显示"N 项必须修复"
     """
     import re as _re
 
@@ -168,10 +195,15 @@ def calc_grade_score(issues: list[dict]) -> tuple[float, str]:
             score -= 0.5
 
     score = max(0.0, score)
+    # 必须修复项 = 规则引擎（含医保规则）产出的项，source 字段在调用前已统一打 'rule'
+    must_fix_count = sum(1 for i in issues if i.get("source") == "rule")
     if score >= 90:
         level = "甲级"
     elif score >= 75:
         level = "乙级"
     else:
         level = "丙级"
-    return score, level
+    # 待整改覆盖：必须修复项存在则病历不可签发，等级强制改为"待整改"
+    if must_fix_count > 0:
+        level = "待整改"
+    return score, level, must_fix_count

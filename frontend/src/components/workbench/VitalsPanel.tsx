@@ -10,7 +10,7 @@ import { Button, Form, InputNumber, message, Table, Typography, Divider } from '
 import { PlusOutlined, HistoryOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 const { Text } = Typography
 
@@ -29,7 +29,7 @@ interface VitalRecord {
 }
 
 export default function VitalsPanel() {
-  const { currentEncounterId } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const [form] = Form.useForm()
   const [history, setHistory] = useState<VitalRecord[]>([])
   const [saving, setSaving] = useState(false)

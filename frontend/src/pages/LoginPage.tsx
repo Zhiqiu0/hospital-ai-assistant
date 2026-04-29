@@ -26,7 +26,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { resetAllWorkbench } from '@/store/activeEncounterStore'
 import api from '@/services/api'
 import { scenes, neutral, radius, spacing, typography } from '@/theme/tokens'
 
@@ -48,7 +48,7 @@ const FEATURES: Record<SystemType, { icon: React.ReactNode; title: string; desc:
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setAuth, setSystemType } = useAuthStore()
-  const resetWorkbench = useWorkbenchStore(s => s.reset)
+  const resetWorkbench = resetAllWorkbench
   const [selectedSystem, setSelectedSystem] = useState<SystemType>('outpatient')
 
   const theme = selectedSystem === 'inpatient' ? scenes.inpatient : scenes.outpatient

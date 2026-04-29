@@ -19,7 +19,10 @@
 import { useCallback } from 'react'
 import { Button, List, Tag, Typography, Empty, Spin, message } from 'antd'
 import { ExperimentOutlined, CheckOutlined } from '@ant-design/icons'
-import { useWorkbenchStore, ExamSuggestion } from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useAISuggestionStore } from '@/store/aiSuggestionStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { ExamSuggestion } from '@/store/types'
 import api from '@/services/api'
 
 const { Text } = Typography
@@ -36,8 +39,10 @@ const EXAM_CATEGORY_COLOR: Record<string, string> = {
 }
 
 export default function ExamSuggestionTab() {
-  const { inquiry, examSuggestions, isExamLoading, setExamSuggestions, setExamLoading } =
-    useWorkbenchStore()
+  const inquiry = useInquiryStore(s => s.inquiry)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const { examSuggestions, isExamLoading, setExamSuggestions, setExamLoading } =
+    useAISuggestionStore()
 
   // 切换接诊时清空逻辑已移至 workbenchStore.setCurrentEncounter，
   // 在 store 层判断 encounterId 是否真正变化，避免 React StrictMode 双次 effect 误清空。
@@ -54,6 +59,7 @@ export default function ExamSuggestionTab() {
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
         initial_impression: inquiry.initial_impression,
+        encounter_id: currentEncounterId || undefined,
       })
       setExamSuggestions(data.suggestions || [])
     } catch {
@@ -112,7 +118,10 @@ export default function ExamSuggestionTab() {
     <List
       dataSource={examSuggestions}
       renderItem={(item: ExamSuggestion, idx) => (
-        <List.Item key={idx} style={{ padding: '10px 0', borderBlockEnd: '1px solid var(--border-subtle)' }}>
+        <List.Item
+          key={idx}
+          style={{ padding: '10px 0', borderBlockEnd: '1px solid var(--border-subtle)' }}
+        >
           <div style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <Tag

@@ -5,14 +5,30 @@
  * 语音识别方案：
  *   主路径 — 阿里云 Paraformer 实时 ASR（via 后端 WebSocket 代理 /api/v1/ai/voice-stream）
  *   兜底路径 — WebSocket 建连失败时，停止录音后音频文件上传到后端由 Qwen-Audio 整段转写
+ *
+ * Audit Round 4 M6 拆分：
+ *   - API 调用集中 → services/voiceTranscriptApi.ts
+ *   - 转写跨刷新恢复/持久化 → hooks/useVoiceTranscriptPersistence.ts
+ *   - 本 hook 主体保留：录音 / 实时 ASR 编排 + 状态聚合 + UI 操作回调
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, message } from 'antd'
-import { InquiryData, useWorkbenchStore } from '@/store/workbenchStore'
+import { InquiryData } from '@/store/types'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import { useVoiceTranscriptStore, type DialogueItem } from '@/store/voiceTranscriptStore'
 import { useAuthStore } from '@/store/authStore'
 import { startVoiceStream, type VoiceStreamHandle } from '@/services/voiceStream'
-import api from '@/services/api'
+import {
+  deleteVoiceRecord,
+  fetchAudioToken,
+  filterPatch,
+  structureVoice,
+  uploadVoiceAudio,
+} from '@/services/voiceTranscriptApi'
+import { useVoiceTranscriptPersistence } from '@/hooks/useVoiceTranscriptPersistence'
+import { dedupeVitalSignsAgainstRecord } from '@/utils/inquiryUtils'
 
 interface Props {
   visitType: 'outpatient' | 'inpatient'
@@ -28,7 +44,11 @@ export function useVoiceInputCard({
   onApplyToRecord,
 }: Props) {
   const isRecordMode = !!onApplyToRecord
-  const { inquiry, currentPatient, currentEncounterId } = useWorkbenchStore()
+  const inquiry = useInquiryStore(s => s.inquiry)
+  // 病历草稿全文：续录场景下优先作为 LLM 增量分析的"已知信息基线"，因为它含医生手改
+  const recordContent = useRecordStore(s => s.recordContent)
+  const currentPatient = useCurrentPatient()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
 
   const [audioToken, setAudioToken] = useState<string | null>(null)
   // 实时 ASR 流句柄（含 stop 方法），录音期间存活
@@ -65,101 +85,36 @@ export function useVoiceInputCard({
     transcriptRef.current = fullTranscript
   }, [fullTranscript])
 
+  // 拉一次性 audio token（给 <audio> 鉴权播放原始录音）
   useEffect(() => {
     if (!transcriptId) {
       setAudioToken(null)
       return
     }
-    api
-      .get(`/ai/voice-records/${transcriptId}/audio-token`)
-      .then((res: any) => setAudioToken(res?.audio_token || null))
-      .catch(() => setAudioToken(null))
+    fetchAudioToken(transcriptId).then(setAudioToken)
   }, [transcriptId])
 
-  // 切换 encounter 或刷新页面时的恢复策略：
-  //   1) 先从 voiceTranscriptStore（localStorage）瞬时恢复 — 含未上传的草稿
-  //   2) 再调 /workspace 取后端最新 voice_record，若有则覆盖（后端是权威）
-  // 这样既不丢"录完没分析"的本地转写，也能拿到最新已上传的版本。
-  useEffect(() => {
-    const restore = async () => {
-      if (!currentEncounterId) {
-        setTranscript('')
-        setInterimText('')
-        setSummary('')
-        setSpeakerDialogue([])
-        setTranscriptId(null)
-        setLastAnalyzedTranscript('')
-        return
-      }
-      // 1) 从持久化 store 恢复
-      const draft = useVoiceTranscriptStore.getState().get(currentEncounterId)
-      setTranscript(draft.transcript)
-      setSummary(draft.summary)
-      setSpeakerDialogue(draft.speakerDialogue)
-      setTranscriptId(draft.transcriptId)
-      setLastAnalyzedTranscript(draft.lastAnalyzedTranscript)
-      // 2) 再调后端覆盖（如果后端有更新版）
-      // 守护：后端字段为空时不覆盖本地草稿（latest_voice_record 可能存在但
-      // raw_transcript 为 null/空字符串）
-      try {
-        const snapshot: any = await api.get(`/encounters/${currentEncounterId}/workspace`)
-        const latest = snapshot?.latest_voice_record
-        if (latest) {
-          if (latest.raw_transcript) setTranscript(latest.raw_transcript)
-          if (latest.transcript_summary) setSummary(latest.transcript_summary)
-          if (Array.isArray(latest.speaker_dialogue) && latest.speaker_dialogue.length > 0) {
-            setSpeakerDialogue(latest.speaker_dialogue)
-          }
-          if (latest.id) setTranscriptId(latest.id)
-        }
-      } catch {
-        // 服务端拉取失败不报错，本地草稿已经显示了
-      }
-    }
-    restore()
-  }, [currentEncounterId])
-
-  // 把 transcript/summary/speakerDialogue/transcriptId/lastAnalyzedTranscript 任一变化
-  // 同步写入 voiceTranscriptStore，刷新页面后这些数据可恢复。
-  // 守护：mount 时 React 初始 useState 是空值，会先于 restore 的 setTranscript
-  // 应用前触发本 effect（同一 render 周期里 effects 按声明顺序执行）。如果直接
-  // 写入 store，会用空值覆盖刚 persist 恢复的内容。守护逻辑：当 store 当前
-  // 有内容但要写入的值全空，跳过本次写入。用户主动清空走 handleClearTranscript
-  // 里的 clearForEncounter，不依赖本 effect。
-  useEffect(() => {
-    if (!currentEncounterId) return
-    const incoming = {
+  // 切换 encounter / 刷新时：本地 store 先恢复 → 后端权威覆盖；状态变化写回 store
+  useVoiceTranscriptPersistence(
+    currentEncounterId,
+    {
       transcript,
       summary,
       speakerDialogue,
       transcriptId,
       lastAnalyzedTranscript,
+      pendingPatch: pendingPatch as Record<string, unknown> | null,
+    },
+    {
+      setTranscript,
+      setInterimText,
+      setSummary,
+      setSpeakerDialogue,
+      setTranscriptId,
+      setLastAnalyzedTranscript,
+      setPendingPatch: v => setPendingPatch(v as Partial<InquiryData> | null),
     }
-    const incomingEmpty =
-      !incoming.transcript &&
-      !incoming.summary &&
-      !incoming.transcriptId &&
-      !incoming.lastAnalyzedTranscript &&
-      incoming.speakerDialogue.length === 0
-    if (incomingEmpty) {
-      const cur = useVoiceTranscriptStore.getState().get(currentEncounterId)
-      const curHasContent =
-        !!cur.transcript ||
-        !!cur.summary ||
-        !!cur.transcriptId ||
-        !!cur.lastAnalyzedTranscript ||
-        cur.speakerDialogue.length > 0
-      if (curHasContent) return
-    }
-    useVoiceTranscriptStore.getState().setForEncounter(currentEncounterId, incoming)
-  }, [
-    currentEncounterId,
-    transcript,
-    summary,
-    speakerDialogue,
-    transcriptId,
-    lastAnalyzedTranscript,
-  ])
+  )
 
   const stopTracks = () => {
     streamRef.current?.getTracks().forEach(t => t.stop())
@@ -175,12 +130,10 @@ export function useVoiceInputCard({
     if (!blob.size) return
     setUploadingAudio(true)
     try {
-      const formData = new FormData()
-      formData.append('file', blob, `voice-record-${Date.now()}.webm`)
-      if (currentEncounterId) formData.append('encounter_id', currentEncounterId)
-      formData.append('visit_type', visitType)
-      formData.append('transcript', transcriptText)
-      const data: any = await api.post('/ai/voice-records/upload', formData)
+      const data = await uploadVoiceAudio(blob, transcriptText, {
+        encounterId: currentEncounterId,
+        visitType,
+      })
       if (data?.voice_record_id) setTranscriptId(data.voice_record_id)
       if (data?.transcript && !transcriptText.trim()) {
         setTranscript(data.transcript)
@@ -297,25 +250,37 @@ export function useVoiceInputCard({
   const doStructure = async () => {
     setStructuring(true)
     try {
-      const data: any = await api.post('/ai/voice-structure', {
-        transcript: fullTranscript,
-        transcript_id: transcriptId,
-        visit_type: visitType,
-        patient_name: currentPatient?.name || '',
-        patient_gender: currentPatient?.gender || '',
-        patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
-        existing_inquiry: { ...inquiry, ...getFormValues() },
+      const data = await structureVoice({
+        fullTranscript,
+        transcriptId,
+        visitType,
+        patient: currentPatient
+          ? {
+              name: currentPatient.name,
+              gender: currentPatient.gender || '',
+              age: currentPatient.age,
+            }
+          : null,
+        existingInquiry: { ...inquiry, ...getFormValues() },
+        // 病历草稿非空时作为权威基线传给 LLM，让续录场景只输出新增/修正字段，
+        // 避免整段覆盖把医生在病历里的手改冲掉。草稿为空时后端会回退到 existingInquiry。
+        existingRecord: recordContent || undefined,
       })
-      const patch = (data?.inquiry || {}) as Partial<InquiryData>
-      const filteredPatch = Object.fromEntries(
-        Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined)
-      ) as Partial<InquiryData>
+      const filteredPatch = filterPatch((data?.inquiry || {}) as Partial<InquiryData>)
+      // 追记模式下对 vital_signs 嵌套子字段做基线去重——LLM 对嵌套子字段层级
+      // 增量约束遵守得不严，常把基线已有的体温/脉搏等数值重复输出，前端兜底剔除
+      const dedupedPatch = isRecordMode
+        ? (dedupeVitalSignsAgainstRecord(
+            filteredPatch as Record<string, unknown>,
+            recordContent
+          ) as Partial<InquiryData>)
+        : filteredPatch
       setSummary(data?.transcript_summary || '')
       setSpeakerDialogue(Array.isArray(data?.speaker_dialogue) ? data.speaker_dialogue : [])
       setTranscriptId(data?.transcript_id || transcriptId)
       setLastAnalyzedTranscript(fullTranscript)
       if (isRecordMode) {
-        setPendingPatch(filteredPatch)
+        setPendingPatch(dedupedPatch)
         message.success('AI 整理完成，请确认下方内容后点击「插入病历」')
       } else {
         onApplyInquiry(filteredPatch)
@@ -359,15 +324,16 @@ export function useVoiceInputCard({
       cancelText: '取消',
       onOk: async () => {
         if (transcriptId) {
-          try {
-            await api.delete(`/ai/voice-records/${transcriptId}`)
-          } catch {}
+          await deleteVoiceRecord(transcriptId)
         }
         setTranscript('')
         setSummary('')
         setSpeakerDialogue([])
         setTranscriptId(null)
         setLastAnalyzedTranscript('')
+        // pendingPatch 也要清——否则 React state 仍有值会触发 persistence
+        // effect 把 patch 重新写回 store，把刚 clearForEncounter 的清空覆盖掉
+        setPendingPatch(null)
         // 同步清掉 store 中本 encounter 的草稿，避免下次刷新又"恢复"
         if (currentEncounterId) {
           useVoiceTranscriptStore.getState().clearForEncounter(currentEncounterId)

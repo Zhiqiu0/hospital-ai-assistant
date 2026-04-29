@@ -16,7 +16,7 @@ import {
   StarOutlined,
 } from '@ant-design/icons'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 const { Text } = Typography
 
@@ -32,7 +32,7 @@ interface ProblemItem {
 }
 
 export default function ProblemListPanel() {
-  const { currentEncounterId } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const [problems, setProblems] = useState<ProblemItem[]>([])
   const [newName, setNewName] = useState('')
   const [adding, setAdding] = useState(false)

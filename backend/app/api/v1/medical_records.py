@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.medical_record import (
+    AutoSaveDraftRequest,
     MedicalRecordCreate,
     MedicalRecordResponse,
     QuickSaveRequest,
@@ -37,6 +38,31 @@ from app.services.audit_service import log_action
 from app.services.medical_record_service import MedicalRecordService
 
 router = APIRouter()
+
+
+@router.post("/auto-save-draft")
+async def auto_save_draft(
+    data: AutoSaveDraftRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """编辑器 auto-save：5 秒防抖触发，UPSERT 当前 draft 版本，不爆版本号。
+
+    返回 updated_at 让前端下次调用带回作为乐观锁凭证。
+    409 表示多设备冲突（罕见，单医生单设备不会触发）。
+    """
+    # 把接诊维度写入 RequestContext（上游若有 AI 调用能用到，与 quick-generate 行为一致）
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(encounter_id=data.encounter_id)
+
+    service = MedicalRecordService(db)
+    return await service.auto_save_draft(
+        encounter_id=data.encounter_id,
+        record_type=data.record_type,
+        content=data.content,
+        user_id=current_user.id,
+        expected_updated_at=data.expected_updated_at,
+    )
 
 
 @router.post("/quick-save")

@@ -14,7 +14,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useRecordStore } from '@/store/recordStore'
 
 const { Text } = Typography
 
@@ -45,7 +45,7 @@ interface Props {
 }
 
 export default function ComplianceBar({ encounterId }: Props) {
-  const { setRecordType } = useWorkbenchStore()
+  const { setRecordType } = useRecordStore()
   const [items, setItems] = useState<ComplianceItem[]>([])
 
   const fetchCompliance = useCallback(async () => {

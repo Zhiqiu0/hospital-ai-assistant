@@ -15,18 +15,102 @@
   组装成完整的 JSON 快照一次性返回。
 """
 
+from typing import Any, Optional
+
 from fastapi import HTTPException
 
 from app.utils.age import calc_age
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.voice_record import VoiceRecord
-from app.schemas.encounter import EncounterCreate, InquiryInputUpdate
+from app.schemas.encounter import EncounterCreate, InquirySnapshot, InquiryInputUpdate
 from app.services.redis_cache import redis_cache
+
+# 病历内容字段标签（结构化 dict 内容回传前端时按此顺序拼成可读文本）
+_RECORD_CONTENT_LABELS = {
+    "chief_complaint": "主诉",
+    "history_present_illness": "现病史",
+    "past_history": "既往史",
+    "allergy_history": "过敏史",
+    "personal_history": "个人史",
+    "physical_exam": "体格检查",
+    "auxiliary_exam": "辅助检查",
+    "initial_diagnosis": "初步诊断",
+    "admission_diagnosis": "入院诊断",
+    "treatment_plan": "诊疗计划",
+}
+
+
+def _parse_record_content(content: Any) -> str:
+    """将 RecordVersion.content 三种存储形态统一序列化为可读文本。
+
+    支持：
+      - quick_save 格式：{"text": "病历全文"} → 直接取 text
+      - 结构化格式：{"chief_complaint": ..., ...} → 按字段顺序拼成可读段落
+      - 纯字符串：原样返回
+      - None 或其他：返回空字符串
+    """
+    if isinstance(content, dict):
+        if "text" in content:
+            return content["text"] or ""
+        parts: list[str] = []
+        for key, label in _RECORD_CONTENT_LABELS.items():
+            val = content.get(key, "")
+            if val:
+                parts.append(f"【{label}】\n{val}")
+        # 映射之外的字段追加到末尾，避免新增字段静默丢失
+        for key, val in content.items():
+            if key not in _RECORD_CONTENT_LABELS and val:
+                parts.append(f"【{key}】\n{val}")
+        return "\n\n".join(parts)
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -> dict:
+    """单条病历 → 工作台快照里的字典。"""
+    return {
+        "record_id": record.id,
+        "record_type": record.record_type,
+        "status": record.status,
+        "current_version": record.current_version,
+        "submitted_at": record.submitted_at.isoformat() if record.submitted_at else None,
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        "content": _parse_record_content(version.content if version else None),
+    }
+
+
+def _serialize_inquiry(inquiry: Optional[InquiryInput], encounter: Encounter) -> Optional[dict]:
+    """问诊 ORM → 工作台快照字段字典。
+
+    用 Pydantic 自动 None → ""（取代原 40+ 行手工 `or ""`）。
+    visit_time 缺省时回退到 encounter.visited_at，便于首次生成病历时有时间戳。
+    """
+    if inquiry is None:
+        return None
+    data = InquirySnapshot.model_validate(inquiry).model_dump()
+    if not data["visit_time"] and encounter.visited_at:
+        data["visit_time"] = encounter.visited_at.strftime("%Y-%m-%d %H:%M")
+    return data
+
+
+def _serialize_voice(voice: Optional[VoiceRecord]) -> Optional[dict]:
+    """最新一条语音录音 → 字典。"""
+    if voice is None:
+        return None
+    return {
+        "id": voice.id,
+        "status": voice.status,
+        "raw_transcript": voice.raw_transcript or "",
+        "transcript_summary": voice.transcript_summary or "",
+        "speaker_dialogue": voice.get_speaker_dialogue(),
+        "draft_record": voice.draft_record or "",
+    }
 
 # Redis 缓存 key（snapshot 是 5+ 张表关联，是工作台启动热路径）
 _SNAPSHOT_KEY = "encounter:snapshot:{eid}"
@@ -181,115 +265,60 @@ class EncounterService:
         """
         cache_key = _SNAPSHOT_KEY.format(eid=encounter_id)
         cached = await redis_cache.get_json(cache_key)
-        if cached is not None:
-            # 缓存里也存了 doctor_id，校验后返回，防止越权读到他人接诊
-            if cached.get("_doctor_id") == doctor_id:
-                # 返回时去掉内部字段
-                return {k: v for k, v in cached.items() if k != "_doctor_id"}
-            # doctor_id 不匹配（极少发生：同一 encounter_id 不同医生不可能同时进行中），
-            # 走原始查询，404 由权限层抛
-        encounter_result = await self.db.execute(
+        if cached is not None and cached.get("_doctor_id") == doctor_id:
+            # 命中缓存且 doctor_id 校验通过，返回时剥掉内部字段
+            return {k: v for k, v in cached.items() if k != "_doctor_id"}
+        # 缓存未命中或 doctor_id 不匹配，走 DB 查询（404 由权限层抛）
+
+        # ── 1. 接诊 + 患者（含权限校验）──────────────────────────────────
+        encounter = (await self.db.execute(
             select(Encounter)
             .options(selectinload(Encounter.patient))
             .where(Encounter.id == encounter_id, Encounter.doctor_id == doctor_id)
-        )
-        encounter = encounter_result.scalar_one_or_none()
+        )).scalar_one_or_none()
         if not encounter:
             raise HTTPException(status_code=404, detail="接诊记录不存在或无权访问")
 
-        # 取最新一条问诊输入（按 updated_at 倒序）
-        inquiry_result = await self.db.execute(
+        # ── 2. 最新一条问诊输入（按 updated_at 倒序取 1 条）────────────
+        inquiry = (await self.db.execute(
             select(InquiryInput)
             .where(InquiryInput.encounter_id == encounter_id)
             .order_by(desc(InquiryInput.updated_at))
             .limit(1)
-        )
-        inquiry = inquiry_result.scalar_one_or_none()
+        )).scalar_one_or_none()
 
-        # 取所有病历记录（按更新时间/签发时间倒序，第一条为最新活跃病历）
-        records_result = await self.db.execute(
-            select(MedicalRecord)
+        # ── 3. 病历 + 当前版本一次 LEFT JOIN 查回（消除 N+1）──────────
+        # 原实现：N 条病历 → N+1 次查询；现在合并为 1 次。
+        rows = (await self.db.execute(
+            select(MedicalRecord, RecordVersion)
+            .join(
+                RecordVersion,
+                and_(
+                    RecordVersion.medical_record_id == MedicalRecord.id,
+                    RecordVersion.version_no == MedicalRecord.current_version,
+                ),
+                isouter=True,
+            )
             .where(MedicalRecord.encounter_id == encounter_id)
             .order_by(desc(MedicalRecord.updated_at), desc(MedicalRecord.submitted_at))
-        )
-        records = records_result.scalars().all()
+        )).all()
+        record_items = [_serialize_record(record, version) for record, version in rows]
 
-        # 为每条病历加载当前版本内容
-        record_items = []
-        for record in records:
-            version_result = await self.db.execute(
-                select(RecordVersion)
-                .where(
-                    RecordVersion.medical_record_id == record.id,
-                    RecordVersion.version_no == record.current_version,
-                )
-                .limit(1)
-            )
-            version = version_result.scalar_one_or_none()
-            content = version.content if version else None
-
-            # 内容格式兼容处理：
-            # quick_save 格式：{"text": "病历全文"} → 直接取 text
-            # 结构化格式：{"chief_complaint": ..., ...} → 按字段顺序重组为可读文本
-            if isinstance(content, dict):
-                if "text" in content:
-                    content_text = content["text"]
-                else:
-                    _labels = {
-                        "chief_complaint": "主诉",
-                        "history_present_illness": "现病史",
-                        "past_history": "既往史",
-                        "allergy_history": "过敏史",
-                        "personal_history": "个人史",
-                        "physical_exam": "体格检查",
-                        "auxiliary_exam": "辅助检查",
-                        "initial_diagnosis": "初步诊断",
-                        "admission_diagnosis": "入院诊断",
-                        "treatment_plan": "诊疗计划",
-                    }
-                    parts = []
-                    for key, label in _labels.items():
-                        val = content.get(key, "")
-                        if val:
-                            parts.append(f"【{label}】\n{val}")
-                    # 映射之外的字段追加到末尾
-                    for key, val in content.items():
-                        if key not in _labels and val:
-                            parts.append(f"【{key}】\n{val}")
-                    content_text = "\n\n".join(parts)
-            elif isinstance(content, str):
-                content_text = content
-            else:
-                content_text = ""
-
-            record_items.append({
-                "record_id": record.id,
-                "record_type": record.record_type,
-                "status": record.status,
-                "current_version": record.current_version,
-                "submitted_at": record.submitted_at.isoformat() if record.submitted_at else None,
-                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
-                "content": content_text,
-            })
-
-        active_record = record_items[0] if record_items else None
-
-        # 最新语音录音（用于恢复语音工作区状态）
-        voice_result = await self.db.execute(
+        # ── 4. 最新语音录音 ─────────────────────────────────────────────
+        latest_voice = (await self.db.execute(
             select(VoiceRecord)
             .where(VoiceRecord.encounter_id == encounter_id)
             .order_by(desc(VoiceRecord.updated_at), desc(VoiceRecord.created_at))
             .limit(1)
-        )
-        latest_voice = voice_result.scalar_one_or_none()
+        )).scalar_one_or_none()
 
-        # 患者年龄实时算（utils.calc_age 内含未过生日修正）
+        # ── 4.5 最新 AI 任务产物（QC issues + 追问/检查/诊断建议）────
+        # 让 logout 重登 / 切设备时医生看到的不是空白，而是上次留下的 AI 产物
+        latest_qc_issues, latest_ai_suggestions = await self._fetch_latest_ai_artifacts(encounter_id)
+
+        # ── 5. 患者档案（PatientService.get_profile 内部 1 次查询）────
+        # 延迟 import 避免 patient_service ↔ encounter_service 循环依赖。
         patient = encounter.patient
-        patient_age = calc_age(patient.birth_date) if patient else None
-
-        # 患者档案（纵向持久数据）：JSONB 重构后统一走 PatientService.get_profile
-        # 拿到扁平结构 + fields_meta（每字段 updated_at 用于前端展示"X 天前确认"）。
-        # 月经史已不在档案里，需要的话从 inquiry_inputs.menstrual_history 取（snapshot.inquiry 已带）。
         patient_profile = None
         if patient:
             from app.services.patient_service import PatientService
@@ -303,78 +332,82 @@ class EncounterService:
                 "id": patient.id,
                 "name": patient.name,
                 "gender": patient.gender,
-                "age": patient_age,
+                "age": calc_age(patient.birth_date),
             } if patient else None,
             "patient_profile": patient_profile,
-            "inquiry": {
-                "chief_complaint": inquiry.chief_complaint or "",
-                "history_present_illness": inquiry.history_present_illness or "",
-                "past_history": inquiry.past_history or "",
-                "allergy_history": inquiry.allergy_history or "",
-                "personal_history": inquiry.personal_history or "",
-                "physical_exam": inquiry.physical_exam or "",
-                "initial_impression": inquiry.initial_impression or "",
-                # 生命体征（结构化独立字段）
-                "temperature": inquiry.temperature or "",
-                "pulse": inquiry.pulse or "",
-                "respiration": inquiry.respiration or "",
-                "bp_systolic": inquiry.bp_systolic or "",
-                "bp_diastolic": inquiry.bp_diastolic or "",
-                "spo2": inquiry.spo2 or "",
-                "height": inquiry.height or "",
-                "weight": inquiry.weight or "",
-                "marital_history": inquiry.marital_history or "",
-                "menstrual_history": inquiry.menstrual_history or "",
-                "family_history": inquiry.family_history or "",
-                "history_informant": inquiry.history_informant or "",
-                "current_medications": inquiry.current_medications or "",
-                "rehabilitation_assessment": inquiry.rehabilitation_assessment or "",
-                "religion_belief": inquiry.religion_belief or "",
-                "pain_assessment": inquiry.pain_assessment or "",
-                "vte_risk": inquiry.vte_risk or "",
-                "nutrition_assessment": inquiry.nutrition_assessment or "",
-                "psychology_assessment": inquiry.psychology_assessment or "",
-                "auxiliary_exam": inquiry.auxiliary_exam or "",
-                "admission_diagnosis": inquiry.admission_diagnosis or "",
-                "tcm_inspection": inquiry.tcm_inspection or "",
-                "tcm_auscultation": inquiry.tcm_auscultation or "",
-                "tongue_coating": inquiry.tongue_coating or "",
-                "pulse_condition": inquiry.pulse_condition or "",
-                "western_diagnosis": inquiry.western_diagnosis or "",
-                "tcm_disease_diagnosis": inquiry.tcm_disease_diagnosis or "",
-                "tcm_syndrome_diagnosis": inquiry.tcm_syndrome_diagnosis or "",
-                "treatment_method": inquiry.treatment_method or "",
-                "treatment_plan": inquiry.treatment_plan or "",
-                "followup_advice": inquiry.followup_advice or "",
-                "precautions": inquiry.precautions or "",
-                "observation_notes": inquiry.observation_notes or "",
-                "patient_disposition": inquiry.patient_disposition or "",
-                # 就诊时间：有记录则用记录值，否则从 encounter.visited_at 预填（便于首次生成病历时有时间戳）
-                "visit_time": inquiry.visit_time or (
-                    encounter.visited_at.strftime("%Y-%m-%d %H:%M") if encounter.visited_at else ""
-                ),
-                "onset_time": inquiry.onset_time or "",
-                "version": inquiry.version,
-            } if inquiry else None,
+            "inquiry": _serialize_inquiry(inquiry, encounter),
             "is_first_visit": encounter.is_first_visit,
-            "active_record": active_record,    # 最新活跃病历（工作台直接显示）
-            "records": record_items,            # 所有历史版本（供历史记录面板使用）
-            "latest_voice_record": {
-                "id": latest_voice.id,
-                "status": latest_voice.status,
-                "raw_transcript": latest_voice.raw_transcript or "",
-                "transcript_summary": latest_voice.transcript_summary or "",
-                "speaker_dialogue": latest_voice.get_speaker_dialogue(),
-                "draft_record": latest_voice.draft_record or "",
-            } if latest_voice else None,
+            "active_record": record_items[0] if record_items else None,
+            "records": record_items,
+            "latest_voice_record": _serialize_voice(latest_voice),
+            # ★ 治本：把 AI 产物也带回去——logout 重登不丢质控/追问/检查/诊断
+            "latest_qc_issues": latest_qc_issues,
+            "latest_ai_suggestions": latest_ai_suggestions,
         }
-        # 缓存时附带 doctor_id 用于二次校验，防止其他医生命中别人的快照
+        # 缓存附带 doctor_id 做二次校验，防止越权命中他人快照
         await redis_cache.set_json(
             cache_key,
             {**snapshot, "_doctor_id": doctor_id},
             ttl=_SNAPSHOT_TTL,
         )
         return snapshot
+
+    async def _fetch_latest_ai_artifacts(
+        self, encounter_id: str
+    ) -> tuple[list[dict], dict]:
+        """取该接诊最新一次 QC issues + 各类 AI 建议（追问/检查/诊断）。
+
+        - QC：取最新一条 task_type='qc' 的 ai_task 关联的全部 qc_issues
+        - 建议：按 task_type 各取最新一条 ai_task 的 output_result
+                  inquiry / exam / diagnosis 三类各一份
+
+        让 logout 重登 / 切设备 / 浏览器崩溃后医生仍能拿到上次跑的产物，
+        不用重跑 LLM（省 token + 体验丝滑）。
+
+        Returns:
+            (qc_issues_list, ai_suggestions_dict)
+            qc_issues_list 形如 [{"field_name":..., "issue_description":..., ...}]
+            ai_suggestions_dict 形如 {"inquiry": {...}, "exam": {...}, "diagnosis": {...}}
+            缺数据用空 list / 空 dict，前端能直接灌进 store
+        """
+        from app.models.medical_record import AITask, QCIssue
+        # 最新 QC task
+        latest_qc_task = (await self.db.execute(
+            select(AITask)
+            .where(AITask.encounter_id == encounter_id, AITask.task_type == "qc")
+            .order_by(desc(AITask.created_at))
+            .limit(1)
+        )).scalar_one_or_none()
+        qc_issues_list: list[dict] = []
+        if latest_qc_task:
+            issues = (await self.db.execute(
+                select(QCIssue).where(QCIssue.ai_task_id == latest_qc_task.id)
+            )).scalars().all()
+            qc_issues_list = [
+                {
+                    "source": i.source,
+                    "issue_type": i.issue_type,
+                    "risk_level": i.risk_level,
+                    "field_name": i.field_name,
+                    "issue_description": i.issue_description,
+                    "suggestion": i.suggestion,
+                }
+                for i in issues
+            ]
+
+        # 各类建议：按 task_type 各取最新一条
+        ai_suggestions: dict = {}
+        for task_type, key in [("inquiry", "inquiry"), ("exam", "exam"), ("diagnosis", "diagnosis")]:
+            task = (await self.db.execute(
+                select(AITask)
+                .where(AITask.encounter_id == encounter_id, AITask.task_type == task_type)
+                .order_by(desc(AITask.created_at))
+                .limit(1)
+            )).scalar_one_or_none()
+            if task and task.output_result:
+                ai_suggestions[key] = task.output_result
+
+        return qc_issues_list, ai_suggestions
 
     async def save_inquiry(self, encounter_id: str, data: InquiryInputUpdate):
         """保存或更新问诊输入（upsert 逻辑，自动版本号递增）。

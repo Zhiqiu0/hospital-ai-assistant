@@ -3,12 +3,17 @@
  *
  * mode='new'       初诊：直接显示新患者填写表单
  * mode='returning' 复诊：先搜索已有患者，选中后确认开始接诊
+ *
+ * 子组件已拆到 newEncounter/ 子目录：
+ *   SearchStep / NewPatientFields / SelectedPatientCard
  */
 import { useRef, useState, useEffect } from 'react'
-import { Avatar, Button, DatePicker, Form, Input, Modal, Select, Space, Spin, Tag } from 'antd'
-import { PlusOutlined, UserOutlined } from '@ant-design/icons'
-import dayjs from 'dayjs'
+import { Button, Form, Modal, Select, Space } from 'antd'
+import { UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import SearchStep from './newEncounter/SearchStep'
+import NewPatientFields from './newEncounter/NewPatientFields'
+import SelectedPatientCard from './newEncounter/SelectedPatientCard'
 
 interface Props {
   open: boolean
@@ -47,11 +52,9 @@ export default function NewEncounterModal({
       setSelectedPatient(null)
       form.resetFields()
     }
-  }, [open, mode])
+  }, [open, mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleClose = () => {
-    onClose()
-  }
+  const handleClose = () => onClose()
 
   const handleSearch = (kw: string) => {
     setKeyword(kw)
@@ -156,261 +159,29 @@ export default function NewEncounterModal({
       }
       width={520}
     >
-      {/* 步骤一：搜索 */}
       {step === 'search' && (
-        <div style={{ paddingTop: 16 }}>
-          <Input.Search
-            placeholder="输入姓名或手机号搜索已有患者..."
-            value={keyword}
-            onChange={e => handleSearch(e.target.value)}
-            size="large"
-            autoFocus
-            allowClear
-            onClear={() => {
-              setKeyword('')
-              setResults([])
-            }}
-          />
-          {searching && (
-            <div style={{ textAlign: 'center', padding: '16px 0' }}>
-              <Spin size="small" />
-            </div>
-          )}
-          {!searching && results.length > 0 && (
-            <div
-              style={{
-                marginTop: 10,
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                overflow: 'hidden',
-              }}
-            >
-              {results.map((p, i) => (
-                <div
-                  key={p.id}
-                  onClick={() => selectPatient(p)}
-                  style={{
-                    padding: '10px 14px',
-                    cursor: 'pointer',
-                    borderTop: i > 0 ? '1px solid var(--border-subtle)' : undefined,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    ;(e.currentTarget as HTMLDivElement).style.background = 'var(--surface-2)'
-                  }}
-                  onMouseLeave={e => {
-                    ;(e.currentTarget as HTMLDivElement).style.background = ''
-                  }}
-                >
-                  <Avatar size={32} style={{ background: accentColor, flexShrink: 0 }}>
-                    {p.name?.[0]}
-                  </Avatar>
-                  <div style={{ flex: 1 }}>
-                    <Space size={6} align="center">
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
-                      {/* 三态住院 Tag：
-                          active=true       → 在院中（绿）：还在住院，门诊医生可能要跨科会诊
-                          active=false + history=true → 已出院（灰）：术后复查/慢病随访常见
-                          history=false     → 不打 Tag（纯门诊或新患者，无住院信息可显示） */}
-                      {p.has_active_inpatient === true ? (
-                        <Tag color="green" style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px' }}>
-                          在院中
-                        </Tag>
-                      ) : p.has_any_inpatient_history === true ? (
-                        <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', height: 16, lineHeight: '14px', background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}>
-                          已出院
-                        </Tag>
-                      ) : null}
-                    </Space>
-                    <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                      {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
-                      {p.age ? ` · ${p.age}岁` : ''}
-                      {p.phone ? ` · ${p.phone}` : ''}
-                    </div>
-                  </div>
-                  <Tag color={isEmergency ? 'red' : 'blue'} style={{ flexShrink: 0 }}>
-                    复诊
-                  </Tag>
-                </div>
-              ))}
-            </div>
-          )}
-          {keyword && !searching && results.length === 0 && (
-            <div style={{ textAlign: 'center', color: 'var(--text-4)', fontSize: 13, marginTop: 16 }}>
-              未找到匹配患者
-            </div>
-          )}
-          <div
-            style={{
-              marginTop: 20,
-              paddingTop: 16,
-              borderTop: '1px solid var(--border-subtle)',
-              textAlign: 'center',
-            }}
-          >
-            <Button
-              type="dashed"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setSelectedPatient(null)
-                form.resetFields()
-                setStep('form')
-              }}
-            >
-              新患者，直接填写
-            </Button>
-          </div>
-        </div>
+        <SearchStep
+          keyword={keyword}
+          onSearch={handleSearch}
+          searching={searching}
+          results={results}
+          onSelect={selectPatient}
+          onCreateNew={() => {
+            setSelectedPatient(null)
+            form.resetFields()
+            setStep('form')
+          }}
+          accentColor={accentColor}
+          isEmergency={isEmergency}
+        />
       )}
 
-      {/* 步骤二：表单 */}
       {step === 'form' && (
         <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 20 }}>
           {selectedPatient ? (
-            <div
-              style={{
-                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
-                border: '1px solid #bbf7d0',
-                borderRadius: 8,
-                padding: '12px 14px',
-                marginBottom: 16,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-              }}
-            >
-              <Avatar size={36} style={{ background: '#16a34a', flexShrink: 0 }}>
-                {selectedPatient.name?.[0]}
-              </Avatar>
-              <div style={{ flex: 1 }}>
-                <Space size={6}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: '#065f46' }}>
-                    {selectedPatient.name}
-                  </span>
-                  {selectedPatient.gender !== 'unknown' && (
-                    <span style={{ fontSize: 12, color: '#059669' }}>
-                      {selectedPatient.gender === 'male' ? '男' : '女'}
-                    </span>
-                  )}
-                  {selectedPatient.age && (
-                    <span style={{ fontSize: 12, color: '#059669' }}>{selectedPatient.age}岁</span>
-                  )}
-                </Space>
-                {selectedPatient.phone && (
-                  <div style={{ fontSize: 12, color: '#059669', marginTop: 2 }}>
-                    {selectedPatient.phone}
-                  </div>
-                )}
-              </div>
-              <Tag color="green">复诊</Tag>
-            </div>
+            <SelectedPatientCard patient={selectedPatient} />
           ) : (
-            <>
-              <Form.Item
-                name="patient_name"
-                label="患者姓名"
-                rules={[{ required: true, message: '请输入患者姓名' }]}
-              >
-                <Input placeholder="请输入患者姓名" size="large" />
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item
-                  name="gender"
-                  label="性别"
-                  style={{ flex: 1 }}
-                  rules={[{ required: true, message: '请选择性别' }]}
-                >
-                  <Select placeholder="选择性别">
-                    <Select.Option value="male">男</Select.Option>
-                    <Select.Option value="female">女</Select.Option>
-                    <Select.Option value="unknown">未知</Select.Option>
-                  </Select>
-                </Form.Item>
-                <Form.Item
-                  name="birth_date"
-                  label="出生日期"
-                  style={{ flex: 2 }}
-                  rules={[{ required: true, message: '请选择出生日期' }]}
-                >
-                  <DatePicker
-                    placeholder="请选择出生日期"
-                    style={{ width: '100%' }}
-                    format="YYYY-MM-DD"
-                    disabledDate={d => d && d.isAfter(dayjs())}
-                  />
-                </Form.Item>
-              </div>
-              {/* 身份证号：门诊选填，但建议填——是患者主索引，未来转住院时
-                  patient_service.find_existing 优先按身份证号去重，避免门诊→住院
-                  重复建档（参考 backend/app/services/patient_service.py 注释）。 */}
-              <Form.Item
-                name="id_card"
-                label="身份证号"
-                rules={[
-                  { pattern: /^\d{17}[\dXx]$/, message: '请输入有效的18位身份证号' },
-                ]}
-              >
-                <Input placeholder="选填，建议录入以便复诊/转住院去重" maxLength={18} />
-              </Form.Item>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="ethnicity" label="民族" style={{ flex: 1 }}>
-                  <Select placeholder="请选择民族（选填）" allowClear showSearch>
-                    {[
-                      '汉族',
-                      '满族',
-                      '回族',
-                      '苗族',
-                      '维吾尔族',
-                      '土家族',
-                      '彝族',
-                      '蒙古族',
-                      '藏族',
-                      '壮族',
-                      '布依族',
-                      '侗族',
-                      '瑶族',
-                      '白族',
-                      '朝鲜族',
-                      '哈尼族',
-                      '黎族',
-                      '哈萨克族',
-                      '傣族',
-                      '畲族',
-                    ].map(e => (
-                      <Select.Option key={e} value={e}>
-                        {e}
-                      </Select.Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-                <Form.Item name="marital_status" label="婚姻状况" style={{ flex: 1 }}>
-                  <Select placeholder="请选择（选填）" allowClear>
-                    {['未婚', '已婚', '离异', '丧偶'].map(v => (
-                      <Select.Option key={v} value={v}>
-                        {v}
-                      </Select.Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              </div>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="occupation" label="职业" style={{ flex: 1 }}>
-                  <Input placeholder="选填" />
-                </Form.Item>
-                <Form.Item name="phone" label="联系电话" style={{ flex: 1 }}>
-                  <Input placeholder="选填" />
-                </Form.Item>
-              </div>
-              <Form.Item name="workplace" label="工作单位">
-                <Input placeholder="选填（无业/退休可填无）" />
-              </Form.Item>
-              <Form.Item name="address" label="住址">
-                <Input placeholder="选填" />
-              </Form.Item>
-            </>
+            <NewPatientFields />
           )}
           <Form.Item
             name="visit_type"

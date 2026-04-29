@@ -20,6 +20,10 @@ numpy
 pydicom
 Pillow
 
+# 中文姓名拼音索引（患者搜索框支持拼音/首字母/混拼，纯 Python 无 C 扩展）
+# 仅在 PatientService 写入和查询时调用，运行时开销可忽略
+pypinyin==0.53.0
+
 # 错误监控（Sentry，FastAPI/SQLAlchemy/Logging 集成）
 # 仅当环境变量 SENTRY_DSN 非空时初始化，开发环境默认不上报
 sentry-sdk[fastapi]==2.18.0

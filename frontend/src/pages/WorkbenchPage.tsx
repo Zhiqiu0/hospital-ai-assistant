@@ -5,33 +5,29 @@
  *   mode="outpatient"（默认）→ 门诊  mode="emergency" → 急诊
  *
  * 布局：三栏响应式布局
- *   左栏：InquiryPanel（问诊表单）+ VoiceInputCard（语音录入）
+ *   左栏：InquiryPanel（问诊表单）+ LabReportTab（检验报告 Tab 切换）
  *   中栏：RecordEditor（病历编辑区）+ FinalRecordModal（签发弹窗）
- *   右栏：Tab 切换 QCIssuePanel / AISuggestionPanel / LabReportTab
+ *   右栏：AISuggestionPanel（AI 检查/追问/诊断建议）
  *
- * 顶栏功能：
- *   - 登记新患者（PatientSearch + 接诊登记）
- *   - 历史病历查看（PatientHistoryDrawer，按患者维度）
- *   - 续接诊（ResumeDrawer）
- *   - 登出（useWorkbenchBase.handleLogout）
- *
- * 工作台重置：
- *   每次登记新患者时调用 workbenchStore.reset()，
- *   清空所有问诊、病历、质控状态，开始新接诊。
+ * 子组件：
+ *   WorkbenchHeader   → 顶部 Logo + 患者徽章 + 用户操作
+ *   NoPatientOverlay  → 无接诊遮罩
+ *   WorkbenchStatusBar→ 底部状态栏
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Typography, Space, Tag, message, Avatar, Divider, Empty, Tabs } from 'antd'
-import {
-  LogoutOutlined,
-  PlusOutlined,
-  MedicineBoxOutlined,
-  CameraOutlined,
-  UserOutlined,
-} from '@ant-design/icons'
+import { Layout, message, Tabs } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import { useWorkbenchStore } from '@/store/workbenchStore'
-import { applyQuickStartResult } from '@/store/encounterIntake'
+import { useInquiryStore } from '@/store/inquiryStore'
+import {
+  useActiveEncounterStore,
+  useCurrentPatient,
+  resetAllWorkbench,
+  setCurrentEncounterFromPatient,
+} from '@/store/activeEncounterStore'
+import type { VisitType } from '@/domain/medical'
+import { applyQuickStartResult, applySnapshotResult } from '@/store/encounterIntake'
+import api from '@/services/api'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InquiryPanel from '@/components/workbench/InquiryPanel'
@@ -43,9 +39,10 @@ import RecordViewModal from '@/components/workbench/RecordViewModal'
 import LabReportTab from '@/components/workbench/LabReportTab'
 import NewEncounterModal from '@/components/workbench/NewEncounterModal'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
+import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
+import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 
 const { Header, Content } = Layout
-const { Text } = Typography
 
 const RECORD_TYPE_LABEL: Record<string, string> = {
   outpatient: '门诊病历',
@@ -67,20 +64,17 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   const accentLighter = isEmergency ? '#fca5a5' : '#67e8f9'
   const navigate = useNavigate()
   const { user } = useAuthStore()
-  const {
-    currentPatient,
-    currentEncounterId,
-    setCurrentEncounter,
-    setVisitMeta,
-    setPatientReused,
-    setPreviousRecordContent,
-    updateInquiryFields,
-    reset,
-  } = useWorkbenchStore()
+  const currentPatient = useCurrentPatient()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const patchActive = useActiveEncounterStore(s => s.patchActive)
+  const updateInquiryFields = useInquiryStore(s => s.updateInquiryFields)
+  // 兼容封装，保留原 setVisitMeta 形状（页面里用了 4 处）
+  const setVisitMeta = (firstVisit: boolean, vt: string) =>
+    patchActive({ isFirstVisit: firstVisit, visitType: vt as VisitType })
 
   // 无接诊时清空残留数据（仅在页面初次挂载时执行，避免新建接诊时的竞态问题）
   useEffect(() => {
-    if (!currentEncounterId) reset()
+    if (!currentEncounterId) resetAllWorkbench()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）
@@ -90,22 +84,16 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   // 切换门诊/急诊页面时同步 visitType 到 store
   useEffect(() => {
     const defaultType = isEmergency ? 'emergency' : 'outpatient'
-    const { currentVisitType, isFirstVisit } = useWorkbenchStore.getState()
-    if (currentVisitType !== defaultType) {
+    const { visitType, isFirstVisit } = useActiveEncounterStore.getState()
+    if (visitType !== defaultType) {
       setVisitMeta(isFirstVisit, defaultType)
     }
   }, [isEmergency])
 
-  const {
-    historyOpen,
-    setHistoryOpen,
-    openHistory,
-    viewRecord,
-    setViewRecord,
-    handleLogout,
-  } = useWorkbenchBase({
-    resumeSuccessMsg: name => `已恢复「${name}」的接诊工作台`,
-  })
+  const { historyOpen, setHistoryOpen, openHistory, viewRecord, setViewRecord, handleLogout } =
+    useWorkbenchBase({
+      resumeSuccessMsg: name => `已恢复「${name}」的接诊工作台`,
+    })
 
   const [modalOpen, setModalOpen] = useState<'new' | 'returning' | null>(null)
   const [imagingOpen, setImagingOpen] = useState(false)
@@ -113,29 +101,35 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   // 新建接诊成功回调：更新 store 并处理住院跳转
   // resumed=true 表示后端检测到已有进行中接诊，直接续接而非新建
   const handleEncounterCreated = (res: any, visitType: string) => {
-    reset()
+    resetAllWorkbench()
     // 1.6 数据接入：把 patient + patient_profile 写入 patientCacheStore，
-    // 并设置 activeEncounterStore；老的 workbenchStore 指针字段暂时并存。
+    // 并通过 setCurrentEncounterFromPatient 设置 activeEncounterStore（一次性传完元信息）
     applyQuickStartResult(res)
-    setCurrentEncounter(
-      {
-        id: res.patient.id,
-        name: res.patient.name,
-        gender: res.patient.gender,
-        age: res.patient.age,
-      },
-      res.encounter_id
-    )
-    setVisitMeta(!res.patient_reused, res.visit_type || visitType)
-    setPatientReused(!!res.patient_reused)
-    setPreviousRecordContent(res.previous_record_content || null)
+    setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+      visitType: (res.visit_type || visitType) as VisitType,
+      isFirstVisit: !res.patient_reused,
+      isPatientReused: !!res.patient_reused,
+      previousRecordContent: res.previous_record_content || null,
+    })
     // 复诊且非续接：把上次稳定字段（既往史/过敏史/个人史等）预填入问诊表单
     if (res.patient_reused && !res.resumed && res.previous_inquiry) {
-      const current = useWorkbenchStore.getState().inquiry
+      const current = useInquiryStore.getState().inquiry
       updateInquiryFields({ ...current, ...res.previous_inquiry })
     }
     if (res.resumed) {
       message.info(`「${res.patient.name}」有未完成的接诊，已自动恢复`)
+      // ★ 治本：自动恢复时拉 snapshot 灌回 inquiry/record/qc/aiSuggestion 4 个 store——
+      // quick-start 接口本身只返回 patient + encounter_id，不含 AI 产物，
+      // 所以 logout 重登后中间编辑器 / 质控提示 / 追问建议会全空（用户报告 bug）。
+      // 失败不阻断，useEnsureSnapshotHydrated 在 currentEncounterId 变化时也会兜底重试。
+      void api
+        .get(`/encounters/${res.encounter_id}/workspace`)
+        .then((snapshot: any) => {
+          if (snapshot) applySnapshotResult(snapshot)
+        })
+        .catch(() => {
+          /* 静默失败 */
+        })
     } else {
       message.success(`已为「${res.patient.name}」开始接诊`)
     }
@@ -144,7 +138,6 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
 
   return (
     <Layout style={{ height: '100vh', background: 'var(--bg)' }}>
-      {/* Header */}
       <Header
         style={{
           height: 58,
@@ -160,197 +153,26 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           position: 'relative',
         }}
       >
-        {/* Top accent stripe */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 3,
-            background: `linear-gradient(90deg, ${accentColor}, ${accentLight}, ${accentLighter})`,
-            borderRadius: '0 0 2px 2px',
-          }}
+        <WorkbenchHeader
+          isEmergency={isEmergency}
+          accentColor={accentColor}
+          accentLight={accentLight}
+          accentLighter={accentLighter}
+          user={user}
+          currentPatient={currentPatient}
+          currentEncounterId={currentEncounterId}
+          setModalOpen={setModalOpen}
+          openHistory={openHistory}
+          setImagingOpen={setImagingOpen}
+          onSwitchMode={() => navigate(isEmergency ? '/workbench' : '/emergency')}
+          handleLogout={handleLogout}
         />
-
-        {/* Logo */}
-        <Space size={10}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 9,
-              background: `linear-gradient(135deg, ${accentColor}, ${accentLight})`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: `0 2px 8px ${isEmergency ? 'rgba(220,38,38,0.35)' : 'rgba(37,99,235,0.35)'}`,
-            }}
-          >
-            <MedicineBoxOutlined style={{ color: 'var(--surface)', fontSize: 16 }} />
-          </div>
-          <Text strong style={{ fontSize: 16, color: 'var(--text-1)', letterSpacing: '-0.4px' }}>
-            MediScribe
-          </Text>
-          <Tag color={isEmergency ? 'red' : 'blue'} style={{ margin: 0, borderRadius: 20 }}>
-            {isEmergency ? '急诊部' : '门诊部'}
-          </Tag>
-        </Space>
-
-        {/* Patient info (center) */}
-        <div
-          style={{
-            position: 'absolute',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}
-        >
-          {currentPatient ? (
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
-                border: '1px solid #bbf7d0',
-                borderRadius: 8,
-                padding: '4px 12px',
-                boxShadow: '0 1px 4px rgba(5,150,105,0.1)',
-                lineHeight: 1,
-              }}
-            >
-              <div
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: '#22c55e',
-                  boxShadow: '0 0 0 2px rgba(34,197,94,0.25)',
-                  flexShrink: 0,
-                }}
-              />
-              <Text style={{ fontSize: 13, fontWeight: 700, color: '#065f46' }}>
-                {currentPatient.name}
-              </Text>
-              {currentPatient.gender && currentPatient.gender !== 'unknown' && (
-                <Text style={{ fontSize: 12, color: '#059669' }}>
-                  {currentPatient.gender === 'male' ? '男' : '女'}
-                </Text>
-              )}
-              {currentPatient.age != null && currentPatient.age > 0 && (
-                <Text style={{ fontSize: 12, color: '#059669' }}>{currentPatient.age}岁</Text>
-              )}
-              <Text
-                style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'monospace', marginLeft: 4 }}
-              >
-                #{currentEncounterId?.slice(-6).toUpperCase()}
-              </Text>
-            </div>
-          ) : (
-            <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>未选择患者</Text>
-          )}
-          <Button
-            icon={<PlusOutlined />}
-            size="small"
-            type="primary"
-            onClick={() => setModalOpen('new')}
-            style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
-          >
-            初诊
-          </Button>
-          <Button
-            size="small"
-            onClick={() => setModalOpen('returning')}
-            style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
-          >
-            复诊
-          </Button>
-        </div>
-
-        {/* Right: user actions */}
-        <Space size={4} style={{ flexShrink: 0 }}>
-          {/* 历史病历：门诊端一个入口看全部签发病历，与住院端命名一致。
-              抽屉默认显示患者列表（按最近就诊倒序）+ 搜索过滤 + 点患者看其全部病历。
-              替代了原来的「我的病历」+「患者档案」两个按钮，避免功能重叠。 */}
-          <Button
-            icon={<UserOutlined />}
-            size="small"
-            type="text"
-            onClick={openHistory}
-            style={{ color: '#059669', fontSize: 12, borderRadius: 8 }}
-          >
-            历史病历
-          </Button>
-          <Button
-            icon={<CameraOutlined />}
-            size="small"
-            type="text"
-            onClick={() => setImagingOpen(true)}
-            style={{ color: '#7c3aed', fontSize: 12, borderRadius: 8 }}
-          >
-            影像分析
-          </Button>
-          <Button
-            size="small"
-            type="text"
-            onClick={() => navigate(isEmergency ? '/workbench' : '/emergency')}
-            style={{
-              color: isEmergency ? '#2563eb' : '#dc2626',
-              fontSize: 12,
-              borderRadius: 8,
-              fontWeight: 500,
-            }}
-          >
-            切换至{isEmergency ? '门诊' : '急诊'}
-          </Button>
-          <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'var(--border)' }} />
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '4px 10px',
-              borderRadius: 8,
-              background: 'var(--surface-2)',
-            }}
-          >
-            <Avatar
-              size={26}
-              style={{
-                background: `linear-gradient(135deg, ${accentColor}, ${accentLighter})`,
-                fontSize: 11,
-                flexShrink: 0,
-              }}
-            >
-              {user?.real_name?.[0]}
-            </Avatar>
-            <div style={{ lineHeight: 1.3 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-                {user?.real_name}
-              </div>
-              {user?.department_name && (
-                <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{user.department_name}</div>
-              )}
-            </div>
-          </div>
-          <Button
-            icon={<LogoutOutlined />}
-            size="small"
-            type="text"
-            onClick={handleLogout}
-            style={{ color: 'var(--text-3)', borderRadius: 8 }}
-          />
-        </Space>
       </Header>
 
-      {/* Content */}
       <Content
         style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10, position: 'relative' }}
       >
-        {/* Left: Inquiry + Lab Reports */}
+        {/* 左栏：问诊 + 检验报告 Tab */}
         <div
           style={{
             width: 320,
@@ -392,12 +214,12 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           />
         </div>
 
-        {/* Center: Record editor */}
+        {/* 中栏：病历编辑器 */}
         <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
           <RecordEditor />
         </div>
 
-        {/* Right: AI suggestions */}
+        {/* 右栏：AI 建议 */}
         <div
           style={{
             width: 320,
@@ -412,51 +234,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           <AISuggestionPanel />
         </div>
 
-        {/* No-patient overlay */}
-        {!currentPatient && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: 'rgba(248,250,252,0.90)',
-              backdropFilter: 'blur(3px)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 16,
-              zIndex: 50,
-              borderRadius: 8,
-            }}
-          >
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={
-                <span style={{ fontSize: 14, color: 'var(--text-3)' }}>
-                  暂无接诊，请选择「初诊」或「复诊」开始
-                </span>
-              }
-            />
-            <Space>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => setModalOpen('new')}
-                size="large"
-                style={{ borderRadius: 20 }}
-              >
-                初诊
-              </Button>
-              <Button
-                onClick={() => setModalOpen('returning')}
-                size="large"
-                style={{ borderRadius: 20 }}
-              >
-                复诊
-              </Button>
-            </Space>
-          </div>
-        )}
+        {/* 无接诊遮罩 */}
+        {!currentPatient && <NoPatientOverlay setModalOpen={setModalOpen} />}
       </Content>
 
       <NewEncounterModal

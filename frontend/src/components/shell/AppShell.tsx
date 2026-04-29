@@ -26,7 +26,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { resetAllWorkbench } from '@/store/activeEncounterStore'
 import api from '@/services/api'
 import { scenes, neutral, radius, shadow, sizing, motion } from '@/theme/tokens'
 import type { SceneKey } from '@/theme/tokens'
@@ -84,7 +84,7 @@ export default function AppShell({
   const navigate = useNavigate()
   const location = useLocation()
   const { user, clearAuth } = useAuthStore()
-  const resetWorkbench = useWorkbenchStore(s => s.reset)
+  const resetWorkbench = resetAllWorkbench
   const theme = scenes[scene]
 
   const handleLogout = async () => {

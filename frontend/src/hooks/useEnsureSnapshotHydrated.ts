@@ -23,26 +23,28 @@
 
 import { useEffect, useRef } from 'react'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
 import { applySnapshotResult } from '@/store/encounterIntake'
 
 export function useEnsureSnapshotHydrated() {
-  const currentEncounterId = useWorkbenchStore(s => s.currentEncounterId)
-  const currentPatient = useWorkbenchStore(s => s.currentPatient)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const currentPatientId = useActiveEncounterStore(s => s.patientId)
   const hydratedForRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!currentEncounterId || !currentPatient) return
+    // 关键：只看 encounterId 是否存在，不要看 currentPatient 是否非空——
+    // 刷新后 patientCacheStore 是空的（故意不持久化），currentPatient 必为 null，
+    // 之前用它做守卫会直接 return，永远不会触发回填，导致顶部一直显示"未选择患者"。
+    if (!currentEncounterId) return
     // 已 hydrate 过同一个 encounter，跳过
     if (hydratedForRef.current === currentEncounterId) return
-    // patientCache 已有该患者数据，无需 hydrate
-    const cached = usePatientCacheStore.getState().cache[currentPatient.id]
-    if (cached) {
+    // patientCache 已有该患者数据（同一会话切回来）—— 无需 hydrate
+    if (currentPatientId && usePatientCacheStore.getState().cache[currentPatientId]) {
       hydratedForRef.current = currentEncounterId
       return
     }
-    // 冷启动：拉 snapshot 回填
+    // 冷启动：拉 snapshot 回填 patient + profile + inquiry + record + qc + aiSuggestion
     hydratedForRef.current = currentEncounterId
     api
       .get(`/encounters/${currentEncounterId}/workspace`)
@@ -53,5 +55,5 @@ export function useEnsureSnapshotHydrated() {
         // 失败不报警；下次刷新还会重试
         hydratedForRef.current = null
       })
-  }, [currentEncounterId, currentPatient])
+  }, [currentEncounterId, currentPatientId])
 }

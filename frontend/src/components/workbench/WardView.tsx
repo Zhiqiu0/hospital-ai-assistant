@@ -8,7 +8,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Button, Empty, Spin, Tag, Typography } from 'antd'
 import { PlusOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 const { Text } = Typography
 
@@ -48,7 +48,7 @@ export default function WardView({
   selectedEncounterId,
   refreshSignal,
 }: Props) {
-  const { currentEncounterId } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const [patients, setPatients] = useState<WardPatient[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -162,7 +162,10 @@ export default function WardView({
                       }}
                     >
                       <UserOutlined
-                        style={{ fontSize: 11, color: isSelected ? 'var(--surface)' : 'var(--text-4)' }}
+                        style={{
+                          fontSize: 11,
+                          color: isSelected ? 'var(--surface)' : 'var(--text-4)',
+                        }}
                       />
                     </div>
                     <Text

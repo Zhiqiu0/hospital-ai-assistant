@@ -4,7 +4,7 @@
  */
 import { Button, Tag, Tooltip, Typography } from 'antd'
 import { BulbOutlined, CheckOutlined, ArrowRightOutlined } from '@ant-design/icons'
-import { DiagnosisItem } from '@/store/workbenchStore'
+import { DiagnosisItem } from '@/store/types'
 
 const { Text } = Typography
 

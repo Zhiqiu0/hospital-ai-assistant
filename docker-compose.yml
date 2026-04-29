@@ -11,13 +11,17 @@ services:
     environment:
       POSTGRES_DB: medassist
       POSTGRES_USER: medassist
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-medassist123}
+      # `:?required` 让 docker compose up 在 .env 缺 DB_PASSWORD 时立即报错，
+      # 不再静默 fallback 到公网仓库可见的默认密码。
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # 容器首次初始化时自动建 orthanc 数据库（已有数据卷的环境不会跑这个，需手动 CREATE DATABASE）
       - ./backend/db_init:/docker-entrypoint-initdb.d:ro
+    # 端口仅绑本机，禁止公网直连——backend / orthanc 容器走 docker 内网访问，
+    # 本机调试用 psql 仍可（127.0.0.1:5432 通），杜绝 5432 被互联网扫描入侵
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U medassist -d medassist"]
       interval: 5s
@@ -31,8 +35,9 @@ services:
   redis:
     image: docker.m.daocloud.io/library/redis:7-alpine
     restart: unless-stopped
+    # 仅本机绑定——backend 容器走 docker 内网；外部不能直连 6379
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     # PACS 缩略图最大占内存 256MB，超出 LRU 自动驱逐最久没用的
@@ -55,14 +60,22 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # 仅本机绑定——backend 容器通过 docker 内网（http://orthanc:8042）访问；
+    # 4242 DIMSE 端口同理。如果 CT 机要直推，需要单独走 SSH 隧道或 VPN，
+    # 不能让 Orthanc 在公网裸奔（凭证用 Basic Auth，强度不够）。
     ports:
-      - "4242:4242"   # DIMSE（CT/MR 设备直推用）
-      - "8042:8042"   # HTTP REST + DICOMweb（FastAPI / OHIF 用）
-    # orthanc 25+ 支持 ORTHANC__SECTION__KEY 环境变量覆盖 JSON 配置
-    # 必须用 env 注入 PostgreSQL 密码（orthanc.json 里写死的默认值会被生产
-    # .env 的 DB_PASSWORD 覆盖，不再因为密码不匹配启动失败）
+      - "127.0.0.1:4242:4242"
+      - "127.0.0.1:8042:8042"
+    # orthanc 25+ 支持 ORTHANC__SECTION__KEY 环境变量覆盖 JSON 配置。
+    # PostgreSQL 密码 + RegisteredUsers HTTP Basic Auth 凭证一律走 env 注入，
+    # 不在 orthanc.json 里硬编码（防止公网仓库泄露默认凭证）。
     environment:
-      ORTHANC__POSTGRESQL__PASSWORD: ${DB_PASSWORD:-medassist123}
+      ORTHANC__POSTGRESQL__USERNAME: ${DB_USER:-medassist}
+      ORTHANC__POSTGRESQL__PASSWORD: ${DB_PASSWORD:?required}
+      ORTHANC__REGISTERED_USERS__MEDISCRIBE: ${ORTHANC_PASSWORD:?required}
+      # CORS 收紧到实际前端域名——之前是 "*"，配合 Authorization header 让任何
+      # 第三方网站脚本带凭证访问 Orthanc API。生产改为前端域名 allowlist。
+      ORTHANC__HTTP_HEADERS__ACCESS-CONTROL-ALLOW-ORIGIN: ${ALLOWED_ORIGINS:-https://mediscribe.cn}
     volumes:
       - ./backend/orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
       - orthanc_storage:/var/lib/orthanc/db
@@ -92,12 +105,18 @@ services:
       retries: 6
       start_period: 15s
     environment:
-      DATABASE_URL: postgresql+asyncpg://medassist:${DB_PASSWORD:-medassist123}@db:5432/medassist
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-32-chars}
+      DATABASE_URL: postgresql+asyncpg://medassist:${DB_PASSWORD:?required}@db:5432/medassist
+      SECRET_KEY: ${SECRET_KEY:?required}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       ALIYUN_API_KEY: ${ALIYUN_API_KEY:-}
+      # Orthanc 三件套显式从 .env 注入（容器内必须用服务名 orthanc 访问，
+      # 不能用 localhost；密码与 ORTHANC__REGISTERED_USERS__MEDISCRIBE 同源，
+      # 一改两改）
+      ORTHANC_BASE_URL: ${ORTHANC_BASE_URL:-http://orthanc:8042}
+      ORTHANC_USERNAME: ${ORTHANC_USERNAME:-mediscribe}
+      ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:?required}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: production
       APP_DEBUG: "false"

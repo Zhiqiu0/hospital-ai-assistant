@@ -12,12 +12,12 @@
   "RemoteAccessAllowed": true,
 
   // ───── 鉴权（基础认证）─────────────────────────────────
-  // FastAPI 调 Orthanc HTTP API 时用这个用户名密码做 Basic Auth
-  // 前端 OHIF 也用同样凭证（短期方案；正式方案应该走 token 代理）
+  // 用户名密码不在本文件硬编码——由 docker-compose.yml 的环境变量
+  // ORTHANC__REGISTERED_USERS__MEDISCRIBE=${ORTHANC_PASSWORD} 注入。
+  // Orthanc 25+ 支持 ENV 覆盖 JSON 配置（_SECTION__KEY 双下划线 = . 分层）。
+  // 这样仓库里不留任何能直接登录 Orthanc 的密码。
   "AuthenticationEnabled": true,
-  "RegisteredUsers": {
-    "mediscribe": "mediscribe-orthanc-2026"
-  },
+  "RegisteredUsers": {},
 
   // ───── DICOMweb 插件（核心，让 FastAPI/OHIF 走标准协议）─
   "DicomWeb": {
@@ -37,8 +37,8 @@
     "Host": "db",
     "Port": 5432,
     "Database": "orthanc",
-    "Username": "medassist",
-    "Password": "medassist123",
+    // Username / Password 由 docker-compose 注入（ORTHANC__POSTGRESQL__USERNAME /
+    // ORTHANC__POSTGRESQL__PASSWORD = ${DB_USER} / ${DB_PASSWORD}），不在本文件硬编码
     "EnableSsl": false,
     "Lock": false
   },

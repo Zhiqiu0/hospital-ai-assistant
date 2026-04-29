@@ -18,7 +18,12 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.ai_request import GradeScoreRequest, QCFixRequest, QuickQCRequest
+from app.schemas.ai_request import (
+    GradeScoreRequest,
+    QCFixRequest,
+    QuickQCRequest,
+    extract_inquiry_dict,
+)
 from app.services.ai.ai_utils import get_active_prompt, safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
@@ -49,6 +54,7 @@ async def run_quick_qc_stream(
             "pass": False,
             "grade_score": 0,
             "grade_level": "丙级",
+            "must_fix_count": 0,
         }
         return
 
@@ -76,11 +82,12 @@ async def run_quick_qc_stream(
         is_inpatient=is_inpatient,
         is_first_visit=req.is_first_visit if req.is_first_visit is not None else True,
         patient_gender=req.patient_gender or "",
+        inquiry=extract_inquiry_dict(req),
     )
     insurance_issues = await check_insurance_risk(req.content, db)
 
     insurance_tagged = [{**i, "source": "rule"} for i in insurance_issues]
-    rule_score, rule_level = calc_grade_score(rule_issues + insurance_tagged)
+    rule_score, rule_level, rule_must_fix = calc_grade_score(rule_issues + insurance_tagged)
     blocking_count = len(rule_issues) + len(insurance_tagged)
 
     yield {
@@ -89,6 +96,7 @@ async def run_quick_qc_stream(
         "pass": blocking_count == 0,
         "grade_score": rule_score,
         "grade_level": rule_level,
+        "must_fix_count": rule_must_fix,
     }
 
     try:
@@ -125,6 +133,7 @@ async def run_quick_qc_stream(
             "pass": blocking_count == 0,
             "grade_score": rule_score,
             "grade_level": rule_level,
+            "must_fix_count": rule_must_fix,
         }
     except Exception as exc:
         llm_task.cancel()
@@ -142,6 +151,7 @@ async def run_quick_qc_stream(
             "pass": blocking_count == 0,
             "grade_score": rule_score,
             "grade_level": rule_level,
+            "must_fix_count": rule_must_fix,
         }
 
 
@@ -182,6 +192,7 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         return {
             "grade_score": 0,
             "grade_level": "丙级",
+            "must_fix_count": 0,
             "issues": [],
             "summary": "病历内容为空，无法评分",
         }
@@ -192,6 +203,7 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         db=db,
         is_inpatient=is_inpatient,
         patient_gender=req.patient_gender or "",
+        inquiry=extract_inquiry_dict(req),
     )
 
     record_type_label = RECORD_TYPE_LABELS.get(req.record_type or "admission_note", "入院记录")
@@ -235,14 +247,21 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
             else:
                 grade_level = "丙级"
 
+        # 必须修复项数 = 规则引擎产出项数（rule_issues 全部 source='rule'）
+        # 存在则强制覆盖等级为"待整改"，与 calc_grade_score 同语义保持一致
+        must_fix_count = len(rule_issues)
+        if must_fix_count > 0:
+            grade_level = "待整改"
+
         # 业务里程碑：质控评分完成（监控质控成功率 + 评分分布）
         logger.info(
-            "ai.qc_grade: done score=%s level=%s deductions=%d",
-            estimated, grade_level, len(deductions),
+            "ai.qc_grade: done score=%s level=%s deductions=%d must_fix=%d",
+            estimated, grade_level, len(deductions), must_fix_count,
         )
         return {
             "grade_score": estimated,
             "grade_level": grade_level,
+            "must_fix_count": must_fix_count,
             "deductions": deductions,
             "strengths": llm_result.get("strengths", []),
             "issues": [
@@ -259,10 +278,11 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         }
     except Exception as exc:
         logger.exception("ai.qc_grade: failed err=%s", exc)
-        score_val, level = calc_grade_score(rule_issues)
+        score_val, level, must_fix_count = calc_grade_score(rule_issues)
         return {
             "grade_score": score_val,
             "grade_level": level,
+            "must_fix_count": must_fix_count,
             "deductions": [],
             "strengths": [],
             "issues": rule_issues,

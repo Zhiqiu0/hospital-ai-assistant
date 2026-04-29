@@ -55,17 +55,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
 from app.core.security import get_current_user
-from app.core.authz import assert_pacs_write, assert_patient_access
+from app.core.authz import PACS_WRITE_ROLES, assert_pacs_write, assert_patient_access
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingReport, ImagingStudy
 from app.services.orthanc_client import orthanc_client
 from app.services.redis_cache import redis_cache
 from app.services.dicom_renderer import render_thumbnail, render_preview
+from app.services.ai.prompts_pacs import build_study_prompt, build_image_prompt
 
 logger = logging.getLogger(__name__)
-
-PRIVILEGED_ROLES = {"radiologist", "admin", "super_admin"}
 
 router = APIRouter()
 
@@ -135,7 +134,7 @@ def _smart_sample_indices(total: int, n: int = AUTO_SAMPLE_COUNT) -> list[int]:
 # ─── 上传 ZIP/RAR → STOW 到 Orthanc ────────────────────────────────────────
 
 def _find_sevenzip() -> Optional[str]:
-    """定位 7-Zip 可执行文件。
+    """定位 7-Zip 可执行文件（仅在 module 加载时调用一次）。
 
     查找顺序（任一命中即返回）：
       1. settings.sevenzip_path（用户在 .env 显式指定，最优先）
@@ -144,6 +143,7 @@ def _find_sevenzip() -> Optional[str]:
       4. Linux 常见路径：/usr/bin/7z / /usr/local/bin/7z
 
     全盘 glob 太慢且权限受限，因此只搜常见父目录的两层深度。
+    结果会缓存在 module-level `SEVENZIP_PATH`，请求路径不要再调本函数。
     """
     # 1) 配置优先
     if settings.sevenzip_path and os.path.exists(settings.sevenzip_path):
@@ -171,6 +171,18 @@ def _find_sevenzip() -> Optional[str]:
             candidates += _glob.glob(rf"{drive}:\{parent}\7-Zip\7z.exe")
 
     return next((p for p in candidates if os.path.exists(p)), None)
+
+
+# Module 加载时一次性定位 7-Zip，避免每次 RAR 上传都触发全盘 glob（慢 + 泄露目录结构）。
+# 未检测到时记 warn（不阻塞启动；解压 RAR 等格式时再 HTTPException 400）。
+SEVENZIP_PATH: Optional[str] = _find_sevenzip()
+if SEVENZIP_PATH:
+    logger.info("pacs.sevenzip: detected path=%s", SEVENZIP_PATH)
+else:
+    logger.warning(
+        "pacs.sevenzip: 未检测到 7-Zip，仅 ZIP 上传可用；"
+        "RAR/7Z/TAR/ISO 等格式将在上传时返回 400"
+    )
 
 
 # 支持的压缩/打包格式（医院 PACS 真实场景常见）：
@@ -215,11 +227,12 @@ def _extract_archive(archive_path: Path, dest_dir: Path, archive_kind: str) -> N
             zf.extractall(str(dest_dir))
         return
     # 7-Zip 兜底：覆盖 RAR / 7Z / TAR.* / ISO / GZ 等
-    sevenzip = _find_sevenzip()
-    if not sevenzip:
+    # SEVENZIP_PATH 在 module 加载时已检测一次，请求路径不再 glob
+    if not SEVENZIP_PATH:
         raise HTTPException(
             400, f"服务器未安装 7-Zip，无法解压 {archive_kind.upper()} 文件"
         )
+    sevenzip = SEVENZIP_PATH
     # tar.gz / tar.bz2 这种双层格式，7z 单次只能解一层（先解 .gz → 得到 .tar），
     # 因此双后缀格式跑两遍 7z：第一遍解外层得到 tar，第二遍把 tar 解成文件
     rounds = 2 if archive_kind in {"tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz", "tbz2", "txz", "gz", "bz2", "xz"} else 1
@@ -942,6 +955,65 @@ async def get_dicom_file(
 
 # ─── AI 分析（从 Orthanc 拉关键帧 → 千问 VL）────────────────────────────────
 
+async def _call_qwen_vl(
+    prompt: str,
+    images: list[tuple[bytes, str]],
+    max_tokens: int = 1000,
+) -> str:
+    """统一的千问 VL（阿里云 DashScope OpenAI 兼容接口）调用入口。
+
+    抽取自原 analyze_study / analyze_image 两份重复代码，作用：
+      - 统一 messages 构造（system 用 prompt，user content 是图像数组）
+      - 统一 base64 + dataurl 拼装（不同 mime 共用同一段逻辑）
+      - 统一异常处理（HTTP 非 200 / 网络异常都转 HTTPException 500）
+
+    参数:
+      prompt     : 用户级文本提示（已含放射科结构化模板，参见 prompts_pacs）
+      images     : [(image_bytes, mime), ...] 列表；mime 形如 "image/jpeg"
+      max_tokens : 生成上限。study 多帧默认 1000；image 单图原本 800
+
+    返回: 模型文本响应（一般是结构化报告字符串）
+
+    异常: HTTPException(500) — 上游 API 非 200 / 网络异常 / 解析失败
+    """
+    images_content = [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime};base64,{base64.b64encode(b).decode()}"
+            },
+        }
+        for b, mime in images
+    ]
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": prompt}] + images_content,
+        }
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{settings.aliyun_base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.aliyun_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.aliyun_model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                },
+            )
+            if resp.status_code != 200:
+                raise HTTPException(500, f"AI 分析失败: {resp.text}")
+            return resp.json()["choices"][0]["message"]["content"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"AI 服务异常: {e}")
+
+
 class AnalyzeRequest(BaseModel):
     """前端传选中的 instance UID 列表（R1 后不再用文件名）。"""
     selected_frames: List[str]
@@ -1007,7 +1079,7 @@ async def analyze_study(
                 instance_to_series[i_uid] = s_uid
 
     # 从 Orthanc 拉每帧 JPEG（保留质量，给千问 VL 看）
-    images_content = []
+    images: list[tuple[bytes, str]] = []
     for instance_uid in selected:
         series_uid = instance_to_series.get(instance_uid)
         if not series_uid:
@@ -1023,59 +1095,14 @@ async def analyze_study(
         except httpx.HTTPError as e:
             logger.warning("AI 分析：拉帧失败 %s: %s", instance_uid, e)
             continue
-        b64 = base64.b64encode(jpeg_bytes).decode()
-        images_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-        })
+        images.append((jpeg_bytes, "image/jpeg"))
 
-    if not images_content:
+    if not images:
         raise HTTPException(400, "没有可分析的影像帧")
 
-    modality = study.modality or "影像"
-    body_part = study.body_part or ""
-
-    prompt = f"""你是一位经验丰富的放射科医生。请对以下{modality}影像（{body_part}）进行专业分析。
-
-请按以下结构输出报告：
-
-【影像类型】
-（说明检查类型、部位、序列）
-
-【影像所见】
-（逐系统描述主要所见，使用规范医学术语）
-
-【印象】
-（总结主要发现，按重要性排列）
-
-【建议】
-（后续处理或随访建议）
-
-要求：使用规范中文医学术语，客观描述所见，不过度推断。"""
-
-    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}] + images_content}]
-
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{settings.aliyun_base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.aliyun_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.aliyun_model,
-                    "messages": messages,
-                    "max_tokens": 1000,
-                },
-            )
-            if resp.status_code != 200:
-                raise HTTPException(500, f"AI 分析失败: {resp.text}")
-            ai_result = resp.json()["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"AI 服务异常: {e}")
+    # 构建 prompt + 调千问 VL（统一走 _call_qwen_vl，与单图分析共用代码路径）
+    prompt = build_study_prompt(study.modality, study.body_part)
+    ai_result = await _call_qwen_vl(prompt, images, max_tokens=1000)
 
     # 保存到数据库（unique 约束保证一个 study 至多一条 report）
     result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
@@ -1101,62 +1128,61 @@ async def analyze_study(
     return {"ai_analysis": ai_result}
 
 
-# ─── 保存 & 发布报告 ─────────────────────────────────────────────────────────
+# ─── 保存 / 发布报告（合并端点） ─────────────────────────────────────────────
 
-class PublishRequest(BaseModel):
+class SaveReportRequest(BaseModel):
+    """保存影像报告 body。
+
+    - final_report : 报告正文（必填）
+    - publish      : True 表示同时签发；False 仅保存草稿
+    """
     final_report: str
+    publish: bool = False
 
 
 @router.put("/{study_id}/report")
 async def save_report(
     study_id: str,
-    body: PublishRequest,
+    body: SaveReportRequest,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    assert_pacs_write(current_user)
-    result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
-    report = result.scalar_one_or_none()
-    if not report:
-        raise HTTPException(404, "报告不存在，请先进行 AI 分析")
+    """保存或同时签发影像报告。
 
-    report.final_report = body.final_report
-    await db.commit()
-    return {"ok": True}
+    Audit Round 4 G4：原本拆成 PUT /report（草稿）+ POST /publish（签发）两个端点，
+    实际差异只是是否设置 is_published / published_at / published_by 三个字段，
+    合并成一个端点更直观——前端只需要传 publish=True 就能签发。
 
-
-@router.post("/{study_id}/publish")
-async def publish_report(
-    study_id: str,
-    body: PublishRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """发布影像报告。
-
-    审计链设计：
-      - radiologist_id：在 analyze_study 阶段写入，**本端点不应改它**——
-        否则会让"A 分析、B 复核签发"场景下分析人被误记为 B。
-      - published_by：本端点写入，记录实际签发责任人。
+    审计链设计（保持 R1 后行为一致）：
+      - radiologist_id : 在 analyze_study 阶段写入，本端点 **绝不覆盖**——
+        否则 "A 分析、B 复核签发" 场景会把分析人记成 B。
+      - published_by   : 仅在 publish=True 时写入，记录实际签发责任人。
     """
     assert_pacs_write(current_user)
-    result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
+    result = await db.execute(
+        select(ImagingReport).where(ImagingReport.study_id == study_id)
+    )
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(404, "报告不存在，请先进行 AI 分析")
 
     report.final_report = body.final_report
-    report.is_published = True
-    report.published_at = datetime.utcnow()
-    # 关键：只写 published_by，绝不覆盖 radiologist_id（保留分析人审计）
-    report.published_by = current_user.id
 
-    study = await db.get(ImagingStudy, study_id)
-    if study:
-        study.status = "published"
+    response: dict = {"ok": True}
+    if body.publish:
+        report.is_published = True
+        report.published_at = datetime.utcnow()
+        # 关键：只写 published_by，绝不覆盖 radiologist_id（保留分析人审计）
+        report.published_by = current_user.id
+
+        study = await db.get(ImagingStudy, study_id)
+        if study:
+            study.status = "published"
+
+        response["published_at"] = report.published_at.isoformat()
 
     await db.commit()
-    return {"ok": True, "published_at": report.published_at.isoformat()}
+    return response
 
 
 # ─── 获取患者的已发布报告（临床医生用）────────────────────────────────────────
@@ -1168,7 +1194,7 @@ async def get_patient_reports(
     current_user=Depends(get_current_user),
 ):
     # 普通医生只能访问自己有 encounter 的患者
-    if getattr(current_user, "role", "doctor") not in PRIVILEGED_ROLES:
+    if getattr(current_user, "role", "doctor") not in PACS_WRITE_ROLES:
         enc = await db.execute(
             select(Encounter.id).where(
                 Encounter.patient_id == patient_id,
@@ -1256,48 +1282,10 @@ async def analyze_image(
         img_bytes = raw_bytes
         mime = content_type if content_type in allowed_img else "image/jpeg"
 
-    b64 = base64.b64encode(img_bytes).decode()
-
-    hint = f"（{image_type}）" if image_type else ""
-    prompt = f"""你是一位经验丰富的放射科医生。请对以下医学影像{hint}进行专业分析。
-
-请按以下结构输出报告：
-
-【影像类型】
-（说明检查类型、部位）
-
-【影像所见】
-（逐系统描述主要所见，使用规范医学术语）
-
-【印象】
-（总结主要发现，按重要性排列）
-
-【建议】
-（后续处理或随访建议）
-
-要求：使用规范中文医学术语，客观描述所见，不过度推断。"""
-
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{settings.aliyun_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.aliyun_api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": settings.aliyun_model,
-                    "messages": [{"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    ]}],
-                    "max_tokens": 800,
-                },
-            )
-            if resp.status_code != 200:
-                raise HTTPException(500, f"AI 分析失败: {resp.text}")
-            return {"analysis": resp.json()["choices"][0]["message"]["content"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"AI 服务异常: {e}")
+    # 构建 prompt + 调千问 VL（与 analyze_study 共用 _call_qwen_vl）
+    prompt = build_image_prompt(image_type)
+    analysis = await _call_qwen_vl(prompt, [(img_bytes, mime)], max_tokens=800)
+    return {"analysis": analysis}
 
 
 # ─── 删除影像研究 ───────────────────────────────────────────────────────────
@@ -1369,7 +1357,7 @@ async def list_studies(
     current_user=Depends(get_current_user),
 ):
     # 只有放射科医生和管理员可查看全部影像列表
-    if getattr(current_user, "role", "doctor") not in PRIVILEGED_ROLES:
+    if getattr(current_user, "role", "doctor") not in PACS_WRITE_ROLES:
         raise HTTPException(403, "仅放射科医生可访问影像列表")
 
     q = select(ImagingStudy).order_by(ImagingStudy.created_at.desc())

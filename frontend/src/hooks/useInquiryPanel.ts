@@ -11,69 +11,39 @@ import { useEffect, useState } from 'react'
 import { Form, message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import type { VisitType } from '@/domain/medical'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import {
+  useActiveEncounterStore,
+  useCurrentPatient,
+  resetAllWorkbench,
+  setCurrentEncounterFromPatient,
+} from '@/store/activeEncounterStore'
 import { applyQuickStartResult } from '@/store/encounterIntake'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
 import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
-
-// 门诊问诊表单"本次接诊"字段（不含纵向档案字段，那些由 PatientProfileCard 处理）
-// past_history / allergy_history / personal_history / menstrual_history 已迁出
-// 生命体征 8 个字段一并纳入，和其他字段一起保存到后端
-const allFields = [
-  'chief_complaint',
-  'history_present_illness',
-  'physical_exam',
-  'auxiliary_exam',
-  'initial_impression',
-  'tcm_inspection',
-  'tcm_auscultation',
-  'tongue_coating',
-  'pulse_condition',
-  'western_diagnosis',
-  'tcm_disease_diagnosis',
-  'tcm_syndrome_diagnosis',
-  'treatment_method',
-  'treatment_plan',
-  'followup_advice',
-  'precautions',
-  'observation_notes',
-  'patient_disposition',
-  'visit_time',
-  'onset_time',
-  // 生命体征（结构化独立字段，与 physical_exam 文字完全分离）
-  'temperature',
-  'pulse',
-  'respiration',
-  'bp_systolic',
-  'bp_diastolic',
-  'spo2',
-  'height',
-  'weight',
-] as const
+import { INQUIRY_FORM_FIELDS, buildInquiryData, syncInquiryToRecord } from '@/utils/inquirySync'
 
 export function useInquiryPanel() {
   const [form] = Form.useForm()
   const navigate = useNavigate()
-  const {
-    inquiry,
-    setInquiry,
-    updateInquiryFields,
-    currentEncounterId,
-    currentPatient,
-    recordContent,
-    setRecordContent,
-    setPreviousRecordContent,
-    setPendingGenerate,
-    inquirySavedAt,
-    isFirstVisit,
-    isPatientReused,
-    currentVisitType,
-    setVisitMeta,
-    setCurrentEncounter,
-    reset,
-    isPolishing,
-  } = useWorkbenchStore()
+  // 拆分后从子 store 读字段：
+  //   inquiry / record 各管自己的；接诊上下文走 activeEncounterStore；
+  //   currentPatient 通过 useCurrentPatient 聚合 patientCache + activeEncounter
+  const { inquiry, setInquiry, updateInquiryFields, inquirySavedAt } = useInquiryStore()
+  const { recordContent, setRecordContent, setPendingGenerate, isPolishing, isFinal } =
+    useRecordStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const isFirstVisit = useActiveEncounterStore(s => s.isFirstVisit)
+  const isPatientReused = useActiveEncounterStore(s => s.isPatientReused)
+  const currentVisitType = useActiveEncounterStore(s => s.visitType)
+  const patchActive = useActiveEncounterStore(s => s.patchActive)
+  const currentPatient = useCurrentPatient()
+  // 兼容封装：保留原 hook 暴露给 InquiryPanel 的 setVisitMeta 形状
+  const setVisitMeta = (firstVisit: boolean, vt: string) =>
+    patchActive({ isFirstVisit: firstVisit, visitType: vt as VisitType })
 
   // 润色期间 recordContent 会短暂清空，isPolishing 防止表单闪烁解锁
   const isInputLocked = !!recordContent.trim() || isPolishing
@@ -132,50 +102,13 @@ export function useInquiryPanel() {
     }
   }, [inquiry.initial_impression])
 
-  // 将表单值构建为统一的问诊数据对象
-  const buildData = (values: any) => {
-    const data: Record<string, string> = {}
-    for (const key of allFields) {
-      const val = values[key]
-      if (key === 'visit_time' || key === 'onset_time') {
-        // DatePicker 返回 dayjs 对象，转为字符串
-        data[key] = val ? (typeof val === 'string' ? val : val.format('YYYY-MM-DD HH:mm')) : ''
-      } else {
-        data[key] = val || ''
-      }
-    }
-    return data as any
-  }
-
-  // 构建病历【诊断】章节文本
-  const buildDiagnosisText = (d: any) => {
-    const parts: string[] = []
-    if (d.tcm_disease_diagnosis || d.tcm_syndrome_diagnosis) {
-      parts.push(
-        `中医诊断：${d.tcm_disease_diagnosis || '待明确'} — ${d.tcm_syndrome_diagnosis || '待明确'}`
-      )
-    }
-    if (d.western_diagnosis) parts.push(`西医诊断：${d.western_diagnosis}`)
-    return parts.join('\n')
-  }
-
-  // 构建病历【治疗意见及措施】章节文本
-  const buildTreatmentText = (d: any) => {
-    const parts: string[] = []
-    if (d.treatment_method) parts.push(`治则治法：${d.treatment_method}`)
-    if (d.treatment_plan) parts.push(`处理意见：${d.treatment_plan}`)
-    if (d.followup_advice) parts.push(`复诊建议：${d.followup_advice}`)
-    if (d.precautions) parts.push(`注意事项：${d.precautions}`)
-    return parts.join('\n')
-  }
-
   const onSave = async (values: any) => {
     setSaving(true)
-    const data = buildData(values)
+    const data = buildInquiryData(values)
 
     // 找出本次新增或修改的字段，用于 AI 规范化和病历章节同步
     const changedFields: Record<string, string> = {}
-    for (const key of allFields) {
+    for (const key of INQUIRY_FORM_FIELDS) {
       const val = data[key] ?? ''
       if (val && val !== ((inquiry as any)[key] ?? '')) changedFields[key] = val
     }
@@ -195,7 +128,7 @@ export function useInquiryPanel() {
       }
     }
 
-    setInquiry(normalizedData)
+    setInquiry(normalizedData as any)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
     }
@@ -203,25 +136,7 @@ export function useInquiryPanel() {
     // 将已改动的字段同步到右侧病历对应章节
     // 既往/过敏/个人/月经史 已迁到 PatientProfileCard，由其保存时单独同步章节
     if (recordContent) {
-      const sectionMap: [string, string, string][] = [
-        ['【主诉】', normalizedData.chief_complaint, 'chief_complaint'],
-        ['【现病史】', normalizedData.history_present_illness, 'history_present_illness'],
-        ['【体格检查】', normalizedData.physical_exam, 'physical_exam'],
-        ['【辅助检查】', normalizedData.auxiliary_exam || '', 'auxiliary_exam'],
-        ['【诊断】', buildDiagnosisText(normalizedData), 'western_diagnosis'],
-        ['【治疗意见及措施】', buildTreatmentText(normalizedData), 'treatment_method'],
-      ]
-      let updated = recordContent
-      for (const [header, value, fieldKey] of sectionMap) {
-        if (!changedFields[fieldKey]) continue
-        if (!value) continue
-        if (updated.includes(header)) {
-          updated = updated.replace(
-            new RegExp(`${header}[^\\S\\n]*\\n?[\\s\\S]*?(?=\\n【|$)`),
-            `${header}\n${value}`
-          )
-        }
-      }
+      const updated = syncInquiryToRecord(recordContent, normalizedData, changedFields)
       if (updated !== recordContent) setRecordContent(updated)
     }
 
@@ -247,21 +162,15 @@ export function useInquiryPanel() {
         patient_name: currentPatient.name,
         visit_type: 'inpatient',
       })) as any
-      reset()
+      resetAllWorkbench()
       // 1.6 数据接入：把住院 quick-start 的 patient + profile 写入新 store
       applyQuickStartResult(res)
-      setCurrentEncounter(
-        {
-          id: res.patient.id,
-          name: res.patient.name,
-          gender: res.patient.gender,
-          age: res.patient.age,
-        },
-        res.encounter_id
-      )
-      setVisitMeta(false, 'inpatient')
-      // 把急诊病历带入住院作为参考
-      setPreviousRecordContent(emergencyRecord || null)
+      // 一次性写入接诊指针 + 元信息（visitType/firstVisit/previousRecordContent 全在 options 里）
+      setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+        visitType: 'inpatient',
+        isFirstVisit: false,
+        previousRecordContent: emergencyRecord || null,
+      })
       navigate('/inpatient')
       message.success(`已为「${res.patient.name}」创建住院接诊`)
     } catch {
@@ -292,7 +201,7 @@ export function useInquiryPanel() {
     // 1) inquiry 字段填表单（profile 字段交给 form 也无影响，反正没对应 Form.Item）
     const nextValues = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue(nextValues)
-    updateInquiryFields(buildData(nextValues))
+    updateInquiryFields(buildInquiryData(nextValues) as any)
     setIsDirty(true)
 
     // 2) profile 字段路由到 patientProfileEditStore
@@ -321,6 +230,11 @@ export function useInquiryPanel() {
   const profileDirty = usePatientProfileEditStore(s => s.isDirty)
   const profileSaving = usePatientProfileEditStore(s => s.saving)
 
+  // 转住院前置条件：有病历草稿但未签发时禁止转住院（A 方案，强制先签发）
+  // 原因：转住院会创建新接诊并跳走，未签发的门诊草稿留在原接诊里悬空，
+  // 既污染待办列表也让责任界限模糊。等医生测试后再评估是否放宽。
+  const hasUnsignedRecord = !!recordContent.trim() && !isFinal
+
   /**
    * 统一保存：profile dirty 时调 PUT /patients/:id/profile；
    * inquiry dirty 时调 form.submit()（触发 onSave → PUT /encounters/:id/inquiry）。
@@ -341,6 +255,7 @@ export function useInquiryPanel() {
   return {
     form,
     isInputLocked,
+    isPolishing,
     isEmergency,
     isDirty,
     setIsDirty,
@@ -369,5 +284,7 @@ export function useInquiryPanel() {
     saveAll,
     /** 当前接诊患者（供子组件按 patient_id 拉数据用，如影像报告） */
     currentPatient,
+    /** 是否存在未签发的病历草稿（转住院按钮的前置条件） */
+    hasUnsignedRecord,
   }
 }
