@@ -30,23 +30,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. 加列
-    op.add_column(
-        "patients",
-        sa.Column("name_pinyin", sa.String(512), nullable=True),
-    )
-    op.add_column(
-        "patients",
-        sa.Column("name_pinyin_initials", sa.String(128), nullable=True),
-    )
+    # 1. 加列（幂等：列已存在则跳过——兼容 migrate.py 兜底先 ALTER 过的场景）
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_cols = {c["name"] for c in inspector.get_columns("patients")}
+    if "name_pinyin" not in existing_cols:
+        op.add_column(
+            "patients",
+            sa.Column("name_pinyin", sa.String(512), nullable=True),
+        )
+    if "name_pinyin_initials" not in existing_cols:
+        op.add_column(
+            "patients",
+            sa.Column("name_pinyin_initials", sa.String(128), nullable=True),
+        )
 
-    # 2. 回填存量数据（按主键 id 拉全表，逐条算拼音 UPDATE）
+    # 2. 回填存量数据（仅对 name_pinyin 仍 NULL 的患者计算，幂等不重写已有值）
     # 注意：这里 import 业务工具是为了一次性数据迁移，不是常规 migration 模式。
     # 患者表规模通常在万级，单次 migration 可以接受；后续 create/update 由 service 层维护。
     from app.utils.pinyin import compute_pinyin
 
-    bind = op.get_bind()
-    rows = bind.execute(sa.text("SELECT id, name FROM patients")).fetchall()
+    rows = bind.execute(
+        sa.text("SELECT id, name FROM patients WHERE name_pinyin IS NULL")
+    ).fetchall()
     for row in rows:
         pinyin_full, pinyin_initials = compute_pinyin(row.name or "")
         bind.execute(
