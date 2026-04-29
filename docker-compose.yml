@@ -72,6 +72,10 @@ services:
     environment:
       ORTHANC__POSTGRESQL__USERNAME: ${DB_USER:-medassist}
       ORTHANC__POSTGRESQL__PASSWORD: ${DB_PASSWORD:?required}
+      # ⚠️ orthanc 25 entrypoint 把 ORTHANC__SECTION__KEY 转 JSON 时会把
+      # KEY 段做 PascalCase 转换：MEDISCRIBE → Mediscribe，
+      # 所以 RegisteredUsers 里实际用户名是 "Mediscribe"（首字母大写）。
+      # backend 的 ORTHANC_USERNAME 必须用 "Mediscribe" 才能 Basic Auth 通过。
       ORTHANC__REGISTERED_USERS__MEDISCRIBE: ${ORTHANC_PASSWORD:?required}
       # CORS 收紧到实际前端域名——之前是 "*"，配合 Authorization header 让任何
       # 第三方网站脚本带凭证访问 Orthanc API。生产改为前端域名 allowlist。
@@ -114,8 +118,11 @@ services:
       # Orthanc 三件套显式从 .env 注入（容器内必须用服务名 orthanc 访问，
       # 不能用 localhost；密码与 ORTHANC__REGISTERED_USERS__MEDISCRIBE 同源，
       # 一改两改）
+      # ⚠️ ORTHANC_USERNAME 默认值必须是 "Mediscribe"（PascalCase）：
+      # orthanc 25 entrypoint 把 env key MEDISCRIBE → Mediscribe，
+      # backend 用小写 "mediscribe" 走 Basic Auth 会被 401。
       ORTHANC_BASE_URL: ${ORTHANC_BASE_URL:-http://orthanc:8042}
-      ORTHANC_USERNAME: ${ORTHANC_USERNAME:-mediscribe}
+      ORTHANC_USERNAME: ${ORTHANC_USERNAME:-Mediscribe}
       ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:?required}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: production

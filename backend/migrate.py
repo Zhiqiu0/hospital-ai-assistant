@@ -178,8 +178,13 @@ async def migrate():
         qc_rules_columns = [
             ("rule_code",            "VARCHAR(20)"),
             ("scope",                "VARCHAR(20)"),
-            ("keywords",             "TEXT"),
-            ("indication_keywords",  "TEXT"),
+            # ⚠️ keywords / indication_keywords 必须用 JSONB——ORM model 声明
+            # 是 JSON 列，QCRuleResponse Pydantic schema 要求 List[str]。早期
+            # 这里用 TEXT，导致 GET /admin/qc-rules 反序列化时拿到字符串
+            # 触发 ValidationError 500。新装幂等：列已存在则跳过 ADD，再走
+            # ALTER ... TYPE JSONB USING ::jsonb 把已有 TEXT 转过去。
+            ("keywords",             "JSONB"),
+            ("indication_keywords",  "JSONB"),
             ("issue_description",    "TEXT"),
             ("suggestion",           "TEXT"),
             ("score_impact",         "VARCHAR(20)"),
@@ -194,6 +199,21 @@ async def migrate():
                 print(f"    qc_rules.{col} - OK")
             except Exception as e:
                 print(f"    qc_rules.{col} - SKIP ({e})")
+        # 兜底：早期版本里 keywords/indication_keywords 是 TEXT，老数据库里
+        # 列类型仍是 TEXT。改不动 ADD COLUMN（已存在），需要显式 ALTER TYPE。
+        # USING ::jsonb 把已有字符串内容当 JSON 解析；空串 / 非法 JSON 会失败，
+        # 但 seed_config 写入的都是合法 JSON 数组，OK。
+        for col in ("keywords", "indication_keywords"):
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE qc_rules ALTER COLUMN {col} TYPE JSONB "
+                    f"USING CASE WHEN {col} IS NULL OR {col} = '' "
+                    f"THEN NULL ELSE {col}::jsonb END"
+                ))
+                print(f"    qc_rules.{col} TYPE → JSONB - OK")
+            except Exception as e:
+                # 已经是 JSONB 的话 ALTER 会成功（无变化），其他情况打日志不阻断
+                print(f"    qc_rules.{col} TYPE - SKIP ({str(e)[:80]})")
         print()
 
         # 7. ai_suggestion_feedback 新增地基字段（为未来档次 2/3 优化做准备）
@@ -223,6 +243,42 @@ async def migrate():
             print("    index ix_ai_feedback_prompt_version - OK")
         except Exception as e:
             print(f"    index ix_ai_feedback_prompt_version - SKIP ({e})")
+        print()
+
+        # 8. patients 拼音索引列（兜底，正式版由 alembic d3e4f5a6b7c8 迁移）
+        # 之前 .dockerignore 误把 alembic/versions/ 排除导致镜像里没迁移文件，
+        # alembic upgrade head 跑空 → 列不存在 → /patients /encounters/my 500。
+        # migrate.py 兜底 ALTER + 回填，确保即使 alembic 不可用业务也能跑。
+        print("[8] patients 拼音索引列 + 回填存量...")
+        for col, col_type in [
+            ("name_pinyin",          "VARCHAR(512)"),
+            ("name_pinyin_initials", "VARCHAR(128)"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE patients ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    patients.{col} - OK")
+            except Exception as e:
+                print(f"    patients.{col} - SKIP ({e})")
+        # 回填：仅对 name_pinyin 仍为 NULL 的患者计算（幂等，重复跑不重写已有值）
+        try:
+            from app.utils.pinyin import compute_pinyin
+            result = await conn.execute(text(
+                "SELECT id, name FROM patients WHERE name_pinyin IS NULL"
+            ))
+            rows = result.fetchall()
+            n = 0
+            for row in rows:
+                full, init = compute_pinyin(row.name or "")
+                await conn.execute(text(
+                    "UPDATE patients SET name_pinyin = :f, name_pinyin_initials = :i "
+                    "WHERE id = :id"
+                ), {"f": full, "i": init, "id": row.id})
+                n += 1
+            print(f"    patients 拼音回填 - OK（{n} 条）")
+        except Exception as e:
+            print(f"    patients 拼音回填 - SKIP ({str(e)[:80]})")
         print()
 
     print("=== 迁移完成 ===")
