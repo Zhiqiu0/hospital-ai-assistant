@@ -17,7 +17,13 @@
 import { useState } from 'react'
 import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio, message } from 'antd'
 import { CheckOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { useQCStore } from '@/store/qcStore'
+import {
+  useActiveEncounterStore,
+  setCurrentEncounterFromPatient,
+} from '@/store/activeEncounterStore'
 import api from '@/services/api'
 
 const { Text } = Typography
@@ -28,17 +34,10 @@ interface FinalRecordModalProps {
 }
 
 export default function FinalRecordModal({ open, onCancel }: FinalRecordModalProps) {
-  const {
-    qcPass,
-    qcIssues,
-    gradeScore,
-    recordContent,
-    recordType,
-    inquiry,
-    currentEncounterId,
-    reset,
-    setCurrentEncounter,
-  } = useWorkbenchStore()
+  const { qcPass, qcIssues, gradeScore } = useQCStore()
+  const { recordContent, recordType } = useRecordStore()
+  const inquiry = useInquiryStore(s => s.inquiry)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
 
   const [confirmed, setConfirmed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -57,7 +56,7 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
   const handleSave = async () => {
     setSaving(true)
     try {
-      let encounterId = useWorkbenchStore.getState().currentEncounterId
+      let encounterId = useActiveEncounterStore.getState().encounterId
       const inferredVisitType = recordType === 'outpatient' ? 'outpatient' : 'inpatient'
 
       if (!encounterId) {
@@ -69,8 +68,12 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
           age: patientAge.trim() ? parseInt(patientAge.trim()) : undefined,
           visit_type: inferredVisitType,
         })
-        encounterId = res.encounter_id
-        setCurrentEncounter({ id: res.patient.id, name: res.patient.name }, encounterId)
+        const newEncounterId: string = res.encounter_id
+        encounterId = newEncounterId
+        // 通过聚合 helper 一次性 upsert 到 patientCacheStore + setActive 到指针 store
+        setCurrentEncounterFromPatient(res.patient, newEncounterId, {
+          visitType: inferredVisitType as 'outpatient' | 'emergency' | 'inpatient',
+        })
       }
 
       await api.post('/medical-records/quick-save', {
@@ -79,9 +82,13 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         content: recordContent,
       })
 
-      message.success('病历已签发，可在「我的病历」中查看或打印')
+      // 标记本地 isFinal=true：编辑器只读、auto-save 停摆，但接诊上下文保留
+      // 不再 resetAllWorkbench——A 方案下转住院要求"先签发"，签发后立刻 reset
+      // 会让医生失去转住院入口，形成"必须先签发→签发就清空→无法转住院"死循环。
+      // 让医生显式选择下一步动作（转住院 / 新建接诊 / 登出），各动作自带 reset。
+      useRecordStore.getState().setFinal(true)
+      message.success('病历已签发，可继续转住院或开始下一位接诊')
       handleClose()
-      reset()
     } catch (e: any) {
       message.error('保存失败：' + (e?.detail || '请重试'))
     } finally {

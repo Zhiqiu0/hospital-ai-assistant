@@ -42,10 +42,10 @@ from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
     CONTINUE_PROMPT,
     POLISH_PROMPT,
-    PROMPT_MAP,
     RECORD_TYPE_LABELS,
     SUPPLEMENT_PROMPT,
 )
+from app.services.ai.record_gen_v2_service import stream_record_v2
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,14 @@ async def quick_generate(
     current_user=Depends(get_current_user),
 ):
     """根据问诊信息流式生成指定类型的病历草稿。"""
+    # 把接诊维度写入 RequestContext，下游 log_ai_task 自动取用——
+    # 让 ai_tasks.encounter_id 能正确绑定（合规追溯 + snapshot 恢复需要）
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(
+        encounter_id=req.encounter_id,
+        medical_record_id=req.medical_record_id,
+    )
+
     # 审计：记录医生对哪个病历类型调了 AI 生成（医疗场景合规要求）
     await log_action(
         action="ai_quick_generate",
@@ -99,121 +107,17 @@ async def quick_generate(
         resource_type="medical_record",
         detail=f"record_type={req.record_type or 'outpatient'}",
     )
-    # 急诊接诊自动使用急诊 prompt，除非医生已明确指定其他类型（如收入住院后切换为入院记录）
+    # 急诊接诊自动选急诊 record_type，除非医生已明确指定其他类型
     is_emergency = (req.visit_type_detail or "outpatient") == "emergency"
     record_type = req.record_type or ("emergency" if is_emergency else "outpatient")
-    db_prompt = await get_active_prompt(db, record_type)
-    template = db_prompt or PROMPT_MAP.get(record_type, PROMPT_MAP["outpatient"])
-    model_options = await get_model_options(db, "generate")
 
-    # 构建住院专项评估段落
-    assessment_parts = [
-        f"病史陈述者：{req.history_informant}" if req.history_informant else "",
-        f"婚育史：{req.marital_history}" if req.marital_history else "",
-        f"月经史：{req.menstrual_history}" if req.menstrual_history else "",
-        f"家族史：{req.family_history}" if req.family_history else "",
-        f"当前用药：{req.current_medications}" if req.current_medications else "",
-        f"疼痛评分（NRS）：{req.pain_assessment or '0'}分",
-        f"VTE风险：{req.vte_risk}" if req.vte_risk else "",
-        f"营养评估：{req.nutrition_assessment}" if req.nutrition_assessment else "",
-        f"心理评估：{req.psychology_assessment}" if req.psychology_assessment else "",
-        f"康复需求：{req.rehabilitation_assessment}" if req.rehabilitation_assessment else "",
-        f"宗教信仰/饮食禁忌：{req.religion_belief}" if req.religion_belief else "",
-    ]
-    assessment_info = "\n".join(p for p in assessment_parts if p) or "未提供"
-
-    visit_type_label = {"outpatient": "门诊", "emergency": "急诊", "inpatient": "住院"}.get(
-        req.visit_type_detail or "outpatient", "门诊"
-    )
-    visit_nature = "初诊" if req.is_first_visit else "复诊"
-    revisit_note = "③复诊患者需记录治疗后症状改变情况；" if not req.is_first_visit else ""
-    # 复诊时在 prompt 中注入上次病历，AI 据此保持稳定信息不变、更新变动章节
-    previous_record_section = (
-        f"\n\n【上次病历（复诊参考，稳定信息请保持一致）】\n{req.previous_record}"
-        if req.previous_record else ""
-    )
-    # emergency_section 在急诊 prompt 中作为去向/留观的简洁注入
-    emergency_section = (
-        f"留观记录：{req.observation_notes or '未提供'}\n患者去向：{req.patient_disposition or '未提供'}"
-        if is_emergency else ""
-    )
-    emergency_record_section = (
-        "\n【急诊留观记录】\n（记录留观期间病情变化、处理措施及患者去向）"
-        if is_emergency else ""
-    )
-    precautions_val = req.precautions or ""
-    precautions_section = f"注意事项：{precautions_val}" if precautions_val else ""
-
-    # 合并生命体征数值与 physical_exam 文字描述成完整体检段，保证 prompt 拿到完整信息
-    composed_physical_exam = compose_physical_exam(
-        physical_exam=req.physical_exam,
-        temperature=req.temperature,
-        pulse=req.pulse,
-        respiration=req.respiration,
-        bp_systolic=req.bp_systolic,
-        bp_diastolic=req.bp_diastolic,
-        spo2=req.spo2,
-        height=req.height,
-        weight=req.weight,
-    )
-    fmt_kwargs: dict = dict(
-        chief_complaint=req.chief_complaint or "未提供",
-        history_present_illness=req.history_present_illness or "未提供",
-        past_history=req.past_history or "未提供",
-        allergy_history=req.allergy_history or "未提供",
-        personal_history=req.personal_history or "未提供",
-        physical_exam=composed_physical_exam or "未提供",
-        auxiliary_exam=req.auxiliary_exam or "未提供",
-        initial_impression=req.initial_impression or "未提供",
-        patient_name=req.patient_name or "患者",
-        patient_gender=req.patient_gender or "未知",
-        patient_age=req.patient_age or "未知",
-        assessment_info=assessment_info,
-        visit_type_label=visit_type_label,
-        visit_nature=visit_nature,
-        revisit_note=revisit_note,
-        tcm_inspection=req.tcm_inspection or "未提供",
-        tcm_auscultation=req.tcm_auscultation or "未提供",
-        tongue_coating=req.tongue_coating or "未提供",
-        pulse_condition=req.pulse_condition or "未提供",
-        western_diagnosis=req.western_diagnosis or req.initial_impression or "待明确",
-        tcm_disease_diagnosis=req.tcm_disease_diagnosis or "待明确",
-        tcm_syndrome_diagnosis=req.tcm_syndrome_diagnosis or "待明确",
-        treatment_method=req.treatment_method or "未提供",
-        treatment_plan=req.treatment_plan or "未提供",
-        followup_advice=req.followup_advice or "未提供",
-        precautions=precautions_val or "未提供",
-        emergency_section=emergency_section,
-        emergency_record_section=emergency_record_section,
-        precautions_section=precautions_section,
-        visit_time=req.visit_time or "未记录",
-        onset_time=req.onset_time or "未记录",
-    )
-
-    try:
-        prompt = template.format(**fmt_kwargs) + previous_record_section
-    except KeyError:
-        # 自定义 prompt 字段不全时降级为最小集格式化
-        prompt = template.format(
-            chief_complaint=fmt_kwargs["chief_complaint"],
-            history_present_illness=fmt_kwargs["history_present_illness"],
-            past_history=fmt_kwargs["past_history"],
-            allergy_history=fmt_kwargs["allergy_history"],
-            personal_history=fmt_kwargs["personal_history"],
-            physical_exam=fmt_kwargs["physical_exam"],
-            initial_impression=fmt_kwargs["initial_impression"],
-            patient_name=fmt_kwargs["patient_name"],
-            patient_gender=fmt_kwargs["patient_gender"],
-            patient_age=fmt_kwargs["patient_age"],
-            assessment_info=fmt_kwargs["assessment_info"],
-            auxiliary_exam=fmt_kwargs["auxiliary_exam"],
-        )
-        prompt += previous_record_section
-
+    # L3 新架构：所有病历生成统一走"JSON 模式 → renderer 拼文本 → SSE 推回"
+    # 行格式由后端模板严格控制，永远符合 QC 契约。
+    # 白名单外的 record_type 由 service 内部抛 error 事件让前端 toast。
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "generate")
     return StreamingResponse(
         stream_with_lock(
-            stream_text(prompt, task_type="generate", model_options=model_options),
+            stream_record_v2(record_type, req, db),
             lock_key, lock_token,
         ),
         media_type="text/event-stream",

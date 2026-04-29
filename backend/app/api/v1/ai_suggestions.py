@@ -44,6 +44,9 @@ async def inquiry_suggestions(
     current_user=Depends(get_current_user),
 ):
     """生成临床追问建议（JSON 响应）。"""
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(encounter_id=req.encounter_id)
+
     db_prompt = await get_active_prompt(db, "inquiry")
     template = db_prompt or INQUIRY_SUGGESTIONS_PROMPT
     prompt = safe_format(
@@ -79,6 +82,7 @@ async def inquiry_suggestions(
             "inquiry",
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
+            output_result=result,  # snapshot 恢复时能取回，logout 重登不丢
         )
         return result
     except Exception as exc:
@@ -93,6 +97,9 @@ async def exam_suggestions(
     current_user=Depends(get_current_user),
 ):
     """生成辅助检查建议（JSON 响应）。"""
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(encounter_id=req.encounter_id)
+
     db_prompt = await get_active_prompt(db, "exam")
     template = db_prompt or EXAM_SUGGESTIONS_PROMPT
     prompt = safe_format(
@@ -115,6 +122,7 @@ async def exam_suggestions(
             "exam",
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
+            output_result=result,  # snapshot 恢复时能取回
         )
         return result
     except Exception as exc:
@@ -129,6 +137,9 @@ async def diagnosis_suggestion(
     current_user=Depends(get_current_user),
 ):
     """根据问诊及追问结果生成初步诊断建议（JSON 响应）。"""
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(encounter_id=req.encounter_id)
+
     answers_text = "\n".join(
         f"- {item.get('question', '')}: {item.get('answer', '')}"
         for item in (req.inquiry_answers or [])
@@ -158,9 +169,10 @@ async def diagnosis_suggestion(
         )
         usage = llm_client._last_usage
         await log_ai_task(
-            "inquiry",
+            "diagnosis",  # 之前误写成 'inquiry' 跟追问混了，task_type 改正
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
+            output_result=result,
         )
         return result
     except Exception as exc:

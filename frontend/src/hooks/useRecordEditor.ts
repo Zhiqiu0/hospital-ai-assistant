@@ -1,137 +1,84 @@
 /**
  * 病历编辑器逻辑（hooks/useRecordEditor.ts）
- * 从 RecordEditor 提取的业务逻辑 hook，包含所有 AI 操作和 SSE 流处理。
+ *
+ * 从 RecordEditor 抽离的业务 hook：负责 AI 生成 / 润色 / 质控 / 补全四个动作
+ * 和章节守卫、SSE 流处理。SSE 通用代码已抽到 services/streamSSE.ts。
  */
 import { useRef, useState, useEffect } from 'react'
-import { message, Modal } from 'antd'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { message } from 'antd'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { useQCStore } from '@/store/qcStore'
 import { useAuthStore } from '@/store/authStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
-import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
+import {
+  isCourseRecordType,
+  pickInquiryByRecordType,
+  type RecordType,
+} from '@/store/inquiryFieldGroups'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
+import { streamSSE } from '@/services/streamSSE'
+import { parseGeneratedSectionsToInquiry, restoreMissingSections } from '@/utils/recordSections'
 
 export function useRecordEditor() {
+  // 各域字段从对应子 store 取
+  const { inquiry, setInquiry } = useInquiryStore()
   const {
-    inquiry,
     recordContent,
     recordType,
     isGenerating,
     isPolishing,
-    isQCing,
-    isQCStale,
     setRecordContent,
     setRecordType,
     setGenerating,
     setPolishing,
+    isFinal,
+    finalizedAt,
+    pendingGenerate,
+    setPendingGenerate,
+  } = useRecordStore()
+  const {
+    isQCing,
+    isQCStale,
     setQCing,
     setQCResult,
     appendQCIssues,
     setQCSummary,
     setQCLlmLoading,
     startQCRun,
-    setInquiry,
-    isFinal,
-    finalizedAt,
     qcIssues,
     qcPass,
     gradeScore,
-    currentPatient,
-    currentEncounterId,
-    pendingGenerate,
-    setPendingGenerate,
-    previousRecordContent,
-  } = useWorkbenchStore()
+  } = useQCStore()
+  const currentPatient = useCurrentPatient()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const previousRecordContent = useActiveEncounterStore(s => s.previousRecordContent)
   const { token } = useAuthStore()
   const abortRef = useRef<AbortController | null>(null)
 
   const [finalModalOpen, setFinalModalOpen] = useState(false)
   const [isSupplementing, setIsSupplementing] = useState(false)
 
-  // 通用 SSE 流请求，逐块回调 onChunk
-  const streamSSE = async (url: string, body: object, onChunk: (text: string) => void) => {
+  // 把 abortRef 与 streamSSE 衔接：每次新调用前换一个 AbortController，
+  // 卸载或主动取消时 abortRef.current?.abort() 触发流中止
+  const runSSE = async (url: string, body: object, handlers: Parameters<typeof streamSSE>[3]) => {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue
-        let obj: any
-        try {
-          obj = JSON.parse(line.slice(5).trim())
-        } catch {
-          continue
-        }
-        if (obj.type === 'chunk') onChunk(obj.text)
-        else if (obj.type === 'error') throw new Error(obj.message || 'LLM_ERROR')
-      }
-    }
+    return streamSSE(url, body, token || '', handlers, { signal: ctrl.signal })
   }
 
   // 生成完成后，把病历各段落解析回左侧问诊字段，确保左右一致
   const syncGeneratedRecordToInquiry = (content: string) => {
-    const result: Record<string, string> = {}
-    const pattern = /【([^】]+)】[^\S\n]*\n?([\s\S]*?)(?=\n【|$)/g
-    let m: RegExpExecArray | null
-    while ((m = pattern.exec(content)) !== null) {
-      const text = m[2].trim()
-      if (!text) continue
-      switch (m[1]) {
-        case '主诉':
-          result.chief_complaint = text
-          break
-        case '现病史':
-          result.history_present_illness = text
-          break
-        // 既往/过敏/个人/月经史 不再回写 inquiry：这些字段属于 PatientProfile，
-        // 由 PatientProfileCard 单独维护，避免 AI 单次生成覆盖患者纵向档案
-        case '体格检查': {
-          const filteredLines = text.split('\n').filter(line => {
-            const trimmed = line.trim()
-            return (
-              !trimmed.match(/^(望诊|闻诊|切诊[··]?舌象|切诊[··]?脉象|舌象|脉象)[：:]/u) &&
-              !trimmed.match(/^其余阳性体征[：:]/u)
-            )
-          })
-          const physicalLine = text.split('\n').find(l => l.trim().match(/^其余阳性体征[：:]/u))
-          const physicalContent = physicalLine
-            ? physicalLine.replace(/^其余阳性体征[：:]\s*/u, '').trim()
-            : ''
-          result.physical_exam = [physicalContent, filteredLines.join('\n').trim()]
-            .filter(Boolean)
-            .join('\n')
-            .trim()
-          break
-        }
-        case '辅助检查':
-          result.auxiliary_exam = text
-          break
-        case '初步诊断':
-          result.initial_impression = text
-          break
-      }
-    }
+    const result = parseGeneratedSectionsToInquiry(content)
     if (Object.keys(result).length > 0) {
-      setInquiry({ ...useWorkbenchStore.getState().inquiry, ...result })
+      setInquiry({ ...useInquiryStore.getState().inquiry, ...result })
     }
   }
 
   // 病程类病历生成前，从后端拉取最新病历作为参考（pull-forward 机制）
   const fetchLatestRecord = async (): Promise<string | undefined> => {
-    const { currentEncounterId } = useWorkbenchStore.getState()
+    const currentEncounterId = useActiveEncounterStore.getState().encounterId
     if (!currentEncounterId) return undefined
     try {
       const res = await fetch(
@@ -151,19 +98,13 @@ export function useRecordEditor() {
   const _doGenerate = async () => {
     setGenerating(true)
     setRecordContent('')
-    const { isFirstVisit, currentVisitType } = useWorkbenchStore.getState()
+    const { isFirstVisit, visitType: currentVisitType } = useActiveEncounterStore.getState()
 
     // 病程记录类型需要注入上一份病历作为 AI 上下文（pull-forward）
-    const isCourseType = [
-      'first_course_record',
-      'course_record',
-      'senior_round',
-      'pre_op_summary',
-      'post_op_record',
-      'discharge_record',
-    ].includes(recordType)
+    // 用共享 isCourseRecordType()，避免跟 record_prompts._INPATIENT_TITLES /
+    // record_renderer._RENDERERS 三处硬编码列表不同步。
     let previousRecord = previousRecordContent || undefined
-    if (isCourseType && !previousRecord) {
+    if (isCourseRecordType(recordType) && !previousRecord) {
       previousRecord = await fetchLatestRecord()
     }
 
@@ -182,13 +123,21 @@ export function useRecordEditor() {
       }
     }
 
+    // 按 record_type 取该场景需要的字段子集，避免把全 43 字段（含其他场景专属字段）
+    // 一股脑透传到后端——派生 selector 是 InquiryData Pick 拆分的"运行时出口"，
+    // 类型层面同时保证编译期不串场。后端 QuickGenerateRequest 兼容缺字段（默认空）。
+    const inquirySubset = pickInquiryByRecordType(recordType as RecordType, inquiry)
+
     try {
-      await streamSSE(
+      await runSSE(
         '/api/v1/ai/quick-generate',
         {
-          ...inquiry,
+          ...inquirySubset,
           ...profilePayload,
           record_type: recordType,
+          // 接诊维度——后端 RequestContext 据此把 ai_task / 自动 quick_save
+          // 都绑定到正确的接诊上，logout 重登能拿回 AI 产物
+          encounter_id: currentEncounterId || undefined,
           patient_name: currentPatient?.name || '',
           patient_gender: currentPatient?.gender || '',
           patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
@@ -199,9 +148,11 @@ export function useRecordEditor() {
           // 复诊或病程记录传入上次病历全文，AI 据此保持稳定信息并生成变化对比
           previous_record: previousRecord,
         },
-        text => setRecordContent(useWorkbenchStore.getState().recordContent + text)
+        {
+          onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
+        }
       )
-      syncGeneratedRecordToInquiry(useWorkbenchStore.getState().recordContent)
+      syncGeneratedRecordToInquiry(useRecordStore.getState().recordContent)
     } catch (e: any) {
       if (e.name !== 'AbortError') message.error('生成失败，请重试')
     } finally {
@@ -214,42 +165,14 @@ export function useRecordEditor() {
       message.warning('请先填写并保存主诉')
       return
     }
-    const tcmMissing: string[] = []
-    if (!recordContent.trim()) {
-      if (!inquiry.tongue_coating?.trim()) tcmMissing.push('舌象')
-      if (!inquiry.pulse_condition?.trim()) tcmMissing.push('脉象')
-      if (!inquiry.tcm_disease_diagnosis?.trim()) tcmMissing.push('中医疾病诊断')
-      if (!inquiry.tcm_syndrome_diagnosis?.trim()) tcmMissing.push('中医证候诊断')
-      if (!inquiry.treatment_method?.trim()) tcmMissing.push('治则治法')
-    }
-    if (tcmMissing.length > 0) {
-      Modal.confirm({
-        title: '中医必填字段未填写',
-        content: `以下字段为空，AI将无法生成有效内容：\n\n${tcmMissing.map(f => `• ${f}`).join('\n')}\n\n建议先填写完整后再生成，或确认继续后手动补充。`,
-        okText: '继续生成',
-        cancelText: '返回填写',
-        onOk: _doGenerate,
-      })
-      return
-    }
+    // 历史遗留：自由文本时代为防 LLM 幻觉编造舌象/脉象/证候诊断，这里加了个
+    // "TCM 字段全空就拦一下"的弹窗。但它有两个问题：
+    //   1) 不区分 record_type——首次病程记录 / 入院记录 等纯西医场景也会弹
+    //   2) JSON 模式 + render_record 已经把空字段统一渲染成 [未填写] 占位符，
+    //      LLM 拿到的是 schema 字段说明而非自由文本回填，根本不会编造
+    // 同时 QC 引擎按 scope='tcm' 走专项规则，缺漏会单独提示。
+    // 这道 guard 已经过时，直接删除。
     _doGenerate()
-  }
-
-  // 提取病历所有章节，返回 Map<标题, 完整段落文本>，用于润色后守卫章节完整性
-  const extractSections = (text: string): Map<string, string> => {
-    const map = new Map<string, string>()
-    const pattern = /【[^】]+】/g
-    const matches: Array<{ header: string; index: number }> = []
-    let m: RegExpExecArray | null
-    while ((m = pattern.exec(text)) !== null) {
-      matches.push({ header: m[0], index: m.index })
-    }
-    for (let i = 0; i < matches.length; i++) {
-      const start = matches[i].index
-      const end = i + 1 < matches.length ? matches[i + 1].index : text.length
-      map.set(matches[i].header, text.slice(start, end).trimEnd())
-    }
-    return map
   }
 
   const handlePolish = async () => {
@@ -259,25 +182,39 @@ export function useRecordEditor() {
     }
     setPolishing(true)
     const original = recordContent
+
+    // 【追问补充】是结构化数据（来自右侧追问建议勾选 → buildSupplementSection 拼接的"问：答"），
+    // 不能交给 LLM 润色——POLISH_PROMPT 虽然要求"原文保留"，实测 LLM 仍会把多行"问：答"
+    // 合并整理成 1 句自然语言（5 行变 1 句），导致勾选数据丢失。
+    // 解决：润色前把整段拆出，只把上半部分发给 LLM，润色完原样拼回。
+    const supplementMarker = '【追问补充】'
+    const supplementIdx = original.indexOf(supplementMarker)
+    const contentForPolish =
+      supplementIdx === -1 ? original : original.slice(0, supplementIdx).trimEnd()
+    const supplementSection = supplementIdx === -1 ? '' : original.slice(supplementIdx).trimEnd()
+
     setRecordContent('')
     try {
-      await streamSSE('/api/v1/ai/quick-polish', { content: original }, text =>
-        setRecordContent(useWorkbenchStore.getState().recordContent + text)
-      )
-      // 章节完整性守卫：LLM 可能误删章节，程序化补回
-      const polished = useWorkbenchStore.getState().recordContent
-      const originalSections = extractSections(original)
-      const polishedSections = extractSections(polished)
-      const missing: string[] = []
-      let restored = polished
-      for (const [header, sectionText] of originalSections) {
-        if (!polishedSections.has(header)) {
-          missing.push(header)
-          restored = restored.trimEnd() + '\n\n' + sectionText
+      await runSSE(
+        '/api/v1/ai/quick-polish',
+        { content: contentForPolish },
+        {
+          onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
         }
+      )
+      // 章节完整性守卫：LLM 可能误删章节（针对 contentForPolish 比对，不含追问补充）
+      const polished = useRecordStore.getState().recordContent
+      const { restored, missing } = restoreMissingSections(contentForPolish, polished)
+
+      // 把保护下来的【追问补充】区块原样拼回末尾
+      const finalContent = supplementSection
+        ? restored.trimEnd() + '\n\n' + supplementSection
+        : restored
+
+      if (finalContent !== polished) {
+        setRecordContent(finalContent)
       }
       if (missing.length > 0) {
-        setRecordContent(restored)
         message.warning(`润色完成，但 AI 误删了 ${missing.join('、')}，已自动还原`)
       }
     } catch (e: any) {
@@ -291,67 +228,51 @@ export function useRecordEditor() {
   }
 
   const handleQC = async (contentOverride?: string) => {
-    const qcContent = contentOverride ?? useWorkbenchStore.getState().recordContent
+    const qcContent = contentOverride ?? useRecordStore.getState().recordContent
     if (!qcContent.trim()) {
       message.warning('病历内容为空，无法质控')
       return
     }
     setQCing(true)
     startQCRun()
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
+    let finalData: any = null
     try {
-      const res = await fetch('/api/v1/ai/quick-qc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
+      // 质控接口推回多种事件类型（rule_issues / llm_issues / done），
+      // 用 streamSSE 的通用 onEvent 分发器统一处理
+      await runSSE(
+        '/api/v1/ai/quick-qc',
+        {
           content: qcContent,
           record_type: recordType,
           patient_gender: currentPatient?.gender || '',
-          is_first_visit: useWorkbenchStore.getState().isFirstVisit,
+          is_first_visit: useActiveEncounterStore.getState().isFirstVisit,
           encounter_id: currentEncounterId || undefined,
-        }),
-        signal: ctrl.signal,
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      let finalData: any = null
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue
-          let obj: any
-          try {
-            obj = JSON.parse(line.slice(5).trim())
-          } catch {
-            continue
-          }
-          if (obj.type === 'rule_issues') {
-            const gs =
-              obj.grade_score != null
-                ? { grade_score: obj.grade_score, grade_level: obj.grade_level }
-                : null
-            setQCResult(obj.issues || [], '', obj.pass ?? false, gs)
-            setQCLlmLoading(true)
-          } else if (obj.type === 'llm_issues') {
-            appendQCIssues(obj.issues || [])
-          } else if (obj.type === 'done') {
-            finalData = obj
-            setQCSummary(obj.summary || '')
-            setQCLlmLoading(false)
-          } else if (obj.type === 'error') {
-            throw new Error(obj.message || 'QC_ERROR')
-          }
+        },
+        {
+          onEvent: obj => {
+            if (obj.type === 'rule_issues') {
+              const gs =
+                obj.grade_score != null
+                  ? {
+                      grade_score: obj.grade_score,
+                      grade_level: obj.grade_level,
+                      must_fix_count: obj.must_fix_count,
+                    }
+                  : null
+              setQCResult(obj.issues || [], '', obj.pass ?? false, gs)
+              setQCLlmLoading(true)
+            } else if (obj.type === 'llm_issues') {
+              appendQCIssues(obj.issues || [])
+            } else if (obj.type === 'done') {
+              finalData = obj
+              setQCSummary(obj.summary || '')
+              setQCLlmLoading(false)
+            }
+          },
         }
-      }
+      )
       if (finalData) {
-        const totalIssues = useWorkbenchStore.getState().qcIssues.length
+        const totalIssues = useQCStore.getState().qcIssues.length
         if (finalData.grade_level === '甲级') {
           message.success(`质控通过！预估评分 ${finalData.grade_score} 分，达到甲级病历标准`)
         } else if (finalData.grade_score != null) {
@@ -380,12 +301,21 @@ export function useRecordEditor() {
     }
     setIsSupplementing(true)
     const original = recordContent
+
+    // 跟 handlePolish 同样的保护：把【追问补充】拆出去，不让 LLM 看到 → 不可能改写
+    // SUPPLEMENT_PROMPT 让 LLM 全篇重写，不保护就会把"问：答"压缩成自然语言导致勾选数据丢失
+    const supplementMarker = '【追问补充】'
+    const supplementIdx = original.indexOf(supplementMarker)
+    const contentForLLM =
+      supplementIdx === -1 ? original : original.slice(0, supplementIdx).trimEnd()
+    const supplementSection = supplementIdx === -1 ? '' : original.slice(supplementIdx).trimEnd()
+
     setRecordContent('')
     try {
-      await streamSSE(
+      await runSSE(
         '/api/v1/ai/quick-supplement',
         {
-          current_content: original,
+          current_content: contentForLLM,
           qc_issues: qcIssues,
           ...inquiry,
           record_type: recordType,
@@ -393,9 +323,17 @@ export function useRecordEditor() {
           patient_gender: currentPatient?.gender || '',
           patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
         },
-        text => setRecordContent(useWorkbenchStore.getState().recordContent + text)
+        {
+          onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
+        }
       )
-      const newContent = useWorkbenchStore.getState().recordContent
+      // 把保护下来的【追问补充】区块原样拼回末尾
+      const supplemented = useRecordStore.getState().recordContent
+      const newContent = supplementSection
+        ? supplemented.trimEnd() + '\n\n' + supplementSection
+        : supplemented
+      if (newContent !== supplemented) setRecordContent(newContent)
+
       message.success('补全完成，正在重新质控...')
       setIsSupplementing(false)
       await handleQC(newContent)

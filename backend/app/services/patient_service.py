@@ -26,6 +26,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.patient import Patient
 from app.utils.age import calc_age
+from app.utils.pinyin import compute_pinyin, is_ascii_alpha
 from app.schemas.patient import PatientCreate, PatientProfileUpdate, PatientUpdate
 from app.services.redis_cache import redis_cache
 
@@ -134,12 +135,18 @@ class PatientService:
             last_visit_subq, Patient.id == last_visit_subq.c.pid
         )
         if keyword:
-            query = query.where(
-                or_(
-                    Patient.name.ilike(f"%{keyword}%"),
-                    Patient.patient_no.ilike(f"%{keyword}%"),
-                )
-            )
+            conditions = [
+                Patient.name.ilike(f"%{keyword}%"),
+                Patient.patient_no.ilike(f"%{keyword}%"),
+            ]
+            # 关键词为纯 ASCII 字母时同时打拼音列：覆盖 "zhang" / "zs" / "zhangs" / "zsan"
+            # 等市面常见输入。汉字/数字/混合关键词跳过拼音列——拼音存的是英文，
+            # 加进 OR 也不会命中，反而浪费 SQL。
+            if is_ascii_alpha(keyword):
+                kw_lower = keyword.lower()
+                conditions.append(Patient.name_pinyin.ilike(f"%{kw_lower}%"))
+                conditions.append(Patient.name_pinyin_initials.ilike(f"%{kw_lower}%"))
+            query = query.where(or_(*conditions))
         # 先查总数（用于分页计算），再查当前页数据
         count_result = await self.db.execute(select(func.count()).select_from(query.subquery()))
         total = count_result.scalar()
@@ -200,8 +207,12 @@ class PatientService:
 
         使用 exclude_none=True 避免将 None 字段写入数据库，
         保留数据库字段的默认值（如 is_from_his=False）。
+        姓名拼音索引 name_pinyin / name_pinyin_initials 由本方法回填——
+        创建路径都走这里（quick-start / 手动建档 / HIS 同步），单一入口好控。
         """
         patient = Patient(**data.model_dump(exclude_none=True))
+        # 同步生成拼音索引，供搜索框拼音/首字母/混拼匹配
+        patient.name_pinyin, patient.name_pinyin_initials = compute_pinyin(patient.name)
         self.db.add(patient)
         await self.db.commit()
         await self.db.refresh(patient)  # 刷新获取数据库生成的 id、created_at 等
@@ -212,6 +223,8 @@ class PatientService:
     async def update(self, patient_id: str, data: PatientUpdate) -> dict:
         """更新患者信息（只更新非 None 的字段）。
 
+        姓名变更时同步刷新拼音索引——否则改名后老拼音还命中旧名拼音、新名搜不到。
+
         Raises:
             HTTPException(404): 患者不存在。
         """
@@ -220,8 +233,12 @@ class PatientService:
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")
         # exclude_none=True 确保只更新传入的字段，不覆盖其他字段
-        for field, value in data.model_dump(exclude_none=True).items():
+        update_data = data.model_dump(exclude_none=True)
+        for field, value in update_data.items():
             setattr(patient, field, value)
+        # 姓名变了就重算拼音索引（其他字段变更不影响拼音）
+        if "name" in update_data:
+            patient.name_pinyin, patient.name_pinyin_initials = compute_pinyin(patient.name)
         await self.db.commit()
         await self.db.refresh(patient)
         # 失效该患者的 Redis 缓存（基本信息变更后下次读重新查 DB）

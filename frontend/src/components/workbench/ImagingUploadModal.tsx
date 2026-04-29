@@ -18,7 +18,7 @@
 import { useState, useRef } from 'react'
 import { Modal, Button, Select, Input, message, Spin, Typography } from 'antd'
 import { CameraOutlined, UploadOutlined, CheckOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
 import api from '@/services/api'
 
 const { Text } = Typography
@@ -42,7 +42,7 @@ const IMAGE_TYPES = [
 ]
 
 export default function ImagingUploadModal({ open, onClose }: Props) {
-  const { inquiry, setInquiry } = useWorkbenchStore()
+  const { inquiry, setInquiry } = useInquiryStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)

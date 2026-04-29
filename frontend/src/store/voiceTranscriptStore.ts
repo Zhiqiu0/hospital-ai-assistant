@@ -13,7 +13,8 @@
  *
  * 设计取舍：
  *   - audioToken 不在这里（短期 token，每次刷新重新换）
- *   - pendingPatch 不在这里（属于"刚分析完待应用"的瞬时态）
+ *   - pendingPatch 在这里（医生分析后可能离开/刷新页面，预览待应用结果不应丢——
+ *     和转写、摘要一样属于流程中间态。点「插入病历」或「取消」时由调用方设 null 清空）
  *   - lastAnalyzedTranscript 在这里（用于"分析过的内容是否变化"判断，需跨刷新）
  *
  * 容量控制：
@@ -35,6 +36,8 @@ export interface VoiceTranscriptDraft {
   speakerDialogue: DialogueItem[]
   transcriptId: string | null
   lastAnalyzedTranscript: string
+  /** AI 整理结果待应用预览；null 表示未分析 / 已应用 / 已取消 */
+  pendingPatch: Record<string, unknown> | null
   /** 最后一次写入时间，用于 LRU 淘汰 */
   lastWriteAt: number
 }
@@ -45,6 +48,7 @@ const EMPTY_DRAFT: VoiceTranscriptDraft = {
   speakerDialogue: [],
   transcriptId: null,
   lastAnalyzedTranscript: '',
+  pendingPatch: null,
   lastWriteAt: 0,
 }
 

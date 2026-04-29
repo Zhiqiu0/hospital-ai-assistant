@@ -7,7 +7,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Button, Tag, Empty, Spin, Popconfirm, message } from 'antd'
 import { PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useRecordStore } from '@/store/recordStore'
 import { buildTimeline, TimelineItem } from '@/domain/inpatient'
 import { getNoteRule } from '@/domain/inpatient'
 import api from '@/services/api'
@@ -15,20 +16,27 @@ import api from '@/services/api'
 interface Props {
   selectedId: string | null
   onSelect: (item: TimelineItem) => void
-  onCreated: () => void   // 新建后刷新
-  refreshToken: number    // 外部触发刷新
+  onCreated: () => void // 新建后刷新
+  refreshToken: number // 外部触发刷新
 }
 
 const NOTE_TYPE_OPTIONS = [
   { value: 'first_course', label: '首次病程' },
   { value: 'daily_course', label: '日常病程' },
-  { value: 'surgery_pre',  label: '术前小结' },
+  { value: 'surgery_pre', label: '术前小结' },
   { value: 'surgery_post', label: '术后病程' },
-  { value: 'discharge',    label: '出院小结' },
+  { value: 'discharge', label: '出院小结' },
 ]
 
-export default function InpatientTimeline({ selectedId, onSelect, onCreated, refreshToken }: Props) {
-  const { currentEncounterId, recordContent, recordType } = useWorkbenchStore()
+export default function InpatientTimeline({
+  selectedId,
+  onSelect,
+  onCreated,
+  refreshToken,
+}: Props) {
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const recordContent = useRecordStore(s => s.recordContent)
+  const recordType = useRecordStore(s => s.recordType)
   const [items, setItems] = useState<TimelineItem[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -68,7 +76,9 @@ export default function InpatientTimeline({ selectedId, onSelect, onCreated, ref
     }
   }, [currentEncounterId, recordContent, recordType])
 
-  useEffect(() => { load() }, [load, refreshToken])
+  useEffect(() => {
+    load()
+  }, [load, refreshToken])
 
   const handleCreate = async (noteType: string) => {
     if (!currentEncounterId) return
@@ -108,15 +118,31 @@ export default function InpatientTimeline({ selectedId, onSelect, onCreated, ref
     }
   }
 
-  if (!currentEncounterId) return <Empty description="请先选择患者" style={{ marginTop: 40 }} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-  if (loading) return <div style={{ textAlign: 'center', padding: 24 }}><Spin size="small" /></div>
+  if (!currentEncounterId)
+    return (
+      <Empty
+        description="请先选择患者"
+        style={{ marginTop: 40 }}
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+      />
+    )
+  if (loading)
+    return (
+      <div style={{ textAlign: 'center', padding: 24 }}>
+        <Spin size="small" />
+      </div>
+    )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 时间轴列表 */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
         {items.length === 0 ? (
-          <Empty description="暂无文书" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 24 }} />
+          <Empty
+            description="暂无文书"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            style={{ marginTop: 24 }}
+          />
         ) : (
           items.map(item => (
             <div
@@ -137,16 +163,41 @@ export default function InpatientTimeline({ selectedId, onSelect, onCreated, ref
               <FileTextOutlined style={{ color: 'var(--text-4)', marginTop: 3, flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <Tag color={item.color} style={{ margin: 0, fontSize: 11 }}>{item.label}</Tag>
-                  {item.status === 'submitted' && <Tag color="green" style={{ margin: 0, fontSize: 10 }}>已签发</Tag>}
-                  {item.status === 'draft' && <Tag color="default" style={{ margin: 0, fontSize: 10 }}>草稿</Tag>}
+                  <Tag color={item.color} style={{ margin: 0, fontSize: 11 }}>
+                    {item.label}
+                  </Tag>
+                  {item.status === 'submitted' && (
+                    <Tag color="green" style={{ margin: 0, fontSize: 10 }}>
+                      已签发
+                    </Tag>
+                  )}
+                  {item.status === 'draft' && (
+                    <Tag color="default" style={{ margin: 0, fontSize: 10 }}>
+                      草稿
+                    </Tag>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
-                  {item.recordedAt ? new Date(item.recordedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                  {item.recordedAt
+                    ? new Date(item.recordedAt).toLocaleString('zh-CN', {
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : ''}
                 </div>
               </div>
               {item.type === 'progress_note' && item.status === 'draft' && (
-                <Popconfirm title="确认删除？" onConfirm={e => { e?.stopPropagation(); handleDelete(item) }} okText="删除" cancelText="取消">
+                <Popconfirm
+                  title="确认删除？"
+                  onConfirm={e => {
+                    e?.stopPropagation()
+                    handleDelete(item)
+                  }}
+                  okText="删除"
+                  cancelText="取消"
+                >
                   <DeleteOutlined
                     onClick={e => e.stopPropagation()}
                     style={{ color: '#ef4444', fontSize: 12, flexShrink: 0 }}
@@ -159,7 +210,15 @@ export default function InpatientTimeline({ selectedId, onSelect, onCreated, ref
       </div>
 
       {/* 新建按钮组 */}
-      <div style={{ borderTop: '1px solid var(--border)', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div
+        style={{
+          borderTop: '1px solid var(--border)',
+          padding: '8px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
         {NOTE_TYPE_OPTIONS.map(opt => (
           <Button
             key={opt.value}

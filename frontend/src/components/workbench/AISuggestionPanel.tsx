@@ -14,13 +14,15 @@
  */
 import { Tabs, Badge } from 'antd'
 import { QuestionCircleOutlined, ExperimentOutlined, SafetyOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useQCStore } from '@/store/qcStore'
+import { useAISuggestionStore } from '@/store/aiSuggestionStore'
 import InquirySuggestionTab from './InquirySuggestionTab'
 import ExamSuggestionTab from './ExamSuggestionTab'
 import QCIssuePanel from './QCIssuePanel'
 
 export default function AISuggestionPanel() {
-  const { qcIssues, inquirySuggestions } = useWorkbenchStore()
+  const qcIssues = useQCStore(s => s.qcIssues)
+  const inquirySuggestions = useAISuggestionStore(s => s.inquirySuggestions)
 
   const unansweredCount = inquirySuggestions.filter(s => s.selectedOptions.length === 0).length
   const highRiskQcCount = qcIssues.filter(i => i.risk_level === 'high').length
@@ -43,9 +45,7 @@ export default function AISuggestionPanel() {
             </Badge>
           ),
           children: (
-            <div
-              style={{ padding: '0 12px 16px', overflowY: 'auto', height: '100%' }}
-            >
+            <div style={{ padding: '0 12px 16px', overflowY: 'auto', height: '100%' }}>
               <InquirySuggestionTab />
             </div>
           ),

@@ -5,7 +5,8 @@
 import { useEffect, useState } from 'react'
 import { Button, Empty, Spin, message, Upload, Modal } from 'antd'
 import { ReloadOutlined, InboxOutlined, PlusOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
+import { useInquiryStore } from '@/store/inquiryStore'
 import LabReportCard from './LabReportCard'
 import api from '@/services/api'
 
@@ -41,7 +42,9 @@ function smartInsert(existing: string, newReport: string): string {
 }
 
 export default function LabReportTab() {
-  const { currentEncounterId, currentPatient, inquiry, setInquiry } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const currentPatient = useCurrentPatient()
+  const { inquiry, setInquiry } = useInquiryStore()
   const [reports, setReports] = useState<LabReportItem[]>([])
   const [loading, setLoading] = useState(false)
   const [uploadingCount, setUploadingCount] = useState(0)

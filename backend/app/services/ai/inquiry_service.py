@@ -86,6 +86,18 @@ class InquiryService:
                 max_tokens=opts["max_tokens"],
                 model_name=opts["model_name"],
             )
+            # 写 ai_tasks（合规追溯，自动从 RequestContext 取 encounter_id）
+            from app.services.ai.task_logger import log_ai_task
+            usage = llm_client._last_usage
+            try:
+                await log_ai_task(
+                    "inquiry_suggestion",
+                    token_input=usage.prompt_tokens if usage else 0,
+                    token_output=usage.completion_tokens if usage else 0,
+                )
+            except Exception:
+                pass  # 日志失败不阻断主流程
+
             for suggestion in result.get("suggestions", []):
                 data = json.dumps({"type": "suggestion", **suggestion}, ensure_ascii=False)
                 yield f"data: {data}\n\n"

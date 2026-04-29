@@ -51,7 +51,10 @@ class Settings(BaseSettings):
     # 生产部署：服务发现走 docker compose 的服务名 http://orthanc:8042
     orthanc_base_url: str = "http://localhost:8042"
     orthanc_username: str = "mediscribe"
-    orthanc_password: str = "mediscribe-orthanc-2026"
+    # ORTHANC_PASSWORD 必须由 .env 显式注入——没有默认值，启动时 Pydantic 会报错。
+    # 之前的硬编码默认值 "mediscribe-orthanc-2026" 跟 GitHub 公网仓库可见，
+    # 任何忘了设环境变量的部署都会用这个公网密码连 Orthanc，导致 PHI 泄露风险。
+    orthanc_password: str
 
     # ── 7-Zip 可执行文件路径（解压 RAR/7Z/TAR.GZ/ISO 等格式用）──────────────
     # 留空时：自动搜 PATH + 常见安装位置；找不到则解压非 ZIP 格式时报错

@@ -70,6 +70,21 @@ class RecordContentUpdate(BaseModel):
     content: dict  # 更新后的病历字段内容
 
 
+class AutoSaveDraftRequest(BaseModel):
+    """编辑器 auto-save 入参（5 秒防抖触发）。
+
+    与 RecordContentUpdate 区别：
+      - 走 auto_save_draft service（不爆版本，UPSERT 当前 version 的 content）
+      - 用 (encounter_id, record_type) 而非 record_id 定位——首次还没 record_id
+      - 含可选 expected_updated_at 做乐观锁，多设备冲突保护
+    """
+
+    encounter_id: str
+    record_type: str
+    content: str  # 完整病历正文（前端编辑器当前值）
+    expected_updated_at: Optional[datetime] = None  # 上次保存返回的 updated_at，乐观锁凭证
+
+
 class MedicalRecordResponse(BaseModel):
     """病历主记录查询响应。"""
 

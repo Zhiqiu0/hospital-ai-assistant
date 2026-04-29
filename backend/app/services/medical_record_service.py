@@ -25,10 +25,11 @@
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import logging
 from datetime import datetime
+from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import HTTPException
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
@@ -143,6 +144,179 @@ class MedicalRecordService:
         await invalidate_encounter_snapshot(record.encounter_id)
         return {"ok": True, "version_no": new_version_no}
 
+    async def auto_save_draft(
+        self,
+        encounter_id: str,
+        record_type: str,
+        content: str,
+        user_id: str,
+        expected_updated_at: Optional[datetime] = None,
+    ) -> dict:
+        """医生编辑器输入 / auto-save 防抖触发——把当前内容覆写到 draft 版本。
+
+        与 save_ai_draft 区别：save_ai_draft 是 AI 生成完毕的"批次保存"，每次创建
+        新 RecordVersion；本方法面向高频 5 秒一次的 auto-save，**不创建新版本**，
+        只 UPDATE 当前 version 的 content——避免半小时几百个版本的爆炸式增长。
+
+        乐观锁：调用方传入 expected_updated_at 时校验记录版本号；不匹配返 409。
+        前端单设备场景一般不会触发；多设备并发编辑时这是唯一的冲突保护。
+
+        Returns:
+            {"record_id": ..., "version_no": ..., "updated_at": ISO 字符串}
+            updated_at 给前端下次 auto-save 带回作为乐观锁凭证。
+        Raises:
+            HTTPException(409): 乐观锁冲突，调用方应提示"内容已被其他设备修改"
+            HTTPException(403): 病历已签发，不可再编辑
+        """
+        result = await self.db.execute(
+            select(MedicalRecord)
+            .where(
+                MedicalRecord.encounter_id == encounter_id,
+                MedicalRecord.record_type == record_type,
+            )
+            .order_by(MedicalRecord.updated_at.desc())
+            .with_for_update()
+        )
+        record = result.scalars().first()
+
+        if record is not None and record.status == "submitted":
+            raise HTTPException(status_code=403, detail="病历已签发，不可再编辑")
+
+        # 乐观锁校验（只在传入预期值时启用——AI 生成那次首发不需要）
+        if expected_updated_at is not None and record is not None:
+            # 数据库 updated_at 可能比预期值更新（其他设备已写过）→ 拒绝
+            if record.updated_at and record.updated_at > expected_updated_at:
+                raise HTTPException(
+                    status_code=409,
+                    detail="病历已被其他设备修改，请刷新后重试",
+                )
+
+        if record is None:
+            # 首次 auto-save：建 record + 第一个 version
+            record = MedicalRecord(
+                encounter_id=encounter_id,
+                record_type=record_type,
+                status="editing",
+                current_version=1,
+            )
+            self.db.add(record)
+            await self.db.flush()
+            version = RecordVersion(
+                medical_record_id=record.id,
+                version_no=1,
+                content={"text": content},
+                source="ai_generated",  # auto-save 起点常常是 AI 生成的，统一标这个
+                triggered_by=user_id,
+            )
+            self.db.add(version)
+        else:
+            # 已有 record：UPDATE 当前 version 的 content（关键：不增加 version_no）
+            ver_result = await self.db.execute(
+                select(RecordVersion)
+                .where(
+                    RecordVersion.medical_record_id == record.id,
+                    RecordVersion.version_no == record.current_version,
+                )
+                .with_for_update()
+            )
+            current_version = ver_result.scalar_one_or_none()
+            if current_version is None:
+                # 异常情况：record 存在但当前 version 不存在——创建一条
+                current_version = RecordVersion(
+                    medical_record_id=record.id,
+                    version_no=record.current_version,
+                    content={"text": content},
+                    source="ai_generated",
+                    triggered_by=user_id,
+                )
+                self.db.add(current_version)
+            else:
+                current_version.content = {"text": content}
+            record.status = "editing"
+
+        # 强制刷新 record.updated_at——SQLAlchemy onupdate 只在字段实际改变时触发，
+        # 但 auto-save 经常 status 还是 "editing"，等于不更新 updated_at；
+        # 这会让乐观锁失效（多设备冲突时两边的 expected_updated_at 都对得上）。
+        # 显式 set 确保每次 auto-save 都推进 updated_at。
+        record.updated_at = datetime.now()
+
+        await self.db.commit()
+        await self.db.refresh(record)
+
+        from app.services.encounter_service import invalidate_encounter_snapshot
+        await invalidate_encounter_snapshot(encounter_id)
+
+        return {
+            "record_id": record.id,
+            "version_no": record.current_version,
+            "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        }
+
+    async def save_ai_draft(
+        self,
+        encounter_id: str,
+        record_type: str,
+        content: str,
+        user_id: str,
+    ) -> dict:
+        """AI 生成完毕保存草稿（不签发，不动接诊状态）。
+
+        与 save_content 的差异：
+          - save_content 要求 record_id 已知（医生编辑场景）
+          - save_ai_draft 用 (encounter_id, record_type) upsert：
+            * 该接诊该类型 record 不存在 → 创建一条 + 新版本
+            * 已存在且非 submitted → 在原 record 上加新版本，状态保持 editing
+            * 已签发（submitted）→ 跳过保存，返回原 record（不让 AI 覆盖签发病历）
+
+        为什么必要：解决"AI 生成的病历只在前端 zustand store，logout 后清空 →
+        DB 没数据可恢复 → 医生开心写一半的草稿全丢"的合规事故。
+
+        Returns:
+            {"record_id": ..., "version_no": ..., "saved": bool}
+            saved=False 表示已签发跳过保存。
+        """
+        result = await self.db.execute(
+            select(MedicalRecord)
+            .where(
+                MedicalRecord.encounter_id == encounter_id,
+                MedicalRecord.record_type == record_type,
+            )
+            .order_by(MedicalRecord.updated_at.desc())
+            .with_for_update()
+        )
+        record = result.scalars().first()
+
+        # 已签发病历不让 AI 覆盖（医生最终确认过的版本是法定证据）
+        if record is not None and record.status == "submitted":
+            return {"record_id": record.id, "version_no": record.current_version, "saved": False}
+
+        if record is None:
+            record = MedicalRecord(
+                encounter_id=encounter_id,
+                record_type=record_type,
+                status="editing",
+                current_version=0,
+            )
+            self.db.add(record)
+            await self.db.flush()  # 拿到 record.id
+
+        new_version_no = record.current_version + 1
+        version = RecordVersion(
+            medical_record_id=record.id,
+            version_no=new_version_no,
+            content={"text": content},  # 与 quick_save 保持同一存储格式
+            source="ai_generated",
+            triggered_by=user_id,
+        )
+        self.db.add(version)
+        record.current_version = new_version_no
+        record.status = "editing"
+        await self.db.commit()
+
+        from app.services.encounter_service import invalidate_encounter_snapshot
+        await invalidate_encounter_snapshot(encounter_id)
+        return {"record_id": record.id, "version_no": new_version_no, "saved": True}
+
     async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str) -> MedicalRecord:
         """签发病历：保存最终内容并将接诊状态标记为已完成。
 
@@ -224,86 +398,152 @@ class MedicalRecordService:
         )
         return record
 
-    async def list_by_doctor(self, doctor_id: str, page: int = 1, page_size: int = 20) -> dict:
-        """查询医生的历史签发病历列表（分页）。
+    async def _paginate_records(
+        self,
+        *,
+        filter_clauses: list,
+        page: int,
+        page_size: int,
+        include_doctor_name: bool = False,
+        include_patient_no: bool = False,
+    ) -> dict:
+        """list_by_doctor / list_by_patient 共用分页查询。
 
-        只返回 status='submitted' 的病历，按签发时间倒序排列。
-        每条记录附带患者信息和病历内容预览（截取前 80 字）。
+        SQL 查询次数：
+          - 1 次 count（总条数）
+          - 1 次主查询（病历+接诊+患者+visit_sequence+最新版本，全部 JOIN 一次返回）
+          - 1 次 users 名字批量（include_doctor_name=True 时）
+          总计 ≤ 3 次（旧实现每页 20 条 ≈ 40 次）。
 
-        Returns:
-            {"total": 总条数, "items": [病历+患者信息列表]}
+        关键技术点：
+          - visit_sequence：用 row_number() 窗口函数按 (patient_id, visit_type) 分区
+            按 visited_at 升序排名，等价于"<= 当前 visited_at 的同组接诊数"。
+          - 当前版本：用 LEFT JOIN + RecordVersion.version_no == MedicalRecord.current_version
+            一次取回，消除原"循环里查 RecordVersion"的 N+1。
         """
         from app.models.patient import Patient
-        from sqlalchemy import func
 
         offset = (page - 1) * page_size
 
-        # 统计总数：联表 Encounter 过滤医生 + 只计签发病历
+        # ── 1. 总数 ──────────────────────────────────────────────────
         count_q = (
             select(func.count())
             .select_from(MedicalRecord)
             .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
-            .where(Encounter.doctor_id == doctor_id, MedicalRecord.status == "submitted")
+            .where(*filter_clauses)
         )
         total = (await self.db.execute(count_q)).scalar() or 0
+        if total == 0:
+            return {"total": 0, "items": []}
 
-        # 联表查询病历、接诊、患者，按签发时间倒序分页
-        q = (
-            select(MedicalRecord, Encounter, Patient)
+        # ── 2. 主查询 ──────────────────────────────────────────────────
+        # 每个 encounter 在"同患者同 visit_type"序列里的序号子查询
+        seq_subq = (
+            select(
+                Encounter.id.label("eid"),
+                func.row_number().over(
+                    partition_by=(Encounter.patient_id, Encounter.visit_type),
+                    order_by=Encounter.visited_at.asc(),
+                ).label("seq"),
+            )
+            .subquery()
+        )
+        # 主查询：病历 + 接诊 + 患者 + visit_sequence + 当前版本（LEFT JOIN）
+        main_q = (
+            select(MedicalRecord, Encounter, Patient, seq_subq.c.seq, RecordVersion)
             .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
             .join(Patient, Encounter.patient_id == Patient.id)
-            .where(Encounter.doctor_id == doctor_id, MedicalRecord.status == "submitted")
+            .join(seq_subq, seq_subq.c.eid == Encounter.id)
+            .join(
+                RecordVersion,
+                and_(
+                    RecordVersion.medical_record_id == MedicalRecord.id,
+                    RecordVersion.version_no == MedicalRecord.current_version,
+                ),
+                isouter=True,
+            )
+            .where(*filter_clauses)
             .order_by(desc(MedicalRecord.submitted_at))
             .offset(offset)
             .limit(page_size)
         )
-        rows = (await self.db.execute(q)).all()
+        rows = (await self.db.execute(main_q)).all()
 
+        # ── 3. 医生名字批量 ───────────────────────────────────────────
+        user_map: dict[str, str] = {}
+        if include_doctor_name:
+            from app.models.user import User
+            doctor_ids: set[str] = set()
+            for _, encounter, _, _, version in rows:
+                if encounter.doctor_id:
+                    doctor_ids.add(encounter.doctor_id)
+                if version and version.triggered_by:
+                    doctor_ids.add(version.triggered_by)
+            if doctor_ids:
+                user_rows = (await self.db.execute(
+                    select(User.id, User.real_name).where(User.id.in_(doctor_ids))
+                )).all()
+                user_map = {uid: name for uid, name in user_rows}
+
+        # ── 4. 组装 items ──────────────────────────────────────────────
         items = []
-        from sqlalchemy import func as _func
-        for record, encounter, patient in rows:
-            # 获取最新版本内容（用于生成预览摘要）
-            ver_q = (
-                select(RecordVersion)
-                .where(RecordVersion.medical_record_id == record.id)
-                .order_by(desc(RecordVersion.version_no))
-                .limit(1)
-            )
-            ver = (await self.db.execute(ver_q)).scalar_one_or_none()
+        for record, encounter, patient, visit_sequence, version in rows:
             # quick_save 格式 {"text": "..."} 取 text；其他格式作空串处理
-            content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
-            # 患者年龄实时算（utils.calc_age 内含未过生日修正）
-            patient_age = calc_age(patient.birth_date)
-            # 计算该接诊在"同患者同 visit_type"序列里的序号（1=初诊，2+=复诊次数+1）
-            # 用 count(<= visited_at) 算，单页 20 条可接受，避免 window function 复杂度
-            seq_q = (
-                select(_func.count())
-                .select_from(Encounter)
-                .where(
-                    Encounter.patient_id == encounter.patient_id,
-                    Encounter.visit_type == encounter.visit_type,
-                    Encounter.visited_at <= encounter.visited_at,
-                )
+            content_text = (
+                version.content.get("text", "")
+                if version and isinstance(version.content, dict) else ""
             )
-            visit_sequence = (await self.db.execute(seq_q)).scalar() or 1
-            items.append({
+            item = {
                 "id": record.id,
                 "record_type": record.record_type,
                 "status": record.status,
                 "submitted_at": record.submitted_at,
                 "patient_name": patient.name,
                 "patient_gender": patient.gender,
-                "patient_age": patient_age,
+                # 患者年龄实时算（utils.calc_age 内含未过生日修正）
+                "patient_age": calc_age(patient.birth_date),
                 "encounter_id": encounter.id,
                 # 前端历史病历列表需要用 is_first_visit 标"初诊/复诊"Tag
                 "is_first_visit": encounter.is_first_visit,
                 "visit_type": encounter.visit_type,
                 # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
-                "visit_sequence": visit_sequence,
-                "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
+                "visit_sequence": int(visit_sequence) if visit_sequence else 1,
+                "content_preview": (
+                    content_text[:80] + "..." if len(content_text) > 80 else content_text
+                ),
                 "content": content_text,
-            })
+            }
+            if include_patient_no:
+                item["patient_no"] = patient.patient_no
+            if include_doctor_name:
+                # 接诊医生（接诊创建者）—— 前端详情页展示责任医生
+                item["doctor_id"] = encounter.doctor_id
+                item["doctor_name"] = (
+                    user_map.get(encounter.doctor_id) if encounter.doctor_id else None
+                )
+                # 签发版本责任人（可能与接诊医生不同：如住院主管医生让管床医生代签发）
+                item["submitted_by_id"] = version.triggered_by if version else None
+                item["submitted_by_name"] = (
+                    user_map.get(version.triggered_by)
+                    if (version and version.triggered_by) else None
+                )
+            items.append(item)
         return {"total": total, "items": items}
+
+    async def list_by_doctor(self, doctor_id: str, page: int = 1, page_size: int = 20) -> dict:
+        """查询医生的历史签发病历列表（分页）。
+
+        只返回 status='submitted' 的病历，按签发时间倒序排列。
+        每条记录附带患者信息和病历内容预览（截取前 80 字）。
+        """
+        return await self._paginate_records(
+            filter_clauses=[
+                Encounter.doctor_id == doctor_id,
+                MedicalRecord.status == "submitted",
+            ],
+            page=page,
+            page_size=page_size,
+        )
 
     async def list_by_patient(self, patient_id: str, page: int = 1, page_size: int = 30) -> dict:
         """查询某患者的全部已签发病历（不限医生），按签发时间倒序分页。
@@ -314,104 +554,16 @@ class MedicalRecordService:
         每条返回含 `doctor_name`（接诊医生）+ `submitted_by_name`（签发版本责任人）
         + `submitted_at`，前端详情页据此显示"接诊医生 张三 · 签发于 ..."。
         """
-        from app.models.patient import Patient
-        from app.models.user import User
-        from sqlalchemy import func
-
-        offset = (page - 1) * page_size
-
-        count_q = (
-            select(func.count())
-            .select_from(MedicalRecord)
-            .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
-            .where(Encounter.patient_id == patient_id, MedicalRecord.status == "submitted")
+        return await self._paginate_records(
+            filter_clauses=[
+                Encounter.patient_id == patient_id,
+                MedicalRecord.status == "submitted",
+            ],
+            page=page,
+            page_size=page_size,
+            include_doctor_name=True,
+            include_patient_no=True,
         )
-        total = (await self.db.execute(count_q)).scalar() or 0
-
-        q = (
-            select(MedicalRecord, Encounter, Patient)
-            .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
-            .join(Patient, Encounter.patient_id == Patient.id)
-            .where(Encounter.patient_id == patient_id, MedicalRecord.status == "submitted")
-            .order_by(desc(MedicalRecord.submitted_at))
-            .offset(offset)
-            .limit(page_size)
-        )
-        rows = (await self.db.execute(q)).all()
-
-        # 先批量查所有相关版本（一次 IN 查询），避免循环里 N+1
-        record_ids = [record.id for record, _, _ in rows]
-        ver_map: dict = {}
-        if record_ids:
-            ver_rows = (await self.db.execute(
-                select(RecordVersion)
-                .where(
-                    RecordVersion.medical_record_id.in_(record_ids),
-                )
-            )).scalars().all()
-            # 每个 record 取 version_no 最大的（最新签发版本）
-            for v in ver_rows:
-                cur = ver_map.get(v.medical_record_id)
-                if cur is None or v.version_no > cur.version_no:
-                    ver_map[v.medical_record_id] = v
-
-        # 收集所有涉及的医生 ID（接诊医生 + 签发版本触发人），一次性查 users 表
-        doctor_ids: set[str] = set()
-        for record, encounter, _ in rows:
-            if encounter.doctor_id:
-                doctor_ids.add(encounter.doctor_id)
-            ver = ver_map.get(record.id)
-            if ver and ver.triggered_by:
-                doctor_ids.add(ver.triggered_by)
-        user_map: dict[str, str] = {}
-        if doctor_ids:
-            user_rows = (await self.db.execute(
-                select(User.id, User.real_name).where(User.id.in_(doctor_ids))
-            )).all()
-            user_map = {uid: name for uid, name in user_rows}
-
-        items = []
-        from sqlalchemy import func as _func
-        for record, encounter, patient in rows:
-            ver = ver_map.get(record.id)
-            content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
-            # 患者年龄实时算（utils.calc_age 内含未过生日修正）
-            patient_age = calc_age(patient.birth_date)
-            # 计算该接诊在"同患者同 visit_type"序列里的序号（1=初诊，2+=复诊次数+1）
-            seq_q = (
-                select(_func.count())
-                .select_from(Encounter)
-                .where(
-                    Encounter.patient_id == encounter.patient_id,
-                    Encounter.visit_type == encounter.visit_type,
-                    Encounter.visited_at <= encounter.visited_at,
-                )
-            )
-            visit_sequence = (await self.db.execute(seq_q)).scalar() or 1
-            items.append({
-                "id": record.id,
-                "record_type": record.record_type,
-                "status": record.status,
-                "submitted_at": record.submitted_at,
-                "patient_name": patient.name,
-                "patient_gender": patient.gender,
-                "patient_age": patient_age,
-                "patient_no": patient.patient_no,
-                "encounter_id": encounter.id,
-                "visit_type": encounter.visit_type,
-                "is_first_visit": encounter.is_first_visit,
-                # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
-                "visit_sequence": visit_sequence,
-                "content_preview": content_text[:80] + "..." if len(content_text) > 80 else content_text,
-                "content": content_text,
-                # 接诊医生（接诊创建者）—— 前端详情页展示责任医生
-                "doctor_id": encounter.doctor_id,
-                "doctor_name": user_map.get(encounter.doctor_id) if encounter.doctor_id else None,
-                # 签发版本责任人（可能与接诊医生不同：如住院主管医生让管床医生代签发）
-                "submitted_by_id": ver.triggered_by if ver else None,
-                "submitted_by_name": user_map.get(ver.triggered_by) if (ver and ver.triggered_by) else None,
-            })
-        return {"total": total, "items": items}
 
     async def get_versions(self, record_id: str):
         """获取病历的所有版本列表（按版本号倒序）。

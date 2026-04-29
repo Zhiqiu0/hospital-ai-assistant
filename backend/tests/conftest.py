@@ -1,15 +1,34 @@
 """
 测试公共 fixtures
 - async_db：每个测试用例独立的 SQLite 内存数据库 session
+
+⚠️ 启动顺序很关键，**所有改动必须保留以下顺序**：
+  1) 注入 DATABASE_URL 环境变量（在 import app.* 之前）
+  2) JSONB → JSON 黑魔法（SQLite 不支持 JSONB，且必须在 model 导入前生效）
+  3) 再 import app.database / app.models / 业务代码
+
+这样做的关键效果：app.database.engine 和 AsyncSessionLocal 一开始就是 SQLite
+内存——audit_service / task_logger 等 module-level 直接 import 的 AsyncSessionLocal
+也都指向 SQLite，不会真的写到开发 PostgreSQL（Audit Round 4 G8）。
 """
+# Step 1: 在 app.config / app.database 加载之前注入测试 DATABASE_URL
+import os as _os
+_os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+# 缺省 SECRET_KEY 也兜底，避免 settings 校验失败
+_os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+# ORTHANC_PASSWORD 在 config.py 是必填（无默认值），生产无 .env 启动会失败；
+# 测试不实际连 Orthanc，但 settings import 期间会校验，所以兜底一个测试占位值。
+_os.environ.setdefault("ORTHANC_PASSWORD", "test-orthanc-password-not-for-production")
+
 import pytest
 import pytest_asyncio
 
-# SQLite 不支持 JSONB，测试时替换为 JSON（必须在 model 导入之前）
+# Step 2: SQLite 不支持 JSONB，测试时替换为 JSON（必须在 model 导入之前）
 import sqlalchemy.dialects.postgresql as _pg
 from sqlalchemy import JSON as _JSON
 _pg.JSONB = _JSON  # type: ignore
 
+# Step 3: 现在 import app.* 才安全
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.database import Base
@@ -39,3 +58,33 @@ async def async_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+# Session 末尾清理 module-level 单例的 async 资源——CI 上 pytest 跑完不退出
+# 实测：184 个测试 8.6s 跑完后 pytest 进程 hang 5 分钟才被 step timeout 杀
+# 根因：模块级单例（redis_cache 连接池 / llm_client 内部 httpx pool /
+#       database engine）创建了 async resource，event loop 关闭时 selector
+#       等连接终结回调，pytest 进程 hang
+# 修复：session 级 autouse finalizer 全部显式 close，让 pytest 正常退出
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _cleanup_module_singletons():
+    yield
+    # 1) redis 单例连接池
+    try:
+        from app.services.redis_cache import redis_cache
+        await redis_cache.close()
+    except Exception:
+        pass
+    # 2) LLM 单例（AsyncOpenAI 内部持有 httpx AsyncClient pool，必须 close
+    #    否则 asyncio event loop 关闭时等 httpx pool finalize 卡住）
+    try:
+        from app.services.ai.llm_client import llm_client
+        await llm_client.client.close()
+    except Exception:
+        pass
+    # 3) database engine（async-pg / asyncio sqlite 也持有连接）
+    try:
+        from app.database import engine
+        await engine.dispose()
+    except Exception:
+        pass
