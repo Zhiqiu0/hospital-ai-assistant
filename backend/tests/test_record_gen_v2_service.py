@@ -85,12 +85,13 @@ async def test_outpatient_happy_path(monkeypatch, async_db):
     async for line in stream_record_v2("outpatient", _mock_req(), async_db):
         events.append(_parse_sse(line))
 
-    # 应该恰好两个事件：chunk + done
-    assert len(events) == 2
-    assert events[0]["type"] == "chunk"
-    assert events[1]["type"] == "done"
-    # chunk 文本含完整章节结构（行格式契约）
-    text = events[0]["text"]
+    # 实际实现为分片节流推送（16 字符 / 片）：N 个 chunk + 1 个 done
+    assert len(events) >= 2
+    assert events[-1]["type"] == "done"
+    chunk_events = [e for e in events if e["type"] == "chunk"]
+    assert len(chunk_events) >= 1
+    # 拼接所有 chunk 还原完整文本，再断言行格式契约
+    text = "".join(e["text"] for e in chunk_events)
     assert "【主诉】" in text
     assert "切诊·舌象：舌淡红苔薄白" in text
     assert "中医诊断：感冒 — 风寒束表证" in text
@@ -198,7 +199,10 @@ async def test_emergency_happy_path(monkeypatch, async_db):
         events.append(_parse_sse(line))
 
     assert events[-1]["type"] == "done"
-    text = events[0]["text"]
+    # 分片节流推送：拼接所有 chunk 还原完整文本
+    chunk_events = [e for e in events if e["type"] == "chunk"]
+    assert len(chunk_events) >= 1
+    text = "".join(e["text"] for e in chunk_events)
     assert "【急诊处置】" in text
     assert "【患者去向】" in text
     # 急诊不含中医四诊子行
