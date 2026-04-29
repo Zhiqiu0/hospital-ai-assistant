@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { Button, Tag, Typography, message } from 'antd'
 import { CheckOutlined, LikeOutlined, DislikeOutlined } from '@ant-design/icons'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 const { Text } = Typography
 
@@ -28,18 +28,13 @@ interface Props {
   onSelectOption: (id: string, option: string) => void
 }
 
-export default function InquirySuggestionItem({
-  item,
-  idx,
-  total,
-  onSelectOption,
-}: Props) {
+export default function InquirySuggestionItem({ item, idx, total, onSelectOption }: Props) {
   // 已选答案说明信息已采集，视觉变灰提示"已处理"；与病历是否锁定无关
   const isDimmed = item.selectedOptions.length > 0
   // 反馈状态（useful / useless / null），提交后禁用按钮
   const [feedback, setFeedback] = useState<null | 'useful' | 'useless'>(null)
   const [submitting, setSubmitting] = useState(false)
-  const currentEncounterId = useWorkbenchStore(s => s.currentEncounterId)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
 
   const handleFeedback = async (verdict: 'useful' | 'useless') => {
     if (feedback || submitting) return

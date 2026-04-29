@@ -22,7 +22,9 @@ import { useState } from 'react'
 import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { resetAllWorkbench, setCurrentEncounterFromPatient } from '@/store/activeEncounterStore'
 import { applySnapshotResult } from '@/store/encounterIntake'
 import api from '@/services/api'
 
@@ -45,8 +47,8 @@ export function useWorkbenchBase({
 }: UseWorkbenchBaseOptions = {}) {
   const navigate = useNavigate()
   const { clearAuth } = useAuthStore()
-  const { setCurrentEncounter, setInquiry, setRecordContent, setRecordType, setFinal, reset } =
-    useWorkbenchStore()
+  const setInquiry = useInquiryStore(s => s.setInquiry)
+  const { setRecordContent, setRecordType, setFinal } = useRecordStore()
 
   // History drawer 开关（数据由 PatientHistoryDrawer 自己拉，不再走本 hook）
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -89,18 +91,28 @@ export function useWorkbenchBase({
         //          ③ 关续接诊抽屉、打开历史病历抽屉
         applySnapshotResult(snapshot)
         if (snapshot.patient) {
-          setCurrentEncounter(snapshot.patient, snapshot.encounter_id)
+          setCurrentEncounterFromPatient(snapshot.patient, snapshot.encounter_id, {
+            visitType: snapshot.visit_type,
+            isFirstVisit: snapshot.is_first_visit,
+            isPatientReused: snapshot.is_patient_reused,
+            previousRecordContent: snapshot.previous_record_content,
+          })
         }
         setResumeOpen(false)
         setHistoryOpen(true)
         message.info(`「${snapshot.patient?.name || ''}」的本次病历已签发，已为您打开历史病历`)
         return
       }
-      reset()
+      resetAllWorkbench()
       // 1.6 数据接入：snapshot 同样含 patient + patient_profile，写入 patientCache
       applySnapshotResult(snapshot)
       if (snapshot.patient) {
-        setCurrentEncounter(snapshot.patient, snapshot.encounter_id)
+        setCurrentEncounterFromPatient(snapshot.patient, snapshot.encounter_id, {
+          visitType: snapshot.visit_type,
+          isFirstVisit: snapshot.is_first_visit,
+          isPatientReused: snapshot.is_patient_reused,
+          previousRecordContent: snapshot.previous_record_content,
+        })
       }
       if (snapshot.inquiry) {
         setInquiry(snapshot.inquiry)
@@ -127,7 +139,7 @@ export function useWorkbenchBase({
     try {
       await api.post('/auth/logout')
     } catch (_) {}
-    reset()
+    resetAllWorkbench()
     clearAuth()
     navigate('/login')
   }

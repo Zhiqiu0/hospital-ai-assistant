@@ -30,6 +30,25 @@ _PROMPT_CACHE_KEY = "ai:prompt:{scene}"
 _PROMPT_CACHE_TTL = 60
 
 
+def sse_event(event_type: str, **fields) -> str:
+    """SSE 事件序列化：'data: {"type":"...","..."}\\n\\n'。
+
+    项目里多处需要把 LLM 流 / 业务事件包成 SSE 格式推回前端
+    （quick-generate / quick-qc / record_gen_v2 / inquiry / record_gen_service 等），
+    本 helper 是单一入口，避免每处独立拼字符串导致格式偏差（漏 \\n\\n、
+    漏 ensure_ascii=False、type key 拼错等）。
+
+    Args:
+        event_type: 事件类型，如 'chunk' / 'done' / 'error' / 'rule_issues'
+        **fields:   事件附加字段，与 event_type 一起 json.dumps
+
+    Returns:
+        SSE 协议字符串，调用方直接 yield 给 StreamingResponse。
+    """
+    payload = {"type": event_type, **fields}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 def compose_physical_exam(
     physical_exam: Optional[str] = "",
     temperature: Optional[str] = "",

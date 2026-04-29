@@ -16,9 +16,9 @@
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class QuickStartRequest(BaseModel):
@@ -152,3 +152,86 @@ class EncounterResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InquirySnapshot(BaseModel):
+    """工作台快照里的问诊数据序列化结构。
+
+    与 InquiryInput ORM 字段一一对应；用 Pydantic 自动把 None → ""，
+    取代原 service 里 40+ 行手工 `or ""` 拼装。
+    """
+
+    model_config = {"from_attributes": True}
+
+    # 基础问诊
+    chief_complaint: str = ""
+    history_present_illness: str = ""
+    past_history: str = ""
+    allergy_history: str = ""
+    personal_history: str = ""
+    physical_exam: str = ""
+    initial_impression: str = ""
+    # 生命体征
+    temperature: str = ""
+    pulse: str = ""
+    respiration: str = ""
+    bp_systolic: str = ""
+    bp_diastolic: str = ""
+    spo2: str = ""
+    height: str = ""
+    weight: str = ""
+    # 住院扩展
+    marital_history: str = ""
+    menstrual_history: str = ""
+    family_history: str = ""
+    history_informant: str = ""
+    current_medications: str = ""
+    rehabilitation_assessment: str = ""
+    religion_belief: str = ""
+    pain_assessment: str = ""
+    vte_risk: str = ""
+    nutrition_assessment: str = ""
+    psychology_assessment: str = ""
+    auxiliary_exam: str = ""
+    admission_diagnosis: str = ""
+    # 中医四诊
+    tcm_inspection: str = ""
+    tcm_auscultation: str = ""
+    tongue_coating: str = ""
+    pulse_condition: str = ""
+    # 门诊诊断细化
+    western_diagnosis: str = ""
+    tcm_disease_diagnosis: str = ""
+    tcm_syndrome_diagnosis: str = ""
+    # 治疗意见
+    treatment_method: str = ""
+    treatment_plan: str = ""
+    followup_advice: str = ""
+    precautions: str = ""
+    # 急诊附加
+    observation_notes: str = ""
+    patient_disposition: str = ""
+    # 时间
+    visit_time: str = ""
+    onset_time: str = ""
+    # 版本号（与 ORM 同名透传）
+    version: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_none_to_empty(cls, data: Any) -> Any:
+        """ORM 字段大量 Optional[str]；进入 schema 前把 None 统一替换为 ""，
+        避免每个字段都写 BeforeValidator。
+        """
+        if isinstance(data, dict):
+            return {k: ("" if v is None and k != "version" else v) for k, v in data.items()}
+        # 来自 ORM（from_attributes=True）：取 cls 模型字段，逐个读属性并把 None 替换
+        result = {}
+        for field in cls.model_fields:
+            value = getattr(data, field, None)
+            if value is None and field != "version":
+                value = ""
+            if value is None and field == "version":
+                value = 1
+            result[field] = value
+        return result

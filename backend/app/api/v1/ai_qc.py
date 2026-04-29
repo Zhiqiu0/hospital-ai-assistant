@@ -34,6 +34,11 @@ async def quick_qc(
     current_user=Depends(get_current_user),
 ):
     """SSE 流式质控：规则引擎结果立即推送，LLM 质量建议追加推送。"""
+    # 把接诊维度写入 RequestContext，下游 log_ai_task 自动取用
+    # 让 ai_tasks.encounter_id 不再为 NULL，符合合规追溯要求
+    from app.core.request_context import bind_encounter_context
+    bind_encounter_context(encounter_id=req.encounter_id)
+
     await log_action(
         action="ai_quick_qc",
         user_id=current_user.id,

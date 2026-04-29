@@ -41,6 +41,12 @@ class Patient(Base, TimestampMixin):
     patient_no: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
     # 患者真实姓名（必填）
     name: Mapped[str] = mapped_column(String(50), nullable=False)
+    # 姓名拼音索引：覆盖全拼/首字母/混拼（"zhangsan" / "zs" / "zhangs" / "zsan"）。
+    # 多字 + 多音字时所有 2^N 组合用空格分隔，由 utils.pinyin.compute_pinyin 生成。
+    # 写入时机：PatientService.create / update 自动回填，不需要调用方关心。
+    name_pinyin: Mapped[Optional[str]] = mapped_column(String(512))
+    # 姓名首字母索引：仅纯首字母组合（"zs"），保留作未来精排（首字母完全匹配优先）。
+    name_pinyin_initials: Mapped[Optional[str]] = mapped_column(String(128))
     # 性别："男" / "女" / "未知"
     gender: Mapped[Optional[str]] = mapped_column(String(10))
     # 出生日期（用于计算年龄、匹配复诊历史）

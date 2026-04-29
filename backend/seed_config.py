@@ -125,7 +125,12 @@ QC_RULES: list[dict] = [
         "rule_type": "completeness",
         "scope": "all",
         "field_name": "physical_exam_vitals",
-        "keywords": ["T:", "T ", "体温", "P:", "P ", "脉搏", "R:", "R ", "呼吸", "BP:", "BP ", "血压"],
+        # 仅用 §生命体征 章节匹配——completeness_rules.py 的 _SECTION_LINE_PREFIXES
+        # 把【体格检查】下"T:"开头的行注册成虚拟章节"生命体征"，且占位符值会被过滤
+        # 不注册（强校验"行存在 + 内容非占位"）。
+        # 不再用 ["T:", "P:", ...] 这种宽松文本兜底——单字符片段（如查房记录里的
+        # "T 38℃"或诊断名"BP 升高"）会让规则被误命中视作"已填"，实际生命体征行不存在。
+        "keywords": ["§生命体征"],
         "indication_keywords": [],
         "risk_level": "medium",
         "issue_description": "体格检查缺少生命体征记录（T/P/R/BP）（扣0.5分）",

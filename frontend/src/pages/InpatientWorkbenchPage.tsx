@@ -12,31 +12,32 @@
  *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Empty, Tabs, message } from 'antd'
-import {
-  PlusOutlined,
-  UnorderedListOutlined,
-  HeartOutlined,
-  FileTextOutlined,
-} from '@ant-design/icons'
+import { Layout, Button, Empty, message } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
-import { useWorkbenchStore } from '@/store/workbenchStore'
-import { applyQuickStartResult } from '@/store/encounterIntake'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import {
+  useActiveEncounterStore,
+  useCurrentPatient,
+  resetAllWorkbench,
+  setCurrentEncounterFromPatient,
+} from '@/store/activeEncounterStore'
+import type { VisitType } from '@/domain/medical'
+import { applyQuickStartResult, applySnapshotResult } from '@/store/encounterIntake'
+import api from '@/services/api'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
 import RecordEditor from '@/components/workbench/RecordEditor'
-import AISuggestionPanel from '@/components/workbench/AISuggestionPanel'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
 import WardView from '@/components/workbench/WardView'
 import NewInpatientEncounterModal from '@/components/workbench/NewInpatientEncounterModal'
 import ComplianceBar from '@/components/workbench/ComplianceBar'
-import VitalsPanel from '@/components/workbench/VitalsPanel'
-import ProblemListPanel from '@/components/workbench/ProblemListPanel'
 import InpatientHeader from '@/components/workbench/InpatientHeader'
-import InpatientTimeline from '@/components/workbench/InpatientTimeline'
+import InpatientRightPanel from '@/components/workbench/InpatientRightPanel'
 import ProgressNotePanel from '@/components/workbench/ProgressNotePanel'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
 import { TimelineItem } from '@/domain/inpatient'
@@ -56,17 +57,10 @@ const RECORD_TYPE_LABEL: Record<string, string> = {
 
 export default function InpatientWorkbenchPage() {
   const { user } = useAuthStore()
-  const {
-    currentPatient,
-    currentEncounterId,
-    setCurrentEncounter,
-    setRecordType,
-    setVisitMeta,
-    setPatientReused,
-    setPreviousRecordContent,
-    updateInquiryFields,
-    reset,
-  } = useWorkbenchStore()
+  const currentPatient = useCurrentPatient()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const setRecordType = useRecordStore(s => s.setRecordType)
+  const updateInquiryFields = useInquiryStore(s => s.updateInquiryFields)
 
   useEffect(() => {
     setRecordType('admission_note')
@@ -102,7 +96,7 @@ export default function InpatientWorkbenchPage() {
 
   // 出院成功回调：清空当前接诊，触发病区列表重新拉取
   const handleDischarged = () => {
-    reset()
+    resetAllWorkbench()
     setWardRefresh(n => n + 1)
   }
 
@@ -118,28 +112,32 @@ export default function InpatientWorkbenchPage() {
 
   // 新建住院接诊成功回调（与门诊端对齐：写 patientCache、预填稳定字段、传递上次病历）
   const handleEncounterCreated = (res: any) => {
-    reset()
+    resetAllWorkbench()
     setRecordType('admission_note')
     applyQuickStartResult(res)
-    setCurrentEncounter(
-      {
-        id: res.patient.id,
-        name: res.patient.name,
-        gender: res.patient.gender,
-        age: res.patient.age,
-      },
-      res.encounter_id
-    )
-    setVisitMeta(!res.patient_reused, res.visit_type || 'inpatient')
-    setPatientReused(!!res.patient_reused)
-    setPreviousRecordContent(res.previous_record_content || null)
+    // 一次性设置接诊指针 + 元信息（visitType / firstVisit / patientReused / previousRecordContent）
+    setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+      visitType: (res.visit_type || 'inpatient') as VisitType,
+      isFirstVisit: !res.patient_reused,
+      isPatientReused: !!res.patient_reused,
+      previousRecordContent: res.previous_record_content || null,
+    })
     // 复诊且非续接：预填上次的稳定问诊字段
     if (res.patient_reused && !res.resumed && res.previous_inquiry) {
-      const current = useWorkbenchStore.getState().inquiry
+      const current = useInquiryStore.getState().inquiry
       updateInquiryFields({ ...current, ...res.previous_inquiry })
     }
     if (res.resumed) {
       message.info(`「${res.patient.name}」有未完成的住院接诊，已自动恢复`)
+      // 与门诊路径一致：自动恢复时拉 snapshot 灌回 4 个 store
+      void api
+        .get(`/encounters/${res.encounter_id}/workspace`)
+        .then((snapshot: any) => {
+          if (snapshot) applySnapshotResult(snapshot)
+        })
+        .catch(() => {
+          /* 静默失败 */
+        })
     } else {
       message.success(`已为「${res.patient.name}」开始住院接诊`)
     }
@@ -159,10 +157,7 @@ export default function InpatientWorkbenchPage() {
             boxShadow: 'var(--shadow-sm)',
           }}
         >
-          <ProgressNotePanel
-            item={selectedNote}
-            onSaved={() => setTimelineRefresh(n => n + 1)}
-          />
+          <ProgressNotePanel item={selectedNote} onSaved={() => setTimelineRefresh(n => n + 1)} />
         </div>
       )
     }
@@ -243,86 +238,15 @@ export default function InpatientWorkbenchPage() {
             </div>
 
             {/* 中间编辑区（入院记录 or 病程记录） */}
-            <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-              {renderCenterEditor()}
-            </div>
+            <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>{renderCenterEditor()}</div>
 
             {/* 右侧：AI建议 + 病程记录 + 问题列表 + 体征 */}
-            <div
-              style={{
-                width: 340,
-                background: 'var(--surface)',
-                borderRadius: 12,
-                border: '1px solid var(--border)',
-                overflow: 'hidden',
-                flexShrink: 0,
-                boxShadow: 'var(--shadow-sm)',
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <Tabs
-                defaultActiveKey="ai"
-                size="small"
-                style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-                tabBarStyle={{ padding: '0 12px', marginBottom: 0, flexShrink: 0 }}
-                items={[
-                  {
-                    key: 'ai',
-                    label: 'AI 建议',
-                    children: (
-                      <div style={{ overflow: 'auto', height: '100%' }}>
-                        <AISuggestionPanel />
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'timeline',
-                    label: (
-                      <span>
-                        <FileTextOutlined /> 病程记录
-                      </span>
-                    ),
-                    children: (
-                      <div style={{ overflow: 'hidden', height: '100%' }}>
-                        <InpatientTimeline
-                          selectedId={selectedNote?.id || null}
-                          onSelect={setSelectedNote}
-                          onCreated={() => setTimelineRefresh(n => n + 1)}
-                          refreshToken={timelineRefresh}
-                        />
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'problems',
-                    label: (
-                      <span>
-                        <UnorderedListOutlined /> 问题列表
-                      </span>
-                    ),
-                    children: (
-                      <div style={{ overflow: 'auto', height: '100%' }}>
-                        <ProblemListPanel />
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'vitals',
-                    label: (
-                      <span>
-                        <HeartOutlined /> 体征
-                      </span>
-                    ),
-                    children: (
-                      <div style={{ overflow: 'auto', height: '100%' }}>
-                        <VitalsPanel />
-                      </div>
-                    ),
-                  },
-                ]}
-              />
-            </div>
+            <InpatientRightPanel
+              selectedNote={selectedNote}
+              setSelectedNote={setSelectedNote}
+              timelineRefresh={timelineRefresh}
+              setTimelineRefresh={setTimelineRefresh}
+            />
           </div>
         </div>
 
@@ -383,8 +307,8 @@ export default function InpatientWorkbenchPage() {
         onClose={() => setHistoryOpen(false)}
         patientId={currentPatient?.id || null}
         patientName={currentPatient?.name}
-        patientGender={currentPatient?.gender}
-        patientAge={currentPatient?.age}
+        patientGender={currentPatient?.gender ?? undefined}
+        patientAge={currentPatient?.age ?? undefined}
         searchable={!currentPatient?.id}
         // 住院端选中病区患者时一定在院（出院后 currentPatient 已被清空走搜索路径）
         patientHasActiveInpatient={currentPatient?.id ? true : undefined}

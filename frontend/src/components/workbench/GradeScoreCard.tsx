@@ -3,20 +3,19 @@
  *
  * 展示 LLM 对病历质量的综合评分，位于 QCIssuePanel 顶部。
  *
- * 评分来源：
- *   POST /ai/grade-score 返回 GradeScore 对象，包含：
- *     - total_score: 0-100 总分
- *     - grade: A/B/C/D 等级
- *     - dimensions: 各维度评分（完整性、准确性、规范性等）
- *     - comment: LLM 总评文字
+ * 评分维度说明（2026-04-30 引入"待整改"）：
+ *   - 分数（grade_score）：连续值 0-100，反映病历质量
+ *   - 等级（grade_level）：离散值 甲/乙/丙/待整改，反映"是否可签发"
+ *   两者解耦：分数高不代表能签发——任何"必须修复项"（规则引擎产出）存在
+ *   时等级强制为"待整改"，文案展示"N 项必须修复"。
  *
  * 显示规则：
- *   - 90+: 绿色 A 级  75-89: 蓝色 B 级
- *   - 60-74: 橙色 C 级  <60: 红色 D 级
+ *   - 待整改：红橙渐变 + 🛠️ 图标，文案强调待修项数
+ *   - 甲级：绿色 + 🏆     乙级：黄色 + ⚡     丙级：红色 + ⚠️
  *   - gradeScore 为 null 时不渲染（QCIssuePanel 控制）
  */
 import { Typography } from 'antd'
-import { GradeScore } from '@/store/workbenchStore'
+import { GradeScore } from '@/store/types'
 
 const { Text } = Typography
 
@@ -45,6 +44,16 @@ const GRADE_CONFIG: Record<
     label: '丙级病历',
     icon: '⚠️',
   },
+  // 待整改：分数与等级解耦后的"不可签发"等级
+  // 选橙红色而非纯红：跟丙级（深红）拉开层次——丙级=分数严重不足，
+  // 待整改=分数可能高但有合规硬伤，前者比后者更糟，色调上保留区分度
+  待整改: {
+    color: '#7c2d12',
+    bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
+    border: '#f97316',
+    label: '待整改',
+    icon: '🛠️',
+  },
 }
 
 interface GradeScoreCardProps {
@@ -54,9 +63,18 @@ interface GradeScoreCardProps {
 export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
   const cfg = GRADE_CONFIG[gradeScore.grade_level] || GRADE_CONFIG['乙级']
   const score = gradeScore.grade_score
+  const isPending = gradeScore.grade_level === '待整改'
   const radius = 26
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (score / 100) * circumference
+  // 环形描边色：待整改优先用配置橙色（即使分数高也别绿，避免视觉冲突）
+  const ringStroke = isPending
+    ? '#f97316'
+    : score >= 90
+      ? '#22c55e'
+      : score >= 75
+        ? '#f59e0b'
+        : '#ef4444'
 
   return (
     <div
@@ -80,7 +98,7 @@ export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
             cy={32}
             r={radius}
             fill="none"
-            stroke={score >= 90 ? '#22c55e' : score >= 75 ? '#f59e0b' : '#ef4444'}
+            stroke={ringStroke}
             strokeWidth={6}
             strokeDasharray={circumference}
             strokeDashoffset={offset}
@@ -114,11 +132,13 @@ export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
             {cfg.label}
           </Text>
           <Text style={{ fontSize: 11, color: 'var(--text-4)' }}>
-            {score >= 90
-              ? '（达到甲级标准）'
-              : score >= 75
-                ? `（距甲级还差 ${90 - score} 分）`
-                : `（距乙级还差 ${75 - score} 分）`}
+            {isPending
+              ? `（${gradeScore.must_fix_count ?? 0} 项必须修复）`
+              : score >= 90
+                ? '（达到甲级标准）'
+                : score >= 75
+                  ? `（距甲级还差 ${90 - score} 分）`
+                  : `（距乙级还差 ${75 - score} 分）`}
           </Text>
         </div>
         {gradeScore.strengths && gradeScore.strengths.length > 0 && (

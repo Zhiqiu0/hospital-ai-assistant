@@ -15,7 +15,7 @@
 import { useState } from 'react'
 import { Button, Modal, Upload, message, Spin, Typography } from 'antd'
 import { UploadOutlined, FileTextOutlined, InboxOutlined } from '@ant-design/icons'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import api from '@/services/api'
 
 const { Dragger } = Upload
@@ -34,7 +34,7 @@ interface Props {
 }
 
 export default function LabReportUploadButton({ onInsert }: Props) {
-  const { currentEncounterId } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState<LabReportItem | null>(null)
@@ -115,7 +115,9 @@ export default function LabReportUploadButton({ onInsert }: Props) {
             <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>
               点击或拖拽上传检验报告
             </p>
-            <p style={{ fontSize: 12, color: 'var(--text-4)' }}>支持 JPG / PNG / PDF，AI 自动识别内容</p>
+            <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
+              支持 JPG / PNG / PDF，AI 自动识别内容
+            </p>
           </Dragger>
         )}
 

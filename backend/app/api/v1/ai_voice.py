@@ -297,11 +297,22 @@ async def voice_structure(
         else VOICE_STRUCTURE_PROMPT_OUTPATIENT
     )
     model_options = await get_model_options(db, "generate")
+    # 增量分析基线选择：
+    #   优先 existing_record（病历草稿全文，含医生手改，最权威）
+    #   退化 existing_inquiry（问诊字段 JSON，仅在病历未生成时使用）
+    #   都为空 → 占位"（无）"，prompt 中的"基线非空才严格执行增量规则"自动失效
+    record_baseline = (req.existing_record or "").strip()
+    if record_baseline:
+        existing_baseline = record_baseline
+    elif req.existing_inquiry:
+        existing_baseline = json.dumps(req.existing_inquiry, ensure_ascii=False)
+    else:
+        existing_baseline = "（无）"
     prompt = prompt_template.format(
         patient_name=req.patient_name or "未提供",
         patient_gender=req.patient_gender or "未提供",
         patient_age=req.patient_age or "未提供",
-        existing_inquiry=json.dumps(req.existing_inquiry or {}, ensure_ascii=False),
+        existing_baseline=existing_baseline,
         transcript=transcript,
     )
 

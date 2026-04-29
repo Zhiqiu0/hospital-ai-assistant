@@ -39,6 +39,14 @@ _request_id: ContextVar[str] = ContextVar("request_id", default="-")
 # 鉴权前 / 公开端点 / 启动钩子 → "-"
 _user_id: ContextVar[str] = ContextVar("user_id", default="-")
 
+# ── 接诊维度 contextvar（合规：每条 AI 任务都能追溯到具体接诊）─────────
+# 路由层在拿到 encounter_id / medical_record_id / patient_id 后调
+# bind_encounter_context() 写入；下游 service / task_logger 直接 get
+# 不用层层传参——填补"所有 ai_tasks.encounter_id 都是 NULL"的合规漏洞。
+_encounter_id: ContextVar[Optional[str]] = ContextVar("encounter_id", default=None)
+_medical_record_id: ContextVar[Optional[str]] = ContextVar("medical_record_id", default=None)
+_patient_id: ContextVar[Optional[str]] = ContextVar("patient_id", default=None)
+
 
 def get_request_id() -> str:
     """业务代码可以直接调用拿当前 request_id（极少用到，主要给 audit 等场景）。"""
@@ -73,6 +81,37 @@ def bind_user_context(user_id: Optional[str], username: Optional[str] = None) ->
 def get_user_id() -> str:
     """业务代码读当前用户 ID（极少用，audit/log 增强场景）。"""
     return _user_id.get()
+
+
+def bind_encounter_context(
+    encounter_id: Optional[str] = None,
+    medical_record_id: Optional[str] = None,
+    patient_id: Optional[str] = None,
+) -> None:
+    """路由层在拿到接诊维度信息后调本函数，让下游 AI service 自动取用。
+
+    传 None 不覆盖已有值——部分路由先知道 encounter_id 再去查 record_id，
+    分两次绑定时不会被后调用清空已有字段。
+    """
+    if encounter_id is not None:
+        _encounter_id.set(encounter_id)
+    if medical_record_id is not None:
+        _medical_record_id.set(medical_record_id)
+    if patient_id is not None:
+        _patient_id.set(patient_id)
+
+
+def get_encounter_id() -> Optional[str]:
+    """task_logger / AI service 写 ai_tasks 时读这个，避免孤儿日志。"""
+    return _encounter_id.get()
+
+
+def get_medical_record_id() -> Optional[str]:
+    return _medical_record_id.get()
+
+
+def get_patient_id() -> Optional[str]:
+    return _patient_id.get()
 
 
 class RequestIDFilter(logging.Filter):
@@ -130,9 +169,13 @@ class RequestIDMiddleware:
         rid = incoming if incoming and len(incoming) <= 64 else uuid.uuid4().hex[:8]
 
         rid_token = _request_id.set(rid)
-        # 重置 user_id：每个请求开始时为 "-"，鉴权 dependency 后才填
-        # 必须重置——否则跨请求残留会出现 A 用户日志带 B 用户 uid 的事故
+        # 重置 user_id / 接诊维度：每个请求开始时回归默认值
+        # 必须重置——否则跨请求残留会出现 A 用户日志带 B 用户 uid，
+        # 或者 A 接诊的 AI 任务被错误绑到 B 接诊 encounter_id 的合规事故
         uid_token = _user_id.set("-")
+        eid_token = _encounter_id.set(None)
+        mrid_token = _medical_record_id.set(None)
+        pid_token = _patient_id.set(None)
         start = time.perf_counter()
         # 用 list 装 status，闭包可修改（send_wrapper 设值，finally 读）
         captured = {"status": 500}
@@ -175,3 +218,6 @@ class RequestIDMiddleware:
             # 必须 reset，否则 contextvar 会污染同 worker 后续请求
             _request_id.reset(rid_token)
             _user_id.reset(uid_token)
+            _encounter_id.reset(eid_token)
+            _medical_record_id.reset(mrid_token)
+            _patient_id.reset(pid_token)

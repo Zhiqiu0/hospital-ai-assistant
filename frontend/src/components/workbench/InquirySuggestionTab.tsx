@@ -5,11 +5,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Button, Typography, Empty, Spin, message, Divider } from 'antd'
 import { QuestionCircleOutlined, PlusOutlined, BulbOutlined } from '@ant-design/icons'
-import {
-  useWorkbenchStore,
-  InquirySuggestion as Suggestion,
-  DiagnosisItem,
-} from '@/store/workbenchStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
+import { useAISuggestionStore } from '@/store/aiSuggestionStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { InquirySuggestion as Suggestion, DiagnosisItem } from '@/store/types'
 import { writeSectionToRecord } from './qcFieldMaps'
 import InquirySuggestionItem from './InquirySuggestionItem'
 import DiagnosisSuggestionList from './DiagnosisSuggestionList'
@@ -20,12 +20,14 @@ const { Text } = Typography
 async function fetchInquirySuggestions(
   chiefComplaint: string,
   history: string,
-  initialImpression: string
+  initialImpression: string,
+  encounterId?: string | null
 ): Promise<Suggestion[]> {
   const data: any = await api.post('/ai/inquiry-suggestions', {
     chief_complaint: chiefComplaint,
     history_present_illness: history,
     initial_impression: initialImpression,
+    encounter_id: encounterId || undefined,
   })
   return (data.suggestions || []).map((s: any, idx: number) => ({
     ...s,
@@ -52,26 +54,24 @@ function updateRecordWithSupplement(content: string, newSection: string): string
 }
 
 export default function InquirySuggestionTab() {
+  const { inquiry, setInitialImpression } = useInquiryStore()
+  const { recordContent, setRecordContent, isPolishing } = useRecordStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const {
-    inquiry,
-    setInitialImpression,
-    recordContent,
-    setRecordContent,
     inquirySuggestions,
     setInquirySuggestions,
     diagnosisSuggestions,
     setDiagnosisSuggestions,
     appliedDiagnosis,
     setAppliedDiagnosis,
-    isPolishing,
-  } = useWorkbenchStore()
+  } = useAISuggestionStore()
 
   const isInputLocked = !!recordContent.trim() || isPolishing
   const suggestions = inquirySuggestions
   // 函数式更新从 store 读最新值，避免异步回调里拿到 stale closure
   const setSuggestions = (v: Suggestion[] | ((prev: Suggestion[]) => Suggestion[])) =>
     setInquirySuggestions(
-      typeof v === 'function' ? v(useWorkbenchStore.getState().inquirySuggestions) : v
+      typeof v === 'function' ? v(useAISuggestionStore.getState().inquirySuggestions) : v
     )
 
   const [loading, setLoading] = useState(false)
@@ -96,7 +96,8 @@ export default function InquirySuggestionTab() {
         await fetchInquirySuggestions(
           inquiry.chief_complaint,
           inquiry.history_present_illness,
-          inquiry.initial_impression
+          inquiry.initial_impression,
+          currentEncounterId
         )
       )
     } catch {
@@ -159,6 +160,7 @@ export default function InquirySuggestionTab() {
         history_present_illness: inquiry.history_present_illness,
         inquiry_answers: answeredItems,
         initial_impression: inquiry.initial_impression || '',
+        encounter_id: currentEncounterId || undefined,
       })
       setDiagnosisSuggestions((data.diagnoses || []) as DiagnosisItem[])
       if (!data.diagnoses?.length) message.info('暂无诊断建议，请补充更多问诊信息')
@@ -276,7 +278,13 @@ export default function InquirySuggestionTab() {
 
       <Divider style={{ margin: '16px 0 12px', borderColor: 'var(--border)' }}>
         <span
-          style={{ fontSize: 12, color: 'var(--text-4)', display: 'flex', alignItems: 'center', gap: 4 }}
+          style={{
+            fontSize: 12,
+            color: 'var(--text-4)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
         >
           <BulbOutlined /> 诊断建议
         </span>

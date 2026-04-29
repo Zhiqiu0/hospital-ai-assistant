@@ -11,7 +11,7 @@ import {
   DeleteOutlined,
   SaveOutlined,
 } from '@ant-design/icons'
-import { InquiryData } from '@/store/workbenchStore'
+import { InquiryData } from '@/store/types'
 import SpeakerDialogueCard from './SpeakerDialogueCard'
 import VoiceStructurePreview from './VoiceStructurePreview'
 import { useVoiceInputCard } from '@/hooks/useVoiceInputCard'

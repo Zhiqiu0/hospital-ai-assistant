@@ -33,7 +33,7 @@ import {
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/services/api'
-import { useWorkbenchStore } from '@/store/workbenchStore'
+import { resetAllWorkbench } from '@/store/activeEncounterStore'
 import { scenes, shadow } from '@/theme/tokens'
 
 const brand = scenes.outpatient
@@ -63,7 +63,7 @@ export default function AdminLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, clearAuth } = useAuthStore()
-  const resetWorkbench = useWorkbenchStore(s => s.reset)
+  const resetWorkbench = resetAllWorkbench
 
   const handleLogout = async () => {
     try {

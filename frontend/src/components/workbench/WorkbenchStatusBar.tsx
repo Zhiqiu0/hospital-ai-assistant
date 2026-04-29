@@ -8,8 +8,9 @@
  * 只展示状态，不处理业务。
  */
 import { StatusBar, StatusBarItem } from '@/components/shell/StatusBar'
-import { useWorkbenchStore } from '@/store/workbenchStore'
-
+import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
 
 function formatSavedAt(ts: number | null | undefined): string {
   if (!ts) return '未保存'
@@ -22,11 +23,32 @@ function formatSavedAt(ts: number | null | undefined): string {
 }
 
 export default function WorkbenchStatusBar() {
-  const { currentEncounterId, currentPatient, inquirySavedAt, recordContent } = useWorkbenchStore()
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const currentPatient = useCurrentPatient()
+  const inquirySavedAt = useInquiryStore(s => s.inquirySavedAt)
+  const recordContent = useRecordStore(s => s.recordContent)
+  const recordSavedAt = useRecordStore(s => s.recordSavedAt)
 
   const busy = !!currentEncounterId && !!currentPatient
   const hasDraft = !!recordContent
-  const savedLabel = inquirySavedAt ? formatSavedAt(inquirySavedAt) : hasDraft ? '草稿未保存' : '未开始'
+
+  // 状态优先级：病历草稿 auto-save 时间 > 问诊保存时间 > "草稿未保存" > "未开始"
+  // 因为医生主要工作面是病历编辑器，auto-save 已保存比问诊保存更能反映"工作进度"
+  let savedLabel: string
+  let dot: 'success' | 'warning' | 'info'
+  if (recordSavedAt) {
+    savedLabel = `病历 ${formatSavedAt(recordSavedAt)}`
+    dot = 'success'
+  } else if (inquirySavedAt) {
+    savedLabel = formatSavedAt(inquirySavedAt)
+    dot = 'success'
+  } else if (hasDraft) {
+    savedLabel = '草稿未保存'
+    dot = 'warning'
+  } else {
+    savedLabel = '未开始'
+    dot = 'info'
+  }
 
   return (
     <StatusBar>
@@ -34,10 +56,7 @@ export default function WorkbenchStatusBar() {
         dot={busy ? 'success' : 'info'}
         label={busy ? `${currentPatient?.name || '患者'} · 接诊中` : '待选择患者'}
       />
-      <StatusBarItem
-        dot={inquirySavedAt ? 'success' : hasDraft ? 'warning' : 'info'}
-        label={savedLabel}
-      />
+      <StatusBarItem dot={dot} label={savedLabel} />
     </StatusBar>
   )
 }
