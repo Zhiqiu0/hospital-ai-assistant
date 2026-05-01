@@ -1,23 +1,33 @@
 name: Deploy to Production
 
+# 触发方式：监听 CI workflow 在 main 分支上跑完成功的事件，而不是直接 push main。
+# 旧方式 (push: main) 跟 CI 并行触发，CI 红灯时 deploy 也会照样跑 → 坏代码上线。
+# 改成 workflow_run 后，deploy 只在 CI 整体 conclusion == success 时才执行，
+# 配合 main 分支的 branch protection 双保险：所有进 main 的 commit 都过 CI gate。
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
 
 jobs:
   deploy:
     name: Deploy via SSH
     runs-on: ubuntu-latest
-    # 只在 CI workflow 全绿后才执行部署
-    # 配合 GitHub → Settings → Branches → main → Require status checks:
-    #   "Frontend — Lint & Type Check" 和 "Backend — Lint & Syntax Check"
+    # workflow_run 不管 CI 成功/失败都触发，必须在 job 层 if 过滤掉失败 + 非 main 的情况
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     environment: production
 
     steps:
       # checkout 必须 fetch-depth: 0，否则 sentry-cli set-commits --auto
       # 拿不到完整 git 历史，无法关联 release 与 commits
+      # ref 显式指向触发本次 deploy 的那个 commit（CI 通过的 SHA），
+      # 避免 workflow_run 上下文里 GITHUB_SHA 默认指 main HEAD 的歧义
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       # 计算本次部署的 release 标识：用 git short SHA（如 a7873b2），
