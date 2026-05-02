@@ -2,9 +2,14 @@
  * 实时语音识别客户端（services/voiceStream.ts）
  *
  * 职责：
- *   1. 通过 AudioContext + ScriptProcessor 从麦克风抽取 PCM16 / 16kHz 单声道数据
+ *   1. 通过 AudioContext + AudioWorkletNode 从麦克风抽取 PCM16 / 16kHz 单声道数据
+ *      （旧版用 ScriptProcessorNode 已 deprecated，2026-05-02 重构）
  *   2. 通过 WebSocket 连接后端 /api/v1/ai/voice-stream 代理，实时上送音频帧
  *   3. 接收后端推回的识别结果（partial/final/finished）并通过回调暴露给 UI
+ *
+ * 兼容性：
+ *   主路径：AudioWorkletNode（Chrome 66+ / Firefox 76+ / Safari 14.1+）
+ *   兜底：  ScriptProcessorNode（旧浏览器 / Worklet 加载失败）
  *
  * 使用方式：
  *   const handle = await startVoiceStream(token, {
@@ -20,8 +25,8 @@
 
 /** 阿里云 Paraformer-realtime-v2 支持 16kHz / 8kHz 两档，这里固定 16kHz */
 const TARGET_SAMPLE_RATE = 16000
-/** ScriptProcessor 每帧采样数，≈128ms 延迟，兼顾实时性与 WebSocket 传输频率 */
-const BUFFER_SIZE = 2048
+/** ScriptProcessor 兜底路径每帧采样数（AudioWorklet 用浏览器默认 128） */
+const FALLBACK_BUFFER_SIZE = 2048
 
 export interface VoiceStreamCallbacks {
   /** 后端已与阿里云建立会话，客户端可开始说话 */
@@ -111,12 +116,10 @@ export async function startVoiceStream(
   const ctx: AudioContext = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE })
   const actualRate = ctx.sampleRate
   const source = ctx.createMediaStreamSource(stream)
-  const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1)
 
-  processor.onaudioprocess = e => {
+  // PCM16 编码 + WebSocket 上送（AudioWorklet 和 ScriptProcessor 共用此回调）
+  const sendPcmFromFloat32 = (input: Float32Array) => {
     if (ws.readyState !== WebSocket.OPEN) return
-    const input = e.inputBuffer.getChannelData(0)
-    // Float32 [-1, 1] → Int16 PCM（必要时先线性插值降采样到 16kHz）
     const resampled =
       actualRate === TARGET_SAMPLE_RATE ? input : downsample(input, actualRate, TARGET_SAMPLE_RATE)
     const pcm = new Int16Array(resampled.length)
@@ -127,14 +130,46 @@ export async function startVoiceStream(
     ws.send(pcm.buffer)
   }
 
-  source.connect(processor)
-  processor.connect(ctx.destination)
+  // 5. 创建音频处理节点：AudioWorklet 优先，失败 fallback ScriptProcessor
+  let cleanup: () => void
+  try {
+    if (!ctx.audioWorklet) throw new Error('AudioWorklet 不可用')
+    // Worklet 文件放 public/，Vite 会原样 copy 到 dist/，URL 直接绝对路径加载，
+    // 不走模块打包系统（audio thread 必须独立加载）
+    await ctx.audioWorklet.addModule('/voice-stream-processor.js')
+    const node = new AudioWorkletNode(ctx, 'voice-stream-processor')
+    node.port.onmessage = e => sendPcmFromFloat32(e.data as Float32Array)
+    source.connect(node)
+    node.connect(ctx.destination)
+    cleanup = () => {
+      try {
+        node.port.close()
+        node.disconnect()
+      } catch {
+        // 清理过程中的异常不影响后续流程
+      }
+    }
+  } catch {
+    // 兜底：旧浏览器或 Worklet 加载失败，回退 ScriptProcessor
+    // 控制台会有 deprecation warning，但功能不受影响
+    const processor = ctx.createScriptProcessor(FALLBACK_BUFFER_SIZE, 1, 1)
+    processor.onaudioprocess = e => sendPcmFromFloat32(e.inputBuffer.getChannelData(0))
+    source.connect(processor)
+    processor.connect(ctx.destination)
+    cleanup = () => {
+      try {
+        processor.disconnect()
+      } catch {
+        // 清理过程中的异常不影响后续流程
+      }
+    }
+  }
 
-  // 5. 返回停止句柄：停止麦克风 → 通知后端 finish → 等 finished 或超时
+  // 6. 返回停止句柄：停止麦克风 → 通知后端 finish → 等 finished 或超时
   const stop = async () => {
     try {
+      cleanup()
       source.disconnect()
-      processor.disconnect()
       stream.getTracks().forEach(t => t.stop())
       await ctx.close()
     } catch {
@@ -148,7 +183,9 @@ export async function startVoiceStream(
       })
       try {
         ws.close()
-      } catch {}
+      } catch {
+        // 关闭过程中的异常不影响后续流程
+      }
     }
   }
 
