@@ -519,6 +519,70 @@ function writeLineInSection(
 }
 
 /**
+ * 中医诊断合并行 split / merge 工具——与后端
+ * `_split_tcm_diagnosis` (completeness_rules.py) +
+ * `_merge_tcm_diagnosis`  (record_renderer.py) 完全对齐：
+ *
+ *   "X — Y"  → disease=X  syndrome=Y
+ *   "X(Y)"   → disease=X  syndrome=Y
+ *   "X"      → disease=X  syndrome=""
+ *
+ * 在前端复刻这套拆/合逻辑是为了治本一个生产 bug（2026-05-02）：
+ *   tcm_disease_diagnosis 与 tcm_syndrome_diagnosis 共用同一个【中医诊断】合并行，
+ *   QC「逐条修复」按字段写回时整段章节替换 → 冲掉另一半 → 再次质控仍报缺。
+ *   修法：写入前从合并行拆出另一半，merge 后再写整行。
+ */
+const TCM_DIAG_PLACEHOLDER = '[未填写，需补充]'
+
+export function splitTcmDiagnosis(merged: string): { disease: string; syndrome: string } {
+  const text = (merged || '').trim()
+  if (!text || text === TCM_DIAG_PLACEHOLDER) return { disease: '', syndrome: '' }
+  // X — Y / X – Y / X——Y（em / en / ASCII dash 都接受，与后端一致）
+  let m = text.match(/^(.+?)\s*[—–-]+\s*(.+)$/)
+  if (m) {
+    const d = m[1].trim()
+    const s = m[2].trim()
+    return {
+      disease: d === TCM_DIAG_PLACEHOLDER ? '' : d,
+      syndrome: s === TCM_DIAG_PLACEHOLDER ? '' : s,
+    }
+  }
+  // X（Y） / X(Y)
+  m = text.match(/^(.+?)\s*[（(]\s*(.+?)\s*[）)]\s*$/)
+  if (m) return { disease: m[1].trim(), syndrome: m[2].trim() }
+  // 单值 → 全部视作疾病诊断（与后端 _split_tcm_diagnosis 一致）
+  return { disease: text, syndrome: '' }
+}
+
+export function mergeTcmDiagnosis(disease: string, syndrome: string): string {
+  const hasD = !!disease && disease !== TCM_DIAG_PLACEHOLDER
+  const hasS = !!syndrome && syndrome !== TCM_DIAG_PLACEHOLDER
+  if (hasD && hasS) return `${disease} — ${syndrome}`
+  if (hasD) return disease
+  if (hasS) return `${TCM_DIAG_PLACEHOLDER} — ${syndrome}`
+  return TCM_DIAG_PLACEHOLDER
+}
+
+/** 读取病历当前【中医诊断】合并行内容；若无独立章节则尝试从【诊断】里"中医诊断：xxx"行抽。 */
+function readTcmDiagnosisBody(content: string): string {
+  const idxIndep = content.indexOf('【中医诊断】')
+  if (idxIndep !== -1) {
+    const after = content.slice(idxIndep + '【中医诊断】'.length)
+    const next = after.match(/【[^】]+】/)
+    return after.slice(0, next ? next.index! : after.length).trim()
+  }
+  const idxDiag = content.indexOf('【诊断】')
+  if (idxDiag !== -1) {
+    const after = content.slice(idxDiag + '【诊断】'.length)
+    const next = after.match(/【[^】]+】/)
+    const body = after.slice(0, next ? next.index! : after.length)
+    const m = body.match(/中医诊断[:：]\s*([^\n]+)/)
+    if (m) return m[1].trim()
+  }
+  return ''
+}
+
+/**
  * 将修复文本写入病历对应章节（找到 header 则替换，找不到则追加）
  *
  * 字段分 3 类处理（按优先级）：
@@ -526,8 +590,23 @@ function writeLineInSection(
  *   2. mapped === ''             → **明确跳过**（全文类规则，如 content / onset_time）
  *   3. mapped === undefined      → **fallback 追加**（未映射字段用 fieldName/中文标签当章节名）
  *   4. 其他                      → 正常章节定位（精确匹配 → 模糊匹配 → 末尾追加）
+ *
+ * 中医诊断特殊预处理：
+ *   tcm_disease_diagnosis / tcm_syndrome_diagnosis 共用【中医诊断】合并行，单独写入
+ *   某一项时必须保留另一项，否则会冲掉。先 split 再 merge 后再走章节写入。
  */
 export function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
+  // 中医诊断合并行：先读现有 → 拆 → 用新值替换对应一项 → 合并 → 后续按整段写入
+  if (fieldName === 'tcm_disease_diagnosis' || fieldName === 'tcm_syndrome_diagnosis') {
+    const existing = readTcmDiagnosisBody(content)
+    const { disease, syndrome } = splitTcmDiagnosis(existing)
+    const trimmed = (fixText || '').trim()
+    fixText =
+      fieldName === 'tcm_disease_diagnosis'
+        ? mergeTcmDiagnosis(trimmed, syndrome)
+        : mergeTcmDiagnosis(disease, trimmed)
+  }
+
   // 优先级 1：行级写入（中医四诊 / 专项评估子项 / 生命体征）
   const lineConfig = FIELD_TO_LINE_PREFIX[fieldName]
   if (lineConfig) {
