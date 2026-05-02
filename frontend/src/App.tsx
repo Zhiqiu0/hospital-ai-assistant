@@ -22,7 +22,9 @@
  *   其他 → /workbench（门诊，默认）
  */
 
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Spin } from 'antd'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
 import EmergencyWorkbenchPage from '@/pages/EmergencyWorkbenchPage'
@@ -56,6 +58,35 @@ function RootRedirect() {
 }
 
 export default function App() {
+  // ── Zustand v5 persist hydration 守卫（2026-05-02 治本）─────────────────────
+  // v5 的 persist 中间件即使 storage 是 localStorage（同步 API），rehydrate
+  // 也是异步完成的。第一帧渲染时 store 还是默认值（token=null），PrivateRoute
+  // 会把已登录用户误判成未登录，重定向到 /login → 用户感知"刷新偶尔被踢登录"。
+  // 用 zustand 内置 persist.hasHydrated() / onFinishHydration() 推迟路由渲染
+  // 直到 hydration 完成，保证守卫看到的是恢复后的真实状态。
+  // 仅守 authStore 即可——它决定路由；其他 persist store（encounter/inquiry...）
+  // 不影响路由判断，自身 effect 会在 hydration 后正常触发。
+  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated())
+  useEffect(() => {
+    if (hydrated) return
+    return useAuthStore.persist.onFinishHydration(() => setHydrated(true))
+  }, [hydrated])
+
+  if (!hydrated) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+        }}
+      >
+        <Spin size="large" tip="加载中..." />
+      </div>
+    )
+  }
+
   return (
     <BrowserRouter>
       <Routes>
