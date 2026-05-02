@@ -157,6 +157,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # 8443: WebSocket 实时语音转写专用入口（HTTP/1.1 only）。
+      # 主站 443 保持 HTTP/2 多路复用稳定，wss 升级走独立端口避开 nginx 1.29
+      # 对 RFC 8441（HTTP/2 上的 WebSocket）兼容性问题。两边互不影响——加错
+      # 8443 server 块也只影响 wss，主站不受波及。Lighthouse 防火墙需要同步
+      # 开放 8443 入站。
+      - "8443:8443"
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
 

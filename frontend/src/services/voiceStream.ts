@@ -46,9 +46,19 @@ export async function startVoiceStream(
   token: string,
   callbacks: VoiceStreamCallbacks
 ): Promise<VoiceStreamHandle> {
-  // 1. 组装 WebSocket URL（走 Vite 代理同源，避免跨域）
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const wsUrl = `${wsProtocol}://${window.location.host}/api/v1/ai/voice-stream?token=${encodeURIComponent(token)}`
+  // 1. 组装 WebSocket URL
+  // 生产 wss 走独立 8443 端口（HTTP/1.1，避开主站 HTTP/2 + RFC 8441 兼容性问题）；
+  // 本地 ws 通过 Vite 代理同源（dev server 不区分端口）。判断方式：当前是 https
+  // 且不是 localhost → 拼 8443；否则保持原行为（host 含 dev port 5174）。
+  const isHttps = window.location.protocol === 'https:'
+  const wsProtocol = isHttps ? 'wss' : 'ws'
+  const isLocalhost =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  const wsHost =
+    isHttps && !isLocalhost
+      ? `${window.location.hostname}:8443` // 生产 wss 专用端口
+      : window.location.host // 本地走 Vite 同源代理
+  const wsUrl = `${wsProtocol}://${wsHost}/api/v1/ai/voice-stream?token=${encodeURIComponent(token)}`
   const ws = new WebSocket(wsUrl)
   ws.binaryType = 'arraybuffer'
 
