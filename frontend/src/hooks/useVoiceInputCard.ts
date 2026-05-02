@@ -86,11 +86,18 @@ export function useVoiceInputCard({
   }, [fullTranscript])
 
   // 拉一次性 audio token（给 <audio> 鉴权播放原始录音）
+  // ★ transcriptId 切换时立即清掉旧 token——否则 React 渲染时 <audio> 元素会
+  //   带着旧 token 立刻发请求，后端因 token.sub != URL.id 返 403。等异步
+  //   fetchAudioToken 拿到新 token 才 setAudioToken → 重渲染 → 200 成功。
+  //   一头一尾两次请求功能上虽然最终能播放，但 console 留一条 403 看着不专业。
+  //   清空旧 token 让 <audio> 短暂不渲染（VoiceInputCard 已有 audioToken truthy 判断），
+  //   等新 token 到了再渲染，避免无效 403。
   useEffect(() => {
-    if (!transcriptId) {
-      setAudioToken(null)
-      return
-    }
+    // 这里 setState 是有意为之的同步清空——cascading render 是必要副作用，
+    // 不算反模式，所以 disable react-hooks/set-state-in-effect。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAudioToken(null)
+    if (!transcriptId) return
     fetchAudioToken(transcriptId).then(setAudioToken)
   }, [transcriptId])
 
