@@ -93,12 +93,20 @@ export function useVoiceInputCard({
   //   清空旧 token 让 <audio> 短暂不渲染（VoiceInputCard 已有 audioToken truthy 判断），
   //   等新 token 到了再渲染，避免无效 403。
   useEffect(() => {
-    // 这里 setState 是有意为之的同步清空——cascading render 是必要副作用，
-    // 不算反模式，所以 disable react-hooks/set-state-in-effect。
+    // 同步清空旧 token——cascading render 是有意为之的副作用，不算反模式
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAudioToken(null)
     if (!transcriptId) return
-    fetchAudioToken(transcriptId).then(setAudioToken)
+    // 用 cleanup + cancelled 标记防异步 race：连续切多个 transcriptId 时
+    // 旧 fetch 后到会把 audioToken 染成"旧 token + 新 transcriptId"不匹配
+    // 组合，<audio> 元素发请求被后端 403。React 官方推荐 pattern。
+    let cancelled = false
+    fetchAudioToken(transcriptId).then(token => {
+      if (!cancelled) setAudioToken(token)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [transcriptId])
 
   // 切换 encounter / 刷新时：本地 store 先恢复 → 后端权威覆盖；状态变化写回 store
