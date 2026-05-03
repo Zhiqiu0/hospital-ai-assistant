@@ -47,6 +47,9 @@ export default function InquiryTimeFields({
               就诊时间 <span style={{ color: '#ef4444' }}>*</span>
             </span>
           }
+          // 之前只挂红 * 没挂 rules，UI 标必填但实际不校验，属于"骗用户"。
+          // 跟 onset_time 对齐，让红 * 跟实际 required 校验一致。
+          rules={[{ required: true, message: '请选择就诊时间' }]}
         >
           <DatePicker
             showTime={{ format: 'HH:mm', use12Hours: false }}

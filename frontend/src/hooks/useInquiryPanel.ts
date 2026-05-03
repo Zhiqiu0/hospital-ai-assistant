@@ -239,12 +239,31 @@ export function useInquiryPanel() {
    * 统一保存：profile dirty 时调 PUT /patients/:id/profile；
    * inquiry dirty 时调 form.submit()（触发 onSave → PUT /encounters/:id/inquiry）。
    * 两个动作并发执行，互不阻塞。
+   *
+   * ── 2026-05-03 治本：必填校验守卫 ─────────────────────────────────────────
+   * 之前直接调 form.submit() 而不 await validateFields：antd 校验失败时只在
+   * 字段下方显示红字（如"请选择病发时间"），但 form.submit 不抛 error 给调用
+   * 方，saveAll 继续往下走 → profile 仍然保存 → 弹"已保存" toast → 用户感知
+   * "保存成功"。再叠加病历自动生成 → recordContent 非空 → isInputLocked=true
+   * → 整个表单变灰，必填字段再也填不进去。
+   * 修法：inquiry dirty 时先 await form.validateFields()，校验失败立刻 return
+   * 并连 profile 一起停（避免"半保存"困惑）。校验过了再走原并发保存路径。
    */
   const saveAll = async () => {
+    if (isDirty) {
+      try {
+        await form.validateFields()
+      } catch {
+        // antd 自动在字段下显示具体错误并 scrollToFirstError，这里再补一条
+        // 全局提示，避免医生一直按保存却不知道哪里没填
+        message.error('请补全必填项后再保存')
+        return
+      }
+    }
     const profilePromise = profileDirty
       ? usePatientProfileEditStore.getState().save(currentPatient?.id || '')
       : Promise.resolve('noop' as const)
-    if (isDirty) form.submit() // form.submit 走 onSave 异步链路，不需要 await
+    if (isDirty) form.submit() // 校验已通过，submit 直接触发 onSave
     const profileResult = await profilePromise
     if (profileResult === true) {
       message.success({ content: '患者档案已保存', duration: 1.5 })
