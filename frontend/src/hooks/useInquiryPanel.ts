@@ -253,17 +253,26 @@ export function useInquiryPanel() {
     if (isDirty) {
       try {
         await form.validateFields()
-      } catch (errInfo: any) {
+      } catch (errInfo) {
         // form.validateFields() 默认不滚动也不聚焦——只 antd 字段下显示红字。
         // 用户反馈"提示了哪里没填但没跳过去看不见"，所以手动 scroll + focus 第一个错误字段，
         // 让医生填完它再点保存如果还有缺失，下次又会自动跳到下一个字段（errorFields 按
         // 表单声明顺序返回，第一个就是页面最靠上的那个，天然支持"逐个补"流程）。
-        const first = errInfo?.errorFields?.[0]
-        if (first?.name) {
-          form.scrollToField(first.name, { behavior: 'smooth', block: 'center' })
+        // antd validateFields rejection 形状是稳定的 ValidateErrorEntity<unknown>，
+        // 这里用 inline type assertion 避免 any 触发 lint 阈值
+        const errFields = (errInfo as { errorFields?: Array<{ name: unknown; errors: string[] }> })
+          ?.errorFields
+        const first = errFields?.[0]
+        if (first?.name !== undefined) {
+          form.scrollToField(first.name as string | number | (string | number)[], {
+            behavior: 'smooth',
+            block: 'center',
+          })
           // setTimeout 等 scroll 动画大致结束再 focus，避免 focus 把页面位置又拽走
           setTimeout(() => {
-            const inst: any = form.getFieldInstance(first.name)
+            const inst = form.getFieldInstance(
+              first.name as string | number | (string | number)[]
+            ) as { focus?: () => void } | undefined
             inst?.focus?.()
           }, 300)
         }

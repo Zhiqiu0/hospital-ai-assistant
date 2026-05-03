@@ -157,12 +157,20 @@ export function useInpatientInquiryPanel() {
     if (isDirty) {
       try {
         await form.validateFields()
-      } catch (errInfo: any) {
-        const first = errInfo?.errorFields?.[0]
-        if (first?.name) {
-          form.scrollToField(first.name, { behavior: 'smooth', block: 'center' })
+      } catch (errInfo) {
+        // 详见 useInquiryPanel.saveAll 同步注释
+        const errFields = (errInfo as { errorFields?: Array<{ name: unknown; errors: string[] }> })
+          ?.errorFields
+        const first = errFields?.[0]
+        if (first?.name !== undefined) {
+          form.scrollToField(first.name as string | number | (string | number)[], {
+            behavior: 'smooth',
+            block: 'center',
+          })
           setTimeout(() => {
-            const inst: any = form.getFieldInstance(first.name)
+            const inst = form.getFieldInstance(
+              first.name as string | number | (string | number)[]
+            ) as { focus?: () => void } | undefined
             inst?.focus?.()
           }, 300)
         }
