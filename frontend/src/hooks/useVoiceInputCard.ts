@@ -14,6 +14,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, message } from 'antd'
 import { InquiryData } from '@/store/types'
+
+// ── 测试期开关：录音文件是否上传到后端归档 ─────────────────────────────────────
+// 测试阶段医生反复录长音频会快速吃满测试服务器磁盘（uploads/voice_records/
+// 永久存盘且暂无清理机制），暂关闭文件上传，只留 ASR 转写文字走 AI 整理路径——
+// 病历生成、问诊填表、AI 整理这些主流程不受影响；唯一损失是"播放原始录音"
+// 功能（无 voice_record_id）。
+// 上线前切回 true，并配合后端加 uploads 目录的归档/清理策略。
+const ENABLE_AUDIO_UPLOAD = false
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
@@ -85,6 +93,56 @@ export function useVoiceInputCard({
     transcriptRef.current = fullTranscript
   }, [fullTranscript])
 
+  // ── 组件卸载强制清理（2026-05-03 治本）────────────────────────────────────
+  // 之前用户报告"录音中途关掉网页，再开就只录到静音、ASR 0 句、刷新或换电脑都
+  // 不行，要整体关浏览器才好"——根因是本 hook 没有 unmount cleanup：
+  //   1. streamRef（MediaStream）的 getUserMedia tracks 没 stop → OS 层麦克风
+  //      仍被前一个 tab/路由占着，新会话 getUserMedia 拿到 stale/muted track
+  //      → 前端按帧发 PCM 但全是静音 → DashScope 收到全零音频静默不回结果
+  //      → 前端等几秒触发"WebSocket 连接超时" → 主动断 → sentences=0
+  //   2. voiceStreamRef（wss）没显式 close → 后端那条 connection 一直挂
+  //   3. mediaRecorderRef 没停 → blob 数据继续累积内存泄漏
+  // 整体关浏览器 = 杀进程 = 所有 OS 麦克风占用全释放，所以"重启浏览器就好"。
+  // 加 unmount cleanup 后，无论用户怎么离开（关 tab / 切路由 / 刷新页面），
+  // 麦克风、wss、MediaRecorder 都会被显式释放，下次进来一定拿到干净的 stream。
+  useEffect(() => {
+    return () => {
+      // 1. 关 wss（stop 内部会发 finish + 关 socket，失败不阻断后续清理）
+      const vs = voiceStreamRef.current
+      voiceStreamRef.current = null
+      if (vs) {
+        try {
+          // stop 返回 Promise，但 unmount 不等待；catch 防 unhandled rejection
+          vs.stop().catch(() => {})
+        } catch {
+          /* 同步异常也忽略 */
+        }
+      }
+      // 2. 停 MediaRecorder（onstop 回调可能再触发 upload，无所谓）
+      const mr = mediaRecorderRef.current
+      mediaRecorderRef.current = null
+      if (mr && mr.state !== 'inactive') {
+        try {
+          mr.stop()
+        } catch {
+          /* 已经停过等异常忽略 */
+        }
+      }
+      // 3. 释放麦克风 tracks——这一步是治本的核心，不释放 OS 层麦克风就一直被占
+      const stream = streamRef.current
+      streamRef.current = null
+      if (stream) {
+        stream.getTracks().forEach(t => {
+          try {
+            t.stop()
+          } catch {
+            /* track 已经 ended 等异常忽略 */
+          }
+        })
+      }
+    }
+  }, [])
+
   // 拉一次性 audio token（给 <audio> 鉴权播放原始录音）
   // ★ transcriptId 切换时立即清掉旧 token——否则 React 渲染时 <audio> 元素会
   //   带着旧 token 立刻发请求，后端因 token.sub != URL.id 返 403。等异步
@@ -143,6 +201,9 @@ export function useVoiceInputCard({
    */
   const uploadAudioBlob = async (blob: Blob, transcriptText: string) => {
     if (!blob.size) return
+    // 测试期跳过音频归档：保留 transcript 文本走 AI 整理；不调后端 upload，
+    // 不占测试服务器磁盘；不弹"已保存" toast 避免误导。详见 ENABLE_AUDIO_UPLOAD 注释。
+    if (!ENABLE_AUDIO_UPLOAD) return
     setUploadingAudio(true)
     try {
       const data = await uploadVoiceAudio(blob, transcriptText, {
