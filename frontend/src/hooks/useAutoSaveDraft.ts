@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from 'react'
 import { message } from 'antd'
 import api from '@/services/api'
 import { useRecordStore } from '@/store/recordStore'
+import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
 import { enqueueDraft, flushDraftQueue, type DraftPayload } from '@/services/draftQueue'
 
 const DEBOUNCE_MS = 5000
@@ -137,6 +138,31 @@ export function useAutoSaveDraft({
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
   }, [recordContent, encounterId, recordType, isFinal])
+
+  // ── 强制 flush 信号：外部（如 ExamSuggestionTab 写入按钮）希望立即落盘 ─────
+  // 防抖跳过等待，直接 performSave 当前 recordContent。乐观锁 ref 仍由本 hook
+  // 维护，外部不需要也不能动，避免 409 误报。详见 recordAutoSaveTrigger.ts。
+  const forceFlushSignal = useRecordAutoSaveTrigger(s => s.forceFlushSignal)
+  // 跳过初次渲染（信号默认 0，不应触发）
+  const lastFlushSignalRef = useRef(forceFlushSignal)
+  useEffect(() => {
+    if (forceFlushSignal === lastFlushSignalRef.current) return
+    lastFlushSignalRef.current = forceFlushSignal
+    if (!encounterId || isFinal) return
+    // 直接读 store 拿最新 recordContent，绕开 closure（外部触发 flush 时 hook
+    // closure 里的 recordContent 可能还是旧的）
+    const latestContent = useRecordStore.getState().recordContent
+    if (!latestContent) return
+    if (latestContent === lastSavedContentRef.current) return
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    void performSave({
+      encounter_id: encounterId,
+      record_type: recordType,
+      content: latestContent,
+      expected_updated_at: lastUpdatedAtRef.current,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceFlushSignal])
 
   return { savedAt, savingState }
 }
