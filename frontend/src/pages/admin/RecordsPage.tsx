@@ -12,9 +12,17 @@
  *   一次返回所有关联信息，无需前端二次请求。
  */
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Modal, Button, Space, Input } from 'antd'
-import { FileTextOutlined, SearchOutlined, EyeOutlined, CheckOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Modal, Button, Space, Input, message } from 'antd'
+import {
+  FileTextOutlined,
+  SearchOutlined,
+  EyeOutlined,
+  CheckOutlined,
+  EditOutlined,
+} from '@ant-design/icons'
 import api from '@/services/api'
+
+const { TextArea } = Input
 
 const { Title, Text } = Typography
 
@@ -31,6 +39,58 @@ export default function RecordsPage() {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [viewRecord, setViewRecord] = useState<any>(null)
+
+  // ── 修订病历（2026-05-03 加）─────────────────────────────────────────────
+  // 已签发病历是法律文件，必须留痕修改：后端创建新 RecordVersion，旧版本保留。
+  // 修订理由必填，写入 audit_logs 永久可查。
+  const [reviseRecord, setReviseRecord] = useState<any>(null)
+  const [reviseContent, setReviseContent] = useState('')
+  const [reviseReason, setReviseReason] = useState('')
+  const [reviseSubmitting, setReviseSubmitting] = useState(false)
+
+  const openRevise = (record: {
+    id: string
+    content?: string
+    record_type?: string
+    patient_name?: string
+  }) => {
+    setReviseRecord(record)
+    setReviseContent(record.content || '')
+    setReviseReason('')
+  }
+
+  const closeRevise = () => {
+    setReviseRecord(null)
+    setReviseContent('')
+    setReviseReason('')
+  }
+
+  const submitRevise = async () => {
+    if (!reviseReason.trim()) {
+      message.warning('请填写修订理由')
+      return
+    }
+    if (!reviseContent.trim()) {
+      message.warning('病历内容不能为空')
+      return
+    }
+    setReviseSubmitting(true)
+    try {
+      await api.post(`/admin/records/${reviseRecord.id}/revise`, {
+        content: reviseContent,
+        revise_reason: reviseReason.trim(),
+      })
+      message.success('病历已修订，原版本保留供审计')
+      closeRevise()
+      // 刷新列表（让 content_preview 更新到新版本）
+      loadRecords()
+    } catch (e: unknown) {
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || '修订失败')
+    } finally {
+      setReviseSubmitting(false)
+    }
+  }
 
   const loadRecords = async (p = page) => {
     setLoading(true)
@@ -106,14 +166,24 @@ export default function RecordsPage() {
       title: '操作',
       key: 'action',
       render: (_: any, record: any) => (
-        <Button
-          size="small"
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => setViewRecord(record)}
-        >
-          查看病历
-        </Button>
+        <Space>
+          <Button
+            size="small"
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => setViewRecord(record)}
+          >
+            查看
+          </Button>
+          <Button
+            size="small"
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openRevise(record)}
+          >
+            修订
+          </Button>
+        </Space>
       ),
     },
   ]
@@ -220,7 +290,80 @@ export default function RecordsPage() {
           }}
         >
           <CheckOutlined style={{ color: '#22c55e' }} />
-          <Text style={{ fontSize: 12, color: '#166534' }}>已签发病历，归档不可修改</Text>
+          <Text style={{ fontSize: 12, color: '#166534' }}>
+            已签发病历，如需修正请关闭后点列表"修订"按钮（管理员留痕修改）
+          </Text>
+        </div>
+      </Modal>
+
+      {/* 修订病历弹窗：留痕式修改（创建新 RecordVersion，旧版本保留供审计） */}
+      <Modal
+        title={
+          reviseRecord && (
+            <Space>
+              <EditOutlined style={{ color: '#dc2626' }} />
+              <span>修订病历</span>
+              <Tag color="default">{reviseRecord.patient_name}</Tag>
+              <Tag color="blue">
+                {RECORD_TYPE_LABEL[reviseRecord.record_type] || reviseRecord.record_type}
+              </Tag>
+            </Space>
+          )
+        }
+        open={!!reviseRecord}
+        onCancel={closeRevise}
+        okText="确认修订并留痕"
+        cancelText="取消"
+        okButtonProps={{ loading: reviseSubmitting, danger: true }}
+        onOk={submitRevise}
+        width={760}
+        destroyOnClose
+      >
+        <div
+          style={{
+            padding: '8px 10px',
+            background: '#fef9c3',
+            border: '1px solid #fde047',
+            borderRadius: 6,
+            marginBottom: 12,
+            fontSize: 12,
+            color: '#854d0e',
+          }}
+        >
+          ⚠️
+          已签发病历是法律文件。修订将创建新版本，原版本永久保留供审计；操作人、时间、修订理由会写入审计日志。
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <Text strong style={{ fontSize: 13 }}>
+            修订理由 <Text type="danger">*</Text>
+          </Text>
+          <TextArea
+            value={reviseReason}
+            onChange={e => setReviseReason(e.target.value)}
+            rows={2}
+            placeholder="请说明本次修订原因（如：医生提交后发现 XX 字段有误，需更正）"
+            maxLength={500}
+            showCount
+            style={{ marginTop: 6 }}
+          />
+        </div>
+
+        <div>
+          <Text strong style={{ fontSize: 13 }}>
+            病历正文（修订后）
+          </Text>
+          <TextArea
+            value={reviseContent}
+            onChange={e => setReviseContent(e.target.value)}
+            rows={20}
+            style={{
+              marginTop: 6,
+              fontFamily: "'PingFang SC', 'Microsoft YaHei', monospace",
+              fontSize: 13,
+              lineHeight: 1.8,
+            }}
+          />
         </div>
       </Modal>
     </div>

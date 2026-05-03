@@ -66,7 +66,15 @@ export default function NewEncounterModal({
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
-        const res = await api.get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=8`)
+        // 复诊弹窗带 require_completed=true：后端只返回至少有 1 次完成接诊的患者，
+        // 避免把"取消接诊后档案就剩个空壳"的患者误当复诊候选。
+        // mode='new'（初诊登记）走查重逻辑，不需要这层过滤。
+        const params = new URLSearchParams({
+          keyword: kw,
+          page_size: '8',
+        })
+        if (mode === 'returning') params.set('require_completed', 'true')
+        const res = await api.get(`/patients?${params.toString()}`)
         setResults((res as any).items || [])
       } catch {
         setResults([])

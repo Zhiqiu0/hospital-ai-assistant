@@ -26,7 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.ai_suggestion import InquirySuggestionRequest
-from app.schemas.encounter import EncounterCreate, EncounterResponse, InquiryInputUpdate, QuickStartRequest
+from app.schemas.encounter import (
+    EncounterCancelRequest,
+    EncounterCreate,
+    EncounterResponse,
+    InquiryInputUpdate,
+    QuickStartRequest,
+)
 from app.schemas.exam import ExamSuggestionRequest
 from app.schemas.patient import PatientCreate
 from app.services.ai.exam_service import ExamService
@@ -108,13 +114,29 @@ async def _quick_start_inner(data, db, current_user):
             blood_type=data.blood_type,
         ))
 
-    # 是否初诊：由系统自动判断（患者是否为新建），不依赖前端传值
-    is_first_visit = not patient_reused
-
     encounter_service = EncounterService(db)
+
+    # ── 2026-05-03 复诊判断改写 ───────────────────────────────────────────────
+    # 旧逻辑：is_first_visit = not patient_reused（只看患者表是否存在）
+    # 问题：上次接诊未签发就被标"复诊"——上次都没完成怎么算"已复一次"？
+    # 新逻辑：用接诊状态机（completed = 至少完成过一次接诊，包含病历签发）
+    #   - 患者新建 → 必为初诊
+    #   - 患者老 + 有任一 completed 接诊 → 复诊
+    #   - 患者老 + 所有接诊都被 cancelled / 还在 in_progress → 仍按初诊
+    if not patient_reused:
+        is_first_visit = True
+    else:
+        is_first_visit = not await encounter_service.has_completed_encounter(patient["id"])
 
     # 取患者档案（档案数据跟随患者，不跟随接诊）
     patient_profile = await patient_service.get_profile(patient["id"])
+
+    # ── pending_encounters：别的医生在这个患者身上留下的进行中接诊（非阻断警示）──
+    # 业务场景：值班交接、急诊副班接管，硬拦截会阻断真实业务，所以仅返回列表，
+    # 让前端弹 Modal 让医生看到自行决策"继续接诊 / 联系原医生"。
+    pending_other = await encounter_service.list_pending_by_other_doctors(
+        patient["id"], current_user.id
+    )
 
     # 若该医生对该患者已有进行中的接诊，直接续接，不再新建
     existing = await encounter_service.find_in_progress(patient["id"], current_user.id)
@@ -145,7 +167,11 @@ async def _quick_start_inner(data, db, current_user):
             "patient_profile": patient_profile,
             "visit_type": existing.visit_type,
             "patient_reused": patient_reused,
+            # is_first_visit 取被续接接诊本身存的值，避免前端用 patient_reused 推算
+            # 把"上次初诊未签发续接"误显示成"复诊"
+            "is_first_visit": existing.is_first_visit,
             "previous_record_content": resume_prev_content,
+            "pending_encounters": pending_other,
             "resumed": True,
         }
 
@@ -225,8 +251,11 @@ async def _quick_start_inner(data, db, current_user):
         "patient_profile": patient_profile,
         "visit_type": data.visit_type,
         "patient_reused": patient_reused,
+        # 跟 resumed 分支一致地显式返回 is_first_visit，让前端不再用 patient_reused 推算
+        "is_first_visit": is_first_visit,
         "previous_record_content": previous_record_content,
         "previous_inquiry": previous_inquiry,
+        "pending_encounters": pending_other,
         "resumed": False,
     }
 
@@ -294,6 +323,30 @@ async def discharge_encounter(
     await _invalidate_patient_cache(encounter.patient_id)
 
     return {"ok": True, "already_discharged": False, "encounter_id": encounter_id}
+
+
+@router.post("/{encounter_id}/cancel")
+async def cancel_encounter(
+    encounter_id: str,
+    data: EncounterCancelRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """取消接诊（软取消，所有数据保留供回溯）。
+
+    业务详情见 EncounterService.cancel 实现注释。
+    """
+    service = EncounterService(db)
+    result = await service.cancel(
+        encounter_id=encounter_id,
+        operator_doctor_id=current_user.id,
+        cancel_reason=data.cancel_reason,
+    )
+    logger.info(
+        "encounter.cancel: encounter_id=%s by=%s reason=%r",
+        encounter_id, current_user.id, data.cancel_reason,
+    )
+    return result
 
 
 @router.get("/{encounter_id}", response_model=EncounterResponse)

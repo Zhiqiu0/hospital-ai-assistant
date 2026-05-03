@@ -24,7 +24,11 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
-import { resetAllWorkbench, setCurrentEncounterFromPatient } from '@/store/activeEncounterStore'
+import {
+  resetAllWorkbench,
+  setCurrentEncounterFromPatient,
+  useActiveEncounterStore,
+} from '@/store/activeEncounterStore'
 import { applySnapshotResult } from '@/store/encounterIntake'
 import api from '@/services/api'
 
@@ -144,6 +148,33 @@ export function useWorkbenchBase({
     navigate('/login')
   }
 
+  // ── 取消接诊（2026-05-03 加）───────────────────────────────────────────────
+  // CancelEncounterModal 的开关 + 提交回调；调后端软取消 + 清前端工作台。
+  // 失败时（如已签发病历返 403）展示错误，不清前端，方便医生看到原因。
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const openCancel = () => setCancelOpen(true)
+  const closeCancel = () => setCancelOpen(false)
+  const handleCancelEncounter = async (cancelReason: string) => {
+    const encounterId = useActiveEncounterStore.getState().encounterId
+    if (!encounterId) {
+      message.warning('当前没有进行中的接诊')
+      setCancelOpen(false)
+      return
+    }
+    try {
+      await api.post(`/encounters/${encounterId}/cancel`, { cancel_reason: cancelReason })
+      // 成功：清空所有工作台 store（跟登出走同一路径，确保 4 个子 store + active 全清）
+      resetAllWorkbench()
+      message.success('已取消本次接诊，数据已留档')
+      setCancelOpen(false)
+    } catch (err: unknown) {
+      // axios 拦截器已弹通用 toast，这里再打一条带 detail 的，方便医生看具体原因
+      const detail = (err as { detail?: string })?.detail
+      if (detail) message.error(detail)
+      // 不关弹窗，让医生看到错误后自行决定（如已签发病历需走作废流程）
+    }
+  }
+
   return {
     // History drawer 开关（PatientHistoryDrawer 共用此开关）
     historyOpen,
@@ -161,5 +192,10 @@ export function useWorkbenchBase({
     handleResume,
     // Auth
     handleLogout,
+    // 取消接诊
+    cancelOpen,
+    openCancel,
+    closeCancel,
+    handleCancelEncounter,
   }
 }

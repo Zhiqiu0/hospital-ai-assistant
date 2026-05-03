@@ -15,7 +15,7 @@
  *   WorkbenchStatusBar→ 底部状态栏
  */
 import { useState, useEffect } from 'react'
-import { Layout, message, Tabs } from 'antd'
+import { Layout, message, Tabs, Modal } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -41,6 +41,7 @@ import NewEncounterModal from '@/components/workbench/NewEncounterModal'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
 import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
 import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
+import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 
 const { Header, Content } = Layout
 
@@ -90,10 +91,20 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     }
   }, [isEmergency])
 
-  const { historyOpen, setHistoryOpen, openHistory, viewRecord, setViewRecord, handleLogout } =
-    useWorkbenchBase({
-      resumeSuccessMsg: name => `已恢复「${name}」的接诊工作台`,
-    })
+  const {
+    historyOpen,
+    setHistoryOpen,
+    openHistory,
+    viewRecord,
+    setViewRecord,
+    handleLogout,
+    cancelOpen,
+    openCancel,
+    closeCancel,
+    handleCancelEncounter,
+  } = useWorkbenchBase({
+    resumeSuccessMsg: name => `已恢复「${name}」的接诊工作台`,
+  })
 
   const [modalOpen, setModalOpen] = useState<'new' | 'returning' | null>(null)
   const [imagingOpen, setImagingOpen] = useState(false)
@@ -107,10 +118,47 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     applyQuickStartResult(res)
     setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
       visitType: (res.visit_type || visitType) as VisitType,
-      isFirstVisit: !res.patient_reused,
+      // 2026-05-03 改：用后端权威 is_first_visit，旧逻辑 !patient_reused 在续接未签发
+      // 接诊时会把"上次初诊未签发"误显示成"复诊"。后端用接诊状态机（completed=复诊
+      // 起点）判断更准。fallback 保留旧推算兼容（万一后端没返回该字段也能跑）。
+      isFirstVisit:
+        typeof res.is_first_visit === 'boolean' ? res.is_first_visit : !res.patient_reused,
       isPatientReused: !!res.patient_reused,
       previousRecordContent: res.previous_record_content || null,
     })
+    // 跨医生未完成接诊警示（非阻断）：让医生看到该患者还有别的医生留下的进行中接诊
+    if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
+      Modal.info({
+        title: '该患者尚有未完成接诊',
+        width: 480,
+        content: (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 10, color: 'var(--text-3)', fontSize: 13 }}>
+              建议联系下列医生处理后再继续，避免重复就诊：
+            </div>
+            <ul style={{ paddingLeft: 18, margin: 0, fontSize: 13, lineHeight: 2 }}>
+              {res.pending_encounters.map(
+                (
+                  e: { doctor_name: string; visit_type: string; visited_at?: string },
+                  i: number
+                ) => (
+                  <li key={i}>
+                    医生 <b>{e.doctor_name}</b>（
+                    {e.visit_type === 'emergency'
+                      ? '急诊'
+                      : e.visit_type === 'inpatient'
+                        ? '住院'
+                        : '门诊'}
+                    {e.visited_at ? `，${new Date(e.visited_at).toLocaleString('zh-CN')}` : ''}）
+                  </li>
+                )
+              )}
+            </ul>
+          </div>
+        ),
+        okText: '我已知悉，继续接诊',
+      })
+    }
     // 复诊且非续接：把上次稳定字段（既往史/过敏史/个人史等）预填入问诊表单
     if (res.patient_reused && !res.resumed && res.previous_inquiry) {
       const current = useInquiryStore.getState().inquiry
@@ -166,6 +214,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           setImagingOpen={setImagingOpen}
           onSwitchMode={() => navigate(isEmergency ? '/workbench' : '/emergency')}
           handleLogout={handleLogout}
+          onOpenCancel={openCancel}
         />
       </Header>
 
@@ -269,6 +318,12 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       />
 
       <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />
+
+      <CancelEncounterModal
+        open={cancelOpen}
+        onClose={closeCancel}
+        onConfirm={handleCancelEncounter}
+      />
 
       {/* 底部状态栏：接诊状态 + 保存时间 */}
       <div

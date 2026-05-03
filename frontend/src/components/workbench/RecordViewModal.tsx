@@ -95,7 +95,9 @@ export default function RecordViewModal({
                 {record.patient_age}岁
               </Text>
             )}
-            <Tag color={tagColor} style={{ margin: 0 }}>{recordTypeLabel(record.record_type)}</Tag>
+            <Tag color={tagColor} style={{ margin: 0 }}>
+              {recordTypeLabel(record.record_type)}
+            </Tag>
             <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
               {record.submitted_at ? new Date(record.submitted_at).toLocaleString('zh-CN') : ''}
             </Text>
@@ -161,11 +163,12 @@ export default function RecordViewModal({
         {record?.doctor_name && (
           <span style={{ color: '#065f46' }}>
             接诊医生：<b>{record.doctor_name}</b>
-            {record.submitted_by_name && record.submitted_by_name !== record.doctor_name && (
-              <span style={{ color: '#6b7280', marginLeft: 6 }}>
-                （签发：{record.submitted_by_name}）
-              </span>
-            )}
+            {/* 2026-05-03 改：医生侧不再展示 submitted_by_name 差异——
+                管理员后台修订病历会让 submitted_by_name 变成 admin，原逻辑会显示
+                "（签发：系统管理员）"误导医生认为责任主体不是自己。合规要求的修订
+                留痕走 audit_logs 表（管理员后台 + 审计员可查），医生侧只看接诊医生
+                即可。如未来真有"管床代签"需求需另起字段（如 first_signed_by）单独
+                展示，不复用 submitted_by_name（语义已被修订人占用）。 */}
           </span>
         )}
         {record?.submitted_at && (

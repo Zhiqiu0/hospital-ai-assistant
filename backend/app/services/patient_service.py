@@ -85,36 +85,65 @@ class PatientService:
         """
         patient = None
 
+        # 全部三种查重路径都要排除已软删患者：上次接诊取消时连档案一起清掉了，
+        # 这里再把人查出来等于把"已删"档案带回业务流，导致医生在新接诊里继续
+        # 用一个底层已经标记删除的患者档案——不是预期。
+
         # 优先用身份证号（精度最高，18位唯一标识）
         if id_card:
-            result = await self.db.execute(select(Patient).where(Patient.id_card == id_card))
+            result = await self.db.execute(
+                select(Patient).where(
+                    Patient.id_card == id_card,
+                    Patient.is_deleted.is_(False),
+                )
+            )
             patient = result.scalar_one_or_none()
 
         # 其次用手机号+姓名（适合没有身份证的场景）
         if not patient and phone and name:
             result = await self.db.execute(
-                select(Patient).where(Patient.phone == phone, Patient.name == name)
+                select(Patient).where(
+                    Patient.phone == phone,
+                    Patient.name == name,
+                    Patient.is_deleted.is_(False),
+                )
             )
             patient = result.scalar_one_or_none()
 
         # 最后用姓名+出生日期（精度较低，同名同日出生有碰撞风险，仅作兜底）
         if not patient and name and birth_date:
             result = await self.db.execute(
-                select(Patient).where(Patient.name == name, Patient.birth_date == birth_date)
+                select(Patient).where(
+                    Patient.name == name,
+                    Patient.birth_date == birth_date,
+                    Patient.is_deleted.is_(False),
+                )
             )
             patient = result.scalar_one_or_none()
 
         return self._to_response(patient) if patient else None
 
-    async def search(self, keyword: str, page: int, page_size: int):
+    async def search(
+        self,
+        keyword: str,
+        page: int,
+        page_size: int,
+        require_completed: bool = False,
+    ):
         """按姓名或患者编号搜索患者，支持分页（带 Redis 缓存）。
 
         缓存 30 秒；create / update 时清整个 patient:search:* 前缀。
         新建/复诊弹窗在用户输入时高频触发，命中缓存可显著降低 DB 负载。
         每条响应附带 has_active_inpatient（是否有进行中的住院接诊），
         前端 PatientHistoryDrawer 据此显示"在院中 / 已出院"状态标签。
+
+        Args:
+            require_completed: True 时只返回"至少有 1 个 status=completed 接诊"
+              的患者。复诊弹窗专用，避免医生把"从未真正完成过接诊"的患者当复诊接。
+              False（默认）= 普通患者列表 / 初诊查重场景。
         """
-        cache_key = f"patient:search:{keyword}:{page}:{page_size}"
+        # 缓存 key 带上 require_completed，两种语义不能互相污染
+        cache_key = f"patient:search:{keyword}:{page}:{page_size}:rc{int(require_completed)}"
         cached = await redis_cache.get_json(cache_key)
         if cached is not None:
             return cached
@@ -134,6 +163,21 @@ class PatientService:
         query = select(Patient).outerjoin(
             last_visit_subq, Patient.id == last_visit_subq.c.pid
         )
+        # 软删患者一律不出现在搜索结果（取消接诊联动删除的孤儿档案）
+        query = query.where(Patient.is_deleted.is_(False))
+        # 复诊场景：再叠加"至少有 1 个 completed 接诊"过滤。
+        # 这层独立于 is_deleted——是为了挡住"档案在但从没正常完成过"的边界态
+        # （HIS 同步过来 + 全部接诊都被取消 / 老档案改名复用但所有 encounter 都失败）。
+        if require_completed:
+            completed_subq = (
+                select(_Enc.patient_id)
+                .where(_Enc.status == "completed")
+                .distinct()
+                .subquery()
+            )
+            query = query.where(
+                Patient.id.in_(select(completed_subq.c.patient_id))
+            )
         if keyword:
             conditions = [
                 Patient.name.ilike(f"%{keyword}%"),
@@ -226,9 +270,14 @@ class PatientService:
         姓名变更时同步刷新拼音索引——否则改名后老拼音还命中旧名拼音、新名搜不到。
 
         Raises:
-            HTTPException(404): 患者不存在。
+            HTTPException(404): 患者不存在（含已软删情况）。
         """
-        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            )
+        )
         patient = result.scalar_one_or_none()
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")
@@ -249,13 +298,20 @@ class PatientService:
         """按 UUID 查询单个患者（带 Redis 缓存）。
 
         缓存 5 分钟；update / update_profile 写时主动失效。
+        软删患者按"不存在"处理：取消接诊联动软删后，前端任何路径再拿这个 ID
+        请求详情都直接 404，避免把已删档案带回界面继续编辑。
         """
         cache_key = _BASIC_KEY.format(pid=patient_id)
         cached = await redis_cache.get_json(cache_key)
         if cached is not None:
             return cached
 
-        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            )
+        )
         patient = result.scalar_one_or_none()
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")
@@ -321,7 +377,13 @@ class PatientService:
         if cached is not None:
             return cached
 
-        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        # 软删患者一律视为不存在，避免任意路径把已删档案带回前端
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            )
+        )
         patient = result.scalar_one_or_none()
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")
@@ -341,7 +403,12 @@ class PatientService:
         值未实际改变（前后相同）的字段不更新元数据，避免医生只是查看时也"被算确认"——
         想主动确认走 confirm_profile_field 接口。
         """
-        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            )
+        )
         patient = result.scalar_one_or_none()
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")
@@ -388,7 +455,12 @@ class PatientService:
         if field not in PROFILE_FIELDS:
             raise HTTPException(status_code=400, detail=f"不支持的档案字段: {field}")
 
-        result = await self.db.execute(select(Patient).where(Patient.id == patient_id))
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            )
+        )
         patient = result.scalar_one_or_none()
         if not patient:
             raise HTTPException(status_code=404, detail="患者不存在")

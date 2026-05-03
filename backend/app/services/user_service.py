@@ -149,3 +149,40 @@ class UserService:
 
         user.is_active = False
         await self.db.commit()
+
+    async def activate(self, user_id: str) -> None:
+        """重新启用已停用的用户账号（is_active=True）。
+
+        2026-05-03 加：之前只有"停用"无"启用"，被停用的账号无法恢复使用。
+        启用后用户可重新登录。
+
+        Raises:
+            HTTPException(404): 用户不存在。
+        """
+        user = await self.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        user.is_active = True
+        await self.db.commit()
+
+    async def reset_password(self, user_id: str, new_password: str) -> None:
+        """管理员重置用户密码。
+
+        密码原文不可看（DB 只存 bcrypt 哈希），只能"重置"——管理员或自动生成
+        新明文，前端展示一次后由用户首次登录改回。
+
+        Args:
+            new_password: 新明文密码（前端可让管理员手动输入或一键生成强随机串）。
+                          长度由前端校验（建议 ≥ 8）；后端只保证非空。
+
+        Raises:
+            HTTPException(404): 用户不存在。
+            HTTPException(400): 密码为空。
+        """
+        if not new_password or not new_password.strip():
+            raise HTTPException(status_code=400, detail="密码不能为空")
+        user = await self.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        user.password_hash = hash_password(new_password)
+        await self.db.commit()

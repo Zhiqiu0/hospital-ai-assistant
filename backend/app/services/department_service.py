@@ -40,24 +40,29 @@ class DepartmentService:
         result = await self.db.execute(select(Department).where(Department.id == dept_id))
         return result.scalar_one_or_none()
 
-    async def list_all(self):
-        """查询所有已启用的科室列表（带 Redis 缓存 5 分钟）。
+    async def list_all(self, include_inactive: bool = False):
+        """查询科室列表。
 
-        仅返回 is_active=True 的科室，已停用的科室不出现在接诊页的科室选择下拉列表中。
-        前端根据 parent_id 字段自行组装树形选择器。
+        Args:
+            include_inactive:
+              False（默认）→ 只返回 is_active=True，给接诊页科室下拉用，走 Redis 缓存
+              True            → 含已停用的，给后台管理页用（让管理员能看见已停用科室
+                                并按需"启用"），不走缓存避免污染默认查询
 
         Returns:
             {"items": [科室字典列表]}
         """
-        cached = await redis_cache.get_json(_LIST_KEY)
-        if cached is not None:
-            return cached
+        if not include_inactive:
+            # 只查启用的——业务热路径，走缓存
+            cached = await redis_cache.get_json(_LIST_KEY)
+            if cached is not None:
+                return cached
 
-        result = await self.db.execute(
-            select(Department).where(Department.is_active.is_(True))
-        )
+        stmt = select(Department)
+        if not include_inactive:
+            stmt = stmt.where(Department.is_active.is_(True))
+        result = await self.db.execute(stmt)
         items = result.scalars().all()
-        # 显式 dict 序列化（ORM 不能直接 JSON 化），便于走 Redis 缓存
         data = {
             "items": [
                 {
@@ -70,7 +75,8 @@ class DepartmentService:
                 for d in items
             ]
         }
-        await redis_cache.set_json(_LIST_KEY, data, ttl=_LIST_TTL)
+        if not include_inactive:
+            await redis_cache.set_json(_LIST_KEY, data, ttl=_LIST_TTL)
         return data
 
     async def create(self, data: DepartmentCreate) -> Department:
@@ -96,7 +102,8 @@ class DepartmentService:
         """停用科室（软删除）。
 
         设置 is_active=False 而非物理删除，保留科室记录防止历史接诊的 department_id 外键失效。
-        停用后该科室不会出现在接诊页的科室选择列表中（list_all 只返回 is_active=True）。
+        停用后该科室不会出现在接诊页的科室选择列表中（list_all 默认只返回 is_active=True）；
+        但后台管理页（list_all(include_inactive=True)）仍能看到，可"启用"恢复。
 
         Raises:
             HTTPException(404): 科室不存在。
@@ -105,5 +112,21 @@ class DepartmentService:
         if not dept:
             raise HTTPException(status_code=404, detail="科室不存在")
         dept.is_active = False
+        await self.db.commit()
+        await redis_cache.delete(_LIST_KEY)
+
+    async def activate(self, dept_id: str) -> None:
+        """重新启用已停用的科室（is_active=True）。
+
+        2026-05-03 加：跟用户管理对齐——之前只能停用无法启用，被停用的科室
+        无法在前端接诊页恢复显示。
+
+        Raises:
+            HTTPException(404): 科室不存在。
+        """
+        dept = await self.get_by_id(dept_id)
+        if not dept:
+            raise HTTPException(status_code=404, detail="科室不存在")
+        dept.is_active = True
         await self.db.commit()
         await redis_cache.delete(_LIST_KEY)
