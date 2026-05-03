@@ -71,6 +71,15 @@ class Encounter(Base, TimestampMixin):
     # 入院病情："危"/"急"/"一般"（住院病案首页字段）
     admission_condition: Mapped[Optional[str]] = mapped_column(String(10))
 
+    # ── 取消接诊（status='cancelled' 配套字段，2026-05-03 加）─────────────────
+    # 取消理由：医生显式填写，预设 5 选 + 自由备注，纯文本存。
+    # 设计为 nullable：仅取消时填写，正常 in_progress / completed 接诊为空。
+    cancel_reason: Mapped[Optional[str]] = mapped_column(String(500))
+    # 取消时间
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # 操作医生 ID（一般 = doctor_id，但保留独立字段以备将来值班医生强取等场景）
+    cancelled_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
+
     # 关联患者信息
     patient: Mapped["Patient"] = relationship(back_populates="encounters")
     # 该次接诊生成的所有病历版本

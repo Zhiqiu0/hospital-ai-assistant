@@ -16,7 +16,7 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -59,6 +59,15 @@ class Patient(Base, TimestampMixin):
     address: Mapped[Optional[str]] = mapped_column(String)
     # 是否来自 HIS 系统：True=HIS 导入，False=系统手动录入
     is_from_his: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # ── 软删除字段（2026-05-03 加，配合接诊取消联动清理孤儿档案）─────────────
+    # 业务规则：取消接诊时如果患者本身是这次接诊一并新建（无其他 encounter、
+    # 非 HIS 来源），则把患者一并软删；老患者复诊取消不动这里。
+    # 所有患者搜索/查重入口（PatientService.search / find_existing / get_by_id）
+    # 必须过滤 is_deleted=false。物理删会丢审计，所以走软删保留行。
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    deleted_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"))
 
     # ── 病案首页扩展字段（住院病历必填）────────────────────────────────────────
     # 民族

@@ -18,7 +18,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class QuickStartRequest(BaseModel):
@@ -137,6 +137,24 @@ class InquiryInputUpdate(BaseModel):
     # 时间
     visit_time: Optional[str] = None
     onset_time: Optional[str] = None
+
+
+class EncounterCancelRequest(BaseModel):
+    """取消接诊请求体（POST /encounters/{id}/cancel）。
+
+    业务规则：
+      - 仅主治医生（doctor_id == current_user.id）可取消
+      - 接诊状态必须是 in_progress（已 completed/cancelled 直接幂等返回）
+      - 已签发病历的接诊不可取消（要走病历作废流程，Phase 1 不做）
+      - 取消后 status='cancelled'，所有关联数据（inquiry/voice/AI 草稿/病历草稿）保留供回溯
+
+    cancel_reason 设计：
+      最小 1 字符，最大 500，前端预设 5 选 + 自由备注
+      预设："误开接诊" / "患者未到诊" / "患者已转院" / "重复创建" / "其他"
+      "其他"时备注必填（前端 UI 校验，后端不强制——后端只确保非空字符串）
+    """
+
+    cancel_reason: str = Field(min_length=1, max_length=500)
 
 
 class EncounterResponse(BaseModel):

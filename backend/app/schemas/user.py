@@ -14,7 +14,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserCreate(BaseModel):
@@ -66,3 +66,15 @@ class UserListResponse(BaseModel):
 
     total: int
     items: list[UserResponse]
+
+
+class ResetPasswordRequest(BaseModel):
+    """管理员重置用户密码入参（POST /admin/users/{id}/reset-password）。
+
+    密码原文不可"看"——DB 只存 bcrypt 哈希，连后端开发者也看不到。
+    管理员只能"重置"：自动生成或手动输入新明文，前端展示一次后让用户首次登录改回。
+
+    new_password 长度由前端校验（建议 ≥ 8 + 包含字母数字）；后端只保证非空。
+    """
+
+    new_password: str = Field(min_length=1, max_length=200)

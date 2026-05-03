@@ -21,14 +21,35 @@ import {
   Select,
   Space,
   Tag,
+  Tooltip,
   Typography,
   Popconfirm,
   message,
 } from 'antd'
-import { PlusOutlined, EditOutlined, StopOutlined } from '@ant-design/icons'
+import { useAuthStore } from '@/store/authStore'
+import {
+  PlusOutlined,
+  EditOutlined,
+  StopOutlined,
+  CheckCircleOutlined,
+  KeyOutlined,
+  CopyOutlined,
+} from '@ant-design/icons'
 import api from '@/services/api'
 
 const { Title } = Typography
+
+/**
+ * 生成强随机密码（默认 12 位，含字母数字大小写）。
+ * 仅在重置密码弹窗里给管理员一个起点，管理员可手动修改。
+ * 不引入 third-party 依赖，使用 crypto.getRandomValues 保证随机性。
+ */
+function generateRandomPassword(length = 12): string {
+  const charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789' // 去除易混淆的 I,L,O,1,0
+  const arr = new Uint32Array(length)
+  crypto.getRandomValues(arr)
+  return Array.from(arr, n => charset[n % charset.length]).join('')
+}
 
 const ROLE_MAP: Record<string, { label: string; color: string }> = {
   super_admin: { label: '超级管理员', color: 'red' },
@@ -39,6 +60,8 @@ const ROLE_MAP: Record<string, { label: string; color: string }> = {
 }
 
 export default function UsersPage() {
+  // 当前登录管理员 ID——用于禁用"自己停用自己"按钮（防误操作把自己锁出系统）
+  const myId = useAuthStore(s => s.user?.id)
   const [users, setUsers] = useState<any[]>([])
   const [departments, setDepartments] = useState<any[]>([])
   const [total, setTotal] = useState(0)
@@ -111,6 +134,65 @@ export default function UsersPage() {
     }
   }
 
+  // 启用已停用账号（2026-05-03 加）—— 跟科室管理对齐，让停用动作可逆
+  const handleActivate = async (id: string) => {
+    try {
+      await api.post(`/admin/users/${id}/activate`)
+      message.success('已启用')
+      loadUsers()
+    } catch {
+      message.error('操作失败')
+    }
+  }
+
+  // ── 重置密码（2026-05-03 加）─────────────────────────────────────────────
+  // 密码原文不可"看"——bcrypt 单向哈希。管理员只能"重置"：手输或一键生成强随机串，
+  // 弹窗展示新密码一次（带"复制"按钮），关闭后再也看不到。
+  // 真实场景下应该再加"用户首次登录强制改密码"的标志位，本期 MVP 暂不强制。
+  const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [resetSubmitting, setResetSubmitting] = useState(false)
+
+  const openReset = (user: { id: string; username: string }) => {
+    setResetUser(user)
+    // 默认生成 12 位强随机密码（含字母数字）；管理员可在弹窗内修改
+    setNewPassword(generateRandomPassword(12))
+  }
+
+  const submitReset = async () => {
+    if (!resetUser || !newPassword || newPassword.length < 6) {
+      message.warning('密码至少 6 位')
+      return
+    }
+    setResetSubmitting(true)
+    try {
+      await api.post(`/admin/users/${resetUser.id}/reset-password`, {
+        new_password: newPassword,
+      })
+      message.success('密码已重置，请将新密码告知用户')
+      // 不立即关弹窗，让管理员有机会复制；点"知道了"才关
+    } catch (e: unknown) {
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || '重置失败')
+    } finally {
+      setResetSubmitting(false)
+    }
+  }
+
+  const closeReset = () => {
+    setResetUser(null)
+    setNewPassword('')
+  }
+
+  const copyPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(newPassword)
+      message.success('已复制到剪贴板')
+    } catch {
+      message.warning('复制失败，请手动选中复制')
+    }
+  }
+
   const columns = [
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '姓名', dataIndex: 'real_name', key: 'real_name' },
@@ -137,10 +219,32 @@ export default function UsersPage() {
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑
           </Button>
-          {record.is_active && (
-            <Popconfirm title="确认停用该用户？" onConfirm={() => handleDeactivate(record.id)}>
-              <Button size="small" danger icon={<StopOutlined />}>
-                停用
+          <Button
+            size="small"
+            icon={<KeyOutlined />}
+            onClick={() => openReset({ id: record.id, username: record.username })}
+          >
+            重置密码
+          </Button>
+          {record.is_active ? (
+            // 自己不能停用自己——按钮禁用 + tooltip 解释
+            record.id === myId ? (
+              <Tooltip title="不能停用自己的账号，请由其他管理员操作">
+                <Button size="small" danger icon={<StopOutlined />} disabled>
+                  停用
+                </Button>
+              </Tooltip>
+            ) : (
+              <Popconfirm title="确认停用该用户？" onConfirm={() => handleDeactivate(record.id)}>
+                <Button size="small" danger icon={<StopOutlined />}>
+                  停用
+                </Button>
+              </Popconfirm>
+            )
+          ) : (
+            <Popconfirm title="确认启用该用户？" onConfirm={() => handleActivate(record.id)}>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />}>
+                启用
               </Button>
             </Popconfirm>
           )}
@@ -220,6 +324,60 @@ export default function UsersPage() {
             </>
           )}
         </Form>
+      </Modal>
+
+      {/* 重置密码弹窗：密码原文不可"看"，只能"重置"——展示一次后由用户登录改回 */}
+      <Modal
+        title="重置密码"
+        open={!!resetUser}
+        onCancel={closeReset}
+        okText="确认重置"
+        cancelText="取消"
+        okButtonProps={{ loading: resetSubmitting }}
+        onOk={submitReset}
+        destroyOnClose
+        width={460}
+      >
+        <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 13 }}>
+          为用户 <Tag>{resetUser?.username}</Tag> 重置密码：
+        </div>
+        <Input.Password
+          value={newPassword}
+          onChange={e => setNewPassword(e.target.value)}
+          placeholder="新密码（至少 6 位）"
+          addonAfter={
+            <Button
+              type="text"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={copyPassword}
+              title="复制密码到剪贴板"
+            />
+          }
+        />
+        <div style={{ marginTop: 8, fontSize: 12 }}>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() => setNewPassword(generateRandomPassword(12))}
+          >
+            重新生成随机密码
+          </Button>
+        </div>
+        <div
+          style={{
+            marginTop: 12,
+            padding: '8px 10px',
+            background: '#fef9c3',
+            border: '1px solid #fde047',
+            borderRadius: 6,
+            fontSize: 12,
+            color: '#854d0e',
+          }}
+        >
+          ⚠️ 提交后请<b>立即复制</b>新密码并告知用户。关闭弹窗后系统不再保留原文，只存哈希值。
+        </div>
       </Modal>
     </div>
   )

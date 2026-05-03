@@ -36,12 +36,20 @@ async def list_patients(
     keyword: str = Query(default="", description="搜索关键词（姓名或患者编号，为空返回全部）"),
     page: int = Query(default=1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页条数，最大 100"),
+    require_completed: bool = Query(
+        default=False,
+        description="True 时只返回至少有 1 个 status=completed 接诊的患者，复诊弹窗专用",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """搜索患者列表（支持姓名/患者编号模糊匹配，分页返回）。"""
+    """搜索患者列表（支持姓名/患者编号模糊匹配，分页返回）。
+
+    require_completed=True 时为复诊弹窗专用语义：
+    过滤掉「档案在但从未真正完成过任何接诊」的患者，避免医生把这类患者误当复诊接。
+    """
     service = PatientService(db)
-    return await service.search(keyword, page, page_size)
+    return await service.search(keyword, page, page_size, require_completed=require_completed)
 
 
 @router.post("", response_model=PatientResponse, status_code=201)

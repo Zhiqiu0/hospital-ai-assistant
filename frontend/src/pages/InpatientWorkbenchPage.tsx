@@ -12,7 +12,7 @@
  *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Empty, message } from 'antd'
+import { Layout, Button, Empty, message, Modal } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -40,6 +40,7 @@ import InpatientHeader from '@/components/workbench/InpatientHeader'
 import InpatientRightPanel from '@/components/workbench/InpatientRightPanel'
 import ProgressNotePanel from '@/components/workbench/ProgressNotePanel'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
+import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 import { TimelineItem } from '@/domain/inpatient'
 
 const { Content } = Layout
@@ -78,6 +79,10 @@ export default function InpatientWorkbenchPage() {
     setViewRecord,
     handleResume,
     handleLogout,
+    cancelOpen,
+    openCancel,
+    closeCancel,
+    handleCancelEncounter,
   } = useWorkbenchBase({
     visitTypeFilter: 'inpatient',
     defaultRecordType: 'admission_note',
@@ -118,7 +123,9 @@ export default function InpatientWorkbenchPage() {
     // 一次性设置接诊指针 + 元信息（visitType / firstVisit / patientReused / previousRecordContent）
     setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
       visitType: (res.visit_type || 'inpatient') as VisitType,
-      isFirstVisit: !res.patient_reused,
+      // 用后端权威 is_first_visit（避免续接未签发接诊被误标"复诊"）；fallback 兼容
+      isFirstVisit:
+        typeof res.is_first_visit === 'boolean' ? res.is_first_visit : !res.patient_reused,
       isPatientReused: !!res.patient_reused,
       previousRecordContent: res.previous_record_content || null,
     })
@@ -126,6 +133,39 @@ export default function InpatientWorkbenchPage() {
     if (res.patient_reused && !res.resumed && res.previous_inquiry) {
       const current = useInquiryStore.getState().inquiry
       updateInquiryFields({ ...current, ...res.previous_inquiry })
+    }
+    // 跨医生未完成接诊警示（非阻断），与门诊端一致
+    if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
+      Modal.info({
+        title: '该患者尚有未完成接诊',
+        width: 480,
+        content: (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 10, color: 'var(--text-3)', fontSize: 13 }}>
+              建议联系下列医生处理后再继续，避免重复就诊：
+            </div>
+            <ul style={{ paddingLeft: 18, margin: 0, fontSize: 13, lineHeight: 2 }}>
+              {res.pending_encounters.map(
+                (
+                  e: { doctor_name: string; visit_type: string; visited_at?: string },
+                  i: number
+                ) => (
+                  <li key={i}>
+                    医生 <b>{e.doctor_name}</b>（
+                    {e.visit_type === 'emergency'
+                      ? '急诊'
+                      : e.visit_type === 'inpatient'
+                        ? '住院'
+                        : '门诊'}
+                    {e.visited_at ? `，${new Date(e.visited_at).toLocaleString('zh-CN')}` : ''}）
+                  </li>
+                )
+              )}
+            </ul>
+          </div>
+        ),
+        okText: '我已知悉，继续接诊',
+      })
     }
     if (res.resumed) {
       message.info(`「${res.patient.name}」有未完成的住院接诊，已自动恢复`)
@@ -174,6 +214,7 @@ export default function InpatientWorkbenchPage() {
         onOpenImaging={() => setImagingOpen(true)}
         onLogout={handleLogout}
         onDischarged={handleDischarged}
+        onOpenCancel={openCancel}
       />
 
       <Content
@@ -325,6 +366,12 @@ export default function InpatientWorkbenchPage() {
       />
 
       <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />
+
+      <CancelEncounterModal
+        open={cancelOpen}
+        onClose={closeCancel}
+        onConfirm={handleCancelEncounter}
+      />
 
       {/* 底部状态栏：接诊状态 + 保存时间 */}
       <div

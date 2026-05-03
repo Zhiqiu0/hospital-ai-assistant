@@ -24,7 +24,7 @@ import {
   Popconfirm,
   message,
 } from 'antd'
-import { PlusOutlined, StopOutlined } from '@ant-design/icons'
+import { PlusOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
 const { Title } = Typography
@@ -71,6 +71,17 @@ export default function DepartmentsPage() {
     }
   }
 
+  // 启用已停用科室（2026-05-03 加）—— 与用户管理对齐，让停用动作可逆
+  const handleActivate = async (id: string) => {
+    try {
+      await api.post(`/admin/departments/${id}/activate`)
+      message.success('已启用')
+      loadDepts()
+    } catch {
+      message.error('操作失败')
+    }
+  }
+
   const columns = [
     { title: '科室名称', dataIndex: 'name', key: 'name' },
     { title: '科室编码', dataIndex: 'code', key: 'code', render: (v: string) => <Tag>{v}</Tag> },
@@ -85,10 +96,16 @@ export default function DepartmentsPage() {
       key: 'action',
       render: (_: any, record: any) => (
         <Space>
-          {record.is_active && (
+          {record.is_active ? (
             <Popconfirm title="确认停用该科室？" onConfirm={() => handleDeactivate(record.id)}>
               <Button size="small" danger icon={<StopOutlined />}>
                 停用
+              </Button>
+            </Popconfirm>
+          ) : (
+            <Popconfirm title="确认启用该科室？" onConfirm={() => handleActivate(record.id)}>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />}>
+                启用
               </Button>
             </Popconfirm>
           )}

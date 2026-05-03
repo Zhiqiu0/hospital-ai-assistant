@@ -13,6 +13,7 @@ import {
   MedicineBoxOutlined,
   CameraOutlined,
   UserOutlined,
+  CloseCircleOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -30,6 +31,8 @@ interface WorkbenchHeaderProps {
   setImagingOpen: (open: boolean) => void
   onSwitchMode: () => void
   handleLogout: () => void
+  /** 打开"取消接诊"弹窗（CancelEncounterModal）。仅 currentEncounterId 存在时按钮可见 */
+  onOpenCancel?: () => void
 }
 
 export default function WorkbenchHeader({
@@ -45,6 +48,7 @@ export default function WorkbenchHeader({
   setImagingOpen,
   onSwitchMode,
   handleLogout,
+  onOpenCancel,
 }: WorkbenchHeaderProps) {
   return (
     <>
@@ -161,6 +165,19 @@ export default function WorkbenchHeader({
         >
           复诊
         </Button>
+        {/* 取消接诊：只在有当前接诊时显示，danger ghost 样式低调避免误触 */}
+        {currentEncounterId && onOpenCancel && (
+          <Button
+            size="small"
+            danger
+            ghost
+            icon={<CloseCircleOutlined />}
+            onClick={onOpenCancel}
+            style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 12 }}
+          >
+            取消接诊
+          </Button>
+        )}
       </div>
 
       {/* 右侧用户操作区 */}
