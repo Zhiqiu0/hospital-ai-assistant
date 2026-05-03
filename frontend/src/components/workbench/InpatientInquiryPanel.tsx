@@ -37,7 +37,6 @@ export default function InpatientInquiryPanel() {
     saving,
     onSave,
     painMarks,
-    handleLabInsert,
     applyVoiceInquiry,
     applyVoiceToRecord,
     hasSavedInquiry,
@@ -196,9 +195,9 @@ export default function InpatientInquiryPanel() {
             />
           </CollapsibleSection>
 
-          {/* 三、体格检查与辅助检查 */}
-          <CollapsibleSection title="三、体格检查与辅助检查" accent="#2563eb" defaultOpen>
-            <PhysicalExamSection handleLabInsert={handleLabInsert} />
+          {/* 三、体格检查（辅助检查已迁出，由右侧「检查建议」Tab 管理） */}
+          <CollapsibleSection title="三、体格检查" accent="#2563eb" defaultOpen>
+            <PhysicalExamSection />
           </CollapsibleSection>
 
           {/* 四、入院诊断 */}

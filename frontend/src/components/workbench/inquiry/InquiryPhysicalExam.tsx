@@ -5,13 +5,18 @@
  *   - 生命体征（急诊场景红色高亮，门诊普通展示）
  *   - 一般体检 textarea
  *   - 中医四诊（TcmSection 子组件）
- *   - 辅助检查 textarea（必填）
+ *
+ * 辅助检查不在此面板：2026-05-03 重构后改为通过右侧 AI 检查建议（写入/已写入）
+ * 直接管理病历【辅助检查】章节；inquiry.auxiliary_exam DB 字段保留作为 AI 选中项
+ * 的结构化记录。详见 ExamSuggestionTab。
  */
 import { Form, Input } from 'antd'
 import { HeartOutlined, AlertOutlined } from '@ant-design/icons'
 import VitalSignsInput from '../VitalSignsInput'
 import TcmSection from '../TcmSection'
 import CollapsibleSection from '@/components/common/CollapsibleSection'
+
+// 一般体检仍保留 TextArea 输入；辅助检查 textarea 已删除（数据流改由 ExamSuggestionTab 管）
 
 const { TextArea } = Input
 
@@ -71,23 +76,8 @@ export default function InquiryPhysicalExam({ isEmergency }: InquiryPhysicalExam
 
       {/* 中医四诊 */}
       <TcmSection />
-
-      <Form.Item
-        style={fs}
-        name="auxiliary_exam"
-        rules={[{ required: true, message: '请填写辅助检查，无检查项目请填写「暂无」' }]}
-        label={
-          <span style={labelStyle}>
-            辅助检查 <span style={{ color: '#ef4444' }}>*</span>
-          </span>
-        }
-      >
-        <TextArea
-          rows={3}
-          placeholder="已有检查结果原样填入；如无检查请填写「暂无」"
-          style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-        />
-      </Form.Item>
+      {/* 辅助检查字段已迁出此面板，由右侧「检查建议」Tab 通过"写入/已写入"按钮
+          直接管理病历【辅助检查】章节，避免一字段多源（手输 + AI 建议 + OCR + 影像）冲突 */}
     </CollapsibleSection>
   )
 }

@@ -1,15 +1,12 @@
 /**
  * 单份检验报告卡片（LabReportCard.tsx）
- * 展示报告类型、异常提示、展开详情、插入/删除操作。
+ * 展示报告类型、异常提示、展开详情、删除操作。
+ *
+ * 2026-05-03 重构：去掉"插入辅助检查"按钮和 inserted 状态——OCR 当前过渡期
+ * "只展示不写入病历"，下次迭代独立"检验结果"章节时再补回写入入口。
  */
 import { Button, Tag, Typography } from 'antd'
-import {
-  FileTextOutlined,
-  DeleteOutlined,
-  CheckCircleOutlined,
-  PlusOutlined,
-  WarningOutlined,
-} from '@ant-design/icons'
+import { FileTextOutlined, DeleteOutlined, WarningOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 
@@ -31,20 +28,16 @@ function extractPatientName(text: string): string {
 
 interface Props {
   report: LabReportItem
-  inserted: boolean
   expanded: boolean
   currentPatientName?: string
-  onInsert: () => void
   onDelete: () => void
   onToggleExpand: () => void
 }
 
 export default function LabReportCard({
   report,
-  inserted,
   expanded,
   currentPatientName,
-  onInsert,
   onDelete,
   onToggleExpand,
 }: Props) {
@@ -66,9 +59,9 @@ export default function LabReportCard({
   return (
     <div
       style={{
-        border: `1px solid ${nameMismatch ? '#fecaca' : inserted ? '#bbf7d0' : 'var(--border)'}`,
+        border: `1px solid ${nameMismatch ? '#fecaca' : 'var(--border)'}`,
         borderRadius: 8,
-        background: nameMismatch ? '#fff5f5' : inserted ? '#f0fdf4' : 'var(--surface)',
+        background: nameMismatch ? '#fff5f5' : 'var(--surface)',
         overflow: 'hidden',
       }}
     >
@@ -120,11 +113,6 @@ export default function LabReportCard({
             flexShrink: 0,
           }}
         >
-          {inserted && (
-            <Tag color="success" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-              已插入
-            </Tag>
-          )}
           {nameMismatch && (
             <Tag color="error" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
               <WarningOutlined /> 患者不符
@@ -205,21 +193,6 @@ export default function LabReportCard({
           onClick={onDelete}
           style={{ fontSize: 11, borderRadius: 5, height: 24 }}
         />
-        <Button
-          size="small"
-          icon={inserted ? <CheckCircleOutlined /> : <PlusOutlined />}
-          onClick={onInsert}
-          style={{
-            fontSize: 11,
-            borderRadius: 5,
-            height: 24,
-            color: inserted ? '#16a34a' : '#7c3aed',
-            borderColor: inserted ? '#86efac' : '#ddd6fe',
-            background: inserted ? '#f0fdf4' : '#f5f3ff',
-          }}
-        >
-          {inserted ? '已插入' : '插入'}
-        </Button>
       </div>
     </div>
   )
