@@ -29,6 +29,7 @@ import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useAISuggestionStore } from '@/store/aiSuggestionStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
 import { ExamSuggestion } from '@/store/types'
 import { writeSectionToRecord } from './qcFieldMaps'
 import api from '@/services/api'
@@ -98,6 +99,11 @@ export default function ExamSuggestionTab() {
     const joined = orderedNames.join('、')
     // 1) 同步病历章节（即时，跟 AI 诊断"写入"一致的视觉反馈）
     setRecordContent(writeSectionToRecord(recordContent, 'auxiliary_exam', joined))
+    // ★ 触发 useAutoSaveDraft 立即落盘，绕过 5s 防抖：
+    //   之前用户刷新太快（防抖未触发）→ 后端 record 仍是旧值 → snapshot 拉回
+    //   覆盖前端章节内容 → 已写入项消失。flush 信号让 useAutoSaveDraft 立即
+    //   PUT，乐观锁 ref 仍由它内部维护（避免 409 误报）。
+    useRecordAutoSaveTrigger.getState().triggerFlush()
     // 2) 同步 inquiry.auxiliary_exam（保存接诊时随 inquiry PUT 上去持久化）
     const newInquiry = { ...inquiry, auxiliary_exam: joined }
     setInquiry(newInquiry)

@@ -11,7 +11,7 @@
  *   "incoming 全空 + store 已有内容"时跳过本次写入；用户主动清空走外层
  *   handleClearTranscript 调 clearForEncounter，不依赖本 hook。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import api from '@/services/api'
 import { useVoiceTranscriptStore, type DialogueItem } from '@/store/voiceTranscriptStore'
 
@@ -99,8 +99,26 @@ export function useVoiceTranscriptPersistence(
   }, [currentEncounterId])
 
   // 2) 任一字段变化时写回 voiceTranscriptStore（守护见文件 docstring）
+  // ── 2026-05-03 治本：currentEncounterId 切换瞬间的 state 污染 ─────────────
+  // 之前用户报告"门诊转住院后，住院端语音录入区出现门诊的转写文本"——
+  // 根因是本 effect 在 currentEncounterId 切换瞬间被触发：state 闭包里仍是
+  // 旧 encounter 的值（同一渲染周期 React state 还没 reset），导致
+  // setForEncounter(新住院ID, {transcript: 旧门诊 transcript}) 把旧数据
+  // 写到新接诊 slot。effect 1 会在下次渲染异步 restore state 为新值，
+  // 但污染已经发生。
+  // 修法：用 ref 记录上次 encounterId，发现变化时跳过本次写入（让 effect 1
+  // 先 restore 完，下次 state 变化时再正常持久化）。
+  const lastEncounterRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!currentEncounterId) return
+    if (!currentEncounterId) {
+      lastEncounterRef.current = null
+      return
+    }
+    if (lastEncounterRef.current !== currentEncounterId) {
+      // encounter 刚切换，state 还是旧值，不能写——交给 effect 1 重置后再走
+      lastEncounterRef.current = currentEncounterId
+      return
+    }
     const incomingEmpty =
       !state.transcript &&
       !state.summary &&
