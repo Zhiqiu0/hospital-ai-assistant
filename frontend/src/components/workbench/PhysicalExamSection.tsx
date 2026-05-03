@@ -1,16 +1,17 @@
 /**
- * 体格检查与辅助检查区块（PhysicalExamSection.tsx）
- * 包含生命体征录入、体格检查文本、辅助检查（仅化验单上传 OCR 回填）。
+ * 体格检查区块（PhysicalExamSection.tsx）
+ * 包含生命体征录入、体格检查文本。
  * 必须渲染在 Ant Design Form 上下文内。
  *
- * 历史：曾内嵌「快速开单」LabOrderPopover——会把"拟行检查"
- * 写到"入院前辅助检查"字段，违反住院病历评分标准；且与右侧
- * AISuggestionPanel 的 ExamSuggestionTab（AI 检查建议+开单）功能重复，
- * 已下掉。开单走右侧"检查建议"Tab 即可。
+ * 历史：
+ *   - 曾内嵌「快速开单」LabOrderPopover —— 已下掉，开单走右侧"检查建议"Tab。
+ *   - 曾含「辅助检查（入院前）」textarea + LabReportUploadButton —— 2026-05-03
+ *     重构后删除：辅助检查改由右侧「检查建议」Tab "写入/已写入"按钮统一管理
+ *     病历【辅助检查】章节；化验单 OCR / 影像分析后续单独迭代独立章节，
+ *     当前过渡期"只展示不写入病历"。
  */
 import { Form, Input } from 'antd'
 import VitalSignsInput from './VitalSignsInput'
-import LabReportUploadButton from './LabReportUploadButton'
 
 const { TextArea } = Input
 
@@ -38,11 +39,7 @@ const PHYSICAL_EXAM_PLACEHOLDER = [
   '专科检查：',
 ].join('\n')
 
-interface Props {
-  handleLabInsert: (text: string) => void
-}
-
-export default function PhysicalExamSection({ handleLabInsert }: Props) {
+export default function PhysicalExamSection() {
   return (
     <>
       <VitalSignsInput />
@@ -53,7 +50,9 @@ export default function PhysicalExamSection({ handleLabInsert }: Props) {
         label={
           <span style={labelStyle}>
             体格检查{' '}
-            <span style={{ color: '#ef4444', fontSize: 10 }}>（仅文字描述，生命体征在上方录入）</span>
+            <span style={{ color: '#ef4444', fontSize: 10 }}>
+              （仅文字描述，生命体征在上方录入）
+            </span>
           </span>
         }
       >
@@ -63,30 +62,7 @@ export default function PhysicalExamSection({ handleLabInsert }: Props) {
           style={{ borderRadius: 6, fontSize: 12, resize: 'vertical', fontFamily: 'monospace' }}
         />
       </Form.Item>
-
-      <Form.Item
-        style={fieldStyle}
-        name="auxiliary_exam"
-        label={
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              width: '100%',
-            }}
-          >
-            <span style={labelStyle}>辅助检查（入院前）</span>
-            <LabReportUploadButton onInsert={handleLabInsert} />
-          </div>
-        }
-      >
-        <TextArea
-          rows={3}
-          placeholder="记录入院前与本次疾病相关的主要检查及结果；他院检查须注明机构名称和检查时间"
-          style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
-        />
-      </Form.Item>
+      {/* 辅助检查（入院前）字段已删除：数据流改由右侧「检查建议」Tab 统一管 */}
     </>
   )
 }

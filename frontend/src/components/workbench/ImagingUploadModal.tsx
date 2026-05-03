@@ -14,14 +14,16 @@
  * 摄像头拍照：
  *   navigator.mediaDevices.getUserMedia() 获取视频流，
  *   canvas.toBlob() 截帧后作为 File 对象上传。
+ *
+ * ── 2026-05-03 重构 ───────────────────────────────────────────────────────
+ * 不再"插入辅助检查"——AI 分析结果只在弹窗内展示供医生查看，不再写
+ * inquiry.auxiliary_exam，避免跟新接管【辅助检查】章节的 ExamSuggestionTab
+ * 互相覆盖。下次迭代独立"影像所见"章节时再补回写入入口。
  */
 import { useState, useRef } from 'react'
-import { Modal, Button, Select, Input, message, Spin, Typography } from 'antd'
-import { CameraOutlined, UploadOutlined, CheckOutlined } from '@ant-design/icons'
-import { useInquiryStore } from '@/store/inquiryStore'
+import { Modal, Button, Select, Input, message, Spin } from 'antd'
+import { CameraOutlined, UploadOutlined } from '@ant-design/icons'
 import api from '@/services/api'
-
-const { Text } = Typography
 
 interface Props {
   open: boolean
@@ -42,14 +44,12 @@ const IMAGE_TYPES = [
 ]
 
 export default function ImagingUploadModal({ open, onClose }: Props) {
-  const { inquiry, setInquiry } = useInquiryStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [imageType, setImageType] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState('')
-  const [inserted, setInserted] = useState(false)
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -62,7 +62,6 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
     }
     setSelectedFile(file)
     setAnalysisResult('')
-    setInserted(false)
     if (isDcm) {
       setPreviewUrl(null) // 浏览器无法直接预览 DCM
     } else {
@@ -92,20 +91,11 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
     }
   }
 
-  const handleInsert = () => {
-    const existing = inquiry.auxiliary_exam?.trim()
-    const newVal = existing ? existing + '\n' + analysisResult : analysisResult
-    setInquiry({ ...inquiry, auxiliary_exam: newVal })
-    setInserted(true)
-    message.success('已插入辅助检查')
-  }
-
   const handleClose = () => {
     setSelectedFile(null)
     setPreviewUrl(null)
     setImageType('')
     setAnalysisResult('')
-    setInserted(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
     onClose()
   }
@@ -225,25 +215,18 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
             value={analysisResult}
             onChange={e => setAnalysisResult(e.target.value)}
             rows={8}
-            style={{ borderRadius: 8, fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
+            style={{ borderRadius: 8, fontSize: 13, fontFamily: 'inherit', marginBottom: 8 }}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Text style={{ fontSize: 12, color: 'var(--text-4)', alignSelf: 'center' }}>
-              {inserted ? '已插入辅助检查 ✓' : '可直接编辑后插入'}
-            </Text>
-            <Button
-              type="primary"
-              icon={inserted ? <CheckOutlined /> : undefined}
-              onClick={handleInsert}
-              disabled={inserted}
-              style={{
-                background: inserted ? '#22c55e' : 'linear-gradient(135deg, #2563eb, #3b82f6)',
-                border: 'none',
-                borderRadius: 8,
-              }}
-            >
-              {inserted ? '已插入' : '插入辅助检查'}
-            </Button>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-4)',
+              padding: '6px 10px',
+              background: 'var(--surface-2)',
+              borderRadius: 6,
+            }}
+          >
+            ℹ️ 当前过渡期 AI 分析结果仅供查看，暂不写入病历；后续将开通独立的「影像所见」章节
           </div>
         </div>
       )}

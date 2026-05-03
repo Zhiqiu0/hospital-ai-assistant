@@ -9,20 +9,28 @@
  * ExamSuggestion 结构：
  *   { exam_name, reason, category: 'basic'|'differential'|'high_risk', isOrdered? }
  *
- * 已开单功能：
- *   每条检查建议有「已开单」切换按钮，状态存于 ExamSuggestion.isOrdered。
- *   由于 examSuggestions 持久化到 localStorage，刷新后开单状态不丢失。
- *   再次点击取消已开单状态。
+ * ── 2026-05-03 重构 ───────────────────────────────────────────────────────
+ * 跟 AI 诊断/追问建议模式对齐：每条建议带「写入/已写入」切换按钮（替代旧"开单"
+ * 文案）；写入时同时做两件事：
+ *   1. 把当前所有 isOrdered=true 的 exam_name 用「、」拼接后写入病历【辅助检查】
+ *      章节（章节级 replace，不会破坏后续【诊断】等章节）
+ *   2. 同步 inquiry.auxiliary_exam DB 字段（保持单一数据源），保存接诊时持久化
+ * 撤销时（再点已写入）反向：从拼接列表移除该 exam_name → 重写章节 + 同步字段。
  *
- * 注意：「已开单」是纯前端标记，不触发任何后端医嘱接口。
+ * 配套迁移：
+ *   - 左侧问诊面板 InquiryPhysicalExam / 住院端 PhysicalExamSection 的 auxiliary_exam
+ *     textarea 已删除，避免一字段多源冲突。
+ *   - 化验单 OCR、影像分析当前过渡期"只展示不写入病历"，下次迭代独立章节。
  */
 import { useCallback } from 'react'
 import { Button, List, Tag, Typography, Empty, Spin, message } from 'antd'
-import { ExperimentOutlined, CheckOutlined } from '@ant-design/icons'
+import { ExperimentOutlined, CheckOutlined, ArrowRightOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
 import { useAISuggestionStore } from '@/store/aiSuggestionStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { ExamSuggestion } from '@/store/types'
+import { writeSectionToRecord } from './qcFieldMaps'
 import api from '@/services/api'
 
 const { Text } = Typography
@@ -40,7 +48,9 @@ const EXAM_CATEGORY_COLOR: Record<string, string> = {
 
 export default function ExamSuggestionTab() {
   const inquiry = useInquiryStore(s => s.inquiry)
+  const setInquiry = useInquiryStore(s => s.setInquiry)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const { recordContent, setRecordContent } = useRecordStore()
   const { examSuggestions, isExamLoading, setExamSuggestions, setExamLoading } =
     useAISuggestionStore()
 
@@ -70,15 +80,31 @@ export default function ExamSuggestionTab() {
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   /**
-   * 切换已开单状态：点击标记为已开单，再次点击取消。
-   * 直接更新 store 中对应条目的 isOrdered 字段，随 persist 持久化。
+   * 切换"写入/已写入"状态：
+   *   - 切换 examSuggestions[].isOrdered 标记（store persist 保活刷新页面也在）
+   *   - 用所有 isOrdered=true 的 exam_name 重写 inquiry.auxiliary_exam（结构化字段）
+   *   - 用 writeSectionToRecord 重写病历【辅助检查】章节（章节级 replace，
+   *     不会破坏后续【诊断】等章节，区别于 InquirySuggestion 的"marker 后全删"）
+   * 撤销时（再点已写入）反向：移除该 exam_name 后同步两处。
    */
   const handleToggleOrdered = (examName: string) => {
-    setExamSuggestions(
-      examSuggestions.map((s: ExamSuggestion) =>
-        s.exam_name === examName ? { ...s, isOrdered: !s.isOrdered } : s
-      )
+    const updated = examSuggestions.map((s: ExamSuggestion) =>
+      s.exam_name === examName ? { ...s, isOrdered: !s.isOrdered } : s
     )
+    setExamSuggestions(updated)
+    // 拼接当前所有 isOrdered=true 的检查项；保持 examSuggestions 列表顺序与医生
+    // 点击顺序无关，符合"基础必查→鉴别→高风险"原始 AI 输出顺序，便于阅读
+    const orderedNames = updated.filter(s => s.isOrdered).map(s => s.exam_name)
+    const joined = orderedNames.join('、')
+    // 1) 同步病历章节（即时，跟 AI 诊断"写入"一致的视觉反馈）
+    setRecordContent(writeSectionToRecord(recordContent, 'auxiliary_exam', joined))
+    // 2) 同步 inquiry.auxiliary_exam（保存接诊时随 inquiry PUT 上去持久化）
+    const newInquiry = { ...inquiry, auxiliary_exam: joined }
+    setInquiry(newInquiry)
+    if (currentEncounterId) {
+      // 静默 PUT，跟 LabReportTab 之前模式一致；失败不阻塞 UI（下次保存按钮还会再试）
+      api.put(`/encounters/${currentEncounterId}/inquiry`, newInquiry).catch(() => {})
+    }
   }
 
   if (isExamLoading) {
@@ -142,11 +168,11 @@ export default function ExamSuggestionTab() {
               >
                 {item.exam_name}
               </Text>
-              {/* 已开单切换按钮：绿色=已开单，默认=未开单，再次点击取消 */}
+              {/* 写入/已写入切换：跟 DiagnosisSuggestion 模式对齐（图标 + 绿色态） */}
               <Button
                 size="small"
                 type={item.isOrdered ? 'primary' : 'default'}
-                icon={item.isOrdered ? <CheckOutlined /> : undefined}
+                icon={item.isOrdered ? <CheckOutlined /> : <ArrowRightOutlined />}
                 onClick={() => handleToggleOrdered(item.exam_name)}
                 style={{
                   fontSize: 11,
@@ -158,7 +184,7 @@ export default function ExamSuggestionTab() {
                     : { borderColor: 'var(--border)', color: 'var(--text-3)' }),
                 }}
               >
-                {item.isOrdered ? '已开单' : '开单'}
+                {item.isOrdered ? '已写入' : '写入'}
               </Button>
             </div>
             <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>

@@ -114,13 +114,6 @@ export function useInpatientInquiryPanel() {
     setSaving(false)
   }
 
-  // 辅助检查文本插入（检验单 / 上传报告回调）
-  const handleLabInsert = (text: string) => {
-    const current = form.getFieldValue('auxiliary_exam') || ''
-    form.setFieldValue('auxiliary_exam', current ? current + '\n' + text : text)
-    setIsDirty(true)
-  }
-
   // 问诊模式：语音结构化结果分流入左侧表单 + 患者档案
   // 1.6.3：profile 8 字段路由到 patientProfileEditStore（统一保存按钮再提交），
   // 避免被丢弃；inquiry 字段照旧填表单
@@ -159,6 +152,32 @@ export function useInpatientInquiryPanel() {
   const profileSaving = usePatientProfileEditStore(s => s.saving)
 
   const saveAll = async () => {
+    // 必填校验守卫：跟门诊端对齐，避免"必填没填也算保存成功 + 病历自动生成 → 字段
+    // 变灰再也填不进去"的连锁 bug。详见 useInquiryPanel.saveAll 同步注释。
+    if (isDirty) {
+      try {
+        await form.validateFields()
+      } catch (errInfo) {
+        // 详见 useInquiryPanel.saveAll 同步注释
+        const errFields = (errInfo as { errorFields?: Array<{ name: unknown; errors: string[] }> })
+          ?.errorFields
+        const first = errFields?.[0]
+        if (first?.name !== undefined) {
+          form.scrollToField(first.name as string | number | (string | number)[], {
+            behavior: 'smooth',
+            block: 'center',
+          })
+          setTimeout(() => {
+            const inst = form.getFieldInstance(
+              first.name as string | number | (string | number)[]
+            ) as { focus?: () => void } | undefined
+            inst?.focus?.()
+          }, 300)
+        }
+        message.error(first?.errors?.[0] || '请补全必填项后再保存')
+        return
+      }
+    }
     // 当前患者 ID 走 activeEncounterStore；详情对象不需要，直接拿 ID 调 profile save
     const patientId = useActiveEncounterStore.getState().patientId || ''
     const profilePromise = profileDirty
@@ -179,7 +198,6 @@ export function useInpatientInquiryPanel() {
     saving,
     onSave,
     painMarks,
-    handleLabInsert,
     applyVoiceInquiry,
     applyVoiceToRecord,
     hasSavedInquiry,
