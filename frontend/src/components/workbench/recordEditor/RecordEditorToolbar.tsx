@@ -54,7 +54,7 @@ interface RecordEditorToolbarProps {
   qcIssues: unknown[]
   qcPass: boolean | null
   gradeScore: QCBadge | null
-  currentPatient: any
+  currentPatient: { name: string } | null
   handleGenerate: () => void
   handlePolish: () => void
   handleQC: () => void

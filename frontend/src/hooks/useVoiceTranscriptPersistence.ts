@@ -136,6 +136,8 @@ export function useVoiceTranscriptPersistence(
       if (curHasContent) return
     }
     useVoiceTranscriptStore.getState().setForEncounter(currentEncounterId, state)
+    // 只关心 state 的 7 个具体字段变化（已展开），整体 state 引用变化不应触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     currentEncounterId,
     state.transcript,

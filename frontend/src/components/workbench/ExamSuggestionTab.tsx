@@ -79,6 +79,9 @@ export default function ExamSuggestionTab() {
     } finally {
       setExamLoading(false)
     }
+    // currentEncounterId / setExamLoading / setExamSuggestions 引用稳定，
+    // 只需在问诊三要素变化时重新拉取建议
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   /**

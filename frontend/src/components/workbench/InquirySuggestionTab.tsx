@@ -84,6 +84,8 @@ export default function InquirySuggestionTab() {
       setDiagnosisSuggestions([])
       setAppliedDiagnosis(null)
     }
+    // 仅在主诉变化时清空诊断建议；isInputLocked / setter 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint])
 
   const handleLoadSuggestions = useCallback(async () => {
@@ -106,6 +108,8 @@ export default function InquirySuggestionTab() {
     } finally {
       setLoading(false)
     }
+    // currentEncounterId / setSuggestions 引用稳定，问诊三要素变化时重新拉取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   const handleLoadMore = useCallback(async () => {
@@ -131,6 +135,8 @@ export default function InquirySuggestionTab() {
     } finally {
       setLoadingMore(false)
     }
+    // setSuggestions 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   const handleSelectOption = (suggestionId: string, option: string) => {

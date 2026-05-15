@@ -53,6 +53,9 @@ export default function LabReportTab() {
 
   useEffect(() => {
     fetchReports()
+    // fetchReports 是 component-local 函数，加进 deps 会让 effect 每次 render 都跑；
+    // setState 在 fetchReports 内部是异步加载预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {

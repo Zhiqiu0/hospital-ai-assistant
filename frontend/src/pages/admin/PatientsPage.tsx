@@ -67,6 +67,8 @@ export default function PatientsPage() {
 
   useEffect(() => {
     loadPatients()
+    // 只需挂载时拉一次；loadPatients 内部 setState 在此语义下是预期
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = () => {

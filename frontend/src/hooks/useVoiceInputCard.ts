@@ -153,7 +153,6 @@ export function useVoiceInputCard({
   //   等新 token 到了再渲染，避免无效 403。
   useEffect(() => {
     // 同步清空旧 token——cascading render 是有意为之的副作用，不算反模式
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAudioToken(null)
     if (!transcriptId) return
     // 用 cleanup + cancelled 标记防异步 race：连续切多个 transcriptId 时

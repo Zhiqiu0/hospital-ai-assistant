@@ -9,7 +9,7 @@
  * 仅维护浅色一套设计，不做深浅切换。
  */
 
-import React, { useEffect } from 'react'
+import React from 'react'
 import ReactDOM from 'react-dom/client'
 // AntApp 是 antd v5 的全局上下文容器，提供 message/notification/Modal 真正能渲染
 // 的 React 上下文（v5.4+ 静态 `import { message } from 'antd'` 不再消费上下文，
@@ -20,19 +20,10 @@ import { App as AntApp, ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { bindMessageApi } from './services/messageBridge'
+import { MessageBinder } from './services/MessageBinder'
 import { initSentry } from './sentry'
 import { scenes, neutral, radius, typography, shadow } from './theme/tokens'
 import './index.css'
-
-/** 把 AntApp 上下文里的 message API 桥接到全局 messageBridge */
-function MessageBinder({ children }: { children: React.ReactNode }) {
-  const { message } = AntApp.useApp()
-  useEffect(() => {
-    bindMessageApi(message)
-  }, [message])
-  return <>{children}</>
-}
 
 // Sentry 初始化必须早于 React 渲染，否则错过早期 unhandled error / rejection
 // DSN 未配置时内部直接 return，本地开发零侵入

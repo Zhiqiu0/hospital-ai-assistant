@@ -40,7 +40,6 @@ function proxy(method: keyof MessageInstance): MessageMethod {
       return (_api[method] as unknown as MessageMethod)(...args)
     }
     if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[messageBridge] message.${String(method)}() 在 AntApp 挂载前被调用，已跳过`,
         ...args

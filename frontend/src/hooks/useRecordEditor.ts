@@ -369,6 +369,9 @@ export function useRecordEditor() {
       setPendingGenerate(false)
       handleGenerate()
     }
+    // 只关心 pendingGenerate flag 切到 true；handleGenerate / setPendingGenerate 加进
+    // deps 会让 effect 在每次 render 都跑（handleGenerate 是 component-local 函数）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingGenerate])
 
   const isBusy = isGenerating || isPolishing || isQCing || isSupplementing

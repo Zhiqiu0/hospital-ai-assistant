@@ -23,8 +23,15 @@ interface WorkbenchHeaderProps {
   accentColor: string
   accentLight: string
   accentLighter: string
-  user: any
-  currentPatient: any
+  user: {
+    real_name?: string
+    department_name?: string
+  } | null
+  currentPatient: {
+    name: string
+    gender?: string | null
+    age?: number | null
+  } | null
   currentEncounterId: string | null
   setModalOpen: (mode: 'new' | 'returning' | null) => void
   openHistory: () => void

@@ -114,6 +114,7 @@ export function useDicomViewer({
     setWw(null)
     const url = buildUrl(null, null)
     if (url) loadImage(url)
+    // setState 重置 + 重新加载是切片切换时的预期
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studyId, cur?.instance])
 

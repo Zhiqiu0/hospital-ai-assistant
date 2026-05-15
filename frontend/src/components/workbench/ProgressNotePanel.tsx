@@ -38,6 +38,8 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
     setContent(item.content || '')
     setRecordedAt(item.recordedAt ? dayjs(item.recordedAt) : dayjs())
     setLocalStatus(null) // 切换条目时清除本地覆盖
+    // 只关心 item.id 变化（切到新条目时重置）；setState 在条目切换时是预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id])
 
   if (!item) {

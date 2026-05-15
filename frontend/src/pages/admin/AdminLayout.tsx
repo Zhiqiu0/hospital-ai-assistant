@@ -68,7 +68,9 @@ export default function AdminLayout() {
   const handleLogout = async () => {
     try {
       await api.post('/auth/logout')
-    } catch (_) {}
+    } catch {
+      // logout 失败也要继续清本地态
+    }
     resetWorkbench()
     clearAuth()
     navigate('/login')

@@ -66,6 +66,8 @@ export default function InpatientWorkbenchPage() {
 
   useEffect(() => {
     setRecordType('admission_note')
+    // setRecordType 来自 zustand store，引用稳定；只需挂载时设置一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）

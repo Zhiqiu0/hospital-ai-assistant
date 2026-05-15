@@ -61,6 +61,9 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     loadLogs()
+    // loadLogs 引用每次 render 都变，加进 deps 会无限循环；只需挂载时跑一次。
+    // setState（loadLogs 内部）在 effect 里也是这个语义下的预期，一并 disable。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = () => {

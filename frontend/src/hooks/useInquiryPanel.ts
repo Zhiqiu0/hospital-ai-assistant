@@ -68,6 +68,8 @@ export function useInquiryPanel() {
     } else {
       setIsDirty(false)
     }
+    // inquiry 是整个表单状态，加进 deps 会让每次输入都重置——只在接诊切换时重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, currentEncounterId, inquirySavedAt])
 
   // 辅助检查由外部（如追问建议）写入时同步表单
@@ -76,6 +78,8 @@ export function useInquiryPanel() {
     if (inquiry.auxiliary_exam !== current) {
       form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
     }
+    // form 引用稳定，加进 deps 会让效果过度触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.auxiliary_exam])
 
   // 就诊时间从 store 初始化（workspace snapshot 的 visited_at）
@@ -83,6 +87,8 @@ export function useInquiryPanel() {
     if (inquiry.visit_time && !form.getFieldValue('visit_time')) {
       form.setFieldValue('visit_time', dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm'))
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.visit_time])
 
   // 现病史被追问建议修改时同步表单并激活保存按钮
@@ -92,6 +98,8 @@ export function useInquiryPanel() {
       form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
       setIsDirty(true)
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.history_present_illness])
 
   // AI 诊断建议写入 initial_impression 时同步表单
@@ -101,6 +109,8 @@ export function useInquiryPanel() {
       form.setFieldValue('initial_impression', inquiry.initial_impression || '')
       setIsDirty(true)
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.initial_impression])
 
   const onSave = async (values: any) => {

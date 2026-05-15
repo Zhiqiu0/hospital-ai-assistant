@@ -90,6 +90,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     if (visitType !== defaultType) {
       setVisitMeta(isFirstVisit, defaultType)
     }
+    // setVisitMeta 引用稳定（hook 返回的 stable callback），无需加进 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEmergency])
 
   const {

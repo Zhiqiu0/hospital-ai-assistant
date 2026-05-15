@@ -35,6 +35,9 @@ export function usePatientProfileCard() {
   // 同一患者且本地 dirty 时不会被 store 内部覆盖（保留医生未保存改动）
   useEffect(() => {
     loadFromProfile(patientId, profile)
+    // profile 引用本身变化频繁（LRU 命中刷 lastAccessedAt），但 updated_at 才反映
+    // 真实数据变化；故意只看 patientId + updated_at
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId, profile?.updated_at, loadFromProfile])
   // 注意：profile?.updated_at 作为 dep —— 后端写入后 cache.profile 引用变，
   // 但 updated_at 也会变；如果 cache 因为 LRU 命中（lastAccessedAt 刷新）

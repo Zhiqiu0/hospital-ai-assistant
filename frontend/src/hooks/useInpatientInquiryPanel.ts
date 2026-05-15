@@ -66,6 +66,8 @@ export function useInpatientInquiryPanel() {
     } else {
       setIsDirty(false)
     }
+    // inquiry 是整个表单状态，加进 deps 会让每次输入都重置——只在接诊切换时重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, currentEncounterId, inquirySavedAt])
 
   // 追问建议修改现病史时同步表单并激活保存按钮
@@ -75,6 +77,8 @@ export function useInpatientInquiryPanel() {
       form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
       setIsDirty(true)
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.history_present_illness])
 
   // AI 诊断建议写入 initial_impression 时同步 admission_diagnosis 字段
@@ -85,6 +89,9 @@ export function useInpatientInquiryPanel() {
       form.setFieldValue('admission_diagnosis', newVal)
       setIsDirty(true)
     }
+    // form 引用稳定，inquiry.admission_diagnosis 也是这个 effect 的潜在触发但
+    // 只关心 initial_impression（AI 写入路径）变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.initial_impression])
 
   const onSave = async (values: any) => {

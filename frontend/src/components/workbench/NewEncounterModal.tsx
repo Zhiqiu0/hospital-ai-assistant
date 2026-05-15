@@ -52,7 +52,9 @@ export default function NewEncounterModal({
       setSelectedPatient(null)
       form.resetFields()
     }
-  }, [open, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+    // setState 在 open 变化时是预期的初始化路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode])
 
   const handleClose = () => onClose()
 

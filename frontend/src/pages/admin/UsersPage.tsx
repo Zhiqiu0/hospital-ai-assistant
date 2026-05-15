@@ -90,6 +90,8 @@ export default function UsersPage() {
   useEffect(() => {
     loadUsers()
     loadDepts()
+    // 只挂载时加载一次；setState 在 effect 里是预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const openCreate = () => {

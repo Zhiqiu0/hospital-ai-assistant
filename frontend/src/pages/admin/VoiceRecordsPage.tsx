@@ -62,6 +62,8 @@ export default function VoiceRecordsPage() {
 
   useEffect(() => {
     loadData(1)
+    // status 变化时重新加载；setState 在 effect 里是预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status])
 
   const handleSearch = () => {

@@ -142,7 +142,9 @@ export function useWorkbenchBase({
   const handleLogout = async () => {
     try {
       await api.post('/auth/logout')
-    } catch (_) {}
+    } catch {
+      // logout 失败也要继续清本地态（token 可能已过期，server 拒绝是正常的）
+    }
     resetAllWorkbench()
     clearAuth()
     navigate('/login')
