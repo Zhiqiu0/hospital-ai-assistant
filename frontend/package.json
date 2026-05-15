@@ -18,6 +18,7 @@
     "@cornerstonejs/core": "^4.20.0",
     "@cornerstonejs/dicom-image-loader": "^4.22.2",
     "@cornerstonejs/tools": "^4.20.0",
+    "@sentry/react": "^10.53.1",
     "antd": "^5.21.0",
     "axios": "^1.7.7",
     "dayjs": "^1.11.13",

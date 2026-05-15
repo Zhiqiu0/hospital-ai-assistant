@@ -25,6 +25,7 @@ import {
   ExperimentOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import * as Sentry from '@sentry/react'
 import { useAuthStore } from '@/store/authStore'
 import { resetAllWorkbench } from '@/store/activeEncounterStore'
 import api from '@/services/api'
@@ -54,14 +55,43 @@ export default function LoginPage() {
   const theme = selectedSystem === 'inpatient' ? scenes.inpatient : scenes.outpatient
 
   const resolveLoginErrorMessage = async (username: string, error: any) => {
-    const detail = error?.detail
-    if (detail && detail !== '用户名或密码错误') return detail
-    try {
-      const res: any = await api.get('/auth/check-username', { params: { username } })
-      return res.exists ? '密码不正确' : '账号不存在'
-    } catch {
-      return detail || '登录失败，请稍后重试'
+    // 诊断 breadcrumb：把 axios error 形态记下来，方便下次同类 bug 排查
+    // 不记 username 内容（PII），仅记 error 形态
+    const errorShape = {
+      hasResponse: !!error?.response,
+      httpStatus: error?.response?.status,
+      errorCode: error?.code,
+      errorMessage: error?.message?.slice(0, 200),
+      hasDetail: !!error?.detail,
     }
+
+    const detail = error?.detail
+    let finalToast: string
+    let checkUsernameResult: 'skipped' | 'success' | 'failed' = 'skipped'
+
+    if (detail && detail !== '用户名或密码错误') {
+      finalToast = detail
+    } else {
+      try {
+        const res: any = await api.get('/auth/check-username', { params: { username } })
+        checkUsernameResult = 'success'
+        finalToast = res.exists ? '密码不正确' : '账号不存在'
+      } catch {
+        checkUsernameResult = 'failed'
+        finalToast = detail || '登录失败，请稍后重试'
+      }
+    }
+
+    // 上报到 Sentry：完整记录"用户看到的 toast" + "实际错误形态"，
+    // 下次同样的"网络错误弹错 toast"问题，看 Sentry event 一眼就能识别
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      level: 'warning',
+      message: 'login failed → toast resolved',
+      data: { ...errorShape, checkUsernameResult, finalToast },
+    })
+
+    return finalToast
   }
 
   const onFinish = async (values: { username: string; password: string }) => {
