@@ -301,6 +301,49 @@ async def migrate():
             print(f"    patients 拼音回填 - SKIP ({str(e)[:80]})")
         print()
 
+        # 9. encounters 取消接诊字段（兜底，正式版由 alembic f5a6b7c8d9e0 迁移）
+        # cancel_reason / cancelled_at / cancelled_by 用于"医生取消接诊"功能
+        # alembic 不可用或老 DB 没 stamp 时，这里兜底保证业务能跑
+        print("[9] encounters 取消接诊字段...")
+        for col, col_type in [
+            ("cancel_reason", "VARCHAR(500)"),
+            ("cancelled_at",  "TIMESTAMP"),
+            ("cancelled_by",  "VARCHAR REFERENCES users(id)"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE encounters ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    encounters.{col} - OK")
+            except Exception as e:
+                print(f"    encounters.{col} - SKIP ({str(e)[:80]})")
+        print()
+
+        # 10. patients 软删除字段（兜底，正式版由 alembic a6b7c8d9e0f1 迁移）
+        # 配合接诊取消：取消时若该患者档案是这次新建的孤儿数据则一并软删
+        print("[10] patients 软删除字段...")
+        for col, col_type in [
+            ("is_deleted", "BOOLEAN NOT NULL DEFAULT false"),
+            ("deleted_at", "TIMESTAMP"),
+            ("deleted_by", "VARCHAR REFERENCES users(id)"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE patients ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    patients.{col} - OK")
+            except Exception as e:
+                print(f"    patients.{col} - SKIP ({str(e)[:80]})")
+        # 兜底回填：避免老数据 is_deleted 为 NULL（虽然 DEFAULT 已生效）
+        try:
+            await conn.execute(text(
+                "UPDATE patients SET is_deleted = false WHERE is_deleted IS NULL"
+            ))
+            print("    patients.is_deleted 回填 NULL - OK")
+        except Exception as e:
+            print(f"    patients.is_deleted 回填 - SKIP ({str(e)[:80]})")
+        print()
+
     print("=== 迁移完成 ===")
 
 
