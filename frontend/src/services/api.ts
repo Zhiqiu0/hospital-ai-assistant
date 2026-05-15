@@ -17,6 +17,7 @@
 import axios from 'axios'
 import { message } from 'antd'
 import { useAuthStore } from '@/store/authStore'
+import { captureAxiosError } from '@/sentry'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -57,6 +58,13 @@ api.interceptors.response.use(
     } else if (!status) {
       // status 为 undefined：网络断连、请求超时或 CORS 错误
       message.error('网络连接失败，请检查网络后重试')
+    }
+
+    // 上报到 Sentry：网络错误 / 5xx / 401（非登录请求） 都值得追溯
+    // 403/404 不报，业务噪音；DSN 未配时 captureAxiosError 内部 no-op
+    const shouldReport = !status || status >= 500 || (status === 401 && !isLoginRequest)
+    if (shouldReport) {
+      captureAxiosError(error)
     }
 
     return Promise.reject(error.response?.data || error)

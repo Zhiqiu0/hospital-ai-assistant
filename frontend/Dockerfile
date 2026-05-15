@@ -9,6 +9,16 @@ COPY package*.json ./
 # 跳过非当前平台的 optional dep（如 netbsd-arm64/win32-x64 等）
 RUN npm install --no-audit --no-fund --registry=https://mirrors.tencentyun.com/npm/
 
+# Sentry 前端 DSN / 环境标识 / release，由 docker-compose 的 build.args 传入
+# Vite 是 build-time 替换 import.meta.env.VITE_*，所以必须在 npm run build 之前
+# 以 ENV 暴露给 build 进程。未传 = 空字符串 = sentry.ts 内部直接跳过初始化（零侵入）。
+ARG VITE_SENTRY_DSN=""
+ARG VITE_SENTRY_ENVIRONMENT=""
+ARG VITE_SENTRY_RELEASE=""
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+ENV VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT
+ENV VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE
+
 COPY . .
 RUN npm run build
 

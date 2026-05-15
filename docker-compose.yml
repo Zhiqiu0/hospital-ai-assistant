@@ -142,7 +142,16 @@ services:
       - "8010:8010"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Sentry 前端 build-time 注入（Vite 把 VITE_* 直接 inline 到 bundle）
+      # FRONTEND_SENTRY_DSN 跟后端 SENTRY_DSN 分开（前后端可以是不同的 Sentry 项目；
+      # 共用 SENTRY_ENVIRONMENT 与 SENTRY_RELEASE 便于跨端关联 event）
+      # 三者留空时 sentry.ts 内部跳过 init，不影响本地 docker compose up 行为
+      args:
+        VITE_SENTRY_DSN: ${FRONTEND_SENTRY_DSN:-}
+        VITE_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+        VITE_SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     restart: unless-stopped
     depends_on:
       backend:

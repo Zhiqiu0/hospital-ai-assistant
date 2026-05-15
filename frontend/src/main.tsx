@@ -15,8 +15,13 @@ import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { initSentry } from './sentry'
 import { scenes, neutral, radius, typography, shadow } from './theme/tokens'
 import './index.css'
+
+// Sentry 初始化必须早于 React 渲染，否则错过早期 unhandled error / rejection
+// DSN 未配置时内部直接 return，本地开发零侵入
+initSentry()
 
 const outpatient = scenes.outpatient
 
