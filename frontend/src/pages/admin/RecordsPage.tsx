@@ -12,7 +12,8 @@
  *   一次返回所有关联信息，无需前端二次请求。
  */
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Modal, Button, Space, Input, message } from 'antd'
+import { Table, Tag, Typography, Modal, Button, Space, Input } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   FileTextOutlined,
   SearchOutlined,

@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Department
-from app.schemas.department import DepartmentCreate
+from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.services.redis_cache import redis_cache
 
 _LIST_KEY = "department:list_active"
@@ -93,6 +93,25 @@ class DepartmentService:
         """
         dept = Department(name=data.name, code=data.code, parent_id=data.parent_id)
         self.db.add(dept)
+        await self.db.commit()
+        await self.db.refresh(dept)
+        await redis_cache.delete(_LIST_KEY)
+        return dept
+
+    async def update(self, dept_id: str, data: DepartmentUpdate) -> Department:
+        """编辑科室基本信息（name / parent_id）。
+
+        故意不允许改 code——见 DepartmentUpdate 的注释。
+        改完主动失效 list 缓存，避免前端拿到旧名称。
+        """
+        dept = await self.get_by_id(dept_id)
+        if not dept:
+            raise HTTPException(status_code=404, detail="科室不存在")
+        if data.name is not None:
+            dept.name = data.name
+        # parent_id 用 model_fields_set 而非 None 判断：允许显式置 None"提升为顶级"
+        if "parent_id" in data.model_fields_set:
+            dept.parent_id = data.parent_id
         await self.db.commit()
         await self.db.refresh(dept)
         await redis_cache.delete(_LIST_KEY)

@@ -6,7 +6,8 @@
  *   - 查看历史体征记录列表
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Button, Form, InputNumber, message, Table, Typography, Divider } from 'antd'
+import { Button, Form, InputNumber, Table, Typography, Divider } from 'antd'
+import { message } from '@/services/messageBridge'
 import { PlusOutlined, HistoryOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '@/services/api'

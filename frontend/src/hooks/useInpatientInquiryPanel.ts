@@ -7,7 +7,8 @@
  *   - 本 hook 仅留 React 状态 + Form 编排 + 副作用 + API 调度
  */
 import { useEffect, useState } from 'react'
-import { Form, message } from 'antd'
+import { Form } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'

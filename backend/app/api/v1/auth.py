@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.client_ip import get_client_ip
 from app.core.rate_limit import login_limiter
 from app.database import get_db
 from app.models.revoked_token import RevokedToken
@@ -64,7 +65,7 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
             action="login",
             user_name=request.username,
             detail=f"登录失败：{detail or '账号或密码错误'}",
-            ip_address=http_request.client.host if http_request.client else None,
+            ip_address=get_client_ip(http_request),
             status="error",
         )
         # 运行日志：仅 username + 失败原因，不带密码 / 任何 PII

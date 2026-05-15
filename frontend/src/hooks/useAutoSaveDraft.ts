@@ -23,7 +23,7 @@
  *   - 不做实时协作 OT/CRDT（医生场景不需要多人同时编辑同一份病历）
  */
 import { useEffect, useRef, useState } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import { useRecordStore } from '@/store/recordStore'
 import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'

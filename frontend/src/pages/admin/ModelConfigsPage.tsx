@@ -23,9 +23,9 @@ import {
   Table,
   Tag,
   Typography,
-  message,
 } from 'antd'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 
 const { Title, Text } = Typography
 

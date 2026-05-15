@@ -5,7 +5,8 @@
  * 支持选中条目、新建病程记录、删除草稿。
  */
 import { useEffect, useState, useCallback } from 'react'
-import { Button, Tag, Empty, Spin, Popconfirm, message } from 'antd'
+import { Button, Tag, Empty, Spin, Popconfirm } from 'antd'
+import { message } from '@/services/messageBridge'
 import { PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useRecordStore } from '@/store/recordStore'

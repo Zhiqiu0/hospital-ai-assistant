@@ -3,7 +3,8 @@
  * 从 InpatientWorkbenchPage 提取，避免页面文件过长。
  */
 import { useState } from 'react'
-import { Button, Space, Tag, Typography, Avatar, Divider, Modal, message } from 'antd'
+import { Button, Space, Tag, Typography, Avatar, Divider, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { Layout } from 'antd'
 import {
   LogoutOutlined,

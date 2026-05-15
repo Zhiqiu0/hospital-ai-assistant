@@ -21,7 +21,8 @@
  * 互相覆盖。下次迭代独立"影像所见"章节时再补回写入入口。
  */
 import { useState, useRef } from 'react'
-import { Modal, Button, Select, Input, message, Spin } from 'antd'
+import { Modal, Button, Select, Input, Spin } from 'antd'
+import { message } from '@/services/messageBridge'
 import { CameraOutlined, UploadOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 

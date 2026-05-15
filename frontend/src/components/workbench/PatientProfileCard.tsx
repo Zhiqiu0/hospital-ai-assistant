@@ -26,7 +26,7 @@
  *   - 本主文件保留：状态聚合 + 折叠初始化 + 字段表 map + ✓ 仍准确 confirm API
  */
 import { useEffect, useRef, useState } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { usePatientProfileCard } from '@/hooks/usePatientProfileCard'
 import api from '@/services/api'
 import { usePatientCacheStore } from '@/store/patientCacheStore'

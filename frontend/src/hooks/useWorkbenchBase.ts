@@ -19,7 +19,7 @@
  */
 
 import { useState } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'

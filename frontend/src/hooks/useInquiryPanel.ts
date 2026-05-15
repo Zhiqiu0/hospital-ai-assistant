@@ -8,7 +8,8 @@
  *   - 生命体征快填处理
  */
 import { useEffect, useState } from 'react'
-import { Form, message } from 'antd'
+import { Form } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import type { VisitType } from '@/domain/medical'

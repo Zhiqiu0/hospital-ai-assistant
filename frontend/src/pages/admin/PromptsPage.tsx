@@ -22,11 +22,11 @@ import {
   Tag,
   Typography,
   Card,
-  message,
   Popconfirm,
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 
 const { Title, Text } = Typography
 const { TextArea } = Input

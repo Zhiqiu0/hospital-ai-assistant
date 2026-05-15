@@ -8,7 +8,8 @@
  *   - 顶栏 + Steps 进度指示器
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Layout, Button, message, Card, Typography, Tag, Steps } from 'antd'
+import { Layout, Button, Card, Typography, Tag, Steps } from 'antd'
+import { message } from '@/services/messageBridge'
 import { ScanOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'

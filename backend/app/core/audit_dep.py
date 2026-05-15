@@ -22,6 +22,7 @@ action 命名约定：
 """
 from fastapi import Depends, Request
 
+from app.core.client_ip import get_client_ip
 from app.core.security import require_admin
 from app.services.audit_service import log_action
 
@@ -50,6 +51,7 @@ async def audit_admin_action(
             user_id=current_user.id,
             user_name=current_user.username,
             user_role=current_user.role,
-            ip_address=request.client.host if request.client else None,
+            # 走 X-Forwarded-For / X-Real-IP 拿反代背后的真实客户端 IP
+            ip_address=get_client_ip(request),
             status=status,
         )

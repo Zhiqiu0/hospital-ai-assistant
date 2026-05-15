@@ -17,7 +17,8 @@
  *   - 本主文件保留：状态聚合 + AI 修复 / 写入逻辑 + 三种空态视图 + 列表分组
  */
 import { useEffect, useState } from 'react'
-import { Alert, Empty, Spin, Typography, message } from 'antd'
+import { Alert, Empty, Spin, Typography } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'

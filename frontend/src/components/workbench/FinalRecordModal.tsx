@@ -15,7 +15,8 @@
  *   存在必须修复项且未勾选 override 时，提交按钮 disabled。
  */
 import { useState } from 'react'
-import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio, message } from 'antd'
+import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio } from 'antd'
+import { message } from '@/services/messageBridge'
 import { CheckOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'

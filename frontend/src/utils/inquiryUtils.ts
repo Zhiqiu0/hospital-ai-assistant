@@ -4,7 +4,7 @@
  * 提取自 useInquiryPanel 和 useInpatientInquiryPanel 的共享纯函数，
  * 两个 hook 都依赖这里，避免重复维护。
  */
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   writeSectionToRecord,
   FIELD_TO_SECTION,

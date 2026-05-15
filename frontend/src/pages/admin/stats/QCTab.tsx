@@ -8,7 +8,7 @@
 import { Row, Col, Card, Table, Tag, Spin } from 'antd'
 import { SafetyOutlined } from '@ant-design/icons'
 
-import { RISK_COLOR, RISK_LABEL, ISSUE_TYPE_LABEL } from './constants'
+import { RISK_COLOR, RISK_LABEL, ISSUE_TYPE_LABEL, FIELD_NAME_LABEL } from './constants'
 
 interface QCTabProps {
   qcData: any
@@ -45,7 +45,13 @@ export default function QCTab({ qcData, loading }: QCTabProps) {
   ]
 
   const qcFieldColumns = [
-    { title: '字段', dataIndex: 'field_name', key: 'field_name' },
+    {
+      title: '字段',
+      dataIndex: 'field_name',
+      key: 'field_name',
+      // FIELD_NAME_LABEL 没命中时回退到原值，保证未来后端新增字段不会让单元格空白
+      render: (v: string) => FIELD_NAME_LABEL[v] || v,
+    },
     { title: '问题次数', dataIndex: 'count', key: 'count' },
   ]
 

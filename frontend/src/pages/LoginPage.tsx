@@ -11,7 +11,8 @@
  * 图标：使用 antd SVG 图标替代 emoji（无障碍 + 专业度）。
  */
 import { useState } from 'react'
-import { Form, Input, Button, message } from 'antd'
+import { Form, Input, Button } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   UserOutlined,
   LockOutlined,

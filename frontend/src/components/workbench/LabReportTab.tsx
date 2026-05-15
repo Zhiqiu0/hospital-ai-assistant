@@ -8,7 +8,8 @@
  * 互相覆盖。下次迭代独立"检验结果"章节时再补回写入入口。
  */
 import { useEffect, useState } from 'react'
-import { Button, Empty, Spin, message, Upload } from 'antd'
+import { Button, Empty, Spin, Upload } from 'antd'
+import { message } from '@/services/messageBridge'
 import { ReloadOutlined, InboxOutlined } from '@ant-design/icons'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import LabReportCard from './LabReportCard'

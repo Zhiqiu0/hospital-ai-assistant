@@ -45,6 +45,48 @@ router = APIRouter()
 
 # ── 私有辅助 ──────────────────────────────────────────────────────────────────
 
+# Qwen-Audio 偶尔会无视 prompt 输出 meta 前缀（"这段音频的原始内容是：'XXX'"），
+# 即使 prompt 已经强调"直接输出"。这里做兜底剥离，覆盖常见模板。
+# 关键词与 prompt 中的 negative example 对齐，保持单一信息源。
+_TRANSCRIPT_META_PREFIXES = (
+    "这段音频的原始内容是",
+    "这段音频的原始内容为",
+    "这段音频的内容是",
+    "音频的原始内容是",
+    "音频原始内容是",
+    "原始内容是",
+    "转录如下",
+    "转录内容如下",
+    "转录文字如下",
+    "以下是转录",
+    "以下是音频内容",
+    "以下是音频",
+    "音频内容",
+    "内容为",
+    "内容如下",
+)
+
+
+def _strip_transcript_meta(text: str) -> str:
+    """剥离 Qwen-Audio 偶发的 meta 前缀与外包引号。"""
+    if not text:
+        return text
+    s = text.strip()
+    # 反复剥（极少数情况会嵌套两层："转录如下：以下是音频：'xxx'"）
+    for _ in range(3):
+        original = s
+        for prefix in _TRANSCRIPT_META_PREFIXES:
+            if s.startswith(prefix):
+                s = s[len(prefix):].lstrip("：:，, 。.").strip()
+                break
+        # 整体被 '' / "" / "" / '' 包裹时拆掉外层引号
+        if len(s) >= 2 and s[0] in "'\"‘“" and s[-1] in "'\"’”":
+            s = s[1:-1].strip()
+        if s == original:
+            break
+    return s
+
+
 async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
     """调用阿里云 Qwen-Audio-Turbo 对音频执行 ASR 转写。
 
@@ -75,7 +117,16 @@ async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
                             "role": "user",
                             "content": [
                                 {"audio": f"data:{audio_mime};base64,{audio_b64}"},
-                                {"text": "请转录这段中文医患录音，只输出转录文字，不添加任何解释或标注。"},
+                                # 强化版 prompt：之前只说"不添加解释"，Qwen-Audio 仍会偶尔
+                                # 输出 meta 描述（"这段音频的原始内容是：'XXX'"），后台
+                                # 语音记录里能看到。这里用 negative example 明确禁止，
+                                # 并补一条 fallback 后处理（_strip_transcript_meta）。
+                                {"text": (
+                                    "请转录这段中文医患录音，直接输出转录后的医患原话文本。"
+                                    "严格禁止：不要加任何前缀（如「这段音频的原始内容是」「转录如下」"
+                                    "「以下是」「内容为」）、不要加引号、不要加解释、不要总结。"
+                                    "如果听不清就只输出能识别清楚的部分。"
+                                )},
                             ],
                         }]
                     },
@@ -92,11 +143,12 @@ async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
             .get("content", [])
         )
         if isinstance(content, list):
-            return " ".join(
+            joined = " ".join(
                 item["text"] for item in content if isinstance(item, dict) and "text" in item
             ).strip()
+            return _strip_transcript_meta(joined)
         if isinstance(content, str):
-            return content.strip()
+            return _strip_transcript_meta(content.strip())
     except Exception as exc:
         logger.warning("Qwen-Audio 转写异常: %s", exc)
     return ""

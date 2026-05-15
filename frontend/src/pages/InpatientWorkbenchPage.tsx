@@ -12,7 +12,8 @@
  *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Empty, message, Modal } from 'antd'
+import { Layout, Button, Empty, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'

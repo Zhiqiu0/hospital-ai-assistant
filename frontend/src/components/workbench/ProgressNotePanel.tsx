@@ -7,7 +7,8 @@
  *   - 支持保存草稿、签发（submitted）
  */
 import { useState, useEffect } from 'react'
-import { Button, Input, Tag, Typography, message, DatePicker } from 'antd'
+import { Button, Input, Tag, Typography, DatePicker } from 'antd'
+import { message } from '@/services/messageBridge'
 import { SaveOutlined, CheckOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { TimelineItem } from '@/domain/inpatient'

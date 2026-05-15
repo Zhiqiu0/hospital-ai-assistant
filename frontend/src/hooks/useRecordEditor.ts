@@ -5,7 +5,7 @@
  * 和章节守卫、SSE 流处理。SSE 通用代码已抽到 services/streamSSE.ts。
  */
 import { useRef, useState, useEffect } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'

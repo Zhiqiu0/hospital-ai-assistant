@@ -24,9 +24,9 @@ import {
   Typography,
   Switch,
   Popconfirm,
-  message,
   Tooltip,
 } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   PlusOutlined,
   EditOutlined,

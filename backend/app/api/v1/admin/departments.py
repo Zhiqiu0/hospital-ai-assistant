@@ -4,6 +4,7 @@
 端点列表：
   GET    /                 查询所有科室（默认含已停用，给后台管理用）
   POST   /                 新建科室
+  PUT    /{dept_id}        编辑科室（仅 name / parent_id，code 不可改）
   DELETE /{dept_id}        停用科室（软删除）
   POST   /{dept_id}/activate  重新启用已停用的科室（2026-05-03 加）
 
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_admin
 from app.database import get_db
-from app.schemas.department import DepartmentCreate
+from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.services.department_service import DepartmentService
 
 router = APIRouter()
@@ -46,6 +47,19 @@ async def create_department(
     """新建科室。code 字段须全局唯一（数据库有 UNIQUE 约束）。"""
     service = DepartmentService(db)
     return await service.create(data)
+
+
+@router.put("/{dept_id}")
+async def update_department(
+    dept_id: str,
+    data: DepartmentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """编辑科室基本信息。仅允许改 name / parent_id；code 因外键依赖不可改。"""
+    service = DepartmentService(db)
+    dept = await service.update(dept_id, data)
+    return {"id": dept.id, "name": dept.name, "code": dept.code, "is_active": dept.is_active}
 
 
 @router.delete("/{dept_id}", status_code=204)

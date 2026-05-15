@@ -3,7 +3,8 @@
  * 子组件：InquirySuggestionItem（追问条目）、DiagnosisSuggestionList（诊断建议）。
  */
 import { useState, useCallback, useEffect } from 'react'
-import { Button, Typography, Empty, Spin, message, Divider } from 'antd'
+import { Button, Typography, Empty, Spin, Divider } from 'antd'
+import { message } from '@/services/messageBridge'
 import { QuestionCircleOutlined, PlusOutlined, BulbOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'

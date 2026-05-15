@@ -92,6 +92,12 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
   const visitType = useActiveEncounterStore(s => s.visitType)
   const recordTypeOptions =
     visitType === 'inpatient' ? INPATIENT_RECORD_OPTIONS : OUTPATIENT_RECORD_OPTIONS
+  // 兜底：recordStore 默认 recordType='outpatient'，住院接诊建立时不会自动切换。
+  // 如果当前 recordType 不在本场景的可选列表里，Select 会渲染 raw value（"outpatient"
+  // 字面量），破坏 UI。这里在渲染层用合法默认值兜底（住院→入院记录，门诊→门诊病历）。
+  const effectiveRecordType = recordTypeOptions.some(o => o.value === recordType)
+    ? recordType
+    : recordTypeOptions[0].value
 
   return (
     <div
@@ -129,14 +135,18 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
          */}
         {visitType === 'inpatient' ? (
           <Select
-            value={recordType}
+            value={effectiveRecordType}
             onChange={setRecordType}
             size="small"
             style={{ width: 120 }}
             options={recordTypeOptions}
           />
         ) : (
-          <Tag style={{ margin: 0, fontSize: 12 }}>门诊病历</Tag>
+          // 急诊也走这个分支（visitType=outpatient/emergency 都用单一病历类型），
+          // 之前硬编码"门诊病历"会在急诊工作台错显——按 visitType 区分。
+          <Tag style={{ margin: 0, fontSize: 12 }}>
+            {visitType === 'emergency' ? '急诊病历' : '门诊病历'}
+          </Tag>
         )}
       </Space>
 

@@ -20,7 +20,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import type { PatientProfile } from '@/domain/medical'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'

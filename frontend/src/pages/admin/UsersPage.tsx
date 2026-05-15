@@ -24,8 +24,8 @@ import {
   Tooltip,
   Typography,
   Popconfirm,
-  message,
 } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import {
   PlusOutlined,

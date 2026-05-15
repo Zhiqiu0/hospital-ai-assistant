@@ -3,13 +3,15 @@
  *
  * 管理员查看和维护全量患者档案，调用 GET /admin/patients（分页）：
  *   - 搜索：按姓名、身份证号、手机号模糊查询
- *   - 新建患者：POST /patients（与医生端共用接口）
  *   - 编辑患者基本信息：PUT /patients/{id}
  *   - 查看患者就诊历史：点击展开关联的接诊和病历列表
  *
  * 权限说明：
  *   医生端只能在接诊时创建/查询患者；
- *   管理员可跨科室查看全院患者，并可修正错误信息。
+ *   管理员可跨科室查看全院患者，并可修正错误信息——但**不能主动新建患者**，
+ *   建档只发生在接诊流程中，由医生在初诊登记时创建（确保每个患者档案都关联
+ *   到一次具体接诊，避免无主孤儿档案）。如需录入外院转入或 HIS 缺失患者，
+ *   由医生开一次接诊登记同步建档。
  */
 import { useEffect, useState, useCallback } from 'react'
 import {
@@ -22,11 +24,11 @@ import {
   Space,
   Tag,
   Typography,
-  message,
   DatePicker,
 } from 'antd'
 import { EditOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 import dayjs from 'dayjs'
 
 const { Title, Text } = Typography

@@ -15,7 +15,8 @@
  *   WorkbenchStatusBar→ 底部状态栏
  */
 import { useState, useEffect } from 'react'
-import { Layout, message, Tabs, Modal } from 'antd'
+import { Layout, Tabs, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'

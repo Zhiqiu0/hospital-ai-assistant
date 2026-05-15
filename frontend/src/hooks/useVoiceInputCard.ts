@@ -12,7 +12,8 @@
  *   - 本 hook 主体保留：录音 / 实时 ASR 编排 + 状态聚合 + UI 操作回调
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, message } from 'antd'
+import { Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { InquiryData } from '@/store/types'
 
 // ── 测试期开关：录音文件是否上传到后端归档 ─────────────────────────────────────

@@ -23,7 +23,8 @@
  *   - 化验单 OCR、影像分析当前过渡期"只展示不写入病历"，下次迭代独立章节。
  */
 import { useCallback } from 'react'
-import { Button, List, Tag, Typography, Empty, Spin, message } from 'antd'
+import { Button, List, Tag, Typography, Empty, Spin } from 'antd'
+import { message } from '@/services/messageBridge'
 import { ExperimentOutlined, CheckOutlined, ArrowRightOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'

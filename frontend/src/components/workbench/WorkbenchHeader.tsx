@@ -65,8 +65,12 @@ export default function WorkbenchHeader({
         }}
       />
 
-      {/* Logo */}
-      <Space size={10}>
+      {/* Logo + 接诊操作按钮
+          用裸 flex div 而非 <Space>：antd <Space> 内嵌多个按钮 + Tag 时会让 Space
+          自身向上下溢出（实测 h=136px），盖在 header 之外的主区域工具栏上，
+          鼠标点击右侧"AI质控/润色/一键生成"等按钮被 Space 拦截。
+          换成裸 flex div + 强制 height 58 后所有 child 严格在 header 内部排列。 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 58, flexShrink: 0 }}>
         <div
           style={{
             width: 32,
@@ -87,17 +91,54 @@ export default function WorkbenchHeader({
         <Tag color={isEmergency ? 'red' : 'blue'} style={{ margin: 0, borderRadius: 20 }}>
           {isEmergency ? '急诊部' : '门诊部'}
         </Tag>
-      </Space>
+        {/* 接诊操作按钮放在 logo/部门 tag 之后：
+            - 之前按钮放在中间绝对定位容器，患者信息变宽时撞到右侧 Space
+              （"影像分析 / 切换至急诊"等）→ pointer-events 被相邻按钮拦截。
+            - 现在按钮跟 logo 同列，中间留给"患者卡片"信息纯展示，layout 不再溢出。 */}
+        <Button
+          icon={<PlusOutlined />}
+          size="small"
+          type="primary"
+          onClick={() => setModalOpen('new')}
+          style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
+        >
+          初诊
+        </Button>
+        <Button
+          size="small"
+          onClick={() => setModalOpen('returning')}
+          style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
+        >
+          复诊
+        </Button>
+        {currentEncounterId && onOpenCancel && (
+          <Button
+            size="small"
+            danger
+            ghost
+            icon={<CloseCircleOutlined />}
+            onClick={onOpenCancel}
+            style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 12 }}
+          >
+            取消接诊
+          </Button>
+        )}
+      </div>
 
-      {/* 患者信息（居中绝对定位） */}
+      {/* 患者信息（居中分段，仅展示，无按钮）
+          按钮已挪到 logo Space 内，这里只放患者卡片信息，避免 flex 溢出。
+          height: 58 + overflow: hidden 防止内部文字在窄屏 wrap 把容器撑高
+          溢出 header，盖到主区域工具栏按钮。 */}
       <div
         style={{
-          position: 'absolute',
-          left: '50%',
-          transform: 'translateX(-50%)',
+          flex: 1,
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'center',
           gap: 10,
+          minWidth: 0,
+          height: 58,
+          overflow: 'hidden',
         }}
       >
         {currentPatient ? (
@@ -112,6 +153,12 @@ export default function WorkbenchHeader({
               padding: '4px 12px',
               boxShadow: '0 1px 4px rgba(5,150,105,0.1)',
               lineHeight: 1,
+              // whiteSpace nowrap + maxWidth 100%：当中间 flex slot 在窄屏被压缩到 0
+              // 宽度时，避免内部文字逐字换行把卡片高度撑到 150px 溢出 header，盖到
+              // 主区域工具栏按钮上（AI质控/润色/一键生成）。配合外层 overflow:hidden
+              // 在极窄场景下直接裁掉而非折行。
+              whiteSpace: 'nowrap',
+              maxWidth: '100%',
             }}
           >
             <div
@@ -148,35 +195,6 @@ export default function WorkbenchHeader({
           </div>
         ) : (
           <Text style={{ fontSize: 13, color: 'var(--text-4)' }}>未选择患者</Text>
-        )}
-        <Button
-          icon={<PlusOutlined />}
-          size="small"
-          type="primary"
-          onClick={() => setModalOpen('new')}
-          style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
-        >
-          初诊
-        </Button>
-        <Button
-          size="small"
-          onClick={() => setModalOpen('returning')}
-          style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 14 }}
-        >
-          复诊
-        </Button>
-        {/* 取消接诊：只在有当前接诊时显示，danger ghost 样式低调避免误触 */}
-        {currentEncounterId && onOpenCancel && (
-          <Button
-            size="small"
-            danger
-            ghost
-            icon={<CloseCircleOutlined />}
-            onClick={onOpenCancel}
-            style={{ borderRadius: 20, fontSize: 12, height: 30, paddingInline: 12 }}
-          >
-            取消接诊
-          </Button>
         )}
       </div>
 
