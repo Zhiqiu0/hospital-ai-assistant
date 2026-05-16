@@ -24,7 +24,17 @@ export const RECORD_TYPE_LABEL: Record<string, string> = {
   post_op_record: '术后病程记录',
 }
 
-function buildPatientDesc(patient: any): string {
+/**
+ * 病历导出函数接受的患者最小形状：仅 name/gender/age 三个字段；
+ * 全部 optional，调用方传 null/undefined 时走"未知患者"分支。
+ */
+export interface RecordExportPatient {
+  name?: string | null
+  gender?: string | null
+  age?: number | null
+}
+
+function buildPatientDesc(patient: RecordExportPatient | null | undefined): string {
   if (!patient) return '未知患者'
   return [
     patient.name,
@@ -37,7 +47,7 @@ function buildPatientDesc(patient: any): string {
 
 export function printRecord(
   content: string,
-  patient: any,
+  patient: RecordExportPatient | null | undefined,
   recordType: string,
   signedAt: string | null
 ) {
@@ -69,7 +79,7 @@ export function printRecord(
 
 export function exportWordDoc(
   content: string,
-  patient: any,
+  patient: RecordExportPatient | null | undefined,
   recordType: string,
   signedAt: string | null
 ) {

@@ -21,6 +21,7 @@ import {
   flattenVoicePatch,
   syncInpatientToRecord,
 } from '@/utils/inpatientInquirySync'
+import type { InquiryData } from '@/store/types'
 
 // 1.6.2：8 个 profile 字段（past/allergy/personal/marital/family/menstrual/
 // current_medications/religion_belief）已迁出到 PatientProfileCard，本 hook 仅
@@ -94,14 +95,15 @@ export function useInpatientInquiryPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.initial_impression])
 
-  const onSave = async (values: any) => {
+  const onSave = async (values: Record<string, unknown>) => {
     setSaving(true)
 
     // 本次接诊字段：profile 8 字段已迁出，由 PatientProfileCard 单独 PUT
     const inquiryData = buildInpatientInquiryData(values)
     const changedFields = diffInpatientChangedFields(inquiryData, inquiry)
 
-    setInquiry({ ...inquiry, ...inquiryData })
+    // InpatientInquiryData 是 InquiryData 子集（字段名/类型对齐），用 unknown 桥接
+    setInquiry({ ...inquiry, ...inquiryData } as unknown as InquiryData)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
     }
@@ -125,16 +127,17 @@ export function useInpatientInquiryPanel() {
   // 问诊模式：语音结构化结果分流入左侧表单 + 患者档案
   // 1.6.3：profile 8 字段路由到 patientProfileEditStore（统一保存按钮再提交），
   // 避免被丢弃；inquiry 字段照旧填表单
-  const applyVoiceInquiry = (patch: any) => {
+  const applyVoiceInquiry = (patch: Record<string, unknown>) => {
     const flattened = flattenVoicePatch(patch)
-    const nextValues = { ...form.getFieldsValue(), ...flattened }
+    const nextValues: Record<string, unknown> = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue({
       ...nextValues,
       pain_assessment: nextValues.pain_assessment ? Number(nextValues.pain_assessment) : 0,
       admission_diagnosis: nextValues.admission_diagnosis || nextValues.initial_impression,
     })
     const data = { ...inquiry, ...buildInpatientInquiryData(nextValues) }
-    updateInquiryFields(data)
+    // InpatientInquiryData 子集合并到 InquiryData，沿用既有运行时行为
+    updateInquiryFields(data as unknown as InquiryData)
     setIsDirty(true)
 
     // profile 字段路由到档案 store
@@ -145,7 +148,7 @@ export function useInpatientInquiryPanel() {
   }
 
   // 追记模式：语音结构化结果写入病历对应章节（锁定后专用）
-  const applyVoiceToRecord = (patch: any) => {
+  const applyVoiceToRecord = (patch: Record<string, unknown>) => {
     applyVoiceToRecordWithFeedback(recordContent, patch, setRecordContent)
   }
 

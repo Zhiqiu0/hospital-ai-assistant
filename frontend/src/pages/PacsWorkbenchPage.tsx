@@ -19,6 +19,50 @@ import AnalyzingStage from './pacs/AnalyzingStage'
 import ReportStage from './pacs/ReportStage'
 import type { Frame, Study, Stage } from './pacs/types'
 
+/** 患者下拉列表项（仅显示用，按 patient_no/id slice 标注） */
+interface PacsPatientOption {
+  id: string
+  name: string
+  patient_no?: string | null
+}
+
+/** 当前打开的影像研究：帧列表 + 建议帧 + study_id（合并后端 frames 接口返回 + UI 引用） */
+interface CurrentStudy {
+  study_id: string
+  frames?: Frame[]
+  suggested?: string[]
+  /** 后端可能附带其他字段，按需透传 */
+  [key: string]: unknown
+}
+
+/** /pacs/upload 响应（去重幂等 + 总帧数） */
+interface PacsUploadResult {
+  study_id: string
+  duplicate?: boolean
+  message?: string
+  total_frames: number
+}
+
+/** /pacs/{id}/frames 响应：帧数组 + 后端智能抽样的 instance_uid 列表 */
+interface PacsFramesResult {
+  frames: Frame[]
+  suggested?: string[]
+  /** 后端可能携带的其他元数据 */
+  [key: string]: unknown
+}
+
+/** /pacs/{id}/analyze 响应：AI 分析文本（送审用） */
+interface PacsAnalyzeResult {
+  ai_analysis?: string
+}
+
+/** axios 拦截器统一把 error.response?.data 抛回；常见后端错误形状 */
+interface ApiErrorLike {
+  status?: number
+  detail?: string
+  response?: { status?: number; data?: { detail?: string } }
+}
+
 const { Header, Content } = Layout
 const { Title, Text } = Typography
 
@@ -28,9 +72,9 @@ export default function PacsWorkbenchPage() {
   const [loadingStudies, setLoadingStudies] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [patients, setPatients] = useState<any[]>([])
+  const [patients, setPatients] = useState<PacsPatientOption[]>([])
   const [selectedPatient, setSelectedPatient] = useState<string>('')
-  const [currentStudy, setCurrentStudy] = useState<any>(null)
+  const [currentStudy, setCurrentStudy] = useState<CurrentStudy | null>(null)
   const [stage, setStage] = useState<Stage>('list')
   // R1：frames 由 instance_uid + series_uid + instance_number 组成
   const [frames, setFrames] = useState<Frame[]>([])
@@ -46,7 +90,12 @@ export default function PacsWorkbenchPage() {
   useEffect(() => {
     api
       .get('/patients?page=1&page_size=100')
-      .then((d: any) => setPatients(d.items || d || []))
+      .then(d => {
+        // 响应拦截器把 data 直接返回；后端可能直接给数组或 { items: [] }，向后兼容
+        const data = (d as unknown) as { items?: PacsPatientOption[] } | PacsPatientOption[] | null
+        if (Array.isArray(data)) setPatients(data)
+        else setPatients(data?.items || [])
+      })
       .catch(() => {})
   }, [])
 
@@ -54,7 +103,9 @@ export default function PacsWorkbenchPage() {
     setLoadingStudies(true)
     api
       .get('/pacs/studies')
-      .then((d: any) => setStudies(d || []))
+      // 响应拦截器把 data 直接返回了，但 axios 类型仍标注成 AxiosResponse；
+      // 这里走 unknown 桥接到真实数组形状，避免触发 lint
+      .then(d => setStudies(((d as unknown) as Study[] | null) || []))
       .finally(() => setLoadingStudies(false))
   }, [])
 
@@ -73,11 +124,13 @@ export default function PacsWorkbenchPage() {
     formData.append('patient_id', selectedPatient)
     formData.append('file', file)
     try {
-      const res: any = await api.post('/pacs/upload', formData, {
+      const res = (await api.post('/pacs/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (e: any) => setUploadProgress(Math.round((e.loaded / e.total) * 100)),
+        // axios ProgressEvent 类型来自 axios，本地用最小接口取代
+        onUploadProgress: (e: { loaded: number; total?: number }) =>
+          setUploadProgress(Math.round((e.loaded / (e.total || 1)) * 100)),
         timeout: 300000,
-      })
+      })) as PacsUploadResult
       // 后端返回 duplicate=true 表示同患者同 DICOM 包二次上传，幂等返回原 study_id
       if (res.duplicate) {
         message.info(res.message || '该影像之前已上传过，已为你定位到原记录')
@@ -86,12 +139,14 @@ export default function PacsWorkbenchPage() {
       }
       loadStudies()
       openStudy(res.study_id, res.total_frames <= 10)
-    } catch (e: any) {
+    } catch (e) {
       // 跨患者重复（HTTP 409）单独提示，让医生意识到是选错了患者
-      if (e?.status === 409 || e?.response?.status === 409) {
-        message.warning(e?.detail || e?.response?.data?.detail || '该影像已绑定其他患者')
+      const err = e as ApiErrorLike
+      const status = err?.status ?? err?.response?.status
+      if (status === 409) {
+        message.warning(err?.detail || err?.response?.data?.detail || '该影像已绑定其他患者')
       } else {
-        message.error(e?.detail || '上传失败')
+        message.error(err?.detail || '上传失败')
       }
     } finally {
       setUploading(false)
@@ -103,7 +158,7 @@ export default function PacsWorkbenchPage() {
   const openStudy = async (studyId: string, autoAll = false) => {
     setLoadingFrames(true)
     try {
-      const res: any = await api.get(`/pacs/${studyId}/frames`)
+      const res = (await api.get(`/pacs/${studyId}/frames`)) as PacsFramesResult
       setCurrentStudy({ study_id: studyId, ...res })
       const allFrames: Frame[] = res.frames || []
       // 后端 suggested 是 instance_uid 字符串数组（已做智能非均匀抽样）
@@ -146,17 +201,22 @@ export default function PacsWorkbenchPage() {
       message.warning('请至少选择 1 张关键帧')
       return
     }
+    if (!currentStudy) {
+      message.warning('当前未选中影像研究')
+      return
+    }
     setAnalyzing(true)
     setStage('analyzing')
     try {
-      const res: any = await api.post(`/pacs/${currentStudy.study_id}/analyze`, {
+      const res = (await api.post(`/pacs/${currentStudy.study_id}/analyze`, {
         selected_frames: Array.from(selectedFrames),
-      })
+      })) as PacsAnalyzeResult
       setAiResult(res.ai_analysis || '')
       setFinalReport(res.ai_analysis || '')
       setStage('report')
-    } catch (e: any) {
-      message.error(e?.detail || 'AI 分析失败')
+    } catch (e) {
+      const err = e as ApiErrorLike
+      message.error(err?.detail || 'AI 分析失败')
       setStage('select_frames')
     } finally {
       setAnalyzing(false)
@@ -170,8 +230,9 @@ export default function PacsWorkbenchPage() {
       await api.delete(`/pacs/${studyId}`)
       message.success('已删除')
       loadStudies()
-    } catch (e: any) {
-      const detail = e?.detail || e?.response?.data?.detail || '删除失败'
+    } catch (e) {
+      const err = e as ApiErrorLike
+      const detail = err?.detail || err?.response?.data?.detail || '删除失败'
       message.error(detail)
     }
   }
@@ -179,6 +240,10 @@ export default function PacsWorkbenchPage() {
   const publishReport = async () => {
     if (!finalReport.trim()) {
       message.warning('报告内容不能为空')
+      return
+    }
+    if (!currentStudy) {
+      message.warning('当前未选中影像研究')
       return
     }
     setPublishing(true)

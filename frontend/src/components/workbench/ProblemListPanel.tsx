@@ -41,7 +41,9 @@ export default function ProblemListPanel() {
   const fetchProblems = useCallback(async () => {
     if (!currentEncounterId) return
     try {
-      const res = (await api.get(`/encounters/${currentEncounterId}/problems`)) as any
+      const res = (await api.get(`/encounters/${currentEncounterId}/problems`)) as {
+        items?: ProblemItem[]
+      }
       setProblems(res.items || [])
     } catch {
       setProblems([])

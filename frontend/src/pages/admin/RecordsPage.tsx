@@ -33,28 +33,35 @@ const RECORD_TYPE_LABEL: Record<string, string> = {
   first_course_record: '首次病程',
 }
 
+/** 病历列表行——后端 /admin/records 把 patient/doctor/department JOIN 后扁平返回 */
+interface RecordRow {
+  id: string
+  record_type: string
+  content?: string
+  content_preview?: string
+  patient_name?: string
+  patient_gender?: string
+  doctor_name?: string
+  submitted_at?: string | null
+}
+
 export default function RecordsPage() {
-  const [records, setRecords] = useState<any[]>([])
+  const [records, setRecords] = useState<RecordRow[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
-  const [viewRecord, setViewRecord] = useState<any>(null)
+  const [viewRecord, setViewRecord] = useState<RecordRow | null>(null)
 
   // ── 修订病历（2026-05-03 加）─────────────────────────────────────────────
   // 已签发病历是法律文件，必须留痕修改：后端创建新 RecordVersion，旧版本保留。
   // 修订理由必填，写入 audit_logs 永久可查。
-  const [reviseRecord, setReviseRecord] = useState<any>(null)
+  const [reviseRecord, setReviseRecord] = useState<RecordRow | null>(null)
   const [reviseContent, setReviseContent] = useState('')
   const [reviseReason, setReviseReason] = useState('')
   const [reviseSubmitting, setReviseSubmitting] = useState(false)
 
-  const openRevise = (record: {
-    id: string
-    content?: string
-    record_type?: string
-    patient_name?: string
-  }) => {
+  const openRevise = (record: RecordRow) => {
     setReviseRecord(record)
     setReviseContent(record.content || '')
     setReviseReason('')
@@ -67,6 +74,7 @@ export default function RecordsPage() {
   }
 
   const submitRevise = async () => {
+    if (!reviseRecord) return
     if (!reviseReason.trim()) {
       message.warning('请填写修订理由')
       return
@@ -96,7 +104,10 @@ export default function RecordsPage() {
   const loadRecords = async (p = page) => {
     setLoading(true)
     try {
-      const data: any = await api.get(`/admin/records?page=${p}&page_size=20`)
+      const data = (await api.get(`/admin/records?page=${p}&page_size=20`)) as {
+        items?: RecordRow[]
+        total?: number
+      }
       setRecords(data.items || [])
       setTotal(data.total || 0)
     } finally {
@@ -119,7 +130,7 @@ export default function RecordsPage() {
       title: '患者',
       dataIndex: 'patient_name',
       key: 'patient_name',
-      render: (name: string, row: any) => (
+      render: (name: string, row: RecordRow) => (
         <Space size={4}>
           <Text strong>{name}</Text>
           {row.patient_gender && (
@@ -150,8 +161,8 @@ export default function RecordsPage() {
       dataIndex: 'submitted_at',
       key: 'submitted_at',
       render: (v: string) => (v ? new Date(v).toLocaleString('zh-CN') : '-'),
-      sorter: (a: any, b: any) =>
-        new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+      sorter: (a: RecordRow, b: RecordRow) =>
+        new Date(a.submitted_at || '').getTime() - new Date(b.submitted_at || '').getTime(),
       defaultSortOrder: 'descend' as const,
     },
     {
@@ -168,7 +179,7 @@ export default function RecordsPage() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: RecordRow) => (
         <Space>
           <Button
             size="small"

@@ -46,17 +46,20 @@ export default function InpatientTimeline({
     if (!currentEncounterId) return
     setLoading(true)
     try {
-      const [notesRes, recordRes]: [any, any] = await Promise.all([
+      // 后端返回的 progress note / active_record 字段并不稳定（admission_note 部分
+      // 来自 workspace.active_record，含字段视 record_type 而定），所以用 Record 装载
+      type RecordLike = Record<string, unknown>
+      const [notesRes, recordRes] = (await Promise.all([
         api.get(`/encounters/${currentEncounterId}/progress-notes`),
         api.get(`/encounters/${currentEncounterId}/workspace`),
-      ])
-      const progressNotes = (notesRes as any).items || []
+      ])) as [{ items?: RecordLike[] }, { active_record?: RecordLike }]
+      const progressNotes = notesRes.items || []
 
       // 入院记录从 workspace active_record 构造
-      const admissionItems: any[] = []
-      if ((recordRes as any).active_record) {
+      const admissionItems: RecordLike[] = []
+      if (recordRes.active_record) {
         admissionItems.push({
-          ...(recordRes as any).active_record,
+          ...recordRes.active_record,
           record_type: recordType || 'admission_note',
         })
       } else if (recordContent) {
@@ -85,10 +88,19 @@ export default function InpatientTimeline({
     if (!currentEncounterId) return
     setCreating(true)
     try {
-      const note: any = await api.post(`/encounters/${currentEncounterId}/progress-notes`, {
+      // 后端返回的 progress note 结构由病程记录 schema 决定，前端仅消费
+      // id / note_type / recorded_at / status / content 几个字段，用最小接口约束
+      interface ProgressNoteResponse {
+        id: string
+        note_type: string
+        recorded_at: string
+        status: string
+        content: string
+      }
+      const note = (await api.post(`/encounters/${currentEncounterId}/progress-notes`, {
         note_type: noteType,
         content: '',
-      })
+      })) as ProgressNoteResponse
       await load()
       onSelect({
         id: note.id,

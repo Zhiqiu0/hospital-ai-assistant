@@ -23,8 +23,30 @@ import { ISSUE_TYPE_LABEL } from './constants'
 
 const { Text } = Typography
 
+/**
+ * /admin/stats/overview 返回值——后端 stats_service.overview 输出。
+ * 字段全部 optional：当样本量为 0 时后端可能不返回某些计数键。
+ */
+export interface OverviewData {
+  today_encounters?: number
+  total_encounters?: number
+  total_ai_tasks?: number
+  total_qc_issues?: number
+  generate_count?: number
+  polish_count?: number
+  qc_count?: number
+  inquiry_count?: number
+  exam_count?: number
+  completeness_issues?: number
+  format_issues?: number
+  logic_issues?: number
+  high_risk_issues?: number
+  medium_risk_issues?: number
+  low_risk_issues?: number
+}
+
 interface OverviewTabProps {
-  overview: any
+  overview: OverviewData | null
   loading: boolean
 }
 

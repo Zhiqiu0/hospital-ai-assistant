@@ -48,7 +48,7 @@ export default function ImagingReportsCard({ patientId }: Props) {
     setLoading(true)
     api
       .get(`/pacs/patient/${patientId}/reports`)
-      .then((d: any) => setReports(Array.isArray(d) ? d : []))
+      .then(d => setReports(Array.isArray(d) ? (d as ImagingReport[]) : []))
       .catch(() => setReports([]))
       .finally(() => setLoading(false))
   }, [patientId])

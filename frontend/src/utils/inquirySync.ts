@@ -40,19 +40,25 @@ export const INQUIRY_FORM_FIELDS = [
 ] as const
 
 /** 把 antd Form 的 values 转成扁平字符串字典；时间字段把 Dayjs 序列化。 */
-export function buildInquiryData(values: Record<string, any>): Record<string, string> {
+// antd Form 的 values 形状不固定（字段可能是字符串、Dayjs、数字、空值），
+// 用 unknown 而非 any 保证下游使用必须显式收窄类型。
+export function buildInquiryData(values: Record<string, unknown>): Record<string, string> {
   const data: Record<string, string> = {}
   for (const key of INQUIRY_FORM_FIELDS) {
     const val = values[key]
     if (key === 'visit_time' || key === 'onset_time') {
       // DatePicker 返回 dayjs 对象，转为字符串
-      data[key] = val
-        ? typeof val === 'string'
-          ? val
-          : (val as Dayjs).format('YYYY-MM-DD HH:mm')
-        : ''
+      if (!val) {
+        data[key] = ''
+      } else if (typeof val === 'string') {
+        data[key] = val
+      } else {
+        // 非空且非字符串 → 视为 Dayjs
+        data[key] = (val as Dayjs).format('YYYY-MM-DD HH:mm')
+      }
     } else {
-      data[key] = val || ''
+      // 兼容数字/布尔等场景：非空时统一 String 化，空值退到空串
+      data[key] = val == null || val === '' ? '' : typeof val === 'string' ? val : String(val)
     }
   }
   return data

@@ -22,11 +22,39 @@ export interface TimelineItem {
   content: string
 }
 
+/**
+ * 入院记录后端原始形状（来自 /encounters/{id}/workspace.active_record
+ * 或 InpatientTimeline 本地构造）。字段全部 optional：后端返回多源、本地兜底
+ * 可能只有最小子集。沿用与 domain/medical/types.ts MedicalRecord 兼容的命名。
+ */
+export interface MedicalRecordRaw {
+  id?: string
+  record_type?: string | null
+  status?: string | null
+  content?: string | null
+  submitted_at?: string | null
+  created_at?: string | null
+}
+
+/**
+ * 病程记录后端原始形状（来自 /encounters/{id}/progress-notes items[]）。
+ * 字段全部 optional：列表接口在不同写入态下字段会缺。
+ */
+export interface ProgressNoteRaw {
+  id?: string
+  note_type?: string | null
+  title?: string | null
+  status?: string | null
+  content?: string | null
+  recorded_at?: string | null
+  created_at?: string | null
+}
+
 /** 将后端返回的 medical_record 转换为时间轴条目 */
-export function medicalRecordToItem(r: any): TimelineItem {
+export function medicalRecordToItem(r: MedicalRecordRaw): TimelineItem {
   const rule = getNoteRule(r.record_type || 'admission_note')
   return {
-    id: r.id,
+    id: r.id || '',
     type: 'medical_record',
     noteType: r.record_type || 'admission_note',
     label: rule.label,
@@ -40,10 +68,10 @@ export function medicalRecordToItem(r: any): TimelineItem {
 }
 
 /** 将后端返回的 progress_note 转换为时间轴条目 */
-export function progressNoteToItem(n: any): TimelineItem {
+export function progressNoteToItem(n: ProgressNoteRaw): TimelineItem {
   const rule = getNoteRule(n.note_type || 'daily_course')
   return {
-    id: n.id,
+    id: n.id || '',
     type: 'progress_note',
     noteType: n.note_type || 'daily_course',
     label: n.title || rule.label,
@@ -58,8 +86,8 @@ export function progressNoteToItem(n: any): TimelineItem {
 
 /** 合并并按时间升序排列 */
 export function buildTimeline(
-  medicalRecords: any[],
-  progressNotes: any[]
+  medicalRecords: MedicalRecordRaw[],
+  progressNotes: ProgressNoteRaw[]
 ): TimelineItem[] {
   const items: TimelineItem[] = [
     ...medicalRecords.map(medicalRecordToItem),

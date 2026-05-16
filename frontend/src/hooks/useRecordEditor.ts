@@ -20,6 +20,24 @@ import {
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import { streamSSE } from '@/services/streamSSE'
 import { parseGeneratedSectionsToInquiry, restoreMissingSections } from '@/utils/recordSections'
+import type { QCIssue, GradeScore } from '@/store/types'
+
+/**
+ * SSE 事件 - 质控流的统一对象形状。
+ * 后端会按 type 分发不同 payload：
+ *   rule_issues: 携带 issues / pass / grade_score
+ *   llm_issues:  追加质量建议（不影响 pass）
+ *   done:        最终摘要 + 评分汇总
+ */
+interface QCStreamEvent {
+  type?: string
+  issues?: QCIssue[]
+  pass?: boolean
+  grade_score?: number
+  grade_level?: GradeScore['grade_level']
+  must_fix_count?: number
+  summary?: string
+}
 
 export function useRecordEditor() {
   // 各域字段从对应子 store 取
@@ -153,8 +171,9 @@ export function useRecordEditor() {
         }
       )
       syncGeneratedRecordToInquiry(useRecordStore.getState().recordContent)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') message.error('生成失败，请重试')
+    } catch (e) {
+      // AbortError 是用户主动取消，正常路径不弹错；其他错误统一提示
+      if ((e as { name?: string })?.name !== 'AbortError') message.error('生成失败，请重试')
     } finally {
       setGenerating(false)
     }
@@ -217,8 +236,8 @@ export function useRecordEditor() {
       if (missing.length > 0) {
         message.warning(`润色完成，但 AI 误删了 ${missing.join('、')}，已自动还原`)
       }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
+    } catch (e) {
+      if ((e as { name?: string })?.name !== 'AbortError') {
         message.error('润色失败，请重试')
         setRecordContent(original)
       }
@@ -235,7 +254,8 @@ export function useRecordEditor() {
     }
     setQCing(true)
     startQCRun()
-    let finalData: any = null
+    // finalData 收集 done 事件的载荷，跨 onEvent 闭包累积——用 QCStreamEvent 类型化
+    let finalData: QCStreamEvent | null = null
     try {
       // 质控接口推回多种事件类型（rule_issues / llm_issues / done），
       // 用 streamSSE 的通用 onEvent 分发器统一处理
@@ -249,10 +269,12 @@ export function useRecordEditor() {
           encounter_id: currentEncounterId || undefined,
         },
         {
-          onEvent: obj => {
+          // streamSSE 的 onEvent 参数本身是泛型对象，这里把它收敛到 QCStreamEvent
+          onEvent: (raw: unknown) => {
+            const obj = (raw || {}) as QCStreamEvent
             if (obj.type === 'rule_issues') {
-              const gs =
-                obj.grade_score != null
+              const gs: GradeScore | null =
+                obj.grade_score != null && obj.grade_level
                   ? {
                       grade_score: obj.grade_score,
                       grade_level: obj.grade_level,
@@ -272,21 +294,23 @@ export function useRecordEditor() {
         }
       )
       if (finalData) {
+        // TS 在闭包外无法推断回调里赋值的 finalData，借助 const 收敛非 null 视图
+        const done: QCStreamEvent = finalData
         const totalIssues = useQCStore.getState().qcIssues.length
-        if (finalData.grade_level === '甲级') {
-          message.success(`质控通过！预估评分 ${finalData.grade_score} 分，达到甲级病历标准`)
-        } else if (finalData.grade_score != null) {
+        if (done.grade_level === '甲级') {
+          message.success(`质控通过！预估评分 ${done.grade_score} 分，达到甲级病历标准`)
+        } else if (done.grade_score != null) {
           message.warning(
-            `预估评分 ${finalData.grade_score} 分（${finalData.grade_level}），发现 ${totalIssues} 个问题，请查看右侧质控提示`
+            `预估评分 ${done.grade_score} 分（${done.grade_level}），发现 ${totalIssues} 个问题，请查看右侧质控提示`
           )
-        } else if (finalData.pass) {
+        } else if (done.pass) {
           message.success('质控通过！')
         } else {
           message.warning(`发现 ${totalIssues} 个问题，请查看右侧质控提示`)
         }
       }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') message.error('质控失败，请重试')
+    } catch (e) {
+      if ((e as { name?: string })?.name !== 'AbortError') message.error('质控失败，请重试')
       setQCLlmLoading(false)
     } finally {
       setQCing(false)
@@ -338,10 +362,11 @@ export function useRecordEditor() {
       setIsSupplementing(false)
       await handleQC(newContent)
       return
-    } catch (e: any) {
-      if (e.name === 'AbortError') return
+    } catch (e) {
+      const err = e as { name?: string; message?: string }
+      if (err?.name === 'AbortError') return
       setRecordContent(original)
-      const msg = e?.message || ''
+      const msg = err?.message || ''
       if (
         msg.includes('context_length_exceeded') ||
         msg.includes('maximum context length') ||

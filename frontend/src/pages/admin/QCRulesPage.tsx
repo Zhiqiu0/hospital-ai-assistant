@@ -55,17 +55,38 @@ const SCOPE_COLORS: Record<string, string> = {
   tcm: 'green',
 }
 
+/** 单条质控规则行（QCRule schema 在前端用到的字段） */
+interface QCRuleRow {
+  id: string
+  rule_code: string
+  name: string
+  rule_type: string // completeness / insurance
+  scope: string // all / inpatient / revisit / tcm
+  risk_level: string // high / medium / low
+  field_name?: string | null
+  keywords?: string[] | null
+  indication_keywords?: string[] | null
+  issue_description?: string | null
+  suggestion?: string | null
+  score_impact?: string | null
+  description?: string | null
+  is_active: boolean
+}
+
+/** 新建/编辑规则表单字段——后端不区分 create/update payload，共用一份 */
+type QCRuleFormValues = Omit<QCRuleRow, 'id' | 'is_active'>
+
 export default function QCRulesPage() {
-  const [rules, setRules] = useState<any[]>([])
+  const [rules, setRules] = useState<QCRuleRow[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editRule, setEditRule] = useState<any>(null)
-  const [form] = Form.useForm()
+  const [editRule, setEditRule] = useState<QCRuleRow | null>(null)
+  const [form] = Form.useForm<QCRuleFormValues>()
 
   const loadRules = async () => {
     setLoading(true)
     try {
-      const data: any = await api.get('/admin/qc-rules')
+      const data = (await api.get('/admin/qc-rules')) as { items?: QCRuleRow[] }
       setRules(data.items || [])
     } finally {
       setLoading(false)
@@ -83,7 +104,7 @@ export default function QCRulesPage() {
     setModalOpen(true)
   }
 
-  const openEdit = (rule: any) => {
+  const openEdit = (rule: QCRuleRow) => {
     setEditRule(rule)
     form.setFieldsValue({
       ...rule,
@@ -93,7 +114,7 @@ export default function QCRulesPage() {
     setModalOpen(true)
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: QCRuleFormValues) => {
     // Select mode="tags" 返回 string[]，直接传给后端
     try {
       if (editRule) {
@@ -167,14 +188,14 @@ export default function QCRulesPage() {
       title: '关键词数',
       key: 'kw_count',
       width: 80,
-      render: (_: any, r: any) => (r.keywords?.length || 0) + ' 个',
+      render: (_: unknown, r: QCRuleRow) => (r.keywords?.length || 0) + ' 个',
     },
     {
       title: '启用',
       dataIndex: 'is_active',
       key: 'is_active',
       width: 65,
-      render: (v: boolean, record: any) => (
+      render: (v: boolean, record: QCRuleRow) => (
         <Switch checked={v} size="small" onChange={() => handleToggle(record.id)} />
       ),
     },
@@ -182,7 +203,7 @@ export default function QCRulesPage() {
       title: '操作',
       key: 'action',
       width: 130,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: QCRuleRow) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑
@@ -242,7 +263,7 @@ export default function QCRulesPage() {
                   {record.suggestion}
                 </div>
               )}
-              {record.keywords?.length > 0 && (
+              {record.keywords && record.keywords.length > 0 && (
                 <div style={{ marginTop: 4 }}>
                   <b>触发关键词：</b>
                   {record.keywords.map((kw: string) => (
@@ -252,7 +273,7 @@ export default function QCRulesPage() {
                   ))}
                 </div>
               )}
-              {record.indication_keywords?.length > 0 && (
+              {record.indication_keywords && record.indication_keywords.length > 0 && (
                 <div style={{ marginTop: 4 }}>
                   <b>豁免关键词：</b>
                   {record.indication_keywords.map((kw: string) => (

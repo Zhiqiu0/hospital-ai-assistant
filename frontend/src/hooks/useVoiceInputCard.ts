@@ -41,7 +41,7 @@ import { dedupeVitalSignsAgainstRecord } from '@/utils/inquiryUtils'
 
 interface Props {
   visitType: 'outpatient' | 'inpatient'
-  getFormValues: () => Record<string, any>
+  getFormValues: () => Record<string, unknown>
   onApplyInquiry: (patch: Partial<InquiryData>) => void
   onApplyToRecord?: (patch: Partial<InquiryData>) => void
 }
@@ -63,7 +63,7 @@ export function useVoiceInputCard({
   // 实时 ASR 流句柄（含 stop 方法），录音期间存活
   const voiceStreamRef = useRef<VoiceStreamHandle | null>(null)
   // 录音音频文件采集器（用于存档 + 作为 WebSocket 失败时的兜底转写源）
-  const mediaRecorderRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const transcriptRef = useRef('')
@@ -302,10 +302,11 @@ export function useVoiceInputCard({
           },
         })
         voiceStreamRef.current = handle
-      } catch (err: any) {
+      } catch (err) {
         streamFallbackRef.current = true
+        const errMsg = (err as { message?: string })?.message || '连接失败'
         message.warning(
-          `实时转写未启用（${err?.message || '连接失败'}），录音继续，停止后自动云端转写`,
+          `实时转写未启用（${errMsg}），录音继续，停止后自动云端转写`,
           5
         )
       }

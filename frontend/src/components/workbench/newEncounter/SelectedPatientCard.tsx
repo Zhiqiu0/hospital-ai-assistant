@@ -4,9 +4,10 @@
  * 与住院 newInpatient/SelectedPatientCard 视觉一致，绿色突出"复诊"。
  */
 import { Avatar, Space, Tag } from 'antd'
+import type { Patient } from '@/domain/medical'
 
 interface Props {
-  patient: any
+  patient: Patient
 }
 
 export default function SelectedPatientCard({ patient }: Props) {

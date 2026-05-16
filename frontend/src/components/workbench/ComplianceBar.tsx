@@ -51,7 +51,9 @@ export default function ComplianceBar({ encounterId }: Props) {
   const fetchCompliance = useCallback(async () => {
     if (!encounterId) return
     try {
-      const res = (await api.get(`/encounters/${encounterId}/compliance`)) as any
+      const res = (await api.get(`/encounters/${encounterId}/compliance`)) as {
+        items?: ComplianceItem[]
+      }
       setItems(res.items || [])
     } catch {
       setItems([])

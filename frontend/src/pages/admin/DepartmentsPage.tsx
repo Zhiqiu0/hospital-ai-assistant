@@ -29,19 +29,33 @@ import { message } from '@/services/messageBridge'
 
 const { Title } = Typography
 
+/** 科室列表行——对应后端 DepartmentResponse */
+interface DepartmentRow {
+  id: string
+  name: string
+  code: string
+  is_active: boolean
+}
+
+/** 新建/编辑科室表单字段；编辑模式 code 只读但表单仍持有 */
+interface DepartmentFormValues {
+  name: string
+  code: string
+}
+
 export default function DepartmentsPage() {
-  const [depts, setDepts] = useState<any[]>([])
+  const [depts, setDepts] = useState<DepartmentRow[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   // editing=null：新建模式；editing=科室对象：编辑模式。两个模式共用同一份 Modal/Form
   // 跟用户管理页一致：避免多套 Modal 漂移
-  const [editing, setEditing] = useState<any>(null)
-  const [form] = Form.useForm()
+  const [editing, setEditing] = useState<DepartmentRow | null>(null)
+  const [form] = Form.useForm<DepartmentFormValues>()
 
   const loadDepts = async () => {
     setLoading(true)
     try {
-      const data: any = await api.get('/admin/departments')
+      const data = (await api.get('/admin/departments')) as { items?: DepartmentRow[] }
       setDepts(data.items || [])
     } finally {
       setLoading(false)
@@ -52,7 +66,7 @@ export default function DepartmentsPage() {
     loadDepts()
   }, [])
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: DepartmentFormValues) => {
     try {
       if (editing) {
         // 编辑：只允许改 name；code 后端拒绝修改，从 payload 里剔除避免误传
@@ -66,12 +80,13 @@ export default function DepartmentsPage() {
       setEditing(null)
       form.resetFields()
       loadDepts()
-    } catch (e: any) {
-      message.error(e?.detail || (editing ? '更新失败' : '创建失败'))
+    } catch (e) {
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || (editing ? '更新失败' : '创建失败'))
     }
   }
 
-  const openEdit = (record: any) => {
+  const openEdit = (record: DepartmentRow) => {
     setEditing(record)
     form.setFieldsValue({ name: record.name, code: record.code })
     setModalOpen(true)
@@ -110,7 +125,7 @@ export default function DepartmentsPage() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: DepartmentRow) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑

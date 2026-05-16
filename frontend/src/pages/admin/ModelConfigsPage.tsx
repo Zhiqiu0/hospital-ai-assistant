@@ -42,16 +42,29 @@ const MODEL_OPTIONS = [
   { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
 ]
 
+/** 模型配置行——对应后端 ModelConfig schema（每个 scene 一行） */
+interface ModelConfigRow {
+  scene: string
+  model_name: string
+  temperature: number
+  max_tokens: number
+  is_active: boolean
+  description?: string | null
+}
+
+/** 模型配置表单字段——与 ModelConfigRow 一致但去掉 scene（行内 form 不修改 scene） */
+type ModelConfigFormValues = Omit<ModelConfigRow, 'scene'>
+
 export default function ModelConfigsPage() {
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<ModelConfigRow[]>([])
   const [loading, setLoading] = useState(false)
   const [savingScene, setSavingScene] = useState<string | null>(null)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const data: any = await api.get('/admin/model-configs')
-      setItems(Array.isArray(data) ? data : [])
+      const data = (await api.get('/admin/model-configs')) as ModelConfigRow[] | unknown
+      setItems(Array.isArray(data) ? (data as ModelConfigRow[]) : [])
     } catch {
       message.error('加载模型配置失败')
     } finally {
@@ -63,7 +76,7 @@ export default function ModelConfigsPage() {
     loadData()
   }, [])
 
-  const handleSave = async (scene: string, values: any) => {
+  const handleSave = async (scene: string, values: ModelConfigFormValues) => {
     setSavingScene(scene)
     try {
       await api.put(`/admin/model-configs/${scene}`, values)
@@ -110,7 +123,7 @@ export default function ModelConfigsPage() {
           },
           {
             title: '配置',
-            render: (_: any, record: any) => (
+            render: (_: unknown, record: ModelConfigRow) => (
               <Card size="small" bodyStyle={{ padding: 12 }}>
                 <Form
                   layout="inline"

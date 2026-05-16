@@ -20,8 +20,34 @@ import { TASK_TYPE_MAP } from './constants'
 
 const { Text } = Typography
 
+/** 按 task_type 聚合的 token 用量行 */
+export interface TokenTaskRow {
+  task_type: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
+}
+
+/** DeepSeek 账户余额响应（后端透传，字段全部字符串以兼容原始 API） */
+export interface DeepSeekBalance {
+  total_balance?: string
+  topped_up_balance?: string
+  granted_balance?: string
+}
+
+/** /admin/stats/token-usage 返回值 */
+export interface TokenData {
+  total_calls?: number
+  total_input_tokens?: number
+  total_output_tokens?: number
+  today_input_tokens?: number
+  today_output_tokens?: number
+  by_task_type?: TokenTaskRow[]
+  balance?: DeepSeekBalance | null
+}
+
 interface TokenTabProps {
-  tokenData: any
+  tokenData: TokenData | null
   loading: boolean
 }
 
@@ -61,7 +87,8 @@ export default function TokenTab({ tokenData, loading }: TokenTabProps) {
     {
       title: '合计',
       key: 'total',
-      render: (_: any, row: any) => (row.input_tokens + row.output_tokens).toLocaleString(),
+      render: (_: unknown, row: TokenTaskRow) =>
+        (row.input_tokens + row.output_tokens).toLocaleString(),
     },
   ]
 

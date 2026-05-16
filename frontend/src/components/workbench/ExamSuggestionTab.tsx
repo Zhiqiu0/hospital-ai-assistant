@@ -67,12 +67,12 @@ export default function ExamSuggestionTab() {
     }
     setExamLoading(true)
     try {
-      const data: any = await api.post('/ai/exam-suggestions', {
+      const data = (await api.post('/ai/exam-suggestions', {
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
         initial_impression: inquiry.initial_impression,
         encounter_id: currentEncounterId || undefined,
-      })
+      })) as { suggestions?: ExamSuggestion[] }
       setExamSuggestions(data.suggestions || [])
     } catch {
       setExamSuggestions([])

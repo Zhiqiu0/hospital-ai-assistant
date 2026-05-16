@@ -72,7 +72,9 @@ export async function structureVoice(payload: {
   transcriptId: string | null
   visitType: 'outpatient' | 'inpatient'
   patient: { name?: string; gender?: string; age?: number | null } | null | undefined
-  existingInquiry: Record<string, any>
+  // existingInquiry 透传给后端做"增量基线"，字段集合即 InquiryData 子集，
+  // 但顶层有自由扩展空间，故用 Record<string, unknown> 表示
+  existingInquiry: Record<string, unknown>
   existingRecord?: string
 }): Promise<VoiceStructureResult> {
   const { fullTranscript, transcriptId, visitType, patient, existingInquiry, existingRecord } =

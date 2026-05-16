@@ -18,19 +18,31 @@ import api from '@/services/api'
 
 const { Text } = Typography
 
+/**
+ * 后端 /ai/inquiry-suggestions 返回的单条建议形状：
+ * 字段与 Suggestion 一致但缺 id / selectedOptions（前端补齐）。
+ */
+interface RawInquirySuggestion {
+  text: string
+  priority: 'high' | 'medium' | 'low'
+  is_red_flag: boolean
+  category: string
+  options?: string[]
+}
+
 async function fetchInquirySuggestions(
   chiefComplaint: string,
   history: string,
   initialImpression: string,
   encounterId?: string | null
 ): Promise<Suggestion[]> {
-  const data: any = await api.post('/ai/inquiry-suggestions', {
+  const data = (await api.post('/ai/inquiry-suggestions', {
     chief_complaint: chiefComplaint,
     history_present_illness: history,
     initial_impression: initialImpression,
     encounter_id: encounterId || undefined,
-  })
-  return (data.suggestions || []).map((s: any, idx: number) => ({
+  })) as { suggestions?: RawInquirySuggestion[] }
+  return (data.suggestions || []).map((s, idx) => ({
     ...s,
     id: `${Date.now()}-${idx}`,
     options: s.options || [],
@@ -162,14 +174,14 @@ export default function InquirySuggestionTab() {
       const answeredItems = suggestions
         .filter(s => s.selectedOptions.length > 0)
         .map(s => ({ question: s.text, answer: s.selectedOptions.join('、') }))
-      const data: any = await api.post('/ai/diagnosis-suggestion', {
+      const data = (await api.post('/ai/diagnosis-suggestion', {
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
         inquiry_answers: answeredItems,
         initial_impression: inquiry.initial_impression || '',
         encounter_id: currentEncounterId || undefined,
-      })
-      setDiagnosisSuggestions((data.diagnoses || []) as DiagnosisItem[])
+      })) as { diagnoses?: DiagnosisItem[] }
+      setDiagnosisSuggestions(data.diagnoses || [])
       if (!data.diagnoses?.length) message.info('暂无诊断建议，请补充更多问诊信息')
     } catch {
       message.error('获取诊断建议失败')

@@ -11,6 +11,7 @@
 import { Button, Space, Spin } from 'antd'
 import { CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 import { printRecord } from '@/utils/recordExport'
+import type { Patient } from '@/domain/medical'
 
 interface RecordEditorStatusBarProps {
   isBusy: boolean
@@ -19,7 +20,7 @@ interface RecordEditorStatusBarProps {
   finalizedAt: string | null
   recordContent: string
   recordType: string
-  currentPatient: any
+  currentPatient: Patient | null
 }
 
 export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps) {

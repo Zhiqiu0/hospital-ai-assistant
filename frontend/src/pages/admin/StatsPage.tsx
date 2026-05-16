@@ -12,18 +12,18 @@ import { useEffect, useState } from 'react'
 import { Tabs, Typography } from 'antd'
 
 import api from '@/services/api'
-import OverviewTab from './stats/OverviewTab'
-import UsageTab from './stats/UsageTab'
-import QCTab from './stats/QCTab'
-import TokenTab from './stats/TokenTab'
+import OverviewTab, { type OverviewData } from './stats/OverviewTab'
+import UsageTab, { type UsageData } from './stats/UsageTab'
+import QCTab, { type QCData } from './stats/QCTab'
+import TokenTab, { type TokenData } from './stats/TokenTab'
 
 const { Title } = Typography
 
 export default function StatsPage() {
-  const [overview, setOverview] = useState<any>(null)
-  const [tokenData, setTokenData] = useState<any>(null)
-  const [usageData, setUsageData] = useState<any>(null)
-  const [qcData, setQcData] = useState<any>(null)
+  const [overview, setOverview] = useState<OverviewData | null>(null)
+  const [tokenData, setTokenData] = useState<TokenData | null>(null)
+  const [usageData, setUsageData] = useState<UsageData | null>(null)
+  const [qcData, setQcData] = useState<QCData | null>(null)
   const [loading, setLoading] = useState(true)
   const [tokenLoading, setTokenLoading] = useState(true)
   const [usageLoading, setUsageLoading] = useState(true)
@@ -33,19 +33,19 @@ export default function StatsPage() {
   useEffect(() => {
     api
       .get('/admin/stats/overview')
-      .then((d: any) => setOverview(d))
+      .then(d => setOverview(d as OverviewData))
       .finally(() => setLoading(false))
     api
       .get('/admin/stats/token-usage')
-      .then((d: any) => setTokenData(d))
+      .then(d => setTokenData(d as TokenData))
       .finally(() => setTokenLoading(false))
     api
       .get('/admin/stats/usage')
-      .then((d: any) => setUsageData(d))
+      .then(d => setUsageData(d as UsageData))
       .finally(() => setUsageLoading(false))
     api
       .get('/admin/stats/qc-issues')
-      .then((d: any) => setQcData(d))
+      .then(d => setQcData(d as QCData))
       .finally(() => setQcLoading(false))
   }, [])
 

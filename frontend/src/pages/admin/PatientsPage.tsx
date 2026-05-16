@@ -29,7 +29,7 @@ import {
 import { EditOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { message } from '@/services/messageBridge'
-import dayjs from 'dayjs'
+import dayjs, { type Dayjs } from 'dayjs'
 
 const { Title, Text } = Typography
 
@@ -39,23 +39,42 @@ const GENDER_MAP: Record<string, { label: string; color: string }> = {
   unknown: { label: '未知', color: 'default' },
 }
 
+/** 患者列表行——对应后端 PatientResponse 子集（本页展示用到的字段） */
+interface PatientRow {
+  id: string
+  patient_no?: string | null
+  name: string
+  gender?: string | null
+  age?: number | null
+  phone?: string | null
+  birth_date?: string | null
+}
+
+/** 编辑患者弹窗表单字段——birth_date 是 dayjs 对象（DatePicker 控件） */
+interface PatientFormValues {
+  name: string
+  gender?: string
+  phone?: string
+  birth_date?: Dayjs | null
+}
+
 export default function PatientsPage() {
-  const [patients, setPatients] = useState<any[]>([])
+  const [patients, setPatients] = useState<PatientRow[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editPatient, setEditPatient] = useState<any>(null)
-  const [form] = Form.useForm()
+  const [editPatient, setEditPatient] = useState<PatientRow | null>(null)
+  const [form] = Form.useForm<PatientFormValues>()
 
   const loadPatients = useCallback(
     async (p = page, kw = keyword) => {
       setLoading(true)
       try {
-        const data: any = await api.get(
+        const data = (await api.get(
           `/patients?page=${p}&page_size=10&keyword=${encodeURIComponent(kw)}`
-        )
+        )) as { items?: PatientRow[]; total?: number }
         setPatients(data.items || [])
         setTotal(data.total || 0)
       } finally {
@@ -76,18 +95,18 @@ export default function PatientsPage() {
     loadPatients(1, keyword)
   }
 
-  const openEdit = (patient: any) => {
+  const openEdit = (patient: PatientRow) => {
     setEditPatient(patient)
     form.setFieldsValue({
       name: patient.name,
-      gender: patient.gender,
-      phone: patient.phone,
+      gender: patient.gender ?? undefined,
+      phone: patient.phone ?? undefined,
       birth_date: patient.birth_date ? dayjs(patient.birth_date) : undefined,
     })
     setModalOpen(true)
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: PatientFormValues) => {
     if (!editPatient) return
     try {
       await api.put(`/patients/${editPatient.id}`, {
@@ -171,7 +190,7 @@ export default function PatientsPage() {
       title: '操作',
       key: 'action',
       width: 100,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: PatientRow) => (
         <Button
           size="small"
           icon={<EditOutlined />}

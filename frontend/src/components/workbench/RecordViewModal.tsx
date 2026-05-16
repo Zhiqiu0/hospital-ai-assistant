@@ -19,8 +19,28 @@ import { FileTextOutlined, CheckOutlined, PrinterOutlined } from '@ant-design/ic
 
 const { Text } = Typography
 
+/**
+ * 病历详情视图所需字段。
+ * 后端 medical-records 接口联表后字段较多（含医生 / 患者 / 接诊信息），
+ * 这里取本组件实际用到的字段集合作为入参契约，其他字段透传不消费。
+ */
+interface ViewableRecord {
+  id?: string
+  record_type: string
+  visit_type?: string
+  status?: string
+  content?: string
+  submitted_at?: string | null
+  patient_name?: string
+  patient_gender?: string
+  patient_age?: number | null
+  doctor_name?: string | null
+  submitted_by_name?: string | null
+  [key: string]: unknown
+}
+
 interface RecordViewModalProps {
-  record: any
+  record: ViewableRecord | null
   onClose: () => void
   accentColor: string
   tagColor: string
@@ -28,7 +48,7 @@ interface RecordViewModalProps {
   showPrint?: boolean
 }
 
-function printRecord(record: any, recordTypeLabel: (type: string) => string) {
+function printRecord(record: ViewableRecord, recordTypeLabel: (type: string) => string) {
   const typeLabel = recordTypeLabel(record.record_type)
   const patientDesc = [
     record.patient_name,
@@ -108,7 +128,7 @@ export default function RecordViewModal({
       onCancel={onClose}
       footer={
         <Space>
-          {showPrint && (
+          {showPrint && record && (
             <Button icon={<PrinterOutlined />} onClick={() => printRecord(record, recordTypeLabel)}>
               打印 / 导出PDF
             </Button>

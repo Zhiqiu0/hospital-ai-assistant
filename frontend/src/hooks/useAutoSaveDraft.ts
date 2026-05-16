@@ -70,12 +70,13 @@ export function useAutoSaveDraft({
   const performSave = async (payload: DraftPayload): Promise<boolean> => {
     setSavingState('saving')
     try {
-      const res: any = await api.post('/medical-records/auto-save-draft', {
+      // 后端 auto-save-draft 仅回 updated_at（用于乐观锁回填），形状收敛在内联接口
+      const res = (await api.post('/medical-records/auto-save-draft', {
         encounter_id: payload.encounter_id,
         record_type: payload.record_type,
         content: payload.content,
         expected_updated_at: payload.expected_updated_at,
-      })
+      })) as { updated_at?: string } | null
       lastSavedContentRef.current = payload.content
       lastUpdatedAtRef.current = res?.updated_at ?? null
       const now = Date.now()
@@ -84,9 +85,14 @@ export function useAutoSaveDraft({
       // 同步到 recordStore，让 WorkbenchStatusBar / 其他组件能感知"已保存"状态
       useRecordStore.getState().setRecordSavedAt(now)
       return true
-    } catch (err: any) {
+    } catch (err) {
+      // axios 错误形状收敛到本地视图：拦截器虽 reject error.response?.data，
+      // 但 unknown 走 instanceof / response status 访问会触发 lint，
+      // 这里直接用 inline 形状（status 通过 response 或 axios error 透出）
+      const e = err as { response?: { status?: number }; status?: number }
+      const status = e?.response?.status ?? e?.status
       // 409：乐观锁冲突——其他设备/标签页已经写过更新版
-      if (err?.response?.status === 409) {
+      if (status === 409) {
         setSavingState('conflict')
         message.warning('病历已被其他设备修改，请刷新后重试')
         return false
