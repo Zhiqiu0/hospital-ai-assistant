@@ -88,7 +88,14 @@ def _strip_transcript_meta(text: str) -> str:
 
 
 async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
-    """调用阿里云 Qwen-Audio-Turbo 对音频执行 ASR 转写。
+    """调用阿里云 qwen3-asr-flash 对音频执行 ASR 转写。
+
+    选 qwen3-asr-flash 而非旧的 qwen-audio-turbo：
+      - qwen-audio-turbo 是"听音频回答问题"的多模态 LLM，**不是 ASR 专用**；
+        会冒"这段音频的原始内容是…"meta 输出 + 同一段话重复输出两遍
+      - qwen3-asr-flash 是阿里专用 ASR 模型，接口形态相同（base64 直传），
+        标点 + 不重复 + ITN 数字归一化都明显更好
+      - 真实测试 3 段医疗对话的对比记录在 commit message
 
     Args:
         audio_bytes: 原始音频二进制内容。
@@ -111,29 +118,30 @@ async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "qwen-audio-turbo",
+                    "model": "qwen3-asr-flash",
                     "input": {
                         "messages": [{
                             "role": "user",
                             "content": [
                                 {"audio": f"data:{audio_mime};base64,{audio_b64}"},
-                                # 强化版 prompt：之前只说"不添加解释"，Qwen-Audio 仍会偶尔
-                                # 输出 meta 描述（"这段音频的原始内容是：'XXX'"），后台
-                                # 语音记录里能看到。这里用 negative example 明确禁止，
-                                # 并补一条 fallback 后处理（_strip_transcript_meta）。
-                                {"text": (
-                                    "请转录这段中文医患录音，直接输出转录后的医患原话文本。"
-                                    "严格禁止：不要加任何前缀（如「这段音频的原始内容是」「转录如下」"
-                                    "「以下是」「内容为」）、不要加引号、不要加解释、不要总结。"
-                                    "如果听不清就只输出能识别清楚的部分。"
-                                )},
+                                # qwen3-asr-flash 是纯 ASR，接口仍需 text 字段占位；
+                                # 留空让模型只走转写不走 instruction following
+                                {"text": ""},
                             ],
                         }]
+                    },
+                    "parameters": {
+                        "asr_options": {
+                            # 关闭语种识别，固定中文（医院全中文环境，省一次模型调用）
+                            "enable_lid": False,
+                            # 反向文本归一化：把"三十六度五"规范成"36.5°"等
+                            "enable_itn": True,
+                        },
                     },
                 },
             )
         if resp.status_code != 200:
-            logger.warning("Qwen-Audio 转写失败: HTTP %s — %s", resp.status_code, resp.text[:200])
+            logger.warning("qwen3-asr-flash 转写失败: HTTP %s — %s", resp.status_code, resp.text[:200])
             return ""
         data = resp.json()
         content = (
@@ -150,7 +158,7 @@ async def _asr_qwen_audio(audio_bytes: bytes, filename: str) -> str:
         if isinstance(content, str):
             return _strip_transcript_meta(content.strip())
     except Exception as exc:
-        logger.warning("Qwen-Audio 转写异常: %s", exc)
+        logger.warning("qwen3-asr-flash 转写异常: %s", exc)
     return ""
 
 
