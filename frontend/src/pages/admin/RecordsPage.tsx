@@ -14,14 +14,9 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Typography, Modal, Button, Space, Input } from 'antd'
 import { message } from '@/services/messageBridge'
-import {
-  FileTextOutlined,
-  SearchOutlined,
-  EyeOutlined,
-  CheckOutlined,
-  EditOutlined,
-} from '@ant-design/icons'
+import { SearchOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import RecordViewModal from '@/components/workbench/RecordViewModal'
 
 const { TextArea } = Input
 
@@ -33,7 +28,9 @@ const RECORD_TYPE_LABEL: Record<string, string> = {
   first_course_record: '首次病程',
 }
 
-/** 病历列表行——后端 /admin/records 把 patient/doctor/department JOIN 后扁平返回 */
+/** 病历列表行——后端 /admin/records 把 patient/doctor/department JOIN 后扁平返回。
+ *  2026-05-16 加：病案首页所需字段（patient_snapshot 优先 + 当前 patient 字段做 fallback）。
+ */
 interface RecordRow {
   id: string
   record_type: string
@@ -43,6 +40,28 @@ interface RecordRow {
   patient_gender?: string
   doctor_name?: string
   submitted_at?: string | null
+  // 病案首页字段（与 RecordViewModal.ViewableRecord 对齐）
+  patient_snapshot?: Record<string, unknown> | null
+  patient_no?: string | null
+  patient_phone?: string | null
+  patient_id_card?: string | null
+  patient_address?: string | null
+  patient_ethnicity?: string | null
+  patient_marital_status?: string | null
+  patient_occupation?: string | null
+  patient_workplace?: string | null
+  patient_contact_name?: string | null
+  patient_contact_phone?: string | null
+  patient_contact_relation?: string | null
+  patient_blood_type?: string | null
+  patient_birth_date?: string | null
+  visit_type?: string | null
+  visit_time?: string | null
+  bed_no?: string | null
+  department_name?: string | null
+  // 兼容 RecordViewModal.ViewableRecord 的 index signature——
+  // RecordViewModal 用 [key: string]: unknown 透传未消费字段
+  [key: string]: unknown
 }
 
 export default function RecordsPage() {
@@ -248,67 +267,17 @@ export default function RecordsPage() {
         style={{ background: 'var(--surface)', borderRadius: 10 }}
       />
 
-      <Modal
-        title={
-          viewRecord && (
-            <Space>
-              <FileTextOutlined style={{ color: '#2563eb' }} />
-              <span>{viewRecord.patient_name}</span>
-              <Tag color="blue">
-                {RECORD_TYPE_LABEL[viewRecord?.record_type] || viewRecord?.record_type}
-              </Tag>
-              <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
-                主治：{viewRecord.doctor_name}
-              </Text>
-            </Space>
-          )
-        }
-        open={!!viewRecord}
-        onCancel={() => setViewRecord(null)}
-        footer={<Button onClick={() => setViewRecord(null)}>关闭</Button>}
-        width={700}
-      >
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          签发时间：
-          {viewRecord?.submitted_at
-            ? new Date(viewRecord.submitted_at).toLocaleString('zh-CN')
-            : '-'}
-        </Text>
-        <div
-          style={{
-            background: 'var(--surface-2)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            padding: '20px 24px',
-            maxHeight: 500,
-            overflowY: 'auto',
-            fontSize: 14,
-            lineHeight: 1.9,
-            whiteSpace: 'pre-wrap',
-            margin: '12px 0',
-            fontFamily: "'PingFang SC', 'Microsoft YaHei', sans-serif",
-            color: 'var(--text-1)',
-          }}
-        >
-          {viewRecord?.content || '（病历内容为空）'}
-        </div>
-        <div
-          style={{
-            padding: '8px 12px',
-            background: '#f0fdf4',
-            border: '1px solid #bbf7d0',
-            borderRadius: 8,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-          }}
-        >
-          <CheckOutlined style={{ color: '#22c55e' }} />
-          <Text style={{ fontSize: 12, color: '#166534' }}>
-            已签发病历，如需修正请关闭后点列表"修订"按钮（管理员留痕修改）
-          </Text>
-        </div>
-      </Modal>
+      {/* 复用工作台 RecordViewModal——管理员视图也有完整"病案首页"+打印按钮。
+          之前是 admin 页面自己 inline 写的简版（只有正文+签发时间），改完之后
+          所有"查看病历"入口的首页/样式/打印逻辑统一在一个组件里。 */}
+      <RecordViewModal
+        record={viewRecord}
+        onClose={() => setViewRecord(null)}
+        accentColor="#2563eb"
+        tagColor="blue"
+        recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
+        showPrint
+      />
 
       {/* 修订病历弹窗：留痕式修改（创建新 RecordVersion，旧版本保留供审计） */}
       <Modal

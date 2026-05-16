@@ -12,6 +12,8 @@ import { Button, Space, Spin } from 'antd'
 import { CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 import { printRecord } from '@/utils/recordExport'
 import type { Patient } from '@/domain/medical'
+import { useAuthStore } from '@/store/authStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 interface RecordEditorStatusBarProps {
   isBusy: boolean
@@ -26,6 +28,17 @@ interface RecordEditorStatusBarProps {
 export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps) {
   const { isBusy, busyText, isFinal, finalizedAt, recordContent, recordType, currentPatient } =
     props
+  // 病案首页所需的医生 + 科室 + 就诊类型上下文。
+  // 编辑器场景下没有 snapshot（snapshot 是签发瞬间冻结的，编辑器读不到），
+  // 所以用 ctx 兜底——这是当前正在签发的接诊，doctor/dept/visit_type 都准确。
+  const user = useAuthStore(s => s.user)
+  const visitType = useActiveEncounterStore(s => s.visitType)
+  const ctx = {
+    visit_type: visitType,
+    visit_time: finalizedAt,
+    doctor_name: user?.real_name,
+    department_name: user?.department_name,
+  }
 
   if (isBusy) {
     return (
@@ -71,7 +84,9 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
         <Button
           size="small"
           icon={<PrinterOutlined />}
-          onClick={() => printRecord(recordContent, currentPatient, recordType, finalizedAt)}
+          onClick={() =>
+            printRecord(recordContent, currentPatient, recordType, finalizedAt, null, ctx)
+          }
           style={{
             borderRadius: 6,
             fontSize: 12,

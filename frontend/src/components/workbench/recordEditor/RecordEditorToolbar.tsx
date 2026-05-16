@@ -17,6 +17,8 @@ import {
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useAuthStore } from '@/store/authStore'
+import type { Patient } from '@/domain/medical'
 
 const { Text } = Typography
 
@@ -54,7 +56,8 @@ interface RecordEditorToolbarProps {
   qcIssues: unknown[]
   qcPass: boolean | null
   gradeScore: QCBadge | null
-  currentPatient: { name: string } | null
+  // 用完整 Patient（含病案首页字段），导出 Word 时一并写入顶部首页
+  currentPatient: Patient | null
   handleGenerate: () => void
   handlePolish: () => void
   handleQC: () => void
@@ -90,6 +93,15 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
   // 门诊 / 急诊医生只看到"门诊病历"；住院端只看到 8 项住院病历类型。
   // 之前模块级常量把所有类型都暴露，门诊医生能选"入院记录"是设计 bug。
   const visitType = useActiveEncounterStore(s => s.visitType)
+  // 导出 Word 时拼"病案首页"用的接诊上下文：医生姓名/科室来自 authStore，
+  // visit_type 来自 activeEncounterStore。编辑器场景没有 snapshot，传 null。
+  const user = useAuthStore(s => s.user)
+  const exportCtx = {
+    visit_type: visitType,
+    visit_time: finalizedAt,
+    doctor_name: user?.real_name,
+    department_name: user?.department_name,
+  }
   const recordTypeOptions =
     visitType === 'inpatient' ? INPATIENT_RECORD_OPTIONS : OUTPATIENT_RECORD_OPTIONS
   // 兜底：recordStore 默认 recordType='outpatient'，住院接诊建立时不会自动切换。
@@ -267,7 +279,16 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
           icon={<FileWordOutlined />}
           size="small"
           disabled={!recordContent.trim() || isBusy}
-          onClick={() => exportWordDoc(recordContent, currentPatient, recordType, finalizedAt)}
+          onClick={() =>
+            exportWordDoc(
+              recordContent,
+              currentPatient,
+              recordType,
+              finalizedAt,
+              null,
+              exportCtx
+            )
+          }
           style={{ borderRadius: 8, fontSize: 12, height: 30 }}
         >
           导出 Word

@@ -351,6 +351,19 @@ class PatientService:
             "has_active_inpatient": has_active_inpatient,
             "has_any_inpatient_history": has_any_inpatient_history,
             "birth_date": patient.birth_date,
+            # ── 病案首页扩展字段（2026-05-16 加）─────────────────────────
+            # 供前端导出 Word / 打印 / 查看病历时渲染病案首页；后端 patient
+            # 表本来就存了这些字段，只是 schema 之前没暴露。
+            "id_card": patient.id_card,
+            "address": patient.address,
+            "ethnicity": patient.ethnicity,
+            "marital_status": patient.marital_status,
+            "occupation": patient.occupation,
+            "workplace": patient.workplace,
+            "contact_name": patient.contact_name,
+            "contact_phone": patient.contact_phone,
+            "contact_relation": patient.contact_relation,
+            "blood_type": patient.blood_type,
         }
 
     # ── 患者档案（Longitudinal Record，JSONB 实现）────────────────────────────
