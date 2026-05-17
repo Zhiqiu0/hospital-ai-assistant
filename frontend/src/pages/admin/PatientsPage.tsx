@@ -28,6 +28,9 @@ import {
 } from 'antd'
 import { EditOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+
+// 统一身份证 / 手机号校验工厂规则，与门诊/住院新建表单走同一份规则
+import { phoneRule } from '@/utils/validators'
 import { message } from '@/services/messageBridge'
 import dayjs, { type Dayjs } from 'dayjs'
 
@@ -300,8 +303,8 @@ export default function PatientsPage() {
               <DatePicker style={{ width: '100%' }} placeholder="选择日期" />
             </Form.Item>
           </div>
-          <Form.Item name="phone" label="联系电话">
-            <Input placeholder="手机号码" />
+          <Form.Item name="phone" label="联系电话" rules={[phoneRule()]}>
+            <Input placeholder="手机号码" maxLength={11} />
           </Form.Item>
         </Form>
       </Modal>

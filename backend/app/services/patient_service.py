@@ -24,11 +24,42 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.validators.identity import extract_birth_date_from_id_card
 from app.models.patient import Patient
 from app.utils.age import calc_age
 from app.utils.pinyin import compute_pinyin, is_ascii_alpha
 from app.schemas.patient import PatientCreate, PatientProfileUpdate, PatientUpdate
 from app.services.redis_cache import redis_cache
+
+def _assert_id_card_birth_date_consistent(id_card: str | None, birth_date: date | None) -> None:
+    """断言身份证内嵌出生日期与 birth_date 字段一致。
+
+    身份证号第 7-14 位是出生日期 YYYYMMDD（GB 11643-1999 规定）。如果两边都填了
+    但对不上，多半是医生打字错位、LLM 抽取错列或者两边录的本就不是同一人。这是
+    患者主索引被污染的最常见来源，必须在 service 层兜住。
+
+    Args:
+        id_card: 已经 Pydantic 校验通过的身份证号（含 normalize），或 None
+        birth_date: 用户提供的出生日期字段值，或 None
+
+    Raises:
+        HTTPException(422): 两者都非空且不一致时抛出，前端可定位提示
+    """
+    if not id_card or not birth_date:
+        return  # 任一为空时无法对比，放行（由 Pydantic 层的单字段校验兜底）
+    extracted = extract_birth_date_from_id_card(id_card)
+    if not extracted:
+        return  # 身份证号本身有问题应该在 Pydantic 层就被挡下，这里防御性返回
+    if extracted != (birth_date.year, birth_date.month, birth_date.day):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"身份证号与出生日期不符："
+                f"身份证显示 {extracted[0]}-{extracted[1]:02d}-{extracted[2]:02d}，"
+                f"出生日期字段为 {birth_date.isoformat()}"
+            ),
+        )
+
 
 # 档案字段列表：JSONB 重构后共 7 个，月经史已移除
 # （月经史是时变信息，每次接诊在 inquiry_inputs.menstrual_history 重填）
@@ -254,6 +285,9 @@ class PatientService:
         姓名拼音索引 name_pinyin / name_pinyin_initials 由本方法回填——
         创建路径都走这里（quick-start / 手动建档 / HIS 同步），单一入口好控。
         """
+        # 跨字段一致性：身份证内嵌的出生日期（第 7-14 位）必须与 birth_date 字段一致
+        # 防止医生打字错位 / LLM 抽取错位导致主索引污染
+        _assert_id_card_birth_date_consistent(data.id_card, data.birth_date)
         patient = Patient(**data.model_dump(exclude_none=True))
         # 同步生成拼音索引，供搜索框拼音/首字母/混拼匹配
         patient.name_pinyin, patient.name_pinyin_initials = compute_pinyin(patient.name)
@@ -283,6 +317,10 @@ class PatientService:
             raise HTTPException(status_code=404, detail="患者不存在")
         # exclude_none=True 确保只更新传入的字段，不覆盖其他字段
         update_data = data.model_dump(exclude_none=True)
+        # 跨字段一致性：取"更新后最终值"对比（仅改身份证保留旧 birth_date 的场景也覆盖）
+        final_id_card = update_data.get("id_card", patient.id_card)
+        final_birth_date = update_data.get("birth_date", patient.birth_date)
+        _assert_id_card_birth_date_consistent(final_id_card, final_birth_date)
         for field, value in update_data.items():
             setattr(patient, field, value)
         # 姓名变了就重算拼音索引（其他字段变更不影响拼音）

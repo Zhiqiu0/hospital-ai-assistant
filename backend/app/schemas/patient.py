@@ -17,6 +17,10 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+# 集中校验：身份证号走 GB 11643 校验码 + 出生日期合法性；手机号走 1[3-9]\d{9}
+# 类型别名引入是为了让 schemas 永远只有一处规则定义，杜绝多文件抄正则导致漂移
+from app.core.validators.identity import IdCardStrict, Phone
+
 
 class PatientCreate(BaseModel):
     """创建患者入参（必填：姓名；其余字段均可选）。"""
@@ -24,8 +28,8 @@ class PatientCreate(BaseModel):
     name: str                              # 患者姓名（必填）
     gender: Optional[str] = None          # 性别："男"/"女"/"未知"
     birth_date: Optional[datetime.date] = None  # 出生日期（YYYY-MM-DD）
-    phone: Optional[str] = None           # 联系电话
-    id_card: Optional[str] = None         # 居民身份证号（18位）
+    phone: Phone = None                   # 联系电话（带 normalize + 11 位号段校验）
+    id_card: IdCardStrict = None          # 居民身份证号（带 normalize + GB 11643 校验码）
     address: Optional[str] = None         # 家庭住址
     # 病案首页扩展字段（住院病历必填）
     ethnicity: Optional[str] = None       # 民族
@@ -33,7 +37,7 @@ class PatientCreate(BaseModel):
     occupation: Optional[str] = None      # 职业
     workplace: Optional[str] = None       # 工作单位
     contact_name: Optional[str] = None    # 紧急联系人姓名
-    contact_phone: Optional[str] = None   # 紧急联系人电话
+    contact_phone: Phone = None           # 紧急联系人电话（同样走手机号校验）
     contact_relation: Optional[str] = None# 紧急联系人关系
     blood_type: Optional[str] = None      # 血型
 
@@ -83,15 +87,15 @@ class PatientUpdate(BaseModel):
     name: Optional[str] = None
     gender: Optional[str] = None
     birth_date: Optional[datetime.date] = None
-    phone: Optional[str] = None
-    id_card: Optional[str] = None
+    phone: Phone = None                   # 走手机号 normalize + 校验
+    id_card: IdCardStrict = None          # 走身份证 normalize + 校验
     address: Optional[str] = None
     ethnicity: Optional[str] = None
     marital_status: Optional[str] = None
     occupation: Optional[str] = None
     workplace: Optional[str] = None
     contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
+    contact_phone: Phone = None           # 走手机号 normalize + 校验
     contact_relation: Optional[str] = None
     blood_type: Optional[str] = None
 
