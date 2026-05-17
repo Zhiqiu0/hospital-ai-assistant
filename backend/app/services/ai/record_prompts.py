@@ -271,3 +271,84 @@ def build_record_prompt(record_type: str, req: Any) -> str:
     raise ValueError(
         f"record_type={record_type!r} 尚未接入 JSON 模式（应通过 NEW_ARCH_RECORD_TYPES 白名单过滤）"
     )
+
+
+# ─── 补全 / 润色 prompt（同构 JSON 路线，复用上面 build_record_prompt 当底） ──
+
+
+def _format_qc_issues(qc_issues: Any) -> str:
+    """把 QC 问题列表渲染成 prompt 可读的多行 bullet 列表。
+
+    传入可能是 list[dict]，每个 dict 含 risk_level / issue_description / suggestion；
+    空列表 / None 时返回占位文案，让 LLM 知道无强制问题，仍按 schema 输出 JSON 即可。
+    """
+    if not qc_issues:
+        return "（无质控问题——仍请按 schema 输出 JSON）"
+    lines: list[str] = []
+    for item in qc_issues:
+        if not isinstance(item, dict):
+            continue
+        level = (item.get("risk_level") or "").upper()
+        desc = item.get("issue_description") or ""
+        advice = item.get("suggestion") or ""
+        lines.append(f"- [{level}] {desc}（建议：{advice}）")
+    return "\n".join(lines) or "（无质控问题——仍请按 schema 输出 JSON）"
+
+
+# 补全场景的额外约束块（拼在 base prompt 末尾，覆盖 generate 模式没考虑到的情景）
+_SUPPLEMENT_EXTRA_RULES = """━━━ 补全场景额外约束（覆盖上方规则；严格遵守） ━━━
+1. 仍然只输出 schema 定义的 JSON 字段（key 不增不减，value 必须是字符串）
+2. 在保留客观数据（体温/血压等体征数值、医生录入的主诉与诊断原文）的前提下，把质控问题全部修复
+3. 草稿中某字段若已合规，可照搬该字段当前值；若是 "[未填写，需补充]"，必须按医生录入数据真实补充
+4. ★ 严禁"保留 [未填写，需补充] 占位符 + 末尾追加新内容"——这会导致最终病历出现两段同名章节
+5. 不得新增 schema 外的额外字段；不得编造医生未提供的症状、用药、检查结果"""
+
+
+# 润色场景的额外约束块
+_POLISH_EXTRA_RULES = """━━━ 润色场景额外约束（覆盖上方规则；严格遵守） ━━━
+1. 仍然只输出 schema 定义的 JSON 字段（key 不增不减，value 必须是字符串）
+2. 只做三件事：① 口语化表述改为标准医学书面语；② 合并重复语句；③ 修正错别字/标点
+3. 严禁修改任何客观数值（体温/血压/化验值等）、诊断名称、药物名称、医生录入原文
+4. 严禁新增任何在草稿中找不到依据的诊断、症状、检查结果
+5. 草稿中某字段若已规范，可原样照搬"""
+
+
+def build_supplement_prompt(record_type: str, req: Any) -> str:
+    """补全 prompt = 生成 prompt 基础 + 上次草稿 + 质控问题清单。
+
+    LLM 看到的内容：
+      ① 与 quick-generate 完全一致的 schema + 医生录入数据 + 真实性约束
+      ② 上次生成的病历草稿（让 LLM 知道哪些字段已经合规、哪些需要修复）
+      ③ 质控问题清单（明确要修复的点）
+      ④ 补全场景额外约束（重点防"双段同名章节"）
+
+    Raises:
+        ValueError: record_type 不在 NEW_ARCH_RECORD_TYPES 内（由 build_record_prompt 抛出）。
+    """
+    base = build_record_prompt(record_type, req)
+    current = (getattr(req, "current_content", None) or "").strip() or "（无现有草稿，按 schema 直接生成）"
+    qc_text = _format_qc_issues(getattr(req, "qc_issues", None))
+    return f"""{base}
+
+━━━ 上次生成的病历草稿（含质控发现的问题）━━━
+{current}
+
+━━━ 质控问题清单（必须全部修复）━━━
+{qc_text}
+
+{_SUPPLEMENT_EXTRA_RULES}"""
+
+
+def build_polish_prompt(record_type: str, req: Any) -> str:
+    """润色 prompt = 生成 prompt 基础 + 现有草稿 + 润色约束。
+
+    与补全的区别：不接受 qc_issues，专注语言规范化，禁止改动客观数据。
+    """
+    base = build_record_prompt(record_type, req)
+    current = (getattr(req, "current_content", None) or "").strip() or "（草稿为空，无法润色）"
+    return f"""{base}
+
+━━━ 待润色的病历草稿 ━━━
+{current}
+
+{_POLISH_EXTRA_RULES}"""

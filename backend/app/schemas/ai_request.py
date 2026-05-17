@@ -116,15 +116,27 @@ class ContinueRequest(BaseModel):
     weight: Optional[str] = ""
 
 
-class SupplementRequest(BaseModel):
-    """根据质控问题补全病历的入参。"""
+class _RecordTaskBase(BaseModel):
+    """病历改写任务（supplement / polish）的共享入参基类。
 
-    current_content: str = ""
-    qc_issues: Optional[list] = []
+    L3 治本路线：补全 / 润色 都走 "JSON schema 输出 → renderer 重渲染"，
+    与 quick-generate 同构。LLM 需要 schema 字段 + 医生录入数据 + 当前草稿
+    才能正确产出新版本，所以这里包含所有 record_type 可能涉及的字段。
+    """
+
+    # 接诊上下文
     record_type: Optional[str] = "outpatient"
+    current_content: str = ""              # 当前病历草稿（给 LLM 当基线参考）
+    is_first_visit: bool = True
+    onset_time: Optional[str] = ""
+    visit_time: Optional[str] = ""
+
+    # 患者基本信息
     patient_name: Optional[str] = ""
     patient_gender: Optional[str] = ""
     patient_age: Optional[str] = ""
+
+    # 通用问诊字段
     chief_complaint: Optional[str] = ""
     history_present_illness: Optional[str] = ""
     past_history: Optional[str] = ""
@@ -134,9 +146,8 @@ class SupplementRequest(BaseModel):
     physical_exam: Optional[str] = ""
     auxiliary_exam: Optional[str] = ""
     initial_impression: Optional[str] = ""
-    onset_time: Optional[str] = ""
-    visit_time: Optional[str] = ""
-    # 生命体征（独立字段）
+
+    # 生命体征
     temperature: Optional[str] = ""
     pulse: Optional[str] = ""
     respiration: Optional[str] = ""
@@ -146,11 +157,45 @@ class SupplementRequest(BaseModel):
     height: Optional[str] = ""
     weight: Optional[str] = ""
 
+    # 中医字段（门诊中医 / 住院中医场景）
+    tcm_inspection: Optional[str] = ""
+    tcm_auscultation: Optional[str] = ""
+    tongue_coating: Optional[str] = ""
+    pulse_condition: Optional[str] = ""
+    western_diagnosis: Optional[str] = ""
+    tcm_disease_diagnosis: Optional[str] = ""
+    tcm_syndrome_diagnosis: Optional[str] = ""
+    treatment_method: Optional[str] = ""
+    treatment_plan: Optional[str] = ""
+    followup_advice: Optional[str] = ""
+    precautions: Optional[str] = ""
 
-class PolishRequest(BaseModel):
-    """润色病历的入参。"""
+    # 住院 + 病程类专属字段
+    marital_history: Optional[str] = ""
+    menstrual_history: Optional[str] = ""
+    history_informant: Optional[str] = ""
+    current_medications: Optional[str] = ""
+    pain_assessment: Optional[str] = ""
+    vte_risk: Optional[str] = ""
+    nutrition_assessment: Optional[str] = ""
+    psychology_assessment: Optional[str] = ""
+    rehabilitation_assessment: Optional[str] = ""
+    religion_belief: Optional[str] = ""
 
-    content: str = ""
+    # 急诊专属字段
+    observation_notes: Optional[str] = ""
+    patient_disposition: Optional[str] = ""
+
+
+class SupplementRequest(_RecordTaskBase):
+    """根据 QC 问题清单一键补全病历的入参。"""
+
+    qc_issues: Optional[list] = []         # QC 引擎返回的问题列表
+
+
+class PolishRequest(_RecordTaskBase):
+    """润色病历的入参（与 supplement 同字段集，无 qc_issues）。"""
+    pass
 
 
 class NormalizeFieldsRequest(BaseModel):

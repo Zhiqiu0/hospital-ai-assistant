@@ -19,7 +19,7 @@ import {
 } from '@/store/inquiryFieldGroups'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import { streamSSE } from '@/services/streamSSE'
-import { parseGeneratedSectionsToInquiry, restoreMissingSections } from '@/utils/recordSections'
+import { parseGeneratedSectionsToInquiry } from '@/utils/recordSections'
 import type { QCIssue, GradeScore } from '@/store/types'
 
 /**
@@ -91,6 +91,45 @@ export function useRecordEditor() {
     const result = parseGeneratedSectionsToInquiry(content)
     if (Object.keys(result).length > 0) {
       setInquiry({ ...useInquiryStore.getState().inquiry, ...result })
+    }
+  }
+
+  /** 构造发往 quick-supplement / quick-polish 的共享 payload。
+   *
+   * L3 治本路线：补全 / 润色 都走"JSON schema 输出 → renderer 重渲染"，
+   * 与 quick-generate 同构，所以三家发送同一组字段（inquiry + profile +
+   * patient 基本信息 + record_type 上下文）。后端依据 schema 字段说明让 LLM
+   * 重新生成完整 JSON，renderer 拼装出唯一格式的病历正文——
+   * 物理上不可能再出现"两段同名章节"。
+   */
+  const buildRecordTaskPayload = (currentContent: string): Record<string, unknown> => {
+    const { isFirstVisit, visitType: currentVisitType } = useActiveEncounterStore.getState()
+    const activePatientId = useActiveEncounterStore.getState().patientId
+    const profile = activePatientId
+      ? usePatientCacheStore.getState().getProfile(activePatientId)
+      : null
+    const profilePayload: Record<string, string> = {}
+    if (profile) {
+      for (const key of PROFILE_FIELD_KEYS) {
+        const v = profile[key]
+        if (v) profilePayload[key] = String(v)
+      }
+    }
+    // 与 _doGenerate 一致：按 record_type 取字段子集，避免串场
+    const inquirySubset = pickInquiryByRecordType(recordType as RecordType, inquiry)
+    return {
+      ...inquirySubset,
+      ...profilePayload,
+      record_type: recordType,
+      current_content: currentContent,
+      encounter_id: currentEncounterId || undefined,
+      patient_name: currentPatient?.name || '',
+      patient_gender: currentPatient?.gender || '',
+      patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
+      is_first_visit: isFirstVisit,
+      visit_type_detail: currentVisitType,
+      visit_time: inquiry.visit_time || '',
+      onset_time: inquiry.onset_time || '',
     }
   }
 
@@ -202,10 +241,8 @@ export function useRecordEditor() {
     setPolishing(true)
     const original = recordContent
 
-    // 【追问补充】是结构化数据（来自右侧追问建议勾选 → buildSupplementSection 拼接的"问：答"），
-    // 不能交给 LLM 润色——POLISH_PROMPT 虽然要求"原文保留"，实测 LLM 仍会把多行"问：答"
-    // 合并整理成 1 句自然语言（5 行变 1 句），导致勾选数据丢失。
-    // 解决：润色前把整段拆出，只把上半部分发给 LLM，润色完原样拼回。
+    // 【追问补充】区块在新架构下仍由前端独立维护——它是医生勾选的"问：答"对
+    // 不参与 LLM 润色（防止被合并成自然语言导致勾选数据丢失），润色完原样拼回末尾
     const supplementMarker = '【追问补充】'
     const supplementIdx = original.indexOf(supplementMarker)
     const contentForPolish =
@@ -213,28 +250,33 @@ export function useRecordEditor() {
     const supplementSection = supplementIdx === -1 ? '' : original.slice(supplementIdx).trimEnd()
 
     setRecordContent('')
+    let gotError = false
     try {
       await runSSE(
         '/api/v1/ai/quick-polish',
-        { content: contentForPolish },
+        buildRecordTaskPayload(contentForPolish),
         {
           onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
+          onEvent: (raw: unknown) => {
+            // 后端 JSON 路线下任何异常都通过 type=error 事件返回（不再抛 SSE 异常）
+            const obj = (raw || {}) as { type?: string; message?: string }
+            if (obj.type === 'error') {
+              gotError = true
+              message.error(`润色失败：${obj.message || '请重试'}`)
+            }
+          },
         }
       )
-      // 章节完整性守卫：LLM 可能误删章节（针对 contentForPolish 比对，不含追问补充）
-      const polished = useRecordStore.getState().recordContent
-      const { restored, missing } = restoreMissingSections(contentForPolish, polished)
-
-      // 把保护下来的【追问补充】区块原样拼回末尾
-      const finalContent = supplementSection
-        ? restored.trimEnd() + '\n\n' + supplementSection
-        : restored
-
-      if (finalContent !== polished) {
-        setRecordContent(finalContent)
+      // 后端 renderer 已保证章节唯一，不再需要 restoreMissingSections 守卫
+      // 只把保护下来的【追问补充】区块原样拼回末尾即可
+      if (gotError) {
+        // LLM 失败时不破坏原内容
+        setRecordContent(original)
+        return
       }
-      if (missing.length > 0) {
-        message.warning(`润色完成，但 AI 误删了 ${missing.join('、')}，已自动还原`)
+      const polished = useRecordStore.getState().recordContent
+      if (supplementSection) {
+        setRecordContent(polished.trimEnd() + '\n\n' + supplementSection)
       }
     } catch (e) {
       if ((e as { name?: string })?.name !== 'AbortError') {
@@ -326,8 +368,8 @@ export function useRecordEditor() {
     setIsSupplementing(true)
     const original = recordContent
 
-    // 跟 handlePolish 同样的保护：把【追问补充】拆出去，不让 LLM 看到 → 不可能改写
-    // SUPPLEMENT_PROMPT 让 LLM 全篇重写，不保护就会把"问：答"压缩成自然语言导致勾选数据丢失
+    // 【追问补充】区块由前端独立维护（医生勾选的"问：答"对），
+    // 不参与 LLM 补全 → 拆出 → LLM 重新生成主体 → 拼回末尾
     const supplementMarker = '【追问补充】'
     const supplementIdx = original.indexOf(supplementMarker)
     const contentForLLM =
@@ -335,23 +377,31 @@ export function useRecordEditor() {
     const supplementSection = supplementIdx === -1 ? '' : original.slice(supplementIdx).trimEnd()
 
     setRecordContent('')
+    let gotError = false
+    let errorMsg = ''
     try {
       await runSSE(
         '/api/v1/ai/quick-supplement',
-        {
-          current_content: contentForLLM,
-          qc_issues: qcIssues,
-          ...inquiry,
-          record_type: recordType,
-          patient_name: currentPatient?.name || '',
-          patient_gender: currentPatient?.gender || '',
-          patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
-        },
+        { ...buildRecordTaskPayload(contentForLLM), qc_issues: qcIssues },
         {
           onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
+          onEvent: (raw: unknown) => {
+            const obj = (raw || {}) as { type?: string; message?: string }
+            if (obj.type === 'error') {
+              gotError = true
+              errorMsg = obj.message || ''
+            }
+          },
         }
       )
-      // 把保护下来的【追问补充】区块原样拼回末尾
+      if (gotError) {
+        setRecordContent(original)
+        // 旧版本会区分 context_length_exceeded 等细节，但 JSON 路线下后端用 ValueError
+        // 兜底，前端只显示提示即可——具体错误类型已在后端日志记录
+        message.error(`补全失败：${errorMsg || '请重试'}`)
+        return
+      }
+      // 后端 renderer 已保证章节唯一，不再需要前端去重 / 章节守卫
       const supplemented = useRecordStore.getState().recordContent
       const newContent = supplementSection
         ? supplemented.trimEnd() + '\n\n' + supplementSection
@@ -366,16 +416,7 @@ export function useRecordEditor() {
       const err = e as { name?: string; message?: string }
       if (err?.name === 'AbortError') return
       setRecordContent(original)
-      const msg = err?.message || ''
-      if (
-        msg.includes('context_length_exceeded') ||
-        msg.includes('maximum context length') ||
-        msg.includes('too many tokens')
-      ) {
-        message.error('病历内容超出AI处理上限，请联系管理员或手动分段修改')
-      } else {
-        message.error('补全失败，请重试')
-      }
+      message.error('补全失败，请重试')
     } finally {
       setIsSupplementing(false)
     }

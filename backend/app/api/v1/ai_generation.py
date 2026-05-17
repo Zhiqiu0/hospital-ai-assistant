@@ -41,11 +41,13 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
     CONTINUE_PROMPT,
-    POLISH_PROMPT,
     RECORD_TYPE_LABELS,
-    SUPPLEMENT_PROMPT,
 )
-from app.services.ai.record_gen_v2_service import stream_record_v2
+from app.services.ai.record_gen_v2_service import (
+    stream_polish_v2,
+    stream_record_v2,
+    stream_supplement_v2,
+)
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -182,7 +184,11 @@ async def quick_supplement(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """根据质控问题一键补全病历（流式）。"""
+    """根据质控问题一键补全病历（JSON 模式 + renderer 重渲染）。
+
+    L3 治本路线：与 quick-generate 同构 JSON 路径，物理上消除"两段同名章节"
+    bug——LLM 输出的 JSON 中每个 schema key 唯一，renderer 每个章节只渲染一次。
+    """
     await log_action(
         action="ai_quick_supplement",
         user_id=current_user.id,
@@ -191,53 +197,18 @@ async def quick_supplement(
         resource_type="medical_record",
         detail=f"record_type={req.record_type or 'outpatient'} issues_count={len(req.qc_issues or [])}",
     )
+    # 没有 qc_issues 时直接 done（前端往往是误触；不浪费 LLM 调用）
     if not req.qc_issues:
         return StreamingResponse(
             iter(['data: {"type":"done"}\n\n']),
             media_type="text/event-stream",
         )
 
-    record_type = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
-    issues_text = "\n".join(
-        f"- [{item.get('risk_level', '').upper()}] {item.get('issue_description', '')}"
-        f"（建议：{item.get('suggestion', '')}）"
-        for item in req.qc_issues
-    )
-    composed_physical_exam = compose_physical_exam(
-        physical_exam=req.physical_exam,
-        temperature=req.temperature,
-        pulse=req.pulse,
-        respiration=req.respiration,
-        bp_systolic=req.bp_systolic,
-        bp_diastolic=req.bp_diastolic,
-        spo2=req.spo2,
-        height=req.height,
-        weight=req.weight,
-    )
-    prompt = SUPPLEMENT_PROMPT.format(
-        record_type=record_type,
-        patient_name=req.patient_name or "未知",
-        patient_gender=req.patient_gender or "未知",
-        patient_age=req.patient_age or "未知",
-        chief_complaint=req.chief_complaint or "未提供",
-        history_present_illness=req.history_present_illness or "未提供",
-        past_history=req.past_history or "未提供",
-        allergy_history=req.allergy_history or "未提供",
-        personal_history=req.personal_history or "未提供",
-        family_history=req.family_history or "未提供",
-        physical_exam=composed_physical_exam or "未提供",
-        auxiliary_exam=req.auxiliary_exam or "无",
-        initial_impression=req.initial_impression or "未提供",
-        onset_time=req.onset_time or "未提供",
-        visit_time=req.visit_time or "未提供",
-        current_content=req.current_content or "（空）",
-        qc_issues=issues_text,
-    )
-    model_options = await get_model_options(db, "generate")
+    record_type = req.record_type or "outpatient"
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "supplement")
     return StreamingResponse(
         stream_with_lock(
-            stream_text(prompt, task_type="generate", model_options=model_options),
+            stream_supplement_v2(record_type, req, db),
             lock_key, lock_token,
         ),
         media_type="text/event-stream",
@@ -250,22 +221,31 @@ async def quick_polish(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """润色病历（流式）。"""
+    """润色病历（JSON 模式 + renderer 重渲染）。
+
+    与 supplement 同构，但 prompt 禁止改动客观数据；输出经 renderer 拼装，
+    永远符合 QC 行格式契约。
+    """
     await log_action(
         action="ai_quick_polish",
         user_id=current_user.id,
         user_name=current_user.username,
         user_role=current_user.role,
         resource_type="medical_record",
+        detail=f"record_type={req.record_type or 'outpatient'}",
     )
-    db_prompt = await get_active_prompt(db, "polish")
-    template = db_prompt or POLISH_PROMPT
-    model_options = await get_model_options(db, "polish")
-    prompt = safe_format(template, content=req.content)
+    # 空草稿没有润色对象，直接 done
+    if not (req.current_content or "").strip():
+        return StreamingResponse(
+            iter(['data: {"type":"done"}\n\n']),
+            media_type="text/event-stream",
+        )
+
+    record_type = req.record_type or "outpatient"
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "polish")
     return StreamingResponse(
         stream_with_lock(
-            stream_text(prompt, task_type="polish", model_options=model_options),
+            stream_polish_v2(record_type, req, db),
             lock_key, lock_token,
         ),
         media_type="text/event-stream",
