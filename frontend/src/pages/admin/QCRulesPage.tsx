@@ -12,7 +12,7 @@
  * UI 按 PDF 四列表格设计：项目 / 检查内容 / 评分说明 / 扣分及理由
  */
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Spin, Empty, Alert, Tabs } from 'antd'
+import { Table, Tag, Typography, Spin, Empty, Alert, Tabs, Space } from 'antd'
 import { SafetyCertificateOutlined, FileTextOutlined } from '@ant-design/icons'
 import { message } from '@/services/messageBridge'
 import api from '@/services/api'
@@ -196,7 +196,13 @@ export default function QCRulesPage() {
                 <Text type="secondary">
                   等级判定：
                   {rubric.grade_thresholds
-                    .map(t => `${t.label}（≥${t.min_score} 分）`)
+                    .map((t, idx, arr) => {
+                      // 最高等级显示 ≥ 自身阈值；其他等级显示 < 上一级阈值
+                      // 否则会出现"不合格（≥0 分）"这种怪文案
+                      if (idx === 0) return `${t.label}（≥${t.min_score} 分）`
+                      const upper = arr[idx - 1].min_score
+                      return `${t.label}（<${upper} 分）`
+                    })
                     .join(' / ')}
                 </Text>
               </Space>
@@ -232,7 +238,7 @@ export default function QCRulesPage() {
           activeKey={activeKey}
           onChange={setActiveKey}
           items={tabs}
-          destroyInactiveTabPane
+          destroyOnHidden
         />
       )}
     </div>
