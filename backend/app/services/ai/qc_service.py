@@ -31,7 +31,11 @@ from app.models.medical_record import AITask, QCIssue, RecordVersion
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
-from app.services.rule_engine.completeness_rules import check_completeness
+from app.services.qc_engine.checker import build_context
+from app.services.qc_engine.rubrics.zj_outpatient_emergency_2023 import (
+    ZJ_OUTPATIENT_EMERGENCY_V2023,
+)
+from app.services.qc_engine.scorer import score as run_rubric_score
 
 
 # LLM 质控 prompt：要求检查规范性和逻辑一致性（非完整性，那由规则引擎负责）
@@ -104,9 +108,24 @@ class QCService:
 
         all_issues = []
 
-        # ── 第一步：规则引擎完整性检查 ────────────────────────────────────────
-        rule_issues = await check_completeness(record_text=str(content), db=self.db)
-        for issue_data in rule_issues:
+        # ── 第一步：Rubric 评分（治本路线，浙江省 PDF 1:1 映射） ──────────────
+        # 后台 qc_scan 也走与工作台 SSE 同一引擎，保证扫描结果与实时质控一致
+        ctx = build_context(str(content), record_type=record.record_type or "outpatient")
+        report = run_rubric_score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
+        for ded in report.deductions:
+            # 扣分值 → 风险等级（与 qc_stream_service._deductions_to_issues 同语义）
+            if ded.is_veto or ded.points >= 5:
+                level = "high"
+            elif ded.points >= 2:
+                level = "medium"
+            else:
+                level = "low"
+            issue_data = {
+                "risk_level": level,
+                "field_name": ded.item_name,
+                "issue_description": ded.description,
+                "suggestion": ded.description,
+            }
             issue = QCIssue(
                 ai_task_id=task.id,
                 medical_record_id=record_id,

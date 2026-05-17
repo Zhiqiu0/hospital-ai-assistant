@@ -339,11 +339,13 @@ export function useRecordEditor() {
         // TS 在闭包外无法推断回调里赋值的 finalData，借助 const 收敛非 null 视图
         const done: QCStreamEvent = finalData
         const totalIssues = useQCStore.getState().qcIssues.length
-        if (done.grade_level === '甲级') {
-          message.success(`质控通过！预估评分 ${done.grade_score} 分，达到甲级病历标准`)
+        if (done.grade_level === '合格' || done.grade_level === '甲级') {
+          message.success(
+            `质控通过！评分 ${done.grade_score} 分（${done.grade_level}）`
+          )
         } else if (done.grade_score != null) {
           message.warning(
-            `预估评分 ${done.grade_score} 分（${done.grade_level}），发现 ${totalIssues} 个问题，请查看右侧质控提示`
+            `评分 ${done.grade_score} 分（${done.grade_level}），发现 ${totalIssues} 个问题，请查看右侧质控提示`
           )
         } else if (done.pass) {
           message.success('质控通过！')
