@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react'
 import { Table, Input, Select, Space, Tag, Typography, Button, Drawer, Descriptions } from 'antd'
 import { AudioOutlined, SearchOutlined } from '@ant-design/icons'
 import api from '@/services/api'
-import { useAuthStore } from '@/store/authStore'
+import { fetchAudioToken } from '@/services/voiceTranscriptApi'
 
 const { Text } = Typography
 
@@ -56,7 +56,6 @@ interface VoiceRecordQuery {
 }
 
 export default function VoiceRecordsPage() {
-  const { token } = useAuthStore()
   const [items, setItems] = useState<VoiceRecordRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -64,6 +63,9 @@ export default function VoiceRecordsPage() {
   const [status, setStatus] = useState<string | undefined>()
   const [page, setPage] = useState(1)
   const [detail, setDetail] = useState<VoiceRecordRow | null>(null)
+  // 短期音频令牌：后端要求 <audio> 用 aud="audio" 的 5 分钟短期令牌，
+  // 不能直接用普通会话 JWT，否则 403。详情打开时拉，关闭时清空。
+  const [audioToken, setAudioToken] = useState<string | null>(null)
 
   const loadData = async (p = page) => {
     setLoading(true)
@@ -89,6 +91,15 @@ export default function VoiceRecordsPage() {
     // status 变化时重新加载；setState 在 effect 里是预期路径
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status])
+
+  // 打开详情且该记录有录音时，去后端换一次短期音频令牌；关闭抽屉清掉旧令牌
+  useEffect(() => {
+    if (detail?.id && detail.has_audio) {
+      fetchAudioToken(detail.id).then(t => setAudioToken(t))
+    } else {
+      setAudioToken(null)
+    }
+  }, [detail?.id, detail?.has_audio])
 
   const handleSearch = () => {
     setPage(1)
@@ -235,14 +246,14 @@ export default function VoiceRecordsPage() {
               </Descriptions.Item>
             </Descriptions>
 
-            {detail.has_audio && (
+            {detail.has_audio && audioToken && (
               <div>
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
                   音频播放
                 </Text>
                 <audio
                   controls
-                  src={`/api/v1/ai/voice-records/${detail.id}/audio?token=${token}`}
+                  src={`/api/v1/ai/voice-records/${detail.id}/audio?token=${audioToken}`}
                   style={{ width: '100%' }}
                 />
               </div>
