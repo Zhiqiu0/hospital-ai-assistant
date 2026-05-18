@@ -62,11 +62,22 @@ T:36.5℃ P:78次/分 R:18次/分 BP:120/80mmHg
 
 
 def _full_inquiry() -> dict:
+    """C 方案后：inquiry 只放问诊维度字段，**不再含**患者基础信息。
+
+    患者基础信息通过 build_context(patient_name=, patient_gender=, patient_age=)
+    分别传入 PatientMeta（治本的核心）。
+    """
     return {
-        "patient_name": "测试王某",
-        "patient_gender": "男",
-        "patient_age": "45",
+        # 问诊维度字段（按需补充实际问诊数据，当前测试只用 patient_meta 字段够）
     }
+
+
+# 测试默认的患者基础信息（治本路线：从 patient_meta 传入，不串到 inquiry）
+_DEFAULT_PATIENT_KWARGS = dict(
+    patient_name="测试王某",
+    patient_gender="男",
+    patient_age="45",
+)
 
 
 def _build_record_missing(section_name: str) -> str:
@@ -90,7 +101,7 @@ def test_full_record_yields_perfect_score():
         _build_full_record(),
         record_type="outpatient",
         is_first_visit=True,
-        patient_gender="男",
+        **_DEFAULT_PATIENT_KWARGS,
         inquiry=_full_inquiry(),
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
@@ -101,6 +112,46 @@ def test_full_record_yields_perfect_score():
 
 
 # ─── 用户截图复现：5 个未填写章节绝不能再 100 分 ──────────────────
+
+
+# ─── C 方案治本：FHIR 三资源分层防字段错位 ────────────────────────
+
+
+def test_patient_basic_info_not_false_positive_when_provided():
+    """★ C 方案治本核心断言：界面 banner 已显示"姓名/性别/年龄"时，
+    必须**不再**误报"患者基础信息缺项"。
+
+    复现用户截图原 bug：旧实现 inquiry_field_filled('patient_name') 永远返回 False
+    （因为 patient_name 不在 inquiry 字典里），导致即使前端 banner 显示
+    "519测试 男 26岁" 仍报 OP-BASIC-INFO-01 误扣 1 分。
+    新实现从 ctx.patient_meta.has_basic_info() 取——永久治本。
+    """
+    ctx = build_context(
+        _build_full_record(),
+        patient_name="519测试",  # ← banner 显示的姓名
+        patient_gender="男",
+        patient_age="26",
+        inquiry=_full_inquiry(),  # inquiry 里**不含** patient_xxx
+    )
+    rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
+    codes = {d.rule_code for d in rep.deductions}
+    assert "OP-BASIC-INFO-01" not in codes, (
+        f"姓名/性别/年龄都填了不应触发基础信息缺项，扣分明细：{[(d.rule_code, d.description) for d in rep.deductions]}"
+    )
+
+
+def test_patient_basic_info_triggers_when_any_field_empty():
+    """patient_meta 任一字段为空 → 触发 OP-BASIC-INFO-01。"""
+    # 故意把 age 留空
+    ctx = build_context(
+        _build_full_record(),
+        patient_name="测试王某",
+        patient_gender="男",
+        patient_age="",  # ← 空
+    )
+    rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
+    codes = {d.rule_code for d in rep.deductions}
+    assert "OP-BASIC-INFO-01" in codes
 
 
 def test_user_screenshot_scenario_does_not_yield_100():
@@ -150,8 +201,9 @@ def test_user_screenshot_scenario_does_not_yield_100():
         record,
         record_type="outpatient",
         is_first_visit=True,
+        patient_name="测试",
         patient_gender="男",
-        inquiry={"patient_name": "测试", "patient_gender": "男", "patient_age": "35"},
+        patient_age="35",
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     # 必触发：缺中医四诊（-10）、缺治则治法（-5）、缺处理意见（-5）、缺复诊建议+注意事项（-5）、
@@ -171,7 +223,7 @@ def test_user_screenshot_scenario_does_not_yield_100():
 
 def test_chief_complaint_missing_triggers_deduction():
     """主诉缺失 → OP-CHIEF-COMPLAINT-01 触发。"""
-    ctx = build_context(_build_record_missing("主诉"), inquiry=_full_inquiry())
+    ctx = build_context(_build_record_missing("主诉"), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-CHIEF-COMPLAINT-01" in codes
@@ -180,7 +232,7 @@ def test_chief_complaint_missing_triggers_deduction():
 def test_chief_complaint_without_duration_triggers_deduction():
     """主诉缺时间单位（天/周/月/年/小时）→ OP-CHIEF-COMPLAINT-02 触发。"""
     record = _build_full_record().replace("反复头痛 3 天", "反复头痛")
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-CHIEF-COMPLAINT-02" in codes
@@ -190,7 +242,7 @@ def test_chief_complaint_without_duration_triggers_deduction():
 
 
 def test_present_illness_missing_triggers_deduction():
-    ctx = build_context(_build_record_missing("现病史"), inquiry=_full_inquiry())
+    ctx = build_context(_build_record_missing("现病史"), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-PRESENT-ILLNESS-01" in codes
@@ -202,7 +254,7 @@ def test_present_illness_without_treatment_keyword_triggers_deduction():
         "患者 3 天前无明显诱因出现头部胀痛，伴轻度恶心，无呕吐发热。曾自行服用对乙酰氨基酚片治疗，效果不佳。今为求中医诊治来院就诊。发病以来精神尚可，食欲一般，睡眠欠佳，二便正常。",
         "患者 3 天前出现头痛，无其他症状。"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-PRESENT-ILLNESS-02" in codes
@@ -212,30 +264,35 @@ def test_present_illness_without_treatment_keyword_triggers_deduction():
 
 
 def test_past_history_missing_triggers_deduction():
-    ctx = build_context(_build_record_missing("既往史"), inquiry=_full_inquiry())
+    ctx = build_context(_build_record_missing("既往史"), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-PAST-HISTORY-01" in codes
 
 
 def test_female_in_reproductive_age_missing_menstrual_history_triggers():
-    """育龄女性无月经史 → OP-PAST-HISTORY-02 触发（-5 分）。"""
+    """育龄女性无月经史 → OP-PAST-HISTORY-02 触发（-5 分）。
+
+    C 方案治本核心场景：性别 + 年龄都从 patient_meta 取——
+    旧实现 age 误查 inquiry 导致此规则**从不触发**。
+    """
     record = _build_full_record()  # 既往史含"否认...过敏史"但不含"经"字
     ctx = build_context(
         record,
+        patient_name="测试",
         patient_gender="女",
-        inquiry={"patient_name": "测试", "patient_gender": "女", "patient_age": "30"},
+        patient_age="30",
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
-    assert "OP-PAST-HISTORY-02" in codes
+    assert "OP-PAST-HISTORY-02" in codes, "育龄女性无月经史规则必须触发（旧实现 bug：age 查错位永远拿空）"
 
 
 def test_male_does_not_trigger_menstrual_history_rule():
     """男性不触发月经史规则。"""
     ctx = build_context(
         _build_full_record(),
-        patient_gender="男",
+        **_DEFAULT_PATIENT_KWARGS,
         inquiry=_full_inquiry(),
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
@@ -251,7 +308,7 @@ def test_missing_tongue_and_pulse_triggers_tcm_four_diagnoses():
     record = _build_full_record() \
         .replace("切诊·舌象：舌淡红，苔薄白", "切诊·舌象：[未填写，需补充]") \
         .replace("切诊·脉象：脉弦", "切诊·脉象：[未填写，需补充]")
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-PHYSICAL-EXAM-01" in codes
@@ -259,7 +316,7 @@ def test_missing_tongue_and_pulse_triggers_tcm_four_diagnoses():
 
 def test_filled_tcm_diagnoses_does_not_trigger():
     """舌脉填了 → 不触发。"""
-    ctx = build_context(_build_full_record(), inquiry=_full_inquiry())
+    ctx = build_context(_build_full_record(), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-PHYSICAL-EXAM-01" not in codes
@@ -269,7 +326,7 @@ def test_filled_tcm_diagnoses_does_not_trigger():
 
 
 def test_missing_auxiliary_exam_triggers_deduction():
-    ctx = build_context(_build_record_missing("辅助检查"), inquiry=_full_inquiry())
+    ctx = build_context(_build_record_missing("辅助检查"), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-AUXILIARY-EXAM-01" in codes
@@ -284,7 +341,7 @@ def test_missing_tcm_diagnosis_triggers_deduction():
         "中医疾病诊断：头痛\n中医证候诊断：风寒头痛证\n西医诊断：紧张型头痛",
         "西医诊断：紧张型头痛"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-DIAGNOSIS-01" in codes
@@ -296,7 +353,7 @@ def test_incomplete_tcm_diagnosis_triggers_deduction():
         "中医证候诊断：风寒头痛证\n",
         ""
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-DIAGNOSIS-02" in codes
@@ -306,7 +363,7 @@ def test_missing_western_diagnosis_triggers_deduction():
     record = _build_full_record().replace(
         "西医诊断：紧张型头痛", ""
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-DIAGNOSIS-03" in codes
@@ -319,7 +376,7 @@ def test_missing_treatment_plan_triggers_deduction():
     record = _build_full_record().replace(
         "处理意见：川芎茶调散加减", "处理意见：[未填写，需补充]"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-TREATMENT-01" in codes
@@ -329,7 +386,7 @@ def test_missing_treatment_method_triggers_deduction():
     record = _build_full_record().replace(
         "治则治法：疏风散寒，止痛", "治则治法：[未填写，需补充]"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-TREATMENT-02" in codes
@@ -341,7 +398,7 @@ def test_missing_both_followup_and_precautions_triggers_deduction():
         "复诊建议：1 周后复诊\n注意事项：避风寒，规律作息",
         "复诊建议：[未填写，需补充]\n注意事项：[未填写，需补充]"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-TREATMENT-03" in codes
@@ -352,7 +409,7 @@ def test_one_of_followup_or_precautions_does_not_trigger():
     record = _build_full_record().replace(
         "注意事项：避风寒，规律作息", "注意事项：[未填写，需补充]"
     )
-    ctx = build_context(record, inquiry=_full_inquiry())
+    ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
     assert "OP-TREATMENT-03" not in codes
@@ -362,12 +419,15 @@ def test_one_of_followup_or_precautions_does_not_trigger():
 
 
 def test_emergency_visit_time_without_minute_triggers_deduction():
-    """急诊就诊时间未到分钟（如"2026-05-18"无 HH:MM）→ OP-OTHER-01 触发。"""
+    """急诊就诊时间未到分钟（如"2026-05-18"无 HH:MM）→ OP-OTHER-01 触发。
+
+    C 方案后：is_emergency 由 EncounterMeta 自动按 record_type 派生，不再单独传。
+    """
     record = _build_full_record().replace("2026-05-18 10:30", "2026-05-18")
     ctx = build_context(
         record,
         record_type="emergency",
-        is_emergency=True,
+        **_DEFAULT_PATIENT_KWARGS,
         inquiry=_full_inquiry(),
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
@@ -381,7 +441,7 @@ def test_outpatient_visit_time_without_minute_does_not_trigger():
     ctx = build_context(
         record,
         record_type="outpatient",
-        is_emergency=False,
+        **_DEFAULT_PATIENT_KWARGS,
         inquiry=_full_inquiry(),
     )
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)

@@ -267,7 +267,12 @@ class QuickQCRequest(BaseModel):
     record_type: Optional[str] = "outpatient"
     encounter_id: Optional[str] = None
     is_first_visit: Optional[bool] = True
+
+    # 患者基础信息（C 方案 FHIR PatientMeta 资源）
+    # 前端调 quick-qc 时传过来，规则引擎判定"患者基础信息缺项"用
+    patient_name: Optional[str] = ""
     patient_gender: Optional[str] = ""
+    patient_age: Optional[str] = ""
 
     # 基础问诊字段（用于规则引擎）
     chief_complaint: Optional[str] = ""

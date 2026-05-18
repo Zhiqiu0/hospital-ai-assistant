@@ -306,7 +306,10 @@ export function useRecordEditor() {
         {
           content: qcContent,
           record_type: recordType,
+          // 患者基础信息（C 方案 FHIR PatientMeta）—— 让规则引擎正确判定"基础信息齐全"
+          patient_name: currentPatient?.name || '',
           patient_gender: currentPatient?.gender || '',
+          patient_age: currentPatient?.age != null ? String(currentPatient.age) : '',
           is_first_visit: useActiveEncounterStore.getState().isFirstVisit,
           encounter_id: currentEncounterId || undefined,
         },

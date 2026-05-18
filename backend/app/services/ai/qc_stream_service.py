@@ -109,14 +109,16 @@ async def run_quick_qc_stream(
         }
         return
 
-    # 选 Rubric + 构造上下文
+    # 选 Rubric + 构造上下文（FHIR 三资源分层）
     rubric = _select_rubric(req.record_type)
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
-        is_emergency=(req.record_type == "emergency"),
         is_first_visit=req.is_first_visit if req.is_first_visit is not None else True,
+        # 患者基础信息——独立成 PatientMeta，不再串到 inquiry 字典
+        patient_name=req.patient_name or "",
         patient_gender=req.patient_gender or "",
+        patient_age=req.patient_age or "",
         inquiry=extract_inquiry_dict(req),
     )
 
@@ -266,8 +268,10 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
-        is_emergency=(req.record_type == "emergency"),
+        # 患者基础信息——独立成 PatientMeta，不再串到 inquiry 字典
+        patient_name=req.patient_name or "",
         patient_gender=req.patient_gender or "",
+        patient_age=req.patient_age or "",
         inquiry=extract_inquiry_dict(req),
     )
     report = score(rubric, ctx)

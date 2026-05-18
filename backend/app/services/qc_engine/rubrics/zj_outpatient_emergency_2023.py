@@ -24,7 +24,7 @@ from app.services.qc_engine.rubric import (
 
 def _missing_visit_time_minute(ctx: RecordContext) -> bool:
     """急诊未具体到分钟（PDF 第 11 项要求；门诊不强制，仅急诊触发）。"""
-    if not ctx.is_emergency:
+    if not ctx.encounter_meta.is_emergency:
         return False
     # 病历正文里 "就诊时间" 行后跟的时间是否包含 ":" 分隔时分
     import re
@@ -39,12 +39,11 @@ def _missing_visit_time_minute(ctx: RecordContext) -> bool:
 # ── 2. 患者基础信息（10 分） ─────────────────────────────────────────
 
 def _missing_patient_basic_info(ctx: RecordContext) -> bool:
-    """患者基础信息（姓名、性别、出生年月日等）缺项。
+    """患者基础信息（姓名、性别、年龄）缺项。
 
-    inquiry 字段里 patient_name / patient_gender / patient_age 任一为空即触发。
+    C 方案治本（2026-05-19）：从 patient_meta 一等字段取，不再误查 inquiry。
     """
-    required = ("patient_name", "patient_gender", "patient_age")
-    return not all(ctx.inquiry_field_filled(k) for k in required)
+    return not ctx.patient_meta.has_basic_info()
 
 
 def _missing_visit_time(ctx: RecordContext) -> bool:
@@ -91,16 +90,14 @@ def _missing_past_history(ctx: RecordContext) -> bool:
 def _missing_menstrual_history_for_female(ctx: RecordContext) -> bool:
     """育龄期女性无月经史扣 5 分（PDF）。
 
-    判定育龄期：性别为女且 inquiry 中年龄在 12-55 之间——粗略阈值，避免漏报。
+    判定育龄期：性别为女且年龄在 12-55 之间——粗略阈值，避免漏报。
+
+    C 方案治本（2026-05-19）：性别 + 年龄都从 patient_meta 取（旧实现 age
+    误查 inquiry 字典导致永远拿不到值 → 此规则从不触发）。
     """
-    if ctx.patient_gender not in ("女", "female"):
+    if not ctx.patient_meta.is_female():
         return False
-    age_str = ctx.inquiry.get("patient_age", "")
-    try:
-        age = int(age_str.split(".")[0])  # "45" / "45.5" 都能解
-    except (ValueError, AttributeError):
-        return False
-    if not (12 <= age <= 55):
+    if not ctx.patient_meta.is_in_reproductive_age():
         return False
     # 月经史可能在【既往史】内或独立【月经史】章节
     if ctx.section("月经史").is_filled():
@@ -172,14 +169,14 @@ def _missing_treatment_method(ctx: RecordContext) -> bool:
 
 def _emergency_missing_vitals(ctx: RecordContext) -> bool:
     """急诊病人无 T、P、R、BP 生命体征记录扣 2 分。"""
-    if not ctx.is_emergency:
+    if not ctx.encounter_meta.is_emergency:
         return False
     return not ctx.section("生命体征").is_filled()
 
 
 def _emergency_missing_disposition(ctx: RecordContext) -> bool:
     """急诊患者去向未记录扣 2 分。"""
-    if not ctx.is_emergency:
+    if not ctx.encounter_meta.is_emergency:
         return False
     return not ctx.section("患者去向").is_filled()
 
