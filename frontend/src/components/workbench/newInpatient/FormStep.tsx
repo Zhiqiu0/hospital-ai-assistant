@@ -8,14 +8,22 @@
  * 选中已有患者也要填。
  */
 import { Form, Input, Select } from 'antd'
+import type { FormInstance } from 'antd'
 import SectionLabel from './SectionLabel'
 import SelectedPatientCard from './SelectedPatientCard'
 import NewPatientFields from './NewPatientFields'
+import type { Patient } from '@/domain/medical'
 
 interface FormStepProps {
-  form: any
-  selectedPatient: any | null
-  onFinish: (values: any) => void
+  /** antd FormInstance：父级建好 form 实例后透传进来，便于提交按钮在 Modal footer 调 submit() */
+  form: FormInstance
+  selectedPatient: Patient | null
+  /**
+   * 表单提交回调。
+   * 入参用 unknown 而非具体接口：FormStep 不知道父级的字段形状（住院 / 复诊场景不同），
+   * 父级回调拿到 unknown 后再断言成自己的 NewInpatientFormValues 即可。
+   */
+  onFinish: (values: unknown) => void
 }
 
 export default function FormStep({ form, selectedPatient, onFinish }: FormStepProps) {

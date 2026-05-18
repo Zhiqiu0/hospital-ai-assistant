@@ -21,10 +21,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.client_ip import get_client_ip
 from app.core.rate_limit import login_limiter
 from app.database import get_db
 from app.models.revoked_token import RevokedToken
@@ -64,7 +66,7 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
             action="login",
             user_name=request.username,
             detail=f"登录失败：{detail or '账号或密码错误'}",
-            ip_address=http_request.client.host if http_request.client else None,
+            ip_address=get_client_ip(http_request),
             status="error",
         )
         # 运行日志：仅 username + 失败原因，不带密码 / 任何 PII
@@ -107,16 +109,28 @@ async def logout(
             if jti and exp:
                 # 双写：DB 作为权威存档（审计、Redis 不可用兜底），Redis 作为热路径
                 # （每个受保护请求都校验黑名单，DB 查询是瓶颈）。
+                # 幂等性：重复 logout（用户连点退出、多 tab 同 token、网络重试都会触发）
+                # 必须返回 200 而非 500——logout 是"使 token 失效"的命令，再次执行不该报错。
                 db.add(RevokedToken(
                     jti=jti,
                     expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
                 ))
-                await db.commit()
+                try:
+                    await db.commit()
+                    logger.info("auth.logout: success jti=%s", jti)
+                except IntegrityError:
+                    # jti 已在黑名单（同一 token 被重复 logout / 并发 logout 第二个到达）
+                    # 视为成功——目标状态"token 已失效"已经达成
+                    await db.rollback()
+                    logger.info("auth.logout: idempotent (jti already revoked) jti=%s", jti)
                 # Redis TTL 设到 token 自然过期时刻，过期后自动清理
+                # Redis 写失败不影响登出：DB 是权威源，下次请求 get_current_user 仍会查到黑名单
                 from app.services.redis_cache import redis_cache
                 ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
-                await redis_cache.set_bytes(f"auth:revoked:{jti}", b"1", ttl=ttl)
-                logger.info("auth.logout: success jti=%s", jti)
+                try:
+                    await redis_cache.set_bytes(f"auth:revoked:{jti}", b"1", ttl=ttl)
+                except Exception as exc:
+                    logger.warning("auth.logout: redis_set_failed jti=%s err=%s", jti, exc)
         except JWTError:
             # token 已无效（格式错误/签名不符），无需加黑名单。用 debug 而非 pass 留痕
             logger.debug("auth.logout: invalid token, skip blacklist")

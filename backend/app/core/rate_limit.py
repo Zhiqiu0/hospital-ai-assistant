@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException, Request
 
+from app.core.client_ip import get_client_ip
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,13 @@ class RateLimiter:
         self._store: dict[str, list[datetime]] = defaultdict(list)
 
     def _get_key(self, request: Request, extra: str = "") -> str:
-        """从请求中提取限速 key，默认为 "客户端IP:extra"。"""
-        ip = request.client.host if request.client else "unknown"
+        """从请求中提取限速 key，默认为 "客户端IP:extra"。
+
+        IP 走 get_client_ip 解析 XFF / X-Real-IP，保证反代环境下能按真实用户
+        网络维度限速（之前用 request.client.host 拿到的是反代容器内网 IP，
+        会让一整个反代后面的所有用户共享一个限速桶 → 单用户爆破耗光所有人额度）。
+        """
+        ip = get_client_ip(request) or "unknown"
         return f"{ip}:{extra}"
 
     async def check(self, request: Request, extra: str = "", key_override: str = ""):

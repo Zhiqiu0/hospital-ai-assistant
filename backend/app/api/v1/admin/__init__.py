@@ -19,6 +19,7 @@ from app.api.v1.admin import (
     prompts,
     qc_rules,
     records,
+    rubrics,
     stats,
     users,
     voice_records,
@@ -30,7 +31,8 @@ router = APIRouter(dependencies=[Depends(audit_admin_action)])
 
 router.include_router(users.router, prefix="/users", tags=["管理-用户"])
 router.include_router(departments.router, prefix="/departments", tags=["管理-科室"])
-router.include_router(qc_rules.router, prefix="/qc-rules", tags=["管理-质控规则"])
+router.include_router(qc_rules.router, prefix="/qc-rules", tags=["管理-质控规则（已只读）"])
+router.include_router(rubrics.router, prefix="/rubrics", tags=["管理-法定评分标准"])
 router.include_router(prompts.router, prefix="/prompts", tags=["管理-Prompt"])
 router.include_router(stats.router, prefix="/stats", tags=["管理-统计"])
 router.include_router(records.router, prefix="/records", tags=["管理-病历"])

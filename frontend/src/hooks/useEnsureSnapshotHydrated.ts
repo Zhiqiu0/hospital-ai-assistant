@@ -25,7 +25,7 @@ import { useEffect, useRef } from 'react'
 import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
-import { applySnapshotResult } from '@/store/encounterIntake'
+import { applySnapshotResult, type SnapshotResult } from '@/store/encounterIntake'
 
 export function useEnsureSnapshotHydrated() {
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
@@ -48,8 +48,9 @@ export function useEnsureSnapshotHydrated() {
     hydratedForRef.current = currentEncounterId
     api
       .get(`/encounters/${currentEncounterId}/workspace`)
-      .then((snapshot: any) => {
-        if (snapshot) applySnapshotResult(snapshot)
+      .then(snapshot => {
+        // 后端返回的形状已被 SnapshotResult 描述（patient + inquiry + active_record + ai_suggestions 等）
+        if (snapshot) applySnapshotResult(snapshot as SnapshotResult)
       })
       .catch(() => {
         // 失败不报警；下次刷新还会重试

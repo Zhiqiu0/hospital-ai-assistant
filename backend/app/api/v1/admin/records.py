@@ -61,12 +61,17 @@ async def list_all_records(
     """
     offset = (page - 1) * page_size
 
-    # 构建基础查询（联表获取接诊医生和患者信息）
+    # 构建基础查询（联表获取接诊医生 + 患者 + 科室信息）
+    # outerjoin Department 是因为历史用户可能没填科室，避免漏数据
+    # 注意：Department 模型在 app.models.user 里定义（项目早期约定）
+    from app.models.user import Department
+
     base = (
-        select(MedicalRecord, Encounter, Patient, User)
+        select(MedicalRecord, Encounter, Patient, User, Department)
         .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
         .join(Patient, Encounter.patient_id == Patient.id)
         .join(User, Encounter.doctor_id == User.id)
+        .outerjoin(Department, User.department_id == Department.id)
         .where(MedicalRecord.status == "submitted")
     )
     if doctor_id:
@@ -81,7 +86,7 @@ async def list_all_records(
     rows = (await db.execute(q)).all()
 
     items = []
-    for record, encounter, patient, doctor in rows:
+    for record, encounter, patient, doctor, dept in rows:
         # 查询最新版本内容（取预览摘要）
         ver_q = (
             select(RecordVersion)
@@ -103,6 +108,29 @@ async def list_all_records(
             "encounter_id": encounter.id,
             "content_preview": content_text[:100] + "..." if len(content_text) > 100 else content_text,
             "content": content_text,
+            # ── 病案首页快照（2026-05-16 加）─────────────────────────────
+            # 优先用 patient_snapshot（签发那一刻冻结的身份信息）；为空（旧记录）
+            # 才回落到当前 patient 实时字段。前端 RecordViewModal/导出/打印用它
+            # 渲染顶部首页。
+            "patient_snapshot": record.patient_snapshot,
+            # 顺便补全当前 patient 字段做 fallback（前端 PatientSnapshot 字段为空时用）
+            "patient_phone": patient.phone,
+            "patient_id_card": patient.id_card,
+            "patient_address": patient.address,
+            "patient_ethnicity": patient.ethnicity,
+            "patient_marital_status": patient.marital_status,
+            "patient_occupation": patient.occupation,
+            "patient_workplace": patient.workplace,
+            "patient_contact_name": patient.contact_name,
+            "patient_contact_phone": patient.contact_phone,
+            "patient_contact_relation": patient.contact_relation,
+            "patient_blood_type": patient.blood_type,
+            "patient_birth_date": patient.birth_date.isoformat() if patient.birth_date else None,
+            "visit_type": encounter.visit_type,
+            # Encounter.visited_at = 接诊开始时间（DateTime）；不是 InquiryInput.visit_time
+            "visit_time": encounter.visited_at.isoformat() if encounter.visited_at else None,
+            "bed_no": encounter.bed_no,
+            "department_name": dept.name if dept else None,
         })
 
     return {"total": total, "items": items}

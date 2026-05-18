@@ -22,11 +22,11 @@ import {
   Tag,
   Typography,
   Card,
-  message,
   Popconfirm,
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -44,17 +44,30 @@ const SCENE_MAP: Record<string, { label: string; color: string }> = {
   exam: { label: '检查建议', color: 'cyan' },
 }
 
+/** Prompt 模板行——对应后端 AIPrompt schema */
+interface PromptRow {
+  id: string
+  name: string
+  scene: string
+  version?: string | null
+  content: string
+  is_active: boolean
+}
+
+/** 新建/编辑 Prompt 表单字段（id/is_active 不可编辑） */
+type PromptFormValues = Omit<PromptRow, 'id' | 'is_active'>
+
 export default function PromptsPage() {
-  const [prompts, setPrompts] = useState<any[]>([])
+  const [prompts, setPrompts] = useState<PromptRow[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editPrompt, setEditPrompt] = useState<any>(null)
-  const [form] = Form.useForm()
+  const [editPrompt, setEditPrompt] = useState<PromptRow | null>(null)
+  const [form] = Form.useForm<PromptFormValues>()
 
   const loadPrompts = async () => {
     setLoading(true)
     try {
-      const data: any = await api.get('/admin/prompts')
+      const data = (await api.get('/admin/prompts')) as { items?: PromptRow[] }
       setPrompts(data.items || [])
     } finally {
       setLoading(false)
@@ -71,13 +84,13 @@ export default function PromptsPage() {
     setModalOpen(true)
   }
 
-  const openEdit = (p: any) => {
+  const openEdit = (p: PromptRow) => {
     setEditPrompt(p)
     form.setFieldsValue(p)
     setModalOpen(true)
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: PromptFormValues) => {
     try {
       if (editPrompt) {
         await api.put(`/admin/prompts/${editPrompt.id}`, values)
@@ -124,7 +137,7 @@ export default function PromptsPage() {
       <List
         loading={loading}
         dataSource={prompts}
-        renderItem={(item: any) => {
+        renderItem={(item: PromptRow) => {
           const scene = SCENE_MAP[item.scene] || { label: item.scene, color: 'default' }
           return (
             <Card

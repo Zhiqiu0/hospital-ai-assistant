@@ -4,9 +4,10 @@
  * 与门诊 NewEncounterModal 风格一致，绿色突出"住院复用"。
  */
 import { Avatar, Space, Tag } from 'antd'
+import type { Patient } from '@/domain/medical'
 
 interface Props {
-  patient: any
+  patient: Patient
 }
 
 export default function SelectedPatientCard({ patient }: Props) {

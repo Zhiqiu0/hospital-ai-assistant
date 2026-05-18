@@ -3,7 +3,8 @@
  * 从 InpatientWorkbenchPage 提取，避免页面文件过长。
  */
 import { useState } from 'react'
-import { Button, Space, Tag, Typography, Avatar, Divider, Modal, message } from 'antd'
+import { Button, Space, Tag, Typography, Avatar, Divider, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { Layout } from 'antd'
 import {
   LogoutOutlined,
@@ -14,14 +15,24 @@ import {
   CloseCircleOutlined,
 } from '@ant-design/icons'
 import api from '@/services/api'
+import type { Patient } from '@/domain/medical'
 
 const { Header } = Layout
 const { Text } = Typography
 
+/**
+ * 顶栏只读取登录用户的展示字段。完整 UserInfo 在 authStore 内部（未导出），
+ * 这里收口为本组件用到的最小集合，避免跨文件耦合。
+ */
+interface HeaderUser {
+  real_name?: string
+  department_name?: string | null
+}
+
 interface Props {
-  currentPatient: any
+  currentPatient: Patient | null
   currentEncounterId: string | null
-  user: any
+  user: HeaderUser | null
   onOpenHistory: () => void
   onOpenImaging: () => void
   onLogout: () => void
@@ -69,8 +80,11 @@ export default function InpatientHeader({
           await api.post(`/encounters/${currentEncounterId}/discharge`)
           message.success(`${currentPatient.name} 已办理出院`)
           onDischarged?.()
-        } catch (e: any) {
-          const detail = e?.response?.data?.detail || '办理出院失败，请重试'
+        } catch (e) {
+          // 不强约束 e 形状，仅取 response.data.detail 做 toast
+          const detail =
+            (e as { response?: { data?: { detail?: string } } } | null)?.response?.data?.detail ||
+            '办理出院失败，请重试'
           message.error(detail)
         } finally {
           setDischarging(false)

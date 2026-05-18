@@ -35,15 +35,59 @@ const TASK_TYPE_MAP: Record<string, string> = {
   pacs: 'PACS影像分析',
 }
 
+/** 按 task_type 聚合的 token 用量行 */
+interface TokenTaskRow {
+  task_type: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
+}
+
+/** DeepSeek 账户余额（后端透传，字段全部字符串以兼容原始 API） */
+interface DeepSeekBalance {
+  total_balance?: string
+  topped_up_balance?: string
+  granted_balance?: string
+}
+
+/** 阿里云通义千问余额（accessKey 未配则全部缺省） */
+interface AliyunBalance {
+  available_amount?: string
+  available_cash_amount?: string
+  credit_amount?: string
+  currency?: string
+}
+
+/** 阿里云状态块 */
+interface AliyunStatus {
+  connected?: boolean
+  model?: string
+  error?: string
+  balance?: AliyunBalance | null
+  balance_error?: string
+}
+
+/** /admin/stats/token-usage 完整响应 */
+interface TokenUsageData {
+  total_calls?: number
+  total_input_tokens?: number
+  total_output_tokens?: number
+  today_input_tokens?: number
+  today_output_tokens?: number
+  by_task_type?: TokenTaskRow[]
+  balance?: DeepSeekBalance | null
+  aliyun_status?: AliyunStatus | null
+}
+
 export default function TokenUsagePage() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<TokenUsageData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     api
       .get('/admin/stats/token-usage')
-      .then((d: any) => setData(d))
+      .then(d => setData(d as TokenUsageData))
       .catch(() => setError('数据加载失败'))
       .finally(() => setLoading(false))
   }, [])
@@ -83,7 +127,8 @@ export default function TokenUsagePage() {
     {
       title: '合计 Tokens',
       key: 'total',
-      render: (_: any, row: any) => (row.input_tokens + row.output_tokens).toLocaleString(),
+      render: (_: unknown, row: TokenTaskRow) =>
+        (row.input_tokens + row.output_tokens).toLocaleString(),
     },
   ]
 

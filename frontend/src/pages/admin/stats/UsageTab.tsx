@@ -10,8 +10,27 @@ import { ApartmentOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 
+/** 按科室聚合的接诊量记录 */
+export interface DepartmentUsageRow {
+  department_id: string
+  department_name: string
+  encounter_count: number
+}
+
+/** 近 7 日单日接诊量 */
+export interface DailyTrendRow {
+  date: string
+  count: number
+}
+
+/** /admin/stats/usage 返回值 */
+export interface UsageData {
+  by_department?: DepartmentUsageRow[]
+  daily_trend?: DailyTrendRow[]
+}
+
 interface UsageTabProps {
-  usageData: any
+  usageData: UsageData | null
   loading: boolean
 }
 
@@ -30,13 +49,13 @@ export default function UsageTab({ usageData, loading }: UsageTabProps) {
       title: '接诊次数',
       dataIndex: 'encounter_count',
       key: 'count',
-      render: (v: number, _: any, i: number) => (
+      render: (v: number, _: DepartmentUsageRow, i: number) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Progress
             percent={Math.round(
               (v /
                 Math.max(
-                  ...(usageData?.by_department ?? []).map((d: any) => d.encounter_count),
+                  ...(usageData?.by_department ?? []).map(d => d.encounter_count),
                   1
                 )) *
                 100
@@ -54,8 +73,8 @@ export default function UsageTab({ usageData, loading }: UsageTabProps) {
     },
   ]
 
-  const dailyTrend = usageData?.daily_trend ?? []
-  const maxDailyCount = Math.max(...dailyTrend.map((x: any) => x.count), 1)
+  const dailyTrend: DailyTrendRow[] = usageData?.daily_trend ?? []
+  const maxDailyCount = Math.max(...dailyTrend.map(x => x.count), 1)
 
   return (
     <Row gutter={[16, 16]}>
@@ -90,7 +109,7 @@ export default function UsageTab({ usageData, loading }: UsageTabProps) {
             </Text>
           ) : (
             <div>
-              {dailyTrend.map((d: any) => (
+              {dailyTrend.map(d => (
                 <div
                   key={d.date}
                   style={{

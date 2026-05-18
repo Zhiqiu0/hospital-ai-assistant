@@ -344,6 +344,19 @@ async def migrate():
             print(f"    patients.is_deleted 回填 - SKIP ({str(e)[:80]})")
         print()
 
+        # 11. medical_records 病案首页快照（2026-05-16 加，合规级要求）
+        # 签发时把患者完整身份字段冻结进 patient_snapshot，避免后续 patient 表
+        # 更新回写已签发病历。详见 alembic b7c8d9e0f1a2。
+        print("[11] medical_records 病案首页快照...")
+        try:
+            await conn.execute(text(
+                "ALTER TABLE medical_records ADD COLUMN IF NOT EXISTS patient_snapshot JSONB"
+            ))
+            print("    medical_records.patient_snapshot - OK")
+        except Exception as e:
+            print(f"    medical_records.patient_snapshot - SKIP ({str(e)[:80]})")
+        print()
+
     print("=== 迁移完成 ===")
 
 

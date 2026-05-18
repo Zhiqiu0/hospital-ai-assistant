@@ -11,7 +11,8 @@
  * 图标：使用 antd SVG 图标替代 emoji（无障碍 + 专业度）。
  */
 import { useState } from 'react'
-import { Form, Input, Button, message } from 'antd'
+import { Form, Input, Button } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   UserOutlined,
   LockOutlined,
@@ -54,18 +55,27 @@ export default function LoginPage() {
 
   const theme = selectedSystem === 'inpatient' ? scenes.inpatient : scenes.outpatient
 
-  const resolveLoginErrorMessage = async (username: string, error: any) => {
+  // axios 拦截器把 error.response?.data reject 出来；既可能含 detail（业务错误），
+  // 也可能仍是 AxiosError（网络层错误）。本地视图取并集，运行期按字段实际存在与否取值。
+  type LoginErrorShape = {
+    detail?: string
+    code?: string
+    message?: string
+    response?: { status?: number }
+  }
+  const resolveLoginErrorMessage = async (username: string, error: unknown) => {
+    const err = (error || {}) as LoginErrorShape
     // 诊断 breadcrumb：把 axios error 形态记下来，方便下次同类 bug 排查
     // 不记 username 内容（PII），仅记 error 形态
     const errorShape = {
-      hasResponse: !!error?.response,
-      httpStatus: error?.response?.status,
-      errorCode: error?.code,
-      errorMessage: error?.message?.slice(0, 200),
-      hasDetail: !!error?.detail,
+      hasResponse: !!err.response,
+      httpStatus: err.response?.status,
+      errorCode: err.code,
+      errorMessage: err.message?.slice(0, 200),
+      hasDetail: !!err.detail,
     }
 
-    const detail = error?.detail
+    const detail = err.detail
     let finalToast: string
     let checkUsernameResult: 'skipped' | 'success' | 'failed' = 'skipped'
 
@@ -73,7 +83,9 @@ export default function LoginPage() {
       finalToast = detail
     } else {
       try {
-        const res: any = await api.get('/auth/check-username', { params: { username } })
+        const res = (await api.get('/auth/check-username', { params: { username } })) as {
+          exists?: boolean
+        }
         checkUsernameResult = 'success'
         finalToast = res.exists ? '密码不正确' : '账号不存在'
       } catch {
@@ -94,9 +106,22 @@ export default function LoginPage() {
     return finalToast
   }
 
+  // /auth/login 响应：JWT + 用户信息（role 驱动跳转目标）
+  interface LoginResponse {
+    access_token: string
+    user: {
+      id: string
+      username: string
+      real_name: string
+      role: string
+      department_id?: string
+      department_name?: string
+    }
+  }
+
   const onFinish = async (values: { username: string; password: string }) => {
     try {
-      const res: any = await api.post('/auth/login', values)
+      const res = (await api.post('/auth/login', values)) as LoginResponse
       resetWorkbench()
       setAuth(res.access_token, res.user)
       setSystemType(selectedSystem)
@@ -108,7 +133,7 @@ export default function LoginPage() {
       } else {
         navigate(selectedSystem === 'inpatient' ? '/inpatient' : '/workbench')
       }
-    } catch (error: any) {
+    } catch (error) {
       message.error(await resolveLoginErrorMessage(values.username, error))
     }
   }

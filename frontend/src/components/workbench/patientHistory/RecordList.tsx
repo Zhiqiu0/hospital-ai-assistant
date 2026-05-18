@@ -9,9 +9,23 @@ import { getSceneTag } from './sceneTag'
 
 const { Text } = Typography
 
+/**
+ * 单条历史病历的最小契约，与 PatientHistoryDrawer.HistoryRecord 同构。
+ * 列表只读：仅在 list item title / description / 查看按钮 click 中消费这些字段。
+ */
+export interface RecordListItem {
+  id?: string
+  record_type: string
+  visit_type?: string
+  visit_sequence?: number
+  content_preview?: string
+  submitted_at?: string | null
+  [key: string]: unknown
+}
+
 interface RecordListProps {
-  records: any[]
-  onView: (record: any) => void
+  records: RecordListItem[]
+  onView: (record: RecordListItem) => void
   recordTypeLabel: (t: string) => string
 }
 
@@ -20,7 +34,7 @@ export default function RecordList({ records, onView, recordTypeLabel }: RecordL
     <List
       style={{ padding: '8px 16px' }}
       dataSource={records}
-      renderItem={(record: any) => {
+      renderItem={record => {
         const scene = getSceneTag(record.visit_type, record.visit_sequence)
         return (
           <List.Item

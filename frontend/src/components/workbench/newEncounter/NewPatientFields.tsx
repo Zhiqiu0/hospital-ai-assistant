@@ -7,6 +7,10 @@
 import { Form, Input, Select, DatePicker } from 'antd'
 import dayjs from 'dayjs'
 
+// 统一身份证 / 手机号校验：从 utils/validators 引入工厂规则，
+// 三个表单走同一份规则，杜绝各处自抄正则导致漂移
+import { idCardRule, phoneRule } from '@/utils/validators'
+
 const ETHNICITY_OPTIONS = [
   '汉族',
   '满族',
@@ -73,7 +77,7 @@ export default function NewPatientFields() {
       <Form.Item
         name="id_card"
         label="身份证号"
-        rules={[{ pattern: /^\d{17}[\dXx]$/, message: '请输入有效的18位身份证号' }]}
+        rules={[idCardRule()]}
       >
         <Input placeholder="选填，建议录入以便复诊/转住院去重" maxLength={18} />
       </Form.Item>
@@ -101,8 +105,8 @@ export default function NewPatientFields() {
         <Form.Item name="occupation" label="职业" style={{ flex: 1 }}>
           <Input placeholder="选填" />
         </Form.Item>
-        <Form.Item name="phone" label="联系电话" style={{ flex: 1 }}>
-          <Input placeholder="选填" />
+        <Form.Item name="phone" label="联系电话" style={{ flex: 1 }} rules={[phoneRule()]}>
+          <Input placeholder="选填" maxLength={11} />
         </Form.Item>
       </div>
       <Form.Item name="workplace" label="工作单位">

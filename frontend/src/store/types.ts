@@ -91,18 +91,17 @@ export interface QCIssue {
   score_impact?: string
 }
 
-/** 甲级评分 */
+/** 病历质控评分（按浙江省 PDF 标准） */
 export interface GradeScore {
   /** 0-100 */
   grade_score: number
-  /** 等级语义：
-   *   甲级/乙级/丙级 = 分数区间
-   *   待整改         = 任意分数 + 存在规则引擎产出的"必须修复"项时的强制等级，
-   *                    含义是"病历不可签发"。与分数维度解耦，避免「93分甲级 +
-   *                    需修复才可出具」的悖论（2026-04-30）。
+  /** 等级语义（PDF 1:1 映射）：
+   *   门、急诊（PDF 注 5）：合格（≥90） / 不合格（<90）
+   *   住院（PDF 备注 8）：甲级（≥90） / 乙级（≥80） / 丙级（<80）
+   *   兼容旧返回："待整改"——L2 旧实现产出的强制等级（住院 Rubric 上线后弃用）
    */
-  grade_level: '甲级' | '乙级' | '丙级' | '待整改'
-  /** 必须修复项数（source=='rule' 的 issue 数量），仅在"待整改"时用于文案显示 */
+  grade_level: '合格' | '不合格' | '甲级' | '乙级' | '丙级' | '待整改'
+  /** 必须修复项数（source=='rule' 的 issue 数量），文案"N 项必须修复" */
   must_fix_count?: number
   strengths?: string[]
 }

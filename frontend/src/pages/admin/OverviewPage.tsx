@@ -69,16 +69,30 @@ const NAV_ITEMS = [
   { label: '操作日志', path: '/admin/audit-logs', color: '#7c3aed', bg: '#f5f3ff' },
 ]
 
+/**
+ * /admin/stats/overview 概览数字——key 与 STAT_CONFIG.key 对齐，
+ * 字段全部 optional：样本为 0 时后端可能不返回某些键。
+ */
+interface OverviewStats {
+  today_encounters?: number
+  total_encounters?: number
+  total_ai_tasks?: number
+  high_risk_issues?: number
+  [key: string]: number | undefined
+}
+
 export default function OverviewPage() {
   const navigate = useNavigate()
-  const [stats, setStats] = useState<any>(null)
+  const [stats, setStats] = useState<OverviewStats | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     api
       .get('/admin/stats/overview')
-      .then((data: any) => {
-        setStats(data)
+      .then(data => {
+        // 响应拦截器已 unwrap response.data，但 axios 静态类型仍是 AxiosResponse，
+        // 走一层 unknown 再断言到实际形状（项目内统一做法）。
+        setStats(data as unknown as OverviewStats)
       })
       .catch(() => {})
       .finally(() => setLoading(false))

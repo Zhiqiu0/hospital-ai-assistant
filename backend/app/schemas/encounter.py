@@ -20,6 +20,10 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+# 一键开始接诊路径同样新建患者，必须走同一份身份证 / 手机号校验，
+# 否则 API 直调或前端表单绕过时会污染患者主索引
+from app.core.validators.identity import IdCardStrict, Phone
+
 
 class QuickStartRequest(BaseModel):
     """一键开始接诊请求体（同时创建患者和接诊记录）。
@@ -36,8 +40,8 @@ class QuickStartRequest(BaseModel):
     # 出生日期（YYYY-MM-DD）；前端展示年龄时用 dayjs().diff(birth_date, 'year') 计算，
     # 不再接受 age 字段，避免推算导致出生日期被劣化为"当年 1 月 1 日"。
     birth_date: Optional[str] = None
-    id_card: Optional[str] = None         # 身份证号（精确查重用）
-    phone: Optional[str] = None
+    id_card: IdCardStrict = None          # 身份证号（GB 11643 校验码 + 出生日期合法性）
+    phone: Phone = None                   # 联系电话（11 位 1[3-9] 校验）
     address: Optional[str] = None
     # 病案首页扩展字段（住院时填写）
     ethnicity: Optional[str] = None
@@ -45,7 +49,7 @@ class QuickStartRequest(BaseModel):
     occupation: Optional[str] = None
     workplace: Optional[str] = None
     contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
+    contact_phone: Phone = None           # 紧急联系人电话（同样走手机号校验）
     contact_relation: Optional[str] = None
     blood_type: Optional[str] = None
     # 接诊设置

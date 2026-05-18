@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react'
 import { Table, Input, Select, Space, Tag, Typography, Button, Drawer, Descriptions } from 'antd'
 import { AudioOutlined, SearchOutlined } from '@ant-design/icons'
 import api from '@/services/api'
-import { useAuthStore } from '@/store/authStore'
+import { fetchAudioToken } from '@/services/voiceTranscriptApi'
 
 const { Text } = Typography
 
@@ -34,23 +34,49 @@ const VISIT_TYPE_LABEL: Record<string, string> = {
   emergency: '急诊',
 }
 
+/** 语音记录列表行——admin/voice-records 接口扁平返回 */
+interface VoiceRecordRow {
+  id: string
+  created_at?: string | null
+  doctor_name?: string | null
+  visit_type?: string | null
+  status: string // uploaded / structured
+  has_audio?: boolean
+  encounter_id?: string | null
+  transcript_summary?: string | null
+  transcript_preview?: string | null
+}
+
+/** /admin/voice-records 查询参数 */
+interface VoiceRecordQuery {
+  page: number
+  page_size: number
+  keyword?: string
+  status?: string
+}
+
 export default function VoiceRecordsPage() {
-  const { token } = useAuthStore()
-  const [items, setItems] = useState<any[]>([])
+  const [items, setItems] = useState<VoiceRecordRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState<string | undefined>()
   const [page, setPage] = useState(1)
-  const [detail, setDetail] = useState<any>(null)
+  const [detail, setDetail] = useState<VoiceRecordRow | null>(null)
+  // 短期音频令牌：后端要求 <audio> 用 aud="audio" 的 5 分钟短期令牌，
+  // 不能直接用普通会话 JWT，否则 403。详情打开时拉，关闭时清空。
+  const [audioToken, setAudioToken] = useState<string | null>(null)
 
   const loadData = async (p = page) => {
     setLoading(true)
     try {
-      const params: any = { page: p, page_size: 20 }
+      const params: VoiceRecordQuery = { page: p, page_size: 20 }
       if (keyword) params.keyword = keyword
       if (status) params.status = status
-      const data: any = await api.get('/admin/voice-records', { params })
+      const data = (await api.get('/admin/voice-records', { params })) as {
+        items?: VoiceRecordRow[]
+        total?: number
+      }
       setItems(data.items || [])
       setTotal(data.total || 0)
     } catch {
@@ -62,7 +88,18 @@ export default function VoiceRecordsPage() {
 
   useEffect(() => {
     loadData(1)
+    // status 变化时重新加载；setState 在 effect 里是预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status])
+
+  // 打开详情且该记录有录音时，去后端换一次短期音频令牌；关闭抽屉清掉旧令牌
+  useEffect(() => {
+    if (detail?.id && detail.has_audio) {
+      fetchAudioToken(detail.id).then(t => setAudioToken(t))
+    } else {
+      setAudioToken(null)
+    }
+  }, [detail?.id, detail?.has_audio])
 
   const handleSearch = () => {
     setPage(1)
@@ -111,7 +148,7 @@ export default function VoiceRecordsPage() {
       title: '转写摘要',
       dataIndex: 'transcript_summary',
       ellipsis: true,
-      render: (v: string, record: any) => (
+      render: (v: string, record: VoiceRecordRow) => (
         <Text style={{ fontSize: 12 }} type="secondary">
           {v || record.transcript_preview || '（暂无）'}
         </Text>
@@ -120,7 +157,7 @@ export default function VoiceRecordsPage() {
     {
       title: '操作',
       width: 80,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: VoiceRecordRow) => (
         <Button size="small" type="link" onClick={() => setDetail(record)}>
           详情
         </Button>
@@ -195,7 +232,9 @@ export default function VoiceRecordsPage() {
               </Descriptions.Item>
               <Descriptions.Item label="医生">{detail.doctor_name || '-'}</Descriptions.Item>
               <Descriptions.Item label="就诊类型">
-                {VISIT_TYPE_LABEL[detail.visit_type] || detail.visit_type || '-'}
+                {(detail.visit_type && VISIT_TYPE_LABEL[detail.visit_type]) ||
+                  detail.visit_type ||
+                  '-'}
               </Descriptions.Item>
               <Descriptions.Item label="接诊ID">
                 <Text style={{ fontSize: 12 }}>{detail.encounter_id || '-'}</Text>
@@ -207,14 +246,14 @@ export default function VoiceRecordsPage() {
               </Descriptions.Item>
             </Descriptions>
 
-            {detail.has_audio && (
+            {detail.has_audio && audioToken && (
               <div>
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
                   音频播放
                 </Text>
                 <audio
                   controls
-                  src={`/api/v1/ai/voice-records/${detail.id}/audio?token=${token}`}
+                  src={`/api/v1/ai/voice-records/${detail.id}/audio?token=${audioToken}`}
                   style={{ width: '100%' }}
                 />
               </div>

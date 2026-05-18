@@ -8,7 +8,8 @@
  * 互相覆盖。下次迭代独立"检验结果"章节时再补回写入入口。
  */
 import { useEffect, useState } from 'react'
-import { Button, Empty, Spin, message, Upload } from 'antd'
+import { Button, Empty, Spin, Upload } from 'antd'
+import { message } from '@/services/messageBridge'
 import { ReloadOutlined, InboxOutlined } from '@ant-design/icons'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import LabReportCard from './LabReportCard'
@@ -52,6 +53,9 @@ export default function LabReportTab() {
 
   useEffect(() => {
     fetchReports()
+    // fetchReports 是 component-local 函数，加进 deps 会让 effect 每次 render 都跑；
+    // setState 在 fetchReports 内部是异步加载预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {

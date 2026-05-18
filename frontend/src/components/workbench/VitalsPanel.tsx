@@ -6,7 +6,8 @@
  *   - 查看历史体征记录列表
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Button, Form, InputNumber, message, Table, Typography, Divider } from 'antd'
+import { Button, Form, InputNumber, Table, Typography, Divider } from 'antd'
+import { message } from '@/services/messageBridge'
 import { PlusOutlined, HistoryOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '@/services/api'
@@ -38,7 +39,9 @@ export default function VitalsPanel() {
   const fetchHistory = useCallback(async () => {
     if (!currentEncounterId) return
     try {
-      const res = (await api.get(`/encounters/${currentEncounterId}/vitals`)) as any
+      const res = (await api.get(`/encounters/${currentEncounterId}/vitals`)) as {
+        items?: VitalRecord[]
+      }
       setHistory(res.items || [])
     } catch {
       setHistory([])
@@ -49,10 +52,20 @@ export default function VitalsPanel() {
     fetchHistory()
   }, [fetchHistory])
 
-  const handleSave = async (values: any) => {
+  /** antd Form.onFinish 给的体征字段集合（六项可选，数值由 InputNumber 给出） */
+  type VitalFormValues = {
+    temperature?: number
+    pulse?: number
+    respiration?: number
+    spo2?: number
+    bp_systolic?: number
+    bp_diastolic?: number
+  }
+
+  const handleSave = async (values: VitalFormValues) => {
     if (!currentEncounterId) return
-    // 确保至少填了一项
-    const hasAnyValue = Object.values(values).some(v => v != null && v !== '')
+    // 确保至少填了一项；InputNumber 未填时给的是 undefined（不是 ''），只判 null/undefined
+    const hasAnyValue = Object.values(values).some(v => v != null)
     if (!hasAnyValue) {
       message.warning('请至少填写一项体征数值')
       return
@@ -103,7 +116,7 @@ export default function VitalsPanel() {
     {
       title: 'BP',
       width: 72,
-      render: (_: any, row: VitalRecord) =>
+      render: (_: unknown, row: VitalRecord) =>
         row.bp_systolic != null ? (
           <Text style={{ fontSize: 11 }}>
             {row.bp_systolic}/{row.bp_diastolic}

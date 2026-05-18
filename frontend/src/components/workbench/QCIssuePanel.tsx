@@ -17,7 +17,8 @@
  *   - 本主文件保留：状态聚合 + AI 修复 / 写入逻辑 + 三种空态视图 + 列表分组
  */
 import { useEffect, useState } from 'react'
-import { Alert, Empty, Spin, Typography, message } from 'antd'
+import { Alert, Empty, Spin, Typography } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'
@@ -70,15 +71,15 @@ export default function QCIssuePanel() {
   const handleAIFix = async (item: QCIssue, idx: number) => {
     setFixLoading(prev => ({ ...prev, [idx]: true }))
     try {
-      const result: any = await api.post('/ai/qc-fix', {
+      const result = (await api.post('/ai/qc-fix', {
         field_name: item.field_name,
         issue_description: item.issue_description,
         suggestion: item.suggestion,
         current_record: recordContent,
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
-      })
-      setQCFixTexts({ ...qcFixTexts, [idx]: result.fix_text })
+      })) as { fix_text?: string }
+      setQCFixTexts({ ...qcFixTexts, [idx]: result.fix_text ?? '' })
     } catch {
       message.error('AI 生成修复失败，请重试')
     } finally {

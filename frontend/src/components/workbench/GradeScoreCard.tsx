@@ -1,17 +1,18 @@
 /**
  * 病历评分卡（components/workbench/GradeScoreCard.tsx）
  *
- * 展示 LLM 对病历质量的综合评分，位于 QCIssuePanel 顶部。
+ * 展示病历质控评分，位于 QCIssuePanel 顶部。
  *
- * 评分维度说明（2026-04-30 引入"待整改"）：
- *   - 分数（grade_score）：连续值 0-100，反映病历质量
- *   - 等级（grade_level）：离散值 甲/乙/丙/待整改，反映"是否可签发"
- *   两者解耦：分数高不代表能签发——任何"必须修复项"（规则引擎产出）存在
- *   时等级强制为"待整改"，文案展示"N 项必须修复"。
+ * L3 治本路线（2026-05-18）：
+ *   等级体系按浙江省卫健委 PDF 标准：
+ *     - 门、急诊（PDF 注 5）：合格（≥90） / 不合格（<90）
+ *     - 住院（PDF 备注 8）：甲级（≥90） / 乙级（≥80） / 丙级（<80）
+ *   兼容旧返回的"甲/乙/丙/待整改"（住院 Rubric 上线前）。
  *
  * 显示规则：
- *   - 待整改：红橙渐变 + 🛠️ 图标，文案强调待修项数
- *   - 甲级：绿色 + 🏆     乙级：黄色 + ⚡     丙级：红色 + ⚠️
+ *   - 合格 / 甲级：绿色 + 🏆
+ *   - 不合格 / 待整改：橙红 + ⚠️ ，文案强调待修项数
+ *   - 乙级：黄色 + ⚡   - 丙级：红色 + ⚠️
  *   - gradeScore 为 null 时不渲染（QCIssuePanel 控制）
  */
 import { Typography } from 'antd'
@@ -19,10 +20,31 @@ import { GradeScore } from '@/store/types'
 
 const { Text } = Typography
 
-const GRADE_CONFIG: Record<
-  string,
-  { color: string; bg: string; border: string; label: string; icon: string }
-> = {
+interface GradeStyle {
+  color: string
+  bg: string
+  border: string
+  label: string
+  icon: string
+}
+
+const GRADE_CONFIG: Record<string, GradeStyle> = {
+  // 门诊新标准
+  合格: {
+    color: '#065f46',
+    bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+    border: '#86efac',
+    label: '合格病历',
+    icon: '🏆',
+  },
+  不合格: {
+    color: '#7c2d12',
+    bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
+    border: '#f97316',
+    label: '不合格',
+    icon: '⚠️',
+  },
+  // 住院旧标准（兼容；下一期住院 Rubric 接入后保持）
   甲级: {
     color: '#065f46',
     bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
@@ -44,9 +66,7 @@ const GRADE_CONFIG: Record<
     label: '丙级病历',
     icon: '⚠️',
   },
-  // 待整改：分数与等级解耦后的"不可签发"等级
-  // 选橙红色而非纯红：跟丙级（深红）拉开层次——丙级=分数严重不足，
-  // 待整改=分数可能高但有合规硬伤，前者比后者更糟，色调上保留区分度
+  // 待整改：分数与等级解耦的"不可签发"等级（住院 + 旧门诊兼容）
   待整改: {
     color: '#7c2d12',
     bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
@@ -61,18 +81,22 @@ interface GradeScoreCardProps {
 }
 
 export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
-  const cfg = GRADE_CONFIG[gradeScore.grade_level] || GRADE_CONFIG['乙级']
+  const cfg = GRADE_CONFIG[gradeScore.grade_level] || GRADE_CONFIG['不合格']
   const score = gradeScore.grade_score
-  const isPending = gradeScore.grade_level === '待整改'
+  // 不合格 / 待整改 / 丙级 都是"非通过"状态，环形颜色统一用橙红
+  const isFailing =
+    gradeScore.grade_level === '不合格' ||
+    gradeScore.grade_level === '待整改' ||
+    gradeScore.grade_level === '丙级'
   const radius = 26
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (score / 100) * circumference
-  // 环形描边色：待整改优先用配置橙色（即使分数高也别绿，避免视觉冲突）
-  const ringStroke = isPending
+  // 环形描边色：按"是否合格"分流，比硬阈值判断更稳健
+  const ringStroke = isFailing
     ? '#f97316'
     : score >= 90
       ? '#22c55e'
-      : score >= 75
+      : score >= 80
         ? '#f59e0b'
         : '#ef4444'
 
@@ -132,13 +156,13 @@ export default function GradeScoreCard({ gradeScore }: GradeScoreCardProps) {
             {cfg.label}
           </Text>
           <Text style={{ fontSize: 11, color: 'var(--text-4)' }}>
-            {isPending
-              ? `（${gradeScore.must_fix_count ?? 0} 项必须修复）`
+            {isFailing
+              ? gradeScore.must_fix_count && gradeScore.must_fix_count > 0
+                ? `（${gradeScore.must_fix_count} 项必须修复）`
+                : `（距合格还差 ${Math.max(0, 90 - score)} 分）`
               : score >= 90
-                ? '（达到甲级标准）'
-                : score >= 75
-                  ? `（距甲级还差 ${90 - score} 分）`
-                  : `（距乙级还差 ${75 - score} 分）`}
+                ? '（达到合格标准）'
+                : `（距合格还差 ${90 - score} 分）`}
           </Text>
         </div>
         {gradeScore.strengths && gradeScore.strengths.length > 0 && (

@@ -17,6 +17,10 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+# 集中校验：身份证号走 GB 11643 校验码 + 出生日期合法性；手机号走 1[3-9]\d{9}
+# 类型别名引入是为了让 schemas 永远只有一处规则定义，杜绝多文件抄正则导致漂移
+from app.core.validators.identity import IdCardStrict, Phone
+
 
 class PatientCreate(BaseModel):
     """创建患者入参（必填：姓名；其余字段均可选）。"""
@@ -24,8 +28,8 @@ class PatientCreate(BaseModel):
     name: str                              # 患者姓名（必填）
     gender: Optional[str] = None          # 性别："男"/"女"/"未知"
     birth_date: Optional[datetime.date] = None  # 出生日期（YYYY-MM-DD）
-    phone: Optional[str] = None           # 联系电话
-    id_card: Optional[str] = None         # 居民身份证号（18位）
+    phone: Phone = None                   # 联系电话（带 normalize + 11 位号段校验）
+    id_card: IdCardStrict = None          # 居民身份证号（带 normalize + GB 11643 校验码）
     address: Optional[str] = None         # 家庭住址
     # 病案首页扩展字段（住院病历必填）
     ethnicity: Optional[str] = None       # 民族
@@ -33,13 +37,21 @@ class PatientCreate(BaseModel):
     occupation: Optional[str] = None      # 职业
     workplace: Optional[str] = None       # 工作单位
     contact_name: Optional[str] = None    # 紧急联系人姓名
-    contact_phone: Optional[str] = None   # 紧急联系人电话
+    contact_phone: Phone = None           # 紧急联系人电话（同样走手机号校验）
     contact_relation: Optional[str] = None# 紧急联系人关系
     blood_type: Optional[str] = None      # 血型
 
 
 class PatientResponse(BaseModel):
-    """患者查询响应（含计算字段 age，不含敏感字段如 id_card）。"""
+    """患者查询响应（含计算字段 age）。
+
+    2026-05-16 扩展：原来只返核心 6 字段，但病案首页（医生导出/打印的病历顶部）
+    需要身份证/住址/民族/婚姻/职业/工作单位/紧急联系人等完整字段。后端 patient
+    表本来就存了这些，只是 schema 没暴露——这次补齐让前端能渲染病案首页。
+
+    敏感性说明：id_card 暴露给前端在医院场景是预期的（医生需要核对身份），
+    所有 admin 路由有 require_admin 守卫，普通医生只能看到自己接诊过的患者。
+    """
 
     id: str
     patient_no: Optional[str] = None  # HIS 系统患者编号（手动录入时为空）
@@ -53,6 +65,18 @@ class PatientResponse(BaseModel):
     # 是否曾住过院（含已出院），区分"已出院" vs "纯门诊从未住过院"
     has_any_inpatient_history: bool = False
 
+    # ── 病案首页扩展字段（导出 Word/打印/查看病历时显示在顶部）─────────────
+    id_card: Optional[str] = None         # 身份证号
+    address: Optional[str] = None         # 家庭住址
+    ethnicity: Optional[str] = None       # 民族
+    marital_status: Optional[str] = None  # 婚姻状况
+    occupation: Optional[str] = None      # 职业
+    workplace: Optional[str] = None       # 工作单位
+    contact_name: Optional[str] = None    # 紧急联系人姓名
+    contact_phone: Optional[str] = None   # 紧急联系人电话
+    contact_relation: Optional[str] = None  # 与患者关系
+    blood_type: Optional[str] = None      # 血型
+
     class Config:
         from_attributes = True  # 允许从 ORM 对象直接实例化
 
@@ -63,15 +87,15 @@ class PatientUpdate(BaseModel):
     name: Optional[str] = None
     gender: Optional[str] = None
     birth_date: Optional[datetime.date] = None
-    phone: Optional[str] = None
-    id_card: Optional[str] = None
+    phone: Phone = None                   # 走手机号 normalize + 校验
+    id_card: IdCardStrict = None          # 走身份证 normalize + 校验
     address: Optional[str] = None
     ethnicity: Optional[str] = None
     marital_status: Optional[str] = None
     occupation: Optional[str] = None
     workplace: Optional[str] = None
     contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
+    contact_phone: Phone = None           # 走手机号 normalize + 校验
     contact_relation: Optional[str] = None
     blood_type: Optional[str] = None
 

@@ -45,12 +45,15 @@ class QCRuleUpdate(BaseModel):
 
 
 class QCRuleResponse(BaseModel):
+    # 兜底：早期版本数据库里可能有 rule_code/scope 为 NULL 的脏记录（早期 NOT NULL
+    # 约束加之前的遗留），如果这里要求 str，list 接口会因脏数据被 pydantic 抛
+    # ValidationError 500。用 Optional 容忍，让管理员能在 UI 看见并手动补全/删除。
     id: str
-    rule_code: str
+    rule_code: Optional[str] = None
     name: str
     description: Optional[str] = None
     rule_type: str
-    scope: str
+    scope: Optional[str] = None
     field_name: Optional[str] = None
     keywords: Optional[List[str]] = None
     indication_keywords: Optional[List[str]] = None

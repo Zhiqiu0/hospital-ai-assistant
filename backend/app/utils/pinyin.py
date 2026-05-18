@@ -32,6 +32,26 @@ from pypinyin import Style, pinyin
 # 这里截断到 32，覆盖 95% 真实姓名（最多 1-2 个多音字）。
 _MAX_COMBINATIONS = 32
 
+# 输出字符串长度 hard cap，避免超过 patients.name_pinyin VARCHAR(512) 写入失败。
+# 触发场景：长姓名（>=6 字）+ 多个多音字 + 含 ASCII 字符（"E2E回归_完整流程"）时，
+# 即使 _MAX_COMBINATIONS=32 截断了，每个组合本身长度仍可累计到 800+ 字符。
+# 安全余量取 480（< 512），按空格切片，避免切到组合中间产生半截拼音误匹配。
+_FULL_TEXT_MAX_LEN = 480
+_INITIALS_TEXT_MAX_LEN = 120  # name_pinyin_initials 是 VARCHAR(128)
+
+
+def _join_with_cap(combos: list[str], cap: int) -> str:
+    """按空格拼接组合列表，总长度 > cap 时按完整组合边界截断。"""
+    out: list[str] = []
+    total = 0
+    for c in combos:
+        added = len(c) + (1 if out else 0)
+        if total + added > cap:
+            break
+        out.append(c)
+        total += added
+    return " ".join(out)
+
 
 def _dedupe(items: Iterable[str]) -> list[str]:
     """保序去重——多音字组合可能产出相同字符串，去重压缩存储。"""
@@ -109,8 +129,8 @@ def compute_pinyin(name: str) -> tuple[str, str]:
             break
 
     return (
-        " ".join(_dedupe(full_combos)),
-        " ".join(_dedupe(initial_combos)),
+        _join_with_cap(_dedupe(full_combos), _FULL_TEXT_MAX_LEN),
+        _join_with_cap(_dedupe(initial_combos), _INITIALS_TEXT_MAX_LEN),
     )
 
 

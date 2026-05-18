@@ -10,7 +10,11 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { applyQuickStartResult, applySnapshotResult } from './encounterIntake'
+import {
+  applyQuickStartResult,
+  applySnapshotResult,
+  type SnapshotResult,
+} from './encounterIntake'
 import { usePatientCacheStore } from './patientCacheStore'
 import { useActiveEncounterStore } from './activeEncounterStore'
 
@@ -43,21 +47,24 @@ describe('applyQuickStartResult', () => {
   })
 
   it('patient_profile 缺失时仅写 patient，不抛错', () => {
+    // QuickStartResult.encounter_id + patient 必填，其它字段都 optional；无需 cast
     expect(() =>
       applyQuickStartResult({
         encounter_id: 'e1',
         patient: { id: 'p1', name: '张三' },
-      } as any)
+      })
     ).not.toThrow()
     expect(usePatientCacheStore.getState().getCached('p1')?.profile).toBeNull()
   })
 
   it('未知 gender 收敛为 unknown，未知 visit_type 收敛为 outpatient', () => {
+    // gender 字段后端类型签名是 string | null，运行时可能传非法值；用 satisfies 验证
+    // 整体形状仍是 QuickStartResult，避免破坏类型检查
     applyQuickStartResult({
       encounter_id: 'e1',
-      patient: { id: 'p1', name: 'X', gender: 'weird-value' as any },
+      patient: { id: 'p1', name: 'X', gender: 'weird-value' },
       visit_type: 'weird-type',
-    } as any)
+    })
     expect(usePatientCacheStore.getState().getPatient('p1')?.gender).toBe('unknown')
     expect(useActiveEncounterStore.getState().visitType).toBe('outpatient')
   })
@@ -68,7 +75,7 @@ describe('applyQuickStartResult', () => {
       patient: { id: 'p1', name: '李四' },
       patient_reused: true,
       previous_record_content: '上次病历...',
-    } as any)
+    })
     const active = useActiveEncounterStore.getState()
     expect(active.isFirstVisit).toBe(false)
     expect(active.isPatientReused).toBe(true)
@@ -93,10 +100,11 @@ describe('applySnapshotResult', () => {
   })
 
   it('encounter_id 缺失时不写 active，但仍可写 patientCache', () => {
+    // SnapshotResult.encounter_id 是 optional，直接传入合法
     applySnapshotResult({
       patient: { id: 'p3', name: '赵六' },
       patient_profile: { allergy_history: '海鲜' },
-    } as any)
+    } satisfies SnapshotResult)
     expect(usePatientCacheStore.getState().getProfile('p3')?.allergy_history).toBe('海鲜')
     expect(useActiveEncounterStore.getState().encounterId).toBeNull()
   })

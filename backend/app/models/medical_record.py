@@ -57,6 +57,16 @@ class MedicalRecord(Base, TimestampMixin):
     # 出具最终病历的时间（status 变为 "final" 时填入）
     submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    # ── 病案首页快照（2026-05-16 新增，合规级要求）──────────────────────────
+    # 签发时刻把患者完整身份字段冻结到这里：姓名/性别/出生日期/身份证/电话/住址/民族/
+    # 婚姻/职业/工作单位/紧急联系人 + 接诊医生/科室/就诊时间。
+    # 为什么需要：
+    #   病案首页（identity）和病程内容（content）合规上是病历不可分割的两部分。
+    #   患者主档后续更新（如改了电话）不应回写已签发病历——已签发的必须保留
+    #   签发当时的状态供审计/复核。
+    # 旧病历此字段为 NULL，UI 渲染时 fallback 到当前 patient 表，保证不报错。
+    patient_snapshot: Mapped[Optional[Any]] = mapped_column(JSONB)
+
     # 关联接诊
     encounter: Mapped["Encounter"] = relationship(back_populates="medical_records")
     # 所有历史版本（按 version_no 排序使用）

@@ -10,7 +10,7 @@
  * data 来自父容器 StatsPage 调 /admin/stats/overview，
  * 子组件不再自己 fetch，避免重复网络请求。
  */
-import { Row, Col, Card, Statistic, Table, Typography, Tag, Progress } from 'antd'
+import { Row, Col, Card, Statistic, Table, Typography, Progress } from 'antd'
 import {
   TeamOutlined,
   FileTextOutlined,
@@ -19,12 +19,34 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 
-import { RISK_COLOR, RISK_LABEL, ISSUE_TYPE_LABEL } from './constants'
+import { ISSUE_TYPE_LABEL } from './constants'
 
 const { Text } = Typography
 
+/**
+ * /admin/stats/overview 返回值——后端 stats_service.overview 输出。
+ * 字段全部 optional：当样本量为 0 时后端可能不返回某些计数键。
+ */
+export interface OverviewData {
+  today_encounters?: number
+  total_encounters?: number
+  total_ai_tasks?: number
+  total_qc_issues?: number
+  generate_count?: number
+  polish_count?: number
+  qc_count?: number
+  inquiry_count?: number
+  exam_count?: number
+  completeness_issues?: number
+  format_issues?: number
+  logic_issues?: number
+  high_risk_issues?: number
+  medium_risk_issues?: number
+  low_risk_issues?: number
+}
+
 interface OverviewTabProps {
-  overview: any
+  overview: OverviewData | null
   loading: boolean
 }
 
@@ -76,15 +98,14 @@ export default function OverviewTab({ overview, loading }: OverviewTabProps) {
   const totalAIFeature = aiFeatureData.reduce((s, r) => s + r.count, 0)
 
   // ── 质控问题摘要 ────────────────────────────────────────────────────
+  // 修复 2026-05-15：之前把"问题类型"和"风险等级"两个独立维度硬绑定
+  //   (completeness↔high / format↔medium / logic↔low)，
+  // 导致"分类总数"和底部"风险等级总数"对不上（前者只统计绑定那一格，后者全量）。
+  // 现在拆开——分类表只按 issue_type 统计总数，风险等级走下方独立卡片。
   const qcSummaryData = [
-    {
-      key: '1',
-      issue_type: 'completeness',
-      risk_level: 'high',
-      count: overview?.completeness_issues ?? 0,
-    },
-    { key: '2', issue_type: 'format', risk_level: 'medium', count: overview?.format_issues ?? 0 },
-    { key: '3', issue_type: 'logic', risk_level: 'low', count: overview?.logic_issues ?? 0 },
+    { key: '1', issue_type: 'completeness', count: overview?.completeness_issues ?? 0 },
+    { key: '2', issue_type: 'format', count: overview?.format_issues ?? 0 },
+    { key: '3', issue_type: 'logic', count: overview?.logic_issues ?? 0 },
   ]
 
   // ── 风险等级卡片 ────────────────────────────────────────────────────
@@ -232,16 +253,7 @@ export default function OverviewTab({ overview, loading }: OverviewTabProps) {
                   dataIndex: 'issue_type',
                   render: (v: string) => ISSUE_TYPE_LABEL[v] || v,
                 },
-                {
-                  title: '风险',
-                  dataIndex: 'risk_level',
-                  render: (v: string) => (
-                    <Tag color={RISK_COLOR[v]} style={{ borderRadius: 20 }}>
-                      {RISK_LABEL[v]}
-                    </Tag>
-                  ),
-                },
-                { title: '数量', dataIndex: 'count' },
+                { title: '总数', dataIndex: 'count' },
               ]}
             />
           </Card>

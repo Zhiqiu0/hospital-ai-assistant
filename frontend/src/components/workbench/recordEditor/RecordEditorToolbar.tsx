@@ -17,6 +17,8 @@ import {
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useAuthStore } from '@/store/authStore'
+import type { Patient } from '@/domain/medical'
 
 const { Text } = Typography
 
@@ -54,7 +56,8 @@ interface RecordEditorToolbarProps {
   qcIssues: unknown[]
   qcPass: boolean | null
   gradeScore: QCBadge | null
-  currentPatient: any
+  // 用完整 Patient（含病案首页字段），导出 Word 时一并写入顶部首页
+  currentPatient: Patient | null
   handleGenerate: () => void
   handlePolish: () => void
   handleQC: () => void
@@ -90,8 +93,23 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
   // 门诊 / 急诊医生只看到"门诊病历"；住院端只看到 8 项住院病历类型。
   // 之前模块级常量把所有类型都暴露，门诊医生能选"入院记录"是设计 bug。
   const visitType = useActiveEncounterStore(s => s.visitType)
+  // 导出 Word 时拼"病案首页"用的接诊上下文：医生姓名/科室来自 authStore，
+  // visit_type 来自 activeEncounterStore。编辑器场景没有 snapshot，传 null。
+  const user = useAuthStore(s => s.user)
+  const exportCtx = {
+    visit_type: visitType,
+    visit_time: finalizedAt,
+    doctor_name: user?.real_name,
+    department_name: user?.department_name,
+  }
   const recordTypeOptions =
     visitType === 'inpatient' ? INPATIENT_RECORD_OPTIONS : OUTPATIENT_RECORD_OPTIONS
+  // 兜底：recordStore 默认 recordType='outpatient'，住院接诊建立时不会自动切换。
+  // 如果当前 recordType 不在本场景的可选列表里，Select 会渲染 raw value（"outpatient"
+  // 字面量），破坏 UI。这里在渲染层用合法默认值兜底（住院→入院记录，门诊→门诊病历）。
+  const effectiveRecordType = recordTypeOptions.some(o => o.value === recordType)
+    ? recordType
+    : recordTypeOptions[0].value
 
   return (
     <div
@@ -129,14 +147,18 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
          */}
         {visitType === 'inpatient' ? (
           <Select
-            value={recordType}
+            value={effectiveRecordType}
             onChange={setRecordType}
             size="small"
             style={{ width: 120 }}
             options={recordTypeOptions}
           />
         ) : (
-          <Tag style={{ margin: 0, fontSize: 12 }}>门诊病历</Tag>
+          // 急诊也走这个分支（visitType=outpatient/emergency 都用单一病历类型），
+          // 之前硬编码"门诊病历"会在急诊工作台错显——按 visitType 区分。
+          <Tag style={{ margin: 0, fontSize: 12 }}>
+            {visitType === 'emergency' ? '急诊病历' : '门诊病历'}
+          </Tag>
         )}
       </Space>
 
@@ -257,7 +279,16 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
           icon={<FileWordOutlined />}
           size="small"
           disabled={!recordContent.trim() || isBusy}
-          onClick={() => exportWordDoc(recordContent, currentPatient, recordType, finalizedAt)}
+          onClick={() =>
+            exportWordDoc(
+              recordContent,
+              currentPatient,
+              recordType,
+              finalizedAt,
+              null,
+              exportCtx
+            )
+          }
           style={{ borderRadius: 8, fontSize: 12, height: 30 }}
         >
           导出 Word

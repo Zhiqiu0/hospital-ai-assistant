@@ -7,7 +7,10 @@ AI 任务日志工具（Task Logger）
 
   - log_ai_task     : 写 AITask 记录（独立 DB 会话，不阻塞主事务）
   - save_qc_issues  : 持久化质控问题列表到 qc_issues 表
-  - calc_grade_score: 根据质控问题列表计算甲级评分及等级
+
+L3 治本（2026-05-18）：
+  旧 calc_grade_score 已删——评分由 qc_engine.scorer.score() 驱动，
+  按浙江省卫健委 PDF 1:1 标准计算，不再用本模块自创的扣分规则。
 
 设计说明：
   使用独立 AsyncSessionLocal 会话而非主请求的 db 参数，目的是让日志写入
@@ -142,68 +145,8 @@ async def save_qc_issues(
             logger.error("qc_issues.save: commit_failed err=%s", exc)
 
 
-def calc_grade_score(issues: list[dict]) -> tuple[float, str, int]:
-    """根据质控问题列表计算甲级评分及病历等级。
-
-    扣分规则（参考浙江省病历质量评分标准）：
-      - 规则表中有 score_impact（如 "-2分"）→ 按规则表扣分
-      - 含"单项否决"/"否决"的描述 → 扣 10 分
-      - risk_level == "high"   → 扣 3 分
-      - risk_level == "medium" → 扣 1.5 分
-      - risk_level == "low"    → 扣 0.5 分
-
-    等级划分：
-      ≥ 90 分 → 甲级
-      75-89 分 → 乙级
-      < 75 分  → 丙级
-      ▲ 任何分数 + 存在 source=='rule' 的"必须修复"项 → 强制覆盖为「待整改」
-
-    为什么需要"待整改"等级（2026-04-30）：
-      原本 5 项必须修复 × -1.3 分 ≈ -6.5 分，仍可能 ≥ 90 分被判甲级，导致
-      「93.5 分甲级病历」+「需修复才可出具」并存的悖论。分数和合规是两个
-      维度——分数衡量质量，等级衡量"是否可签发"。规则引擎产出的 source=='rule'
-      项是确定性必填项，存在即不合规，无论分数多高都不能出具，故强制覆盖为
-      「待整改」，让等级语义重新对齐"是否可出具"。
-
-    Args:
-        issues: 质控问题字典列表，每项含 risk_level / issue_description / score_impact / source。
-
-    Returns:
-        (score_float, level_str, must_fix_count) 三元组：
-          - score_float    ：0-100 浮点数（保留实际精度，待整改时也展示真实分数）
-          - level_str      ：甲级 / 乙级 / 丙级 / 待整改
-          - must_fix_count ：source=='rule' 的项数，前端用于显示"N 项必须修复"
-    """
-    import re as _re
-
-    score = 100.0
-    for issue in issues:
-        risk = issue.get("risk_level", "low")
-        desc = issue.get("issue_description", "")
-        # 优先读规则表里预设的 score_impact（格式如 "-2分"、"-0.5分"）
-        si = issue.get("score_impact", "")
-        match = _re.search(r"-(\d+(?:\.\d+)?)", si) if si else None
-        if match:
-            score -= float(match.group(1))
-        elif "单项否决" in desc or "否决" in desc:
-            score -= 10
-        elif risk == "high":
-            score -= 3
-        elif risk == "medium":
-            score -= 1.5
-        else:
-            score -= 0.5
-
-    score = max(0.0, score)
-    # 必须修复项 = 规则引擎（含医保规则）产出的项，source 字段在调用前已统一打 'rule'
-    must_fix_count = sum(1 for i in issues if i.get("source") == "rule")
-    if score >= 90:
-        level = "甲级"
-    elif score >= 75:
-        level = "乙级"
-    else:
-        level = "丙级"
-    # 待整改覆盖：必须修复项存在则病历不可签发，等级强制改为"待整改"
-    if must_fix_count > 0:
-        level = "待整改"
-    return score, level, must_fix_count
+# L3 治本路线（2026-05-18）：
+#   评分由 qc_engine.scorer.score() 驱动（浙江省 PDF 1:1 法定标准）。
+#   原 calc_grade_score 用了"自创扣分规则"（risk_level 浮点扣分 + 75/90 阈值），
+#   不符合 PDF 注 5 / 备注 8 的法定阈值。整函数已删除——所有调用方切到
+#   qc_engine 的 ScoreReport 模型。

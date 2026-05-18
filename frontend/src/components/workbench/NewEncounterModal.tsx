@@ -9,11 +9,36 @@
  */
 import { useRef, useState, useEffect } from 'react'
 import { Button, Form, Modal, Select, Space } from 'antd'
+import type { Dayjs } from 'dayjs'
 import { UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import type { Patient, VisitType } from '@/domain/medical'
 import SearchStep from './newEncounter/SearchStep'
 import NewPatientFields from './newEncounter/NewPatientFields'
 import SelectedPatientCard from './newEncounter/SelectedPatientCard'
+
+/** /encounters/quick-start 返回的最小载荷形状（仅本组件用到的字段） */
+interface QuickStartResult {
+  encounter_id: string
+  patient: Patient
+  // 后端可能携带其他字段，但本组件只透传给上层 onSuccess，由上层按各自需要消费
+  [key: string]: unknown
+}
+
+/** Form.onFinish 里 antd 给的字段集合：业务字段都是字符串，birth_date 是 Dayjs */
+interface NewEncounterFormValues {
+  visit_type?: VisitType
+  patient_name?: string
+  gender?: 'male' | 'female' | 'unknown'
+  birth_date?: Dayjs | null
+  id_card?: string
+  phone?: string
+  ethnicity?: string
+  marital_status?: string
+  occupation?: string
+  workplace?: string
+  address?: string
+}
 
 interface Props {
   open: boolean
@@ -22,7 +47,7 @@ interface Props {
   isEmergency: boolean
   accentColor: string
   accentLight: string
-  onSuccess: (res: any, visitType: string) => void
+  onSuccess: (res: QuickStartResult, visitType: string) => void
 }
 
 export default function NewEncounterModal({
@@ -38,9 +63,9 @@ export default function NewEncounterModal({
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<'search' | 'form'>('search')
   const [keyword, setKeyword] = useState('')
-  const [results, setResults] = useState<any[]>([])
+  const [results, setResults] = useState<Patient[]>([])
   const [searching, setSearching] = useState(false)
-  const [selectedPatient, setSelectedPatient] = useState<any | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 每次弹窗打开时按当前 mode 重置所有状态，防止上次的 step 残留
@@ -52,7 +77,9 @@ export default function NewEncounterModal({
       setSelectedPatient(null)
       form.resetFields()
     }
-  }, [open, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+    // setState 在 open 变化时是预期的初始化路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode])
 
   const handleClose = () => onClose()
 
@@ -74,8 +101,10 @@ export default function NewEncounterModal({
           page_size: '8',
         })
         if (mode === 'returning') params.set('require_completed', 'true')
-        const res = await api.get(`/patients?${params.toString()}`)
-        setResults((res as any).items || [])
+        const res = (await api.get(`/patients?${params.toString()}`)) as {
+          items?: Patient[]
+        }
+        setResults(res.items || [])
       } catch {
         setResults([])
       } finally {
@@ -84,13 +113,13 @@ export default function NewEncounterModal({
     }, 300)
   }
 
-  const selectPatient = (p: any) => {
+  const selectPatient = (p: Patient) => {
     setSelectedPatient(p)
     form.setFieldsValue({ visit_type: isEmergency ? 'emergency' : 'outpatient' })
     setStep('form')
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: NewEncounterFormValues) => {
     setLoading(true)
     try {
       const payload = selectedPatient
@@ -112,13 +141,15 @@ export default function NewEncounterModal({
             workplace: values.workplace || undefined,
             address: values.address || undefined,
           }
-      let res: any
+      let res: QuickStartResult
       try {
-        res = await api.post('/encounters/quick-start', payload)
-      } catch (err: any) {
-        if (!err?.response) {
+        res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
+      } catch (err) {
+        // 网络瞬断（无 response）时延后 3s 重试一次，其他错误直接抛
+        const e = err as { response?: unknown }
+        if (!e?.response) {
           await new Promise(r => setTimeout(r, 3000))
-          res = await api.post('/encounters/quick-start', payload)
+          res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
         } else throw err
       }
       onSuccess(res, values.visit_type || (isEmergency ? 'emergency' : 'outpatient'))

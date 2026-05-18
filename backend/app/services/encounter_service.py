@@ -82,6 +82,9 @@ def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -
         "submitted_at": record.submitted_at.isoformat() if record.submitted_at else None,
         "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         "content": _parse_record_content(version.content if version else None),
+        # 病案首页快照：签发瞬间冻结的患者完整身份 + 接诊信息。
+        # 未签发病历此字段为 None，前端 fallback 到当前 patient 数据。
+        "patient_snapshot": record.patient_snapshot,
     }
 
 
@@ -534,11 +537,26 @@ class EncounterService:
             "encounter_id": encounter.id,
             "visit_type": encounter.visit_type,
             "status": encounter.status,
+            # 病案首页需要完整字段（id_card/address/民族/婚姻/职业/紧急联系人等）；
+            # 之前只返 4 个字段，导致前端导出 Word/打印病历时顶部首页缺信息。
             "patient": {
                 "id": patient.id,
                 "name": patient.name,
                 "gender": patient.gender,
                 "age": calc_age(patient.birth_date),
+                "birth_date": patient.birth_date.isoformat() if patient.birth_date else None,
+                "patient_no": patient.patient_no,
+                "id_card": patient.id_card,
+                "phone": patient.phone,
+                "address": patient.address,
+                "ethnicity": patient.ethnicity,
+                "marital_status": patient.marital_status,
+                "occupation": patient.occupation,
+                "workplace": patient.workplace,
+                "contact_name": patient.contact_name,
+                "contact_phone": patient.contact_phone,
+                "contact_relation": patient.contact_relation,
+                "blood_type": patient.blood_type,
             } if patient else None,
             "patient_profile": patient_profile,
             "inquiry": _serialize_inquiry(inquiry, encounter),

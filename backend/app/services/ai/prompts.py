@@ -16,8 +16,6 @@ from app.services.ai.prompts_voice import (  # noqa: F401
 )
 from app.services.ai.prompts_operations import (  # noqa: F401
     CONTINUE_PROMPT,
-    POLISH_PROMPT,
-    SUPPLEMENT_PROMPT,
 )
 from app.services.ai.prompts_suggestions import (  # noqa: F401
     DIAGNOSIS_SUGGESTION_PROMPT,

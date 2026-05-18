@@ -25,6 +25,52 @@ export interface Patient {
   has_active_inpatient?: boolean | null
   /** 是否曾经住过院（含已出院）；区分"已出院"(true) vs "纯门诊从未住过院"(false) */
   has_any_inpatient_history?: boolean | null
+  // ── 病案首页扩展字段（2026-05-16 新增） ────────────────────────────────
+  // 后端 PatientResponse 已暴露完整字段，前端用于渲染查看/打印/导出顶部首页
+  id_card?: string | null
+  address?: string | null
+  ethnicity?: string | null
+  marital_status?: string | null
+  occupation?: string | null
+  workplace?: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
+  contact_relation?: string | null
+  blood_type?: string | null
+}
+
+/**
+ * 病案首页快照（PatientSnapshot）
+ *
+ * 合规级要求：病历签发那一刻，把患者+医生+科室+就诊时间冻结进 medical_records.patient_snapshot
+ * JSONB 字段。之后患者档案的改动、医生调岗、科室合并都不会改写历史病历首页。
+ * 查看/导出/打印病历时，前端优先用 patient_snapshot；为空（旧记录）才回落到当前 patient。
+ */
+export interface PatientSnapshot {
+  // 患者人口学
+  name?: string | null
+  gender?: string | null // 后端原样存："男"/"女"/"未知"
+  birth_date?: string | null
+  patient_no?: string | null
+  id_card?: string | null
+  phone?: string | null
+  address?: string | null
+  ethnicity?: string | null
+  marital_status?: string | null
+  occupation?: string | null
+  workplace?: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
+  contact_relation?: string | null
+  blood_type?: string | null
+  // 就诊
+  visit_type?: VisitType | string | null
+  visit_time?: string | null
+  bed_no?: string | null
+  // 医生 / 科室
+  doctor_name?: string | null
+  doctor_id?: string | null
+  department_name?: string | null
 }
 
 // ── PatientProfile (Longitudinal Record，JSONB 重构后) ──────────────────────
@@ -94,4 +140,6 @@ export interface MedicalRecord {
   content: string // 规范化后的纯文本
   submitted_at?: string | null
   updated_at?: string | null
+  /** 病案首页快照（签发那一刻冻结的患者+医生+科室+就诊信息）。旧记录可能为 null */
+  patient_snapshot?: PatientSnapshot | null
 }
