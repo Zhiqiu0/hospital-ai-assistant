@@ -32,8 +32,6 @@ from app.schemas.ai_request import (
 )
 from app.services.ai.ai_utils import (
     compose_physical_exam,
-    get_active_prompt,
-    safe_format,
     stream_text,
     stream_with_lock,
 )
