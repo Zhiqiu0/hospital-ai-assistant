@@ -85,10 +85,51 @@ export interface QCIssue {
   /** completeness | insurance | format | logic 等 */
   issue_type?: string
   risk_level: 'high' | 'medium' | 'low'
+  /** AI 修复"写入病历"的目标字段（治本后可能是子字段名如"处理意见"，也可能是 __xxx__ 不可写键） */
   field_name: string
+  /** PDF 大项名（如"治疗意见及措施"）——用于按大项分组渲染。
+   *  跟 field_name 解耦：field_name 决定写入位置，item_name 决定 UI 分组归属。
+   *  rule 来源才有此字段，LLM 建议可能没有。 */
+  item_name?: string
   issue_description: string
   suggestion: string
   score_impact?: string
+}
+
+/** 单条扣分明细——对应 ScoreReport.items[].deductions[] 一项 */
+export interface ScoreReportDeduction {
+  rule_code: string
+  description: string
+  /** 该条规则的原始扣分值（未应用大项上限） */
+  points: number
+  /** 是否单项否决（住院专属，门诊永远 false） */
+  is_veto: boolean
+}
+
+/** 单大项得分明细——按 PDF 大项分组 */
+export interface ScoreReportItem {
+  name: string
+  /** 大项满分（PDF 上的"分值"列） */
+  max_points: number
+  /** 该项实际得分（已应用上限保护） */
+  score: number
+  /** 该项实际扣分（已应用上限保护；可能 < 触发的细则扣分之和） */
+  deducted: number
+  /** 是否触发了单项否决（住院专属） */
+  veto_triggered: boolean
+  /** 原始扣分细则——加起来可能 > deducted（大项上限保护原因） */
+  deductions: ScoreReportDeduction[]
+}
+
+/** 评分报告——按 PDF 大项结构化产出 */
+export interface ScoreReport {
+  rubric_name: string
+  rubric_version: string
+  score: number
+  grade: string
+  passed: boolean
+  total_deducted: number
+  items: ScoreReportItem[]
 }
 
 /** 病历质控评分（按浙江省 PDF 标准） */

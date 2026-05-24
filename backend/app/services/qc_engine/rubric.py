@@ -46,12 +46,20 @@ class DeductionRule:
         description: PDF 原文（用户看到的扣分理由）
         deduct_points: PDF 上的扣分值（浙江省标准都是整数或 0.5 的倍数）
         checker: (RecordContext) -> bool，True 触发扣分
+        target_field: 该规则违反时，AI 修复应写入哪个具体业务字段。
+            治本动机（2026-05-19）：原 issue 的 field_name 用大项名（如"治疗意见
+            及措施"），但病历模板里这是个合并章节，下面是 4 个子行；前端按大项名
+            找不到对应章节，只能把修复文本追加到病历末尾。
+            标注子字段后，前端就知道按"治则治法："/"处理意见："等行前缀精准替换。
+            字段名约定用前端 FIELD_TO_LINE_PREFIX / FIELD_TO_SECTION 的中文键。
+            None → 前端走大项名兜底（适用大项与单字段 1:1 映射的场景，如"主诉"）。
     """
 
     code: str
     description: str
     deduct_points: float
     checker: CheckerFn
+    target_field: str | None = None
 
 
 # 单项否决固定扣分（PDF 住院 2021 版备注 6 明确："单项否决指标计分时扣 10 分，不累积扣分"）
@@ -71,11 +79,15 @@ class VetoRule:
         code: 唯一码（前缀 IP-VETO-*）
         description: PDF 原文（如"主要诊断填写或编码错误"）
         checker: (RecordContext) -> bool
+        target_field: 跟 DeductionRule.target_field 同义——标识该 veto 违反时
+            AI 修复应写入哪个具体业务字段。同样走 _writable_fields 白名单校验。
+            None → 前端走大项名兜底（不推荐，veto 应明确指向修复目标）。
     """
 
     code: str
     description: str
     checker: CheckerFn
+    target_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +180,26 @@ class Rubric:
                     raise ValueError(
                         f"Rubric {self.name}: 单文档评分（门诊）不允许 veto_rules，"
                         f"违规项：{item.name}"
+                    )
+
+        # L2 契约（2026-05-19）：每条 DeductionRule / VetoRule 的 target_field 要么 None，
+        # 要么命中 _writable_fields.ALL_KNOWN_TARGET_FIELDS 白名单——避免后端规则改完
+        # 忘了同步前端映射，让"修复文本默默写错位置"这类反复出现的 bug 在 module import 时就报错。
+        # 延迟 import 避免循环依赖（rubric.py 是 _writable_fields.py 上游基础组件）
+        from app.services.qc_engine._writable_fields import ALL_KNOWN_TARGET_FIELDS
+        for item in self.items:
+            for rule in item.deduction_rules:
+                if rule.target_field is not None and rule.target_field not in ALL_KNOWN_TARGET_FIELDS:
+                    raise ValueError(
+                        f"Rubric {self.name}: rule {rule.code} 的 target_field="
+                        f"{rule.target_field!r} 未在 _writable_fields.py 白名单注册——"
+                        f"添加新字段需同步前端 qcFieldMaps.ts 的映射 + NON_WRITABLE_FIELDS"
+                    )
+            for veto in item.veto_rules:
+                if veto.target_field is not None and veto.target_field not in ALL_KNOWN_TARGET_FIELDS:
+                    raise ValueError(
+                        f"Rubric {self.name}: veto {veto.code} 的 target_field="
+                        f"{veto.target_field!r} 未在 _writable_fields.py 白名单注册"
                     )
 
     @property

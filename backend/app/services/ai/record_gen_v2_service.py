@@ -27,7 +27,6 @@ from app.services.ai.model_options import get_model_options
 from app.services.ai.record_prompts import (
     build_polish_prompt,
     build_record_prompt,
-    build_supplement_prompt,
 )
 from app.services.ai.record_renderer import render_record
 from app.services.ai.task_logger import log_ai_task
@@ -210,27 +209,6 @@ async def stream_record_v2(
         task_type="generate",
         save_draft=True,
         log_prefix="record_gen_v2",
-    ):
-        yield chunk
-
-
-async def stream_supplement_v2(
-    record_type: str,
-    req: Any,
-    db: AsyncSession,
-) -> AsyncGenerator[str, None]:
-    """quick-supplement：根据 QC 问题清单补全病历，输出完整 JSON 后渲染。
-
-    治本路线：与 generate 同构 JSON 路径，物理上不可能出现两段同名章节
-    （renderer 每个章节只 render 一次；LLM 输出的 JSON key 唯一，
-    即使违规重复 key 在 JSON 解析后也只保留最后一个）。
-    """
-    async for chunk in _stream_json_pipeline(
-        record_type, req, db,
-        prompt_builder=build_supplement_prompt,
-        task_type="supplement",
-        save_draft=True,
-        log_prefix="record_supplement_v2",
     ):
         yield chunk
 

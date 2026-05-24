@@ -46,8 +46,8 @@ from app.services.ai.prompts import (
 from app.services.ai.record_gen_v2_service import (
     stream_polish_v2,
     stream_record_v2,
-    stream_supplement_v2,
 )
+from app.services.ai.supplement_batch_service import run_quick_supplement_batch
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -184,10 +184,16 @@ async def quick_supplement(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """根据质控问题一键补全病历（JSON 模式 + renderer 重渲染）。
+    """批量补全（行级写入路线）：一次 LLM 调用返回所有缺失字段的建议值。
 
-    L3 治本路线：与 quick-generate 同构 JSON 路径，物理上消除"两段同名章节"
-    bug——LLM 输出的 JSON 中每个 schema key 唯一，renderer 每个章节只渲染一次。
+    治本路线（2026-05-24）—— 替换旧"整段重画"实现：
+      旧：LLM 重写完整 JSON → renderer 整段重画 → 覆盖医生现场修改
+           （bug：78 分逐条补全后整体补全回到 70）
+      新：LLM 一次返回 N 个 {field_name, value}，前端按 FIELD_TO_LINE_PREFIX
+           行级写入 —— 与"逐条修复"同一套机制，杜绝整段覆盖。
+
+    返回格式（非 SSE，普通 JSON 响应）：
+      {"items": [{"field_name": "舌象", "value": "..."}, ...]}
     """
     await log_action(
         action="ai_quick_supplement",
@@ -197,22 +203,20 @@ async def quick_supplement(
         resource_type="medical_record",
         detail=f"record_type={req.record_type or 'outpatient'} issues_count={len(req.qc_issues or [])}",
     )
-    # 没有 qc_issues 时直接 done（前端往往是误触；不浪费 LLM 调用）
+    # 没有 qc_issues 时直接返回空（前端往往是误触；不浪费 LLM 调用）
     if not req.qc_issues:
-        return StreamingResponse(
-            iter(['data: {"type":"done"}\n\n']),
-            media_type="text/event-stream",
-        )
+        return {"items": []}
 
-    record_type = req.record_type or "outpatient"
+    # 仍然走 AI 生成锁，避免同一医生并发跑多次补全
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "supplement")
-    return StreamingResponse(
-        stream_with_lock(
-            stream_supplement_v2(record_type, req, db),
-            lock_key, lock_token,
-        ),
-        media_type="text/event-stream",
-    )
+    try:
+        return await run_quick_supplement_batch(db, req)
+    finally:
+        # 锁是 redis_cache 实现，token 不匹配则跳过删除（防误删别人的锁）
+        try:
+            await redis_cache.release_lock(lock_key, lock_token)
+        except Exception:
+            pass
 
 
 @router.post("/quick-polish")

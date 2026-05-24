@@ -47,7 +47,14 @@ def _missing_patient_basic_info(ctx: RecordContext) -> bool:
 
 
 def _missing_visit_time(ctx: RecordContext) -> bool:
-    """无就诊时间——病历首行通常 "就诊时间：YYYY-MM-DD HH:MM"。"""
+    """无就诊时间——病历首行通常 "就诊时间：YYYY-MM-DD HH:MM"。
+
+    仅门、急诊评分触发：住院病历模板（首次病程/入院记录）的渲染器不输出"就诊时间："行
+    （住院用"入院时间"作为头部时间字段），用门急诊的"就诊时间"规则会误报。
+    住院 Rubric（zj_inpatient_2021.py）落地后会用自己的"入院时间缺失"规则。
+    """
+    if not (ctx.encounter_meta.is_outpatient or ctx.encounter_meta.is_emergency):
+        return False
     import re
     return not re.search(r"就诊时间[：:]", ctx.record_text)
 
@@ -109,10 +116,33 @@ def _missing_menstrual_history_for_female(ctx: RecordContext) -> bool:
 
 
 # ── 6. 体格检查（10 分） ─────────────────────────────────────────────
+#
+# PDF "按中医四诊要求记录"——本系统拆成 4 条独立规则（望/闻/舌/脉），
+# 每条 2.5 分，合计 10 分。
+#
+# 治本动机（2026-05-24）：旧设计 1 条规则 -10 + target_field="__tcm_four_diagnoses__"
+# 引导医生"去左侧问诊面板补充"，违反"病历正文是唯一编辑入口"原则。
+# 新设计每条规则 target_field 是具体子字段（望诊/闻诊/舌象/脉象），
+# AI 批量补全 / 逐条修复都能各自针对性补，写入【体格检查】对应子行。
 
-def _missing_tcm_four_diagnoses(ctx: RecordContext) -> bool:
-    """缺中医四诊扣 10 分——望/闻/切（舌+脉）四项至少要有舌脉。"""
-    return not (ctx.section("舌象").is_filled() and ctx.section("脉象").is_filled())
+def _missing_tcm_inspection(ctx: RecordContext) -> bool:
+    """缺望诊（神色/形态）扣 2.5 分。"""
+    return not ctx.section("望诊").is_filled()
+
+
+def _missing_tcm_auscultation(ctx: RecordContext) -> bool:
+    """缺闻诊（语声/气味）扣 2.5 分。"""
+    return not ctx.section("闻诊").is_filled()
+
+
+def _missing_tongue(ctx: RecordContext) -> bool:
+    """缺切诊·舌象扣 2.5 分。"""
+    return not ctx.section("舌象").is_filled()
+
+
+def _missing_pulse(ctx: RecordContext) -> bool:
+    """缺切诊·脉象扣 2.5 分。"""
+    return not ctx.section("脉象").is_filled()
 
 
 # ── 7. 辅助检查（5 分） ──────────────────────────────────────────────
@@ -203,12 +233,16 @@ _PATIENT_BASIC_INFO = RubricItem(
             description="患者基础信息缺项（姓名/性别/年龄）",
             deduct_points=1,
             checker=_missing_patient_basic_info,
+            # 不写入病历正文——这是患者档案字段，应去患者表单补
+            target_field="__patient_basic_info__",
         ),
         DeductionRule(
             code="OP-BASIC-INFO-02",
             description="无就诊时间",
             deduct_points=2,
             checker=_missing_visit_time,
+            # 不写入病历正文——这是病历头部时间字段
+            target_field="__visit_time__",
         ),
     ),
 )
@@ -223,12 +257,14 @@ _CHIEF_COMPLAINT = RubricItem(
             description="主诉缺失或主要症状、体征记录不规范",
             deduct_points=2,
             checker=_missing_chief_complaint,
+            target_field="主诉",
         ),
         DeductionRule(
             code="OP-CHIEF-COMPLAINT-02",
             description="主诉持续时间未记录",
             deduct_points=2,
             checker=_missing_chief_complaint_duration,
+            target_field="主诉",
         ),
     ),
 )
@@ -243,12 +279,14 @@ _PRESENT_ILLNESS = RubricItem(
             description="现病史缺失或主要症状、体征描述不清",
             deduct_points=5,
             checker=_missing_present_illness,
+            target_field="现病史",
         ),
         DeductionRule(
             code="OP-PRESENT-ILLNESS-02",
             description="缺诊治经过",
             deduct_points=2,
             checker=_missing_present_illness_treatment,
+            target_field="现病史",
         ),
     ),
 )
@@ -263,12 +301,16 @@ _PAST_HISTORY = RubricItem(
             description="既往史缺失",
             deduct_points=2,
             checker=_missing_past_history,
+            target_field="既往史",
         ),
         DeductionRule(
             code="OP-PAST-HISTORY-02",
             description="育龄期女性无月经史",
             deduct_points=5,
             checker=_missing_menstrual_history_for_female,
+            # 月经史可能写在【月经史】独立章节，也可能写在【既往史】里
+            # 门诊渲染器没有【月经史】章节，所以填到既往史更安全
+            target_field="既往史",
         ),
     ),
 )
@@ -280,9 +322,31 @@ _PHYSICAL_EXAM = RubricItem(
     deduction_rules=(
         DeductionRule(
             code="OP-PHYSICAL-EXAM-01",
-            description="缺中医四诊（舌象/脉象）",
-            deduct_points=10,
-            checker=_missing_tcm_four_diagnoses,
+            description="缺望诊（神色/形态）",
+            deduct_points=2.5,
+            checker=_missing_tcm_inspection,
+            target_field="望诊",
+        ),
+        DeductionRule(
+            code="OP-PHYSICAL-EXAM-02",
+            description="缺闻诊（语声/气味）",
+            deduct_points=2.5,
+            checker=_missing_tcm_auscultation,
+            target_field="闻诊",
+        ),
+        DeductionRule(
+            code="OP-PHYSICAL-EXAM-03",
+            description="缺切诊·舌象",
+            deduct_points=2.5,
+            checker=_missing_tongue,
+            target_field="舌象",
+        ),
+        DeductionRule(
+            code="OP-PHYSICAL-EXAM-04",
+            description="缺切诊·脉象",
+            deduct_points=2.5,
+            checker=_missing_pulse,
+            target_field="脉象",
         ),
     ),
 )
@@ -297,6 +361,7 @@ _AUXILIARY_EXAM = RubricItem(
             description="辅助检查未记录",
             deduct_points=5,
             checker=_missing_auxiliary_exam,
+            target_field="辅助检查",
         ),
     ),
 )
@@ -311,18 +376,21 @@ _DIAGNOSIS = RubricItem(
             description="有中医治疗的病历无中医诊断",
             deduct_points=10,
             checker=_missing_tcm_diagnosis,
+            target_field="中医诊断",
         ),
         DeductionRule(
             code="OP-DIAGNOSIS-02",
             description="中医诊断不全（疾病诊断/证候诊断 缺其一）",
             deduct_points=2,
             checker=_incomplete_tcm_diagnosis,
+            target_field="中医诊断",
         ),
         DeductionRule(
             code="OP-DIAGNOSIS-03",
             description="西医诊断缺失",
             deduct_points=2,
             checker=_missing_western_diagnosis,
+            target_field="西医诊断",
         ),
     ),
 )
@@ -337,18 +405,21 @@ _TREATMENT = RubricItem(
             description="检查治疗项目不明确（处理意见缺失）",
             deduct_points=5,
             checker=_missing_treatment_plan,
+            target_field="处理意见",
         ),
         DeductionRule(
             code="OP-TREATMENT-02",
             description="治则治法与证型不符（治则治法缺失）",
             deduct_points=5,
             checker=_missing_treatment_method,
+            target_field="治则治法",
         ),
         DeductionRule(
             code="OP-TREATMENT-03",
             description="无复诊建议或注意事项",
             deduct_points=5,
             checker=_missing_followup_advice,
+            target_field="复诊建议",
         ),
     ),
 )
@@ -375,18 +446,21 @@ _OTHER_EMERGENCY = RubricItem(
             description="急诊就诊时间未具体到分钟",
             deduct_points=5,
             checker=_missing_visit_time_minute,
+            target_field="__visit_time__",
         ),
         DeductionRule(
             code="OP-OTHER-02",
             description="急诊病人无 T、P、R、BP 生命体征记录",
             deduct_points=2,
             checker=_emergency_missing_vitals,
+            target_field="生命体征",
         ),
         DeductionRule(
             code="OP-OTHER-03",
             description="急诊患者去向未记录",
             deduct_points=2,
             checker=_emergency_missing_disposition,
+            target_field="患者去向",
         ),
     ),
 )

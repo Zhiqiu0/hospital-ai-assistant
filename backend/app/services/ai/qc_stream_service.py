@@ -33,6 +33,7 @@ from app.services.ai.prompts import QC_FIX_PROMPT, QC_PROMPT, RECORD_TYPE_LABELS
 from app.services.ai.task_logger import log_ai_task, save_qc_issues
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.rubric import Rubric
+from app.services.qc_engine.rubrics.zj_inpatient_2021 import ZJ_INPATIENT_V2021
 from app.services.qc_engine.rubrics.zj_outpatient_emergency_2023 import (
     ZJ_OUTPATIENT_EMERGENCY_V2023,
 )
@@ -43,16 +44,41 @@ from app.services.rule_engine.insurance_rules import check_insurance_risk
 logger = logging.getLogger(__name__)
 
 
+# 住院系列 record_type 白名单——治本动机（2026-05-19）：
+# 原占位实现让住院类全部回退用门急诊 rubric，导致门急诊规则在住院首次病程上
+# 误报（"无就诊时间"等）。现在按 record_type 精确路由到住院 rubric。
+_INPATIENT_RECORD_TYPES = frozenset({
+    "admission_note",
+    "first_course_record",
+    "course_record",
+    "senior_round",
+    "discharge_record",
+    "pre_op_summary",
+    "op_record",
+    "post_op_record",
+})
+
+
 def _select_rubric(record_type: str | None) -> Rubric:
     """按 record_type 选择对应法定评分表。
 
-    住院 Rubric 待下一期落地（rubrics/zj_inpatient_2021.py），
-    暂时回退到门急诊 Rubric——评分仍按浙江省标准跑（不会因为是住院类型就 100 分）。
+    路由策略：
+      - outpatient / emergency → 门急诊 rubric（PDF 2023 版，11 大项 100 分）
+      - admission_note / first_course_record / course_record / senior_round /
+        discharge_record / pre_op_summary / op_record / post_op_record
+        → 住院 rubric（PDF 2021 版，18 大项 100 分，含单项否决 + 甲乙丙三级）
+
+    住院 rubric 内每条规则按 record_type 自适应触发（checker 第一行做守卫），
+    医生在 admission_note 跑质控只触发入院记录区规则、在 first_course_record 跑
+    只触发首次病程规则——一份 rubric 覆盖 8 种住院 record_type。
     """
     rt = record_type or "outpatient"
     if rt in ("outpatient", "emergency"):
         return ZJ_OUTPATIENT_EMERGENCY_V2023
-    # 住院系列暂时复用门急诊 Rubric（占位）。下期接入 ZJ_INPATIENT_V2021 后切换。
+    if rt in _INPATIENT_RECORD_TYPES:
+        return ZJ_INPATIENT_V2021
+    # 兜底：未识别的 record_type（不该走到这里）默认门急诊评分
+    logger.warning("qc.select_rubric: 未识别的 record_type=%r，回退门急诊评分", rt)
     return ZJ_OUTPATIENT_EMERGENCY_V2023
 
 
@@ -76,7 +102,16 @@ def _deductions_to_issues(report: ScoreReport) -> list[dict]:
             level = "low"
         issues.append({
             "risk_level": level,
-            "field_name": d.item_name,
+            # 治本（2026-05-19）：优先用规则自带 target_field（精确到病历子字段），
+            # 无 target_field 时退到大项名（适用大项与单字段 1:1 映射的场景）。
+            # 这让前端"逐条修复 → 写入病历"能精准替换合并章节下的某一子行
+            # （如【治疗意见及措施】下的"治则治法：xxx"行），而不是把修复文本
+            # 兜底追加到病历末尾。
+            "field_name": d.target_field or d.item_name,
+            # 治本配套（2026-05-19）：大项名独立透传，跟 field_name（写入目标）解耦。
+            # 前端 QCIssuePanel 按 PDF 大项分组渲染时用此字段，
+            # 避免 target_field 变成子字段名后跟 score_report.items[].name 对不上。
+            "item_name": d.item_name,
             "rule_code": d.rule_code,
             "issue_description": d.description,
             "suggestion": d.description,  # PDF 扣分说明本身即为修复指引

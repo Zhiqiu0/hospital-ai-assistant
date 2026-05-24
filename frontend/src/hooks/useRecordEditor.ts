@@ -20,7 +20,9 @@ import {
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import { streamSSE } from '@/services/streamSSE'
 import { parseGeneratedSectionsToInquiry } from '@/utils/recordSections'
-import type { QCIssue, GradeScore } from '@/store/types'
+import { writeSectionToRecord } from '@/components/workbench/qcFieldMaps'
+import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
+import type { QCIssue, GradeScore, ScoreReport } from '@/store/types'
 
 /**
  * SSE 事件 - 质控流的统一对象形状。
@@ -37,6 +39,8 @@ interface QCStreamEvent {
   grade_level?: GradeScore['grade_level']
   must_fix_count?: number
   summary?: string
+  /** 后端按 PDF 大项结构化产出的评分报告（rule_issues 事件携带） */
+  score_report?: ScoreReport
 }
 
 export function useRecordEditor() {
@@ -326,7 +330,8 @@ export function useRecordEditor() {
                       must_fix_count: obj.must_fix_count,
                     }
                   : null
-              setQCResult(obj.issues || [], '', obj.pass ?? false, gs)
+              // score_report 在此一并入 store——A 方案分组渲染的数据源
+              setQCResult(obj.issues || [], '', obj.pass ?? false, gs, obj.score_report ?? null)
               setQCLlmLoading(true)
             } else if (obj.type === 'llm_issues') {
               appendQCIssues(obj.issues || [])
@@ -366,6 +371,19 @@ export function useRecordEditor() {
   }
 
   const handleSupplement = async () => {
+    /**
+     * 批量补全（治本路线 2026-05-24）
+     *
+     * 流程：调 /quick-supplement 拿到 LLM 一次返回的 N 个 {field_name, value}
+     *        → 循环用 writeSectionToRecord 行级写入（不是整段重画）
+     *        → 把写入的字段名 push 到 aiWrittenFieldsStore（顶部 chip + gutter 高亮）
+     *        → 自动重新质控
+     *
+     * 关键区别于旧实现：
+     *   - 不再用 SSE 流式 + renderer 整段重画 → 不会覆盖医生现场修改
+     *   - 跟"逐条修复 写入病历"走完全相同的 writeSectionToRecord 写入路径
+     *   - LLM 没数据可生成的字段（QC_FIX prompt 鼓励基于上下文推断）也会给值
+     */
     if (!qcIssues.length) {
       message.warning('请先执行 AI 质控')
       return
@@ -373,47 +391,47 @@ export function useRecordEditor() {
     setIsSupplementing(true)
     const original = recordContent
 
-    // 【追问补充】区块由前端独立维护（医生勾选的"问：答"对），
-    // 不参与 LLM 补全 → 拆出 → LLM 重新生成主体 → 拼回末尾
-    const supplementMarker = '【追问补充】'
-    const supplementIdx = original.indexOf(supplementMarker)
-    const contentForLLM =
-      supplementIdx === -1 ? original : original.slice(0, supplementIdx).trimEnd()
-    const supplementSection = supplementIdx === -1 ? '' : original.slice(supplementIdx).trimEnd()
-
-    setRecordContent('')
-    let gotError = false
-    let errorMsg = ''
     try {
-      await runSSE(
-        '/api/v1/ai/quick-supplement',
-        { ...buildRecordTaskPayload(contentForLLM), qc_issues: qcIssues },
-        {
-          onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
-          onEvent: (raw: unknown) => {
-            const obj = (raw || {}) as { type?: string; message?: string }
-            if (obj.type === 'error') {
-              gotError = true
-              errorMsg = obj.message || ''
-            }
-          },
-        }
-      )
-      if (gotError) {
-        setRecordContent(original)
-        // 旧版本会区分 context_length_exceeded 等细节，但 JSON 路线下后端用 ValueError
-        // 兜底，前端只显示提示即可——具体错误类型已在后端日志记录
-        message.error(`补全失败：${errorMsg || '请重试'}`)
+      const res = await fetch('/api/v1/ai/quick-supplement', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          ...buildRecordTaskPayload(original),
+          qc_issues: qcIssues,
+        }),
+      })
+      if (!res.ok) {
+        message.error(`补全失败：HTTP ${res.status}`)
         return
       }
-      // 后端 renderer 已保证章节唯一，不再需要前端去重 / 章节守卫
-      const supplemented = useRecordStore.getState().recordContent
-      const newContent = supplementSection
-        ? supplemented.trimEnd() + '\n\n' + supplementSection
-        : supplemented
-      if (newContent !== supplemented) setRecordContent(newContent)
+      const data = await res.json()
+      if (data.error) {
+        message.error(`补全失败：${data.error}`)
+        return
+      }
+      const items: { field_name: string; value: string }[] = data.items || []
+      if (items.length === 0) {
+        message.warning('AI 未能给出建议，可点击单条「逐条修复」试试')
+        return
+      }
 
-      message.success('补全完成，正在重新质控...')
+      // 行级写入 + 标记 AI 写入字段（顺序写入，每次基于上次结果再写下一条）
+      let newContent = original
+      const writtenFields: string[] = []
+      for (const it of items) {
+        const before = newContent
+        newContent = writeSectionToRecord(newContent, it.field_name, it.value)
+        if (newContent !== before) {
+          writtenFields.push(it.field_name)
+        }
+      }
+      setRecordContent(newContent)
+      useAiWrittenFieldsStore.getState().addFields(writtenFields)
+
+      message.success(`已补全 ${writtenFields.length} 项，正在重新质控...`)
       setIsSupplementing(false)
       await handleQC(newContent)
       return

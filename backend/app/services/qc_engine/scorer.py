@@ -40,6 +40,9 @@ class Deduction:
     description: str        # 扣分理由（PDF 原文）
     points: float           # 实际扣分值
     is_veto: bool = False   # 是否单项否决
+    # 治本（2026-05-19）：从 rule.target_field 透传，前端按子字段精准定位"逐条修复"
+    # 写入位置（替代原来用大项名做兜底匹配的实现）。
+    target_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,7 @@ def _score_item(item: RubricItem, ctx: RecordContext) -> ItemScore:
                 description=veto.description,
                 points=VETO_DEDUCT_POINTS,
                 is_veto=True,
+                target_field=veto.target_field,
             ))
             # PDF 备注 6："扣 10 分，不累积扣分"——此项不再走 deduction_rules
             actual_deducted = min(VETO_DEDUCT_POINTS, item.max_points)
@@ -142,6 +146,7 @@ def _score_item(item: RubricItem, ctx: RecordContext) -> ItemScore:
                 description=rule.description,
                 points=rule.deduct_points,
                 is_veto=False,
+                target_field=rule.target_field,
             ))
             raw_deducted += rule.deduct_points
 

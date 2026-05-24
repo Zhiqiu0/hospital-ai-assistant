@@ -75,29 +75,38 @@ export default function QCRulesPage() {
   const [detailLoading, setDetailLoading] = useState(false)
 
   // 拉评分标准列表
+  // axios 响应拦截器已 unwrap response.data，调用方直接拿数据；项目约定走 (await api.get()) as T
   useEffect(() => {
     setListLoading(true)
-    api
-      .get<{ items: RubricSummary[] }>('/admin/rubrics')
-      .then(res => {
+    ;(async () => {
+      try {
+        const res = (await api.get('/admin/rubrics')) as { items: RubricSummary[] }
         setSummaries(res.items || [])
         if (res.items && res.items.length > 0) {
           setActiveKey(res.items[0].key)
         }
-      })
-      .catch(() => message.error('加载评分标准列表失败'))
-      .finally(() => setListLoading(false))
+      } catch {
+        message.error('加载评分标准列表失败')
+      } finally {
+        setListLoading(false)
+      }
+    })()
   }, [])
 
   // 切 tab 时拉单份标准详情
   useEffect(() => {
     if (!activeKey) return
     setDetailLoading(true)
-    api
-      .get<RubricView>(`/admin/rubrics/${activeKey}`)
-      .then(res => setRubric(res))
-      .catch(() => message.error('加载评分标准详情失败'))
-      .finally(() => setDetailLoading(false))
+    ;(async () => {
+      try {
+        const res = (await api.get(`/admin/rubrics/${activeKey}`)) as RubricView
+        setRubric(res)
+      } catch {
+        message.error('加载评分标准详情失败')
+      } finally {
+        setDetailLoading(false)
+      }
+    })()
   }, [activeKey])
 
   // PDF 四列表格：项目 / 检查内容 / 评分说明（扣分细则） / 扣分及理由（运行时填）

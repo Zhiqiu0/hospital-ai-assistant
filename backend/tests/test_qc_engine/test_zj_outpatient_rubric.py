@@ -304,22 +304,36 @@ def test_male_does_not_trigger_menstrual_history_rule():
 
 
 def test_missing_tongue_and_pulse_triggers_tcm_four_diagnoses():
-    """舌象 + 脉象都缺 → OP-PHYSICAL-EXAM-01 触发（-10 分）。"""
+    """舌象 + 脉象都缺 → OP-PHYSICAL-EXAM-03 + 04 触发（各 -2.5 分）。
+
+    2026-05-24 治本：旧设计 1 条 -10 + target_field=__tcm_four_diagnoses__
+    引导去问诊面板，违反"病历正文是唯一编辑入口"。新设计拆 4 条独立规则
+    （望/闻/舌/脉），各自 target_field 指向具体子字段，AI 补全能针对性补。
+    """
     record = _build_full_record() \
         .replace("切诊·舌象：舌淡红，苔薄白", "切诊·舌象：[未填写，需补充]") \
         .replace("切诊·脉象：脉弦", "切诊·脉象：[未填写，需补充]")
     ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
-    assert "OP-PHYSICAL-EXAM-01" in codes
+    assert "OP-PHYSICAL-EXAM-03" in codes  # 缺舌象
+    assert "OP-PHYSICAL-EXAM-04" in codes  # 缺脉象
+    # target_field 是具体可写字段，非 NON_WRITABLE 标记
+    tongue_deduction = next(d for d in rep.deductions if d.rule_code == "OP-PHYSICAL-EXAM-03")
+    assert tongue_deduction.target_field == "舌象"
+    pulse_deduction = next(d for d in rep.deductions if d.rule_code == "OP-PHYSICAL-EXAM-04")
+    assert pulse_deduction.target_field == "脉象"
 
 
 def test_filled_tcm_diagnoses_does_not_trigger():
-    """舌脉填了 → 不触发。"""
+    """舌脉填了 → 不触发任何中医四诊规则。"""
     ctx = build_context(_build_full_record(), **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
     rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
     codes = {d.rule_code for d in rep.deductions}
-    assert "OP-PHYSICAL-EXAM-01" not in codes
+    assert "OP-PHYSICAL-EXAM-01" not in codes  # 缺望诊
+    assert "OP-PHYSICAL-EXAM-02" not in codes  # 缺闻诊
+    assert "OP-PHYSICAL-EXAM-03" not in codes  # 缺舌象
+    assert "OP-PHYSICAL-EXAM-04" not in codes  # 缺脉象
 
 
 # 辅助检查 ──────────────────────────────────────────────────────

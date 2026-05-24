@@ -26,6 +26,7 @@ import { useInquiryStore } from './inquiryStore'
 import { useRecordStore } from './recordStore'
 import { useQCStore } from './qcStore'
 import { useAISuggestionStore } from './aiSuggestionStore'
+import { useAiWrittenFieldsStore } from './aiWrittenFieldsStore'
 import { usePatientCacheStore } from './patientCacheStore'
 
 interface ActiveEncounterState {
@@ -98,6 +99,9 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
           useRecordStore.getState().reset()
           useQCStore.getState().reset()
           useAISuggestionStore.getState().reset()
+          // AI 写入高亮按接诊隔离 —— 切换接诊清空，避免上一个接诊的
+          // 高亮残留误导医生（2026-05-24 治本路线）
+          useAiWrittenFieldsStore.getState().clear()
         }
         set({
           patientId: input.patientId,
