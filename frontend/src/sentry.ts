@@ -112,6 +112,15 @@ export function initSentry(): void {
     environment: (import.meta.env.VITE_SENTRY_ENVIRONMENT as string) || 'unknown',
     release: (import.meta.env.VITE_SENTRY_RELEASE as string) || undefined,
 
+    // ── Tunnel：绕过 ad-blocker / 医院出口防火墙 ─────────────────
+    // 2026-05-25 治本：医生浏览器装 ad-blocker（uBlock 等）或医院出口
+    // 防火墙会拦截 *.ingest.sentry.io 海外域名，envelope 上报丢失。
+    // tunnel 让上报走自己后端 /api/v1/sentry-tunnel 同源代理转发到上游，
+    // 同源域名 ad-blocker 不识别就放行。
+    // 后端校验：DSN host whitelist + rate limit + size limit + 5s 超时
+    // 详见 backend/app/api/v1/sentry_tunnel.py
+    tunnel: '/api/v1/sentry-tunnel',
+
     // ── 采样率 ─────────────────────────────────────────────────────
     // 性能 trace 一律不开（trace 会附带 URL / form 提交内容，避免泄露）
     tracesSampleRate: 0,
