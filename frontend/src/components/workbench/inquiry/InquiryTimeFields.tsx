@@ -6,6 +6,7 @@
  */
 import { Form, DatePicker } from 'antd'
 import { ClockCircleOutlined } from '@ant-design/icons'
+import type { InquiryData } from '@/store/types'
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
@@ -16,8 +17,10 @@ const labelStyle: React.CSSProperties = {
 }
 
 interface InquiryTimeFieldsProps {
-  inquiry: any
-  updateInquiryFields: (data: any) => void
+  /** 当前接诊问诊数据：本组件只读取 visit_time / onset_time 两字段，但保留全量 InquiryData 便于回写时合并 */
+  inquiry: InquiryData
+  /** 回写问诊：本组件每次都把整张 inquiry 合并 visit_time/onset_time 后回传 */
+  updateInquiryFields: (data: InquiryData) => void
 }
 
 export default function InquiryTimeFields({

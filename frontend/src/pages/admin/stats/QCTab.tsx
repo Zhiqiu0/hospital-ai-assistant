@@ -8,10 +8,29 @@
 import { Row, Col, Card, Table, Tag, Spin } from 'antd'
 import { SafetyOutlined } from '@ant-design/icons'
 
-import { RISK_COLOR, RISK_LABEL, ISSUE_TYPE_LABEL } from './constants'
+import { RISK_COLOR, RISK_LABEL, ISSUE_TYPE_LABEL, FIELD_NAME_LABEL } from './constants'
+
+/** 按问题类型 × 风险等级聚合的行 */
+export interface QCTypeRow {
+  issue_type: string
+  risk_level: string
+  count: number
+}
+
+/** 高频问题字段排行行 */
+export interface QCFieldRow {
+  field_name: string
+  count: number
+}
+
+/** /admin/stats/qc-issues 返回值 */
+export interface QCData {
+  by_type?: QCTypeRow[]
+  top_fields?: QCFieldRow[]
+}
 
 interface QCTabProps {
-  qcData: any
+  qcData: QCData | null
   loading: boolean
 }
 
@@ -45,7 +64,13 @@ export default function QCTab({ qcData, loading }: QCTabProps) {
   ]
 
   const qcFieldColumns = [
-    { title: '字段', dataIndex: 'field_name', key: 'field_name' },
+    {
+      title: '字段',
+      dataIndex: 'field_name',
+      key: 'field_name',
+      // FIELD_NAME_LABEL 没命中时回退到原值，保证未来后端新增字段不会让单元格空白
+      render: (v: string) => FIELD_NAME_LABEL[v] || v,
+    },
     { title: '问题次数', dataIndex: 'count', key: 'count' },
   ]
 
@@ -64,7 +89,7 @@ export default function QCTab({ qcData, loading }: QCTabProps) {
           <Table
             dataSource={qcData?.by_type ?? []}
             columns={qcTypeColumns}
-            rowKey={(r: any) => `${r.issue_type}-${r.risk_level}`}
+            rowKey={(r: QCTypeRow) => `${r.issue_type}-${r.risk_level}`}
             pagination={false}
             size="small"
             locale={{ emptyText: '暂无质控数据' }}

@@ -50,7 +50,10 @@ export default function CancelEncounterModal({ open, onClose, onConfirm }: Props
   const voiceDraft = useMemo(() => {
     if (!currentEncounterId) return null
     return useVoiceTranscriptStore.getState().get(currentEncounterId)
-  }, [currentEncounterId, open]) // open 变化时重新算（弹窗打开瞬间快照）
+    // open 变化时故意重新算（弹窗打开瞬间快照）；ESLint 觉得 open 不必要因为内部没用，
+    // 但我们就是要它作为 trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEncounterId, open])
 
   const recordCharCount = recordContent.trim().length
   const voiceCharCount = voiceDraft?.transcript?.trim().length || 0

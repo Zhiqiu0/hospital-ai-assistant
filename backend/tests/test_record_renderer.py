@@ -22,7 +22,18 @@ from app.services.ai.record_schemas import (
     PLACEHOLDER,
     get_schema,
 )
-from app.services.rule_engine.completeness_rules import parse_sections
+# 治本（2026-05-18）：parse_sections 已迁移到 qc_engine.parser.parse_record。
+# 新接口返回 dict[str, Section]——这里保留旧 parse_sections 名字 + 行为
+# 让本测试继续覆盖"渲染输出能被章节解析器正确还原"的契约。
+from app.services.qc_engine.parser import parse_record as _parse_record
+
+
+def parse_sections(text: str) -> dict[str, str]:
+    """适配层：qc_engine.parse_record 输出 dict[str, Section]，
+    本测试历史断言形如 sections["舌象"] == "舌淡红"，保留旧接口。
+    """
+    sec_dict = _parse_record(text)
+    return {name: sec.raw_value for name, sec in sec_dict.items() if sec.is_filled()}
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────

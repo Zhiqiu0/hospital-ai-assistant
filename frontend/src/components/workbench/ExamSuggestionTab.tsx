@@ -23,7 +23,8 @@
  *   - 化验单 OCR、影像分析当前过渡期"只展示不写入病历"，下次迭代独立章节。
  */
 import { useCallback } from 'react'
-import { Button, List, Tag, Typography, Empty, Spin, message } from 'antd'
+import { Button, List, Tag, Typography, Empty, Spin } from 'antd'
+import { message } from '@/services/messageBridge'
 import { ExperimentOutlined, CheckOutlined, ArrowRightOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
@@ -66,18 +67,21 @@ export default function ExamSuggestionTab() {
     }
     setExamLoading(true)
     try {
-      const data: any = await api.post('/ai/exam-suggestions', {
+      const data = (await api.post('/ai/exam-suggestions', {
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
         initial_impression: inquiry.initial_impression,
         encounter_id: currentEncounterId || undefined,
-      })
+      })) as { suggestions?: ExamSuggestion[] }
       setExamSuggestions(data.suggestions || [])
     } catch {
       setExamSuggestions([])
     } finally {
       setExamLoading(false)
     }
+    // currentEncounterId / setExamLoading / setExamSuggestions 引用稳定，
+    // 只需在问诊三要素变化时重新拉取建议
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   /**

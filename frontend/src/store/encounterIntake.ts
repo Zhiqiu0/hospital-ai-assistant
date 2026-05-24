@@ -23,7 +23,13 @@ import { useRecordStore } from './recordStore'
 import { useQCStore } from './qcStore'
 import { useAISuggestionStore } from './aiSuggestionStore'
 import type { PatientProfile, VisitType } from '@/domain/medical'
-import type { InquiryData, QCIssue } from './types'
+import type {
+  InquiryData,
+  QCIssue,
+  ExamSuggestion,
+  InquirySuggestion,
+  DiagnosisItem,
+} from './types'
 
 /** quick-start 与 snapshot 共有的最小字段集合 */
 export interface EncounterIntakePayload {
@@ -65,11 +71,17 @@ export interface SnapshotResult extends EncounterIntakePayload {
   } | null
   /** 最新 QC 跑出来的问题列表（logout 重登也能恢复） */
   latest_qc_issues?: QCIssue[] | null
-  /** 各类 AI 建议产物（追问 / 检查 / 诊断），key=task_type */
+  /**
+   * 各类 AI 建议产物（追问 / 检查 / 诊断），key=task_type
+   *
+   * 后端只存 LLM 原始输出，没有"医生临时勾选"状态（selectedOptions / isOrdered），
+   * 所以追问/检查这两类用 Partial 包一层避免 id 等字段缺失时报错；前端在
+   * applySnapshotResult 内做"恢复缺省值"合并。
+   */
   latest_ai_suggestions?: {
-    inquiry?: { suggestions?: any[] }
-    exam?: { suggestions?: any[] }
-    diagnosis?: { diagnoses?: any[] }
+    inquiry?: { suggestions?: Partial<InquirySuggestion>[] }
+    exam?: { suggestions?: Partial<ExamSuggestion>[] }
+    diagnosis?: { diagnoses?: DiagnosisItem[] }
   } | null
 }
 
@@ -157,7 +169,14 @@ export function applySnapshotResult(res: SnapshotResult): void {
   if (res.inquiry) {
     // updateInquiryFields 用部分字段补丁覆盖，不打"已保存"标记
     // （未保存状态由用户编辑触发，不由恢复触发）
-    useInquiryStore.getState().updateInquiryFields(res.inquiry as InquiryData)
+    //
+    // 后端 snapshot 返回的 inquiry 只含已填字段，是 Partial<InquiryData>；
+    // store 签名要 InquiryData（38 字段全集）。这里用 unknown 桥接而非 any，
+    // 让类型转换是受控的：缺失字段保持 undefined，下游字段访问全部走 `?? ''`
+    // 兜底（store 内部所有字段都是 string | undefined）。
+    useInquiryStore
+      .getState()
+      .updateInquiryFields(res.inquiry as unknown as InquiryData)
   }
 
   // record：当前活跃病历的内容
@@ -209,15 +228,20 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (aiSug.inquiry?.suggestions) {
       const existingByText = new Map(store.inquirySuggestions.map(s => [s.text, s]))
       store.setInquirySuggestions(
-        aiSug.inquiry.suggestions.map((s: any, idx: number) => {
-          const existing = existingByText.get(s.text)
+        aiSug.inquiry.suggestions.map((s, idx) => {
+          const existing = existingByText.get(s.text ?? '')
+          // 补齐 InquirySuggestion 的必填字段；后端无值时给安全默认值
           return {
+            text: s.text ?? '',
+            priority: s.priority ?? 'medium',
+            is_red_flag: s.is_red_flag ?? false,
+            category: s.category ?? '',
             ...s,
             id: existing?.id ?? `restored-${idx}`,
             options: s.options || [],
             // 保留医生已选的选项；前端无该项时初始化空数组
             selectedOptions: existing?.selectedOptions ?? [],
-          }
+          } as InquirySuggestion
         })
       )
     }
@@ -226,11 +250,14 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (aiSug.exam?.suggestions) {
       const existingByName = new Map(store.examSuggestions.map(s => [s.exam_name, s]))
       store.setExamSuggestions(
-        aiSug.exam.suggestions.map((s: any) => ({
+        aiSug.exam.suggestions.map(s => ({
+          exam_name: s.exam_name ?? '',
+          category: s.category ?? 'basic',
+          reason: s.reason ?? '',
           ...s,
           // 保留医生标记的"已开单"状态，后端不存这个，前端独立维护
-          isOrdered: existingByName.get(s.exam_name)?.isOrdered ?? s.isOrdered,
-        }))
+          isOrdered: existingByName.get(s.exam_name ?? '')?.isOrdered ?? s.isOrdered,
+        } as ExamSuggestion))
       )
     }
 

@@ -19,7 +19,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { QCIssue, GradeScore } from './types'
+import { QCIssue, GradeScore, ScoreReport } from './types'
 
 interface QCState {
   /** 本轮质控的 ID（timestamp 字符串），每次 startQCRun 更新 */
@@ -39,6 +39,11 @@ interface QCState {
   qcPass: boolean | null
   /** 甲级评分 */
   gradeScore: GradeScore | null
+  /** 结构化评分报告——按 PDF 大项分组的扣分明细，QCIssuePanel 用来分组展示
+   *  解决"扣分明细加起来 ≠ 总扣分"的 UX 问题：大项扣分有上限保护，
+   *  报告里 items[].deducted 是已 cap 后的实际扣分。
+   */
+  scoreReport: ScoreReport | null
 
   /** 每条 issue 对应的 AI 修复文本，key = issue 在 qcIssues 数组里的索引 */
   qcFixTexts: Record<number, string>
@@ -53,7 +58,8 @@ interface QCState {
     issues: QCIssue[],
     summary: string,
     pass: boolean | null,
-    gradeScore?: GradeScore | null
+    gradeScore?: GradeScore | null,
+    scoreReport?: ScoreReport | null
   ) => void
   /** 流式追加 LLM 建议（不更新 runId，不清空医生操作） */
   appendQCIssues: (issues: QCIssue[]) => void
@@ -83,6 +89,7 @@ export const useQCStore = create<QCState>()(
       qcSummary: '',
       qcPass: null,
       gradeScore: null,
+      scoreReport: null,
 
       qcFixTexts: {},
       qcWrittenIndices: [],
@@ -94,14 +101,15 @@ export const useQCStore = create<QCState>()(
           qcSummary: '',
           qcPass: null,
           gradeScore: null,
+          scoreReport: null,
           qcLlmLoading: false,
           isQCStale: false,
           qcFixTexts: {},
           qcWrittenIndices: [],
         }),
 
-      setQCResult: (issues, summary, pass, gradeScore = null) =>
-        set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore }),
+      setQCResult: (issues, summary, pass, gradeScore = null, scoreReport = null) =>
+        set({ qcIssues: issues, qcSummary: summary, qcPass: pass, gradeScore, scoreReport }),
 
       appendQCIssues: issues => set(state => ({ qcIssues: [...state.qcIssues, ...issues] })),
 
@@ -127,6 +135,7 @@ export const useQCStore = create<QCState>()(
           qcSummary: '',
           qcPass: null,
           gradeScore: null,
+          scoreReport: null,
           qcFixTexts: {},
           qcWrittenIndices: [],
         }),
@@ -139,6 +148,7 @@ export const useQCStore = create<QCState>()(
         qcSummary: state.qcSummary,
         qcPass: state.qcPass,
         gradeScore: state.gradeScore,
+        scoreReport: state.scoreReport,
         isQCStale: state.isQCStale,
         qcFixTexts: state.qcFixTexts,
         qcWrittenIndices: state.qcWrittenIndices,

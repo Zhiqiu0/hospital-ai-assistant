@@ -72,45 +72,61 @@ export interface InpatientInquiryData {
 /**
  * 把 antd Form 的 values 转成扁平 InpatientInquiryData。
  * 关键：admission_diagnosis 同时回填到 initial_impression（兼容旧字段）。
+ *
+ * values 来自 antd Form，字段类型不固定（字符串/数字/对象/空值），
+ * 用 unknown 而非 any 强迫显式收窄；本函数内部统一用 readString helper。
  */
-export function buildInpatientInquiryData(values: Record<string, any>): InpatientInquiryData {
+export function buildInpatientInquiryData(
+  values: Record<string, unknown>
+): InpatientInquiryData {
+  // 把"任意类型 form value"压成字符串：空值 → ''；其它 → String 化
+  const readString = (v: unknown): string =>
+    v == null || v === '' ? '' : typeof v === 'string' ? v : String(v)
+  // 疼痛评分允许数字 0；nullish 时退到 '0'，保持原逻辑（painScore ?? 0）
   const painScore = values.pain_assessment ?? 0
   return {
-    chief_complaint: values.chief_complaint || '',
-    history_present_illness: values.history_present_illness || '',
-    physical_exam: values.physical_exam || '',
-    initial_impression: values.admission_diagnosis || '',
-    history_informant: values.history_informant || '',
-    rehabilitation_assessment: values.rehabilitation_assessment || '',
+    chief_complaint: readString(values.chief_complaint),
+    history_present_illness: readString(values.history_present_illness),
+    physical_exam: readString(values.physical_exam),
+    initial_impression: readString(values.admission_diagnosis),
+    history_informant: readString(values.history_informant),
+    rehabilitation_assessment: readString(values.rehabilitation_assessment),
     pain_assessment: String(painScore),
-    vte_risk: values.vte_risk || '',
-    nutrition_assessment: values.nutrition_assessment || '',
-    psychology_assessment: values.psychology_assessment || '',
-    auxiliary_exam: values.auxiliary_exam || '',
-    admission_diagnosis: values.admission_diagnosis || '',
-    temperature: values.temperature || '',
-    pulse: values.pulse || '',
-    respiration: values.respiration || '',
-    bp_systolic: values.bp_systolic || '',
-    bp_diastolic: values.bp_diastolic || '',
-    spo2: values.spo2 || '',
-    height: values.height || '',
-    weight: values.weight || '',
+    vte_risk: readString(values.vte_risk),
+    nutrition_assessment: readString(values.nutrition_assessment),
+    psychology_assessment: readString(values.psychology_assessment),
+    auxiliary_exam: readString(values.auxiliary_exam),
+    admission_diagnosis: readString(values.admission_diagnosis),
+    temperature: readString(values.temperature),
+    pulse: readString(values.pulse),
+    respiration: readString(values.respiration),
+    bp_systolic: readString(values.bp_systolic),
+    bp_diastolic: readString(values.bp_diastolic),
+    spo2: readString(values.spo2),
+    height: readString(values.height),
+    weight: readString(values.weight),
   }
 }
 
 /**
  * 找出本次保存相对原 inquiry 状态发生变化的字段集合（仅 INPATIENT_CHANGE_TRACK_KEYS 内的）。
  * 用于决定"哪些字段触发病历章节同步"，避免未改动的字段也覆盖 AI 已写入内容。
+ *
+ * prev 是上一份"原始 form 值或 InquiryData 快照"，字段类型不一致，
+ * 用 Partial<InpatientInquiryData> 描述即可（同名字段都是 string）。
  */
 export function diffInpatientChangedFields(
   next: InpatientInquiryData,
-  prev: Record<string, any>
+  prev: Partial<InpatientInquiryData> | Record<string, unknown>
 ): Set<string> {
   const changed = new Set<string>()
+  // prev 可能来自 inquiry store（含其它字段），用 Record 视图按 key 取值
+  const prevRecord = prev as Record<string, unknown>
   for (const key of INPATIENT_CHANGE_TRACK_KEYS) {
     const nextVal = (next[key] ?? '') as string
-    const prevVal = (prev[key] ?? '') as string
+    const prevRaw = prevRecord[key]
+    // 与 next 保持同样的"空值 → 空串"收敛规则
+    const prevVal = prevRaw == null ? '' : typeof prevRaw === 'string' ? prevRaw : String(prevRaw)
     if (nextVal && nextVal !== prevVal) {
       changed.add(key)
     }
@@ -186,11 +202,17 @@ export function syncInpatientToRecord(
 /**
  * 把语音结构化 patch 铺平到 form 顶层字段：vital_signs 子结构展开后不再保留嵌套。
  * 调用方拿到平铺 patch 再走 form.setFieldsValue / setInquiry 流程。
+ *
+ * patch 来自 /ai/voice-structure 后端解析结果，字段集合不固定，故用
+ * Record<string, unknown>；vital_signs 子节点是同形 Record。
  */
-export function flattenVoicePatch(patch: any): Record<string, any> {
-  const flattened = { ...patch }
-  if (patch?.vital_signs && typeof patch.vital_signs === 'object') {
-    Object.assign(flattened, patch.vital_signs)
+export function flattenVoicePatch(
+  patch: Record<string, unknown> | null | undefined
+): Record<string, unknown> {
+  const flattened: Record<string, unknown> = { ...(patch || {}) }
+  const vital = patch?.vital_signs
+  if (vital && typeof vital === 'object') {
+    Object.assign(flattened, vital as Record<string, unknown>)
     delete flattened.vital_signs
   }
   return flattened

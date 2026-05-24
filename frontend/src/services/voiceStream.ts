@@ -84,7 +84,14 @@ export async function startVoiceStream(
   let finishedResolver: (() => void) | null = null
   ws.onmessage = event => {
     try {
-      const msg = JSON.parse(event.data as string)
+      // 后端 voice-stream 协议消息形状（与 ai/voice_stream_routes.py 一致）：
+      //   { type: 'started' | 'partial' | 'final' | 'error' | 'finished', text?, message? }
+      // 任一字段都可能缺，故全部 optional + 显式收窄
+      const msg = JSON.parse(event.data as string) as {
+        type?: string
+        text?: string
+        message?: string
+      }
       switch (msg.type) {
         case 'started':
           callbacks.onStarted?.()
@@ -111,7 +118,12 @@ export async function startVoiceStream(
 
   // 4. 打开麦克风 + 创建 16kHz AudioContext
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+  // Safari < 14 用 webkitAudioContext 前缀；TS lib.dom 默认不含此别名，
+  // 用结构化类型而非 any 取自 window，避免 ESLint @typescript-eslint/no-explicit-any
+  const AudioCtx =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioCtx) throw new Error('AudioContext 不可用')
   // sampleRate 选项在部分浏览器可能被忽略，后续用 actualRate 做重采样兜底
   const ctx: AudioContext = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE })
   const actualRate = ctx.sampleRate

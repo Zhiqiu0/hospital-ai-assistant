@@ -26,8 +26,15 @@ import type { Study } from './types'
 
 const { Text } = Typography
 
+/** 患者下拉项最小契约（与 PacsWorkbenchPage 内同名 interface 字段对齐） */
+interface PacsPatientOption {
+  id: string
+  name: string
+  patient_no?: string | null
+}
+
 interface StudyListStageProps {
-  patients: any[]
+  patients: PacsPatientOption[]
   selectedPatient: string
   setSelectedPatient: (id: string) => void
   uploading: boolean
@@ -72,7 +79,7 @@ export default function StudyListStage({
                   .toLowerCase()
                   .includes(input.toLowerCase())
               }
-              options={patients.map((p: any) => ({
+              options={patients.map(p => ({
                 value: p.id,
                 label: `${p.name}（${p.patient_no || p.id.slice(0, 6)}）`,
               }))}

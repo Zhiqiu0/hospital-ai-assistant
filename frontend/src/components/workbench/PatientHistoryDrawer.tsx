@@ -16,9 +16,16 @@ import { useEffect, useState } from 'react'
 import { Drawer, Empty, Space, Spin, Input, Typography } from 'antd'
 import { FileTextOutlined, UserOutlined, SearchOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import type { Patient } from '@/domain/medical'
 import PatientCardHeader from './patientHistory/PatientCardHeader'
 import PatientPickerList from './patientHistory/PatientPickerList'
-import RecordList from './patientHistory/RecordList'
+import RecordList, { type RecordListItem } from './patientHistory/RecordList'
+
+/**
+ * 病历列表中单条记录的形状：直接复用 RecordList 暴露的 RecordListItem。
+ * 后端返回的 medical_record 联表字段较多，本组件透传，消费者按需读取。
+ */
+type HistoryRecord = RecordListItem
 
 const { Text: _Text } = Typography
 void _Text
@@ -45,7 +52,7 @@ interface Props {
   searchable?: boolean
   /** 父级传入的"当前患者是否在院"（住院端选中病区患者时一定为 true） */
   patientHasActiveInpatient?: boolean
-  onView: (record: any) => void
+  onView: (record: HistoryRecord) => void
   recordTypeLabel: (t: string) => string
 }
 
@@ -62,12 +69,12 @@ export default function PatientHistoryDrawer({
   recordTypeLabel,
 }: Props) {
   const [selected, setSelected] = useState<SelectedPatient | null>(null)
-  const [records, setRecords] = useState<any[]>([])
+  const [records, setRecords] = useState<HistoryRecord[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
 
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [patientList, setPatientList] = useState<any[]>([])
+  const [patientList, setPatientList] = useState<Patient[]>([])
   const [searching, setSearching] = useState(false)
 
   // props 里的 patientId 改变或抽屉打开时，同步 selected
@@ -112,9 +119,10 @@ export default function PatientHistoryDrawer({
     setLoading(true)
     api
       .get(`/medical-records/by-patient/${selected.id}`)
-      .then((res: any) => {
-        setRecords(res.items || [])
-        setTotal(res.total || 0)
+      .then(res => {
+        const data = res as { items?: HistoryRecord[]; total?: number }
+        setRecords(data.items || [])
+        setTotal(data.total || 0)
       })
       .catch(() => {
         setRecords([])
@@ -134,8 +142,9 @@ export default function PatientHistoryDrawer({
         setSearching(true)
         api
           .get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=50`)
-          .then((res: any) => {
-            setPatientList(res?.items || [])
+          .then(res => {
+            const data = res as { items?: Patient[] } | null
+            setPatientList(data?.items || [])
           })
           .catch(() => setPatientList([]))
           .finally(() => setSearching(false))
@@ -145,11 +154,11 @@ export default function PatientHistoryDrawer({
     return () => clearTimeout(t)
   }, [open, searchable, selected, searchKeyword])
 
-  const handlePickPatient = (p: any) => {
+  const handlePickPatient = (p: Patient) => {
     setSelected({
       id: p.id,
       name: p.name,
-      gender: p.gender,
+      gender: p.gender ?? undefined,
       age: p.age,
       hasActiveInpatient: !!p.has_active_inpatient,
       hasAnyInpatientHistory: !!p.has_any_inpatient_history,

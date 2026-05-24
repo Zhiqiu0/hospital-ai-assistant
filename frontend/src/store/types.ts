@@ -85,24 +85,64 @@ export interface QCIssue {
   /** completeness | insurance | format | logic 等 */
   issue_type?: string
   risk_level: 'high' | 'medium' | 'low'
+  /** AI 修复"写入病历"的目标字段（治本后可能是子字段名如"处理意见"，也可能是 __xxx__ 不可写键） */
   field_name: string
+  /** PDF 大项名（如"治疗意见及措施"）——用于按大项分组渲染。
+   *  跟 field_name 解耦：field_name 决定写入位置，item_name 决定 UI 分组归属。
+   *  rule 来源才有此字段，LLM 建议可能没有。 */
+  item_name?: string
   issue_description: string
   suggestion: string
   score_impact?: string
 }
 
-/** 甲级评分 */
+/** 单条扣分明细——对应 ScoreReport.items[].deductions[] 一项 */
+export interface ScoreReportDeduction {
+  rule_code: string
+  description: string
+  /** 该条规则的原始扣分值（未应用大项上限） */
+  points: number
+  /** 是否单项否决（住院专属，门诊永远 false） */
+  is_veto: boolean
+}
+
+/** 单大项得分明细——按 PDF 大项分组 */
+export interface ScoreReportItem {
+  name: string
+  /** 大项满分（PDF 上的"分值"列） */
+  max_points: number
+  /** 该项实际得分（已应用上限保护） */
+  score: number
+  /** 该项实际扣分（已应用上限保护；可能 < 触发的细则扣分之和） */
+  deducted: number
+  /** 是否触发了单项否决（住院专属） */
+  veto_triggered: boolean
+  /** 原始扣分细则——加起来可能 > deducted（大项上限保护原因） */
+  deductions: ScoreReportDeduction[]
+}
+
+/** 评分报告——按 PDF 大项结构化产出 */
+export interface ScoreReport {
+  rubric_name: string
+  rubric_version: string
+  score: number
+  grade: string
+  passed: boolean
+  total_deducted: number
+  items: ScoreReportItem[]
+}
+
+/** 病历质控评分（按浙江省 PDF 标准） */
 export interface GradeScore {
   /** 0-100 */
   grade_score: number
-  /** 等级语义：
-   *   甲级/乙级/丙级 = 分数区间
-   *   待整改         = 任意分数 + 存在规则引擎产出的"必须修复"项时的强制等级，
-   *                    含义是"病历不可签发"。与分数维度解耦，避免「93分甲级 +
-   *                    需修复才可出具」的悖论（2026-04-30）。
+  /** 等级语义（PDF 1:1 映射）：
+   *   门、急诊（PDF 注 5）：合格（≥90） / 不合格（<90）
+   *   住院（PDF 备注 8）：甲级（≥90） / 乙级（≥80） / 丙级（<80）
+   *   兼容旧返回："待整改"——L2 旧实现产出的强制等级（住院 Rubric 上线后弃用）
    */
-  grade_level: '甲级' | '乙级' | '丙级' | '待整改'
-  /** 必须修复项数（source=='rule' 的 issue 数量），仅在"待整改"时用于文案显示 */
+  grade_level: '合格' | '不合格' | '甲级' | '乙级' | '丙级' | '待整改'
+  /** 必须修复项数（source=='rule' 的 issue 数量），文案"N 项必须修复" */
   must_fix_count?: number
   strengths?: string[]
 }

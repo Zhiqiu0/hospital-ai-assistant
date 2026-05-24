@@ -271,3 +271,36 @@ def build_record_prompt(record_type: str, req: Any) -> str:
     raise ValueError(
         f"record_type={record_type!r} 尚未接入 JSON 模式（应通过 NEW_ARCH_RECORD_TYPES 白名单过滤）"
     )
+
+
+# ─── 润色 prompt（同构 JSON 路线，复用上面 build_record_prompt 当底） ──
+#
+# 注：补全 prompt 已于 2026-05-24 下线 —— 旧 build_supplement_prompt 让 LLM
+# 重写完整 JSON 后由 renderer 整段重画，会把医生现场修改物理覆盖掉
+# （bug：78 分逐条补全后整体补全回到 70）。新方案见
+# services/ai/supplement_batch_service.py：一次 LLM 调用返回 N 个 {field, value}，
+# 前端按 FIELD_TO_LINE_PREFIX 行级写入，与"逐条修复"同一机制。
+
+
+# 润色场景的额外约束块
+_POLISH_EXTRA_RULES = """━━━ 润色场景额外约束（覆盖上方规则；严格遵守） ━━━
+1. 仍然只输出 schema 定义的 JSON 字段（key 不增不减，value 必须是字符串）
+2. 只做三件事：① 口语化表述改为标准医学书面语；② 合并重复语句；③ 修正错别字/标点
+3. 严禁修改任何客观数值（体温/血压/化验值等）、诊断名称、药物名称、医生录入原文
+4. 严禁新增任何在草稿中找不到依据的诊断、症状、检查结果
+5. 草稿中某字段若已规范，可原样照搬"""
+
+
+def build_polish_prompt(record_type: str, req: Any) -> str:
+    """润色 prompt = 生成 prompt 基础 + 现有草稿 + 润色约束。
+
+    与补全的区别：不接受 qc_issues，专注语言规范化，禁止改动客观数据。
+    """
+    base = build_record_prompt(record_type, req)
+    current = (getattr(req, "current_content", None) or "").strip() or "（草稿为空，无法润色）"
+    return f"""{base}
+
+━━━ 待润色的病历草稿 ━━━
+{current}
+
+{_POLISH_EXTRA_RULES}"""

@@ -24,8 +24,8 @@ import {
   Tooltip,
   Typography,
   Popconfirm,
-  message,
 } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import {
   PlusOutlined,
@@ -59,22 +59,54 @@ const ROLE_MAP: Record<string, { label: string; color: string }> = {
   nurse: { label: '护士', color: 'cyan' },
 }
 
+/** 用户列表行类型（后端 UserResponse 子集，仅含本页用到的字段） */
+interface UserRow {
+  id: string
+  username: string
+  real_name: string
+  role: string
+  is_active: boolean
+  department_id?: string | null
+  department_name?: string | null
+}
+
+/** 科室下拉项（仅取 id + name 用于 Select options） */
+interface DeptOption {
+  id: string
+  name: string
+}
+
+/** 新建/编辑用户表单字段——与后端 UserCreate/UserUpdate 对齐 */
+interface UserFormValues {
+  username?: string
+  password?: string
+  real_name: string
+  role: string
+  department_id?: string | null
+  employee_no?: string
+  phone?: string
+  email?: string
+}
+
 export default function UsersPage() {
   // 当前登录管理员 ID——用于禁用"自己停用自己"按钮（防误操作把自己锁出系统）
   const myId = useAuthStore(s => s.user?.id)
-  const [users, setUsers] = useState<any[]>([])
-  const [departments, setDepartments] = useState<any[]>([])
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [departments, setDepartments] = useState<DeptOption[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editUser, setEditUser] = useState<any>(null)
-  const [form] = Form.useForm()
+  const [editUser, setEditUser] = useState<UserRow | null>(null)
+  const [form] = Form.useForm<UserFormValues>()
 
   const loadUsers = async (p = page) => {
     setLoading(true)
     try {
-      const data: any = await api.get(`/admin/users?page=${p}&page_size=10`)
+      const data = (await api.get(`/admin/users?page=${p}&page_size=10`)) as {
+        items: UserRow[]
+        total: number
+      }
       setUsers(data.items)
       setTotal(data.total)
     } finally {
@@ -83,13 +115,15 @@ export default function UsersPage() {
   }
 
   const loadDepts = async () => {
-    const data: any = await api.get('/admin/departments')
+    const data = (await api.get('/admin/departments')) as { items?: DeptOption[] }
     setDepartments(data.items || [])
   }
 
   useEffect(() => {
     loadUsers()
     loadDepts()
+    // 只挂载时加载一次；setState 在 effect 里是预期路径
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const openCreate = () => {
@@ -98,17 +132,17 @@ export default function UsersPage() {
     setModalOpen(true)
   }
 
-  const openEdit = (user: any) => {
+  const openEdit = (user: UserRow) => {
     setEditUser(user)
     form.setFieldsValue({
       real_name: user.real_name,
       role: user.role,
-      department_id: user.department_id,
+      department_id: user.department_id ?? undefined,
     })
     setModalOpen(true)
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: UserFormValues) => {
     try {
       if (editUser) {
         await api.put(`/admin/users/${editUser.id}`, values)
@@ -119,8 +153,10 @@ export default function UsersPage() {
       }
       setModalOpen(false)
       loadUsers()
-    } catch (e: any) {
-      message.error(e?.detail || '操作失败')
+    } catch (e) {
+      // axios 响应拦截把后端 { detail: string } 当作 reject 值传出，这里 inline cast 取 detail
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || '操作失败')
     }
   }
 
@@ -214,7 +250,7 @@ export default function UsersPage() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: UserRow) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑
@@ -310,7 +346,7 @@ export default function UsersPage() {
             <Select
               allowClear
               placeholder="选择科室（可选）"
-              options={departments.map((d: any) => ({ value: d.id, label: d.name }))}
+              options={departments.map(d => ({ value: d.id, label: d.name }))}
             />
           </Form.Item>
           {!editUser && (

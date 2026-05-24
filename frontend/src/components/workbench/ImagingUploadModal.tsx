@@ -21,7 +21,8 @@
  * 互相覆盖。下次迭代独立"影像所见"章节时再补回写入入口。
  */
 import { useState, useRef } from 'react'
-import { Modal, Button, Select, Input, message, Spin } from 'antd'
+import { Modal, Button, Select, Input, Spin } from 'antd'
+import { message } from '@/services/messageBridge'
 import { CameraOutlined, UploadOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
@@ -80,12 +81,14 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
       const form = new FormData()
       form.append('file', selectedFile)
       form.append('image_type', imageType)
-      const res: any = await api.post('/pacs/analyze-image', form, {
+      const res = (await api.post('/pacs/analyze-image', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      })) as { analysis?: string }
       setAnalysisResult(res.analysis || '（未返回分析内容）')
-    } catch (err: any) {
-      message.error(err?.detail || 'AI分析失败，请重试')
+    } catch (err) {
+      // 后端错误体 detail 由 FastAPI 统一返回
+      const detail = (err as { detail?: string } | null)?.detail
+      message.error(detail || 'AI分析失败，请重试')
     } finally {
       setAnalyzing(false)
     }

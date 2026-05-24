@@ -12,9 +12,9 @@
  * 这样跨多个问题的"哪些已写入 / 哪些 AI 还在跑"可以在父侧统一控制 + 持久化到 store。
  */
 import { Button, Input, Tag, Typography } from 'antd'
-import { BulbOutlined, EditOutlined } from '@ant-design/icons'
+import { BulbOutlined, EditOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { QCIssue } from '@/store/types'
-import { FIELD_NAME_LABEL } from '../qcFieldMaps'
+import { FIELD_NAME_LABEL, NON_WRITABLE_FIELDS, NON_WRITABLE_HINTS } from '../qcFieldMaps'
 import { QC_RISK_COLOR, QC_RISK_LABEL, QC_TYPE_COLOR, QC_TYPE_LABEL } from './qcConstants'
 
 const { Text } = Typography
@@ -35,6 +35,10 @@ export default function QCIssueItem(props: QCIssueItemProps) {
   const isRule = item.source === 'rule' || item.source == null
   const isFullTextSuggestion =
     item.source === 'llm' && (!item.field_name || item.field_name === 'content')
+  // 不可写正文字段（患者档案 / 就诊时间 / 中医四诊集合）：
+  // 不显示"逐条修复 / 写入病历"按钮，直接显示引导文案告诉医生去哪修。
+  // 避免医生白点一次按钮才看到提示 + 暴露 __xxx__ internal key（已被 FIELD_NAME_LABEL 中文化）。
+  const isNonWritable = NON_WRITABLE_FIELDS.has(item.field_name)
 
   return (
     <div
@@ -91,7 +95,25 @@ export default function QCIssueItem(props: QCIssueItemProps) {
       >
         {item.issue_description}
       </Text>
-      {isFullTextSuggestion ? (
+      {isNonWritable ? (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '8px 12px',
+            background: '#eff6ff',
+            border: '1px solid #bfdbfe',
+            borderRadius: 6,
+            fontSize: 12,
+            color: '#1e40af',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 6,
+          }}
+        >
+          <InfoCircleOutlined style={{ marginTop: 2, flexShrink: 0 }} />
+          <span>{NON_WRITABLE_HINTS[item.field_name] || '该问题需手动修改，无法自动写入'}</span>
+        </div>
+      ) : isFullTextSuggestion ? (
         <div
           style={{
             marginTop: 4,

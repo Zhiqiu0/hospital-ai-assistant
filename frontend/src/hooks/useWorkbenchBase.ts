@@ -19,7 +19,7 @@
  */
 
 import { useState } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -29,8 +29,63 @@ import {
   setCurrentEncounterFromPatient,
   useActiveEncounterStore,
 } from '@/store/activeEncounterStore'
-import { applySnapshotResult } from '@/store/encounterIntake'
+import { applySnapshotResult, type SnapshotResult } from '@/store/encounterIntake'
 import api from '@/services/api'
+import type { Gender, Patient, VisitType } from '@/domain/medical'
+
+/**
+ * 历史病历抽屉 / 详情弹窗共用的"可视记录"形状。
+ * - 与 RecordList.RecordListItem（id 可选）保持兼容，确保 onView={setViewRecord} 类型可接
+ * - 也满足 RecordViewModal.ViewableRecord 字段集
+ * 与 domain.MedicalRecord 解耦——后端联表 patient 后字段更多，且查询接口不一定回 current_version
+ */
+export interface WorkbenchViewableRecord {
+  id?: string
+  record_type: string
+  status?: string
+  visit_type?: string
+  visit_sequence?: number
+  content?: string
+  content_preview?: string
+  submitted_at?: string | null
+  patient_name?: string
+  patient_gender?: string
+  patient_age?: number | null
+  doctor_name?: string | null
+  submitted_by_name?: string | null
+  /** 后端可能携带的额外字段允许透传 */
+  [key: string]: unknown
+}
+
+/**
+ * /encounters/my 返回的"进行中接诊"列表项（前端实际用到的字段子集）。
+ * 后端字段更多，但本 hook 只读必要字段；其他字段允许透传到 handleResume。
+ */
+interface ResumeEncounterItem {
+  encounter_id: string
+  visit_type?: string
+  patient?: { name?: string } | null
+  /** 允许后端额外字段透传（用 unknown 而非 any） */
+  [key: string]: unknown
+}
+
+/** snapshot.visit_type 来自后端是宽字符串，收敛到 VisitType 联合或 undefined。 */
+function toVisitType(raw: unknown): VisitType | undefined {
+  return raw === 'emergency' || raw === 'inpatient' || raw === 'outpatient' ? raw : undefined
+}
+
+/** 后端 patient.gender 字符串 → domain Gender；未知值统一归为 unknown。 */
+function toDomainPatient(p: NonNullable<SnapshotResult['patient']>): Patient {
+  const g: Gender = p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown'
+  return {
+    id: p.id,
+    name: p.name,
+    gender: g,
+    age: p.age ?? null,
+    phone: p.phone ?? null,
+    birth_date: p.birth_date ?? null,
+  }
+}
 
 interface UseWorkbenchBaseOptions {
   /** 续接诊列表是否只加载特定类型，如 'inpatient' */
@@ -56,11 +111,13 @@ export function useWorkbenchBase({
 
   // History drawer 开关（数据由 PatientHistoryDrawer 自己拉，不再走本 hook）
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [viewRecord, setViewRecord] = useState<any>(null)
+  // 历史病历抽屉点击某条记录时打开的弹窗，传入的是后端 medical_records 行；
+  // 与 PatientHistoryDrawer.HistoryRecord / RecordViewModal.ViewableRecord 取并集
+  const [viewRecord, setViewRecord] = useState<WorkbenchViewableRecord | null>(null)
 
   // Resume drawer
   const [resumeOpen, setResumeOpen] = useState(false)
-  const [resumeList, setResumeList] = useState<any[]>([])
+  const [resumeList, setResumeList] = useState<ResumeEncounterItem[]>([])
   const [resumeLoading, setResumeLoading] = useState(false)
 
   const openHistory = () => {
@@ -71,11 +128,9 @@ export function useWorkbenchBase({
     setResumeOpen(true)
     setResumeLoading(true)
     try {
-      const data: any = await api.get('/encounters/my')
-      const list = data || []
-      setResumeList(
-        visitTypeFilter ? list.filter((e: any) => e.visit_type === visitTypeFilter) : list
-      )
+      const data = (await api.get('/encounters/my')) as ResumeEncounterItem[] | null
+      const list: ResumeEncounterItem[] = data || []
+      setResumeList(visitTypeFilter ? list.filter(e => e.visit_type === visitTypeFilter) : list)
     } catch {
       message.error('加载进行中接诊失败')
     } finally {
@@ -83,10 +138,26 @@ export function useWorkbenchBase({
     }
   }
 
-  const handleResume = async (item: any) => {
+  /**
+   * 恢复某条进行中接诊。
+   *
+   * 入参允许是 ResumeEncounterItem（resumeList 元素），也允许调用方仅构造最小
+   * 载荷 { encounter_id, patient_name } 直接走恢复流程（如住院端从病区列表
+   * 选患者）—— 形状灵活，但 encounter_id 必填。
+   */
+  const handleResume = async (item: {
+    encounter_id: string
+    patient_name?: string
+    patient?: { name?: string } | null
+  }) => {
     setResumeLoading(true)
     try {
-      const snapshot: any = await api.get(`/encounters/${item.encounter_id}/workspace`)
+      const snapshot = (await api.get(
+        `/encounters/${item.encounter_id}/workspace`
+      )) as SnapshotResult & {
+        is_first_visit?: boolean
+        is_patient_reused?: boolean
+      }
       if (snapshot.active_record?.status === 'submitted') {
         // 已签发病历不可继续编辑：不再让用户自己去找历史病历入口（住院端 PatientHistoryDrawer
         // 需要先选中病区患者才能查看，而签发后该患者已从"进行中"列表移除，会陷入死循环）。
@@ -94,9 +165,9 @@ export function useWorkbenchBase({
         //          ② 同步档案到本地缓存
         //          ③ 关续接诊抽屉、打开历史病历抽屉
         applySnapshotResult(snapshot)
-        if (snapshot.patient) {
-          setCurrentEncounterFromPatient(snapshot.patient, snapshot.encounter_id, {
-            visitType: snapshot.visit_type,
+        if (snapshot.patient && snapshot.encounter_id) {
+          setCurrentEncounterFromPatient(toDomainPatient(snapshot.patient), snapshot.encounter_id, {
+            visitType: toVisitType(snapshot.visit_type),
             isFirstVisit: snapshot.is_first_visit,
             isPatientReused: snapshot.is_patient_reused,
             previousRecordContent: snapshot.previous_record_content,
@@ -110,16 +181,18 @@ export function useWorkbenchBase({
       resetAllWorkbench()
       // 1.6 数据接入：snapshot 同样含 patient + patient_profile，写入 patientCache
       applySnapshotResult(snapshot)
-      if (snapshot.patient) {
-        setCurrentEncounterFromPatient(snapshot.patient, snapshot.encounter_id, {
-          visitType: snapshot.visit_type,
+      if (snapshot.patient && snapshot.encounter_id) {
+        setCurrentEncounterFromPatient(toDomainPatient(snapshot.patient), snapshot.encounter_id, {
+          visitType: toVisitType(snapshot.visit_type),
           isFirstVisit: snapshot.is_first_visit,
           isPatientReused: snapshot.is_patient_reused,
           previousRecordContent: snapshot.previous_record_content,
         })
       }
       if (snapshot.inquiry) {
-        setInquiry(snapshot.inquiry)
+        // snapshot.inquiry 是 Partial<InquiryData>；store.setInquiry 期待完整 InquiryData，
+        // 沿用旧实现"直接灌 partial"行为，用 unknown 桥接以消除 any 噪音
+        setInquiry(snapshot.inquiry as unknown as Parameters<typeof setInquiry>[0])
       }
       if (snapshot.active_record) {
         setRecordType(snapshot.active_record.record_type || defaultRecordType)
@@ -130,7 +203,9 @@ export function useWorkbenchBase({
         setRecordContent('')
         setFinal(false)
       }
-      message.success(resumeSuccessMsg(snapshot.patient?.name || item.patient?.name || ''))
+      message.success(
+        resumeSuccessMsg(snapshot.patient?.name || item.patient?.name || item.patient_name || '')
+      )
       setResumeOpen(false)
     } catch {
       message.error(resumeErrorMsg)
@@ -142,7 +217,9 @@ export function useWorkbenchBase({
   const handleLogout = async () => {
     try {
       await api.post('/auth/logout')
-    } catch (_) {}
+    } catch {
+      // logout 失败也要继续清本地态（token 可能已过期，server 拒绝是正常的）
+    }
     resetAllWorkbench()
     clearAuth()
     navigate('/login')

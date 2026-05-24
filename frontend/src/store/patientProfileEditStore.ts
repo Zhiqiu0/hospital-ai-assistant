@@ -20,7 +20,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import type { PatientProfile } from '@/domain/medical'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
@@ -163,7 +163,12 @@ export const usePatientProfileEditStore = create<State>()(
 
         set({ saving: true })
         try {
-          const updated: any = await api.put(`/patients/${patientId}/profile`, changed)
+          // 后端 /patients/:id/profile PUT 返回完整 PatientProfile（与 GET 同形状）；
+          // 用 PatientProfile 显式注解避免 any 但允许字段缺失（fields_meta 是新字段）。
+          const updated = (await api.put(
+            `/patients/${patientId}/profile`,
+            changed
+          )) as PatientProfile
           // 后端返回完整 profile，写回 patientCache（含 updated_at）
           usePatientCacheStore.getState().upsertProfile(patientId, {
             past_history: updated.past_history ?? null,

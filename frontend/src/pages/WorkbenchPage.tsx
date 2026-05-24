@@ -15,7 +15,8 @@
  *   WorkbenchStatusBar→ 底部状态栏
  */
 import { useState, useEffect } from 'react'
-import { Layout, message, Tabs, Modal } from 'antd'
+import { Layout, Tabs, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -25,8 +26,14 @@ import {
   resetAllWorkbench,
   setCurrentEncounterFromPatient,
 } from '@/store/activeEncounterStore'
-import type { VisitType } from '@/domain/medical'
-import { applyQuickStartResult, applySnapshotResult } from '@/store/encounterIntake'
+import type { VisitType, Patient, Gender } from '@/domain/medical'
+import {
+  applyQuickStartResult,
+  applySnapshotResult,
+  type QuickStartResult,
+  type SnapshotResult,
+} from '@/store/encounterIntake'
+import type { InquiryData } from '@/store/types'
 import api from '@/services/api'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
@@ -89,6 +96,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     if (visitType !== defaultType) {
       setVisitMeta(isFirstVisit, defaultType)
     }
+    // setVisitMeta 引用稳定（hook 返回的 stable callback），无需加进 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEmergency])
 
   const {
@@ -111,12 +120,34 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
 
   // 新建接诊成功回调：更新 store 并处理住院跳转
   // resumed=true 表示后端检测到已有进行中接诊，直接续接而非新建
-  const handleEncounterCreated = (res: any, visitType: string) => {
+  // QuickStartResult 只描述必含字段；本回调还会读 resumed / pending_encounters /
+  // previous_inquiry / is_first_visit 等业务扩展字段，用交叉类型补齐前端视图
+  type EncounterCreatedRes = QuickStartResult & {
+    resumed?: boolean
+    is_first_visit?: boolean
+    previous_inquiry?: Partial<InquiryData> | null
+    pending_encounters?: Array<{
+      doctor_name: string
+      visit_type: string
+      visited_at?: string
+    }>
+  }
+  const handleEncounterCreated = (res: EncounterCreatedRes, visitType: string) => {
     resetAllWorkbench()
     // 1.6 数据接入：把 patient + patient_profile 写入 patientCacheStore，
     // 并通过 setCurrentEncounterFromPatient 设置 activeEncounterStore（一次性传完元信息）
     applyQuickStartResult(res)
-    setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+    // 后端 patient.gender 是 string | null；domain Patient.gender 是 Gender 联合，
+    // 与 encounterIntake.syncPatientToCache 同步逻辑保持一致——未知值统一归为 unknown
+    const normalizedGender: Gender =
+      res.patient.gender === 'male' || res.patient.gender === 'female'
+        ? res.patient.gender
+        : 'unknown'
+    const patientForActive: Patient = {
+      ...res.patient,
+      gender: normalizedGender,
+    }
+    setCurrentEncounterFromPatient(patientForActive, res.encounter_id, {
       visitType: (res.visit_type || visitType) as VisitType,
       // 2026-05-03 改：用后端权威 is_first_visit，旧逻辑 !patient_reused 在续接未签发
       // 接诊时会把"上次初诊未签发"误显示成"复诊"。后端用接诊状态机（completed=复诊
@@ -172,8 +203,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       // 失败不阻断，useEnsureSnapshotHydrated 在 currentEncounterId 变化时也会兜底重试。
       void api
         .get(`/encounters/${res.encounter_id}/workspace`)
-        .then((snapshot: any) => {
-          if (snapshot) applySnapshotResult(snapshot)
+        .then(snapshot => {
+          // 后端 workspace 接口返回形状已被 SnapshotResult 描述
+          if (snapshot) applySnapshotResult(snapshot as SnapshotResult)
         })
         .catch(() => {
           /* 静默失败 */

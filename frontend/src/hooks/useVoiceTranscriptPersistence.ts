@@ -80,7 +80,18 @@ export function useVoiceTranscriptPersistence(
       // 再调后端覆盖（如果后端有更新版）
       // 守护：后端字段为空时不覆盖本地草稿
       try {
-        const snapshot: any = await api.get(`/encounters/${currentEncounterId}/workspace`)
+        // 这里仅消费 snapshot.latest_voice_record；其他字段不关心，
+        // 用最小化内联接口替代 any（与 SnapshotResult 不耦合，避免循环依赖）
+        const snapshot = (await api.get(
+          `/encounters/${currentEncounterId}/workspace`
+        )) as {
+          latest_voice_record?: {
+            id?: string
+            raw_transcript?: string
+            transcript_summary?: string
+            speaker_dialogue?: DialogueItem[]
+          } | null
+        } | null
         const latest = snapshot?.latest_voice_record
         if (latest) {
           if (latest.raw_transcript) setTranscript(latest.raw_transcript)
@@ -136,6 +147,8 @@ export function useVoiceTranscriptPersistence(
       if (curHasContent) return
     }
     useVoiceTranscriptStore.getState().setForEncounter(currentEncounterId, state)
+    // 只关心 state 的 7 个具体字段变化（已展开），整体 state 引用变化不应触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     currentEncounterId,
     state.transcript,

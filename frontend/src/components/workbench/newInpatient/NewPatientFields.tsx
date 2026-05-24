@@ -11,6 +11,9 @@ import dayjs from 'dayjs'
 import SectionLabel from './SectionLabel'
 import { ETHNICITY_OPTIONS } from './constants'
 
+// 统一身份证 / 手机号校验工厂规则
+import { idCardRule, phoneRule } from '@/utils/validators'
+
 export default function NewPatientFields() {
   return (
     <>
@@ -58,10 +61,7 @@ export default function NewPatientFields() {
             身份证号 <span style={{ color: '#ef4444', fontSize: 11 }}>（信息错误为单项否决）</span>
           </span>
         }
-        rules={[
-          { required: true, message: '身份证号为必填项' },
-          { pattern: /^\d{17}[\dXx]$/, message: '请输入有效的18位身份证号' },
-        ]}
+        rules={[idCardRule({ required: true })]}
       >
         <Input placeholder="请输入18位身份证号" maxLength={18} />
       </Form.Item>
@@ -108,8 +108,8 @@ export default function NewPatientFields() {
 
       <SectionLabel text="二、联系方式与紧急联系人" />
       <div style={{ display: 'flex', gap: 10 }}>
-        <Form.Item name="phone" label="本人电话" style={{ flex: 1 }}>
-          <Input placeholder="手机号（选填）" />
+        <Form.Item name="phone" label="本人电话" style={{ flex: 1 }} rules={[phoneRule()]}>
+          <Input placeholder="手机号（选填）" maxLength={11} />
         </Form.Item>
         <Form.Item
           name="contact_name"
@@ -137,9 +137,9 @@ export default function NewPatientFields() {
           name="contact_phone"
           label="联系人电话"
           style={{ flex: 1 }}
-          rules={[{ required: true, message: '请输入联系人电话' }]}
+          rules={[phoneRule({ required: true })]}
         >
-          <Input placeholder="联系人手机" />
+          <Input placeholder="联系人手机" maxLength={11} />
         </Form.Item>
       </div>
       <Form.Item

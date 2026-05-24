@@ -26,13 +26,23 @@
  *   - 本主文件保留：状态聚合 + 折叠初始化 + 字段表 map + ✓ 仍准确 confirm API
  */
 import { useEffect, useRef, useState } from 'react'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { usePatientProfileCard } from '@/hooks/usePatientProfileCard'
 import api from '@/services/api'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
+import type { PatientProfile, ProfileFieldMeta } from '@/domain/medical'
 import PatientProfileField from './patientProfile/PatientProfileField'
 import PatientProfileHeader from './patientProfile/PatientProfileHeader'
 import { PROFILE_FIELDS } from './patientProfile/staleness'
+
+/**
+ * POST /patients/:id/profile/confirm 的返回结构：
+ * 后端确认完字段后返回最新档案全量值 + 字段级 fields_meta，前端写回 cache。
+ */
+interface ProfileConfirmResponse extends PatientProfile {
+  updated_at?: string | null
+  fields_meta?: Record<string, ProfileFieldMeta> | null
+}
 
 export default function PatientProfileCard() {
   // 1.6.3：保存动作迁到 InquiryPanel/InpatientInquiryPanel 底部统一按钮，
@@ -67,9 +77,9 @@ export default function PatientProfileCard() {
     if (!patientId) return
     setConfirmingField(fieldKey)
     try {
-      const updated: any = await api.post(`/patients/${patientId}/profile/confirm`, {
+      const updated = (await api.post(`/patients/${patientId}/profile/confirm`, {
         field: fieldKey,
-      })
+      })) as ProfileConfirmResponse
       // 写回 patientCache 的 fields_meta 部分（值不变，只更新元数据时间）
       usePatientCacheStore.getState().upsertProfile(patientId, {
         past_history: updated.past_history ?? null,

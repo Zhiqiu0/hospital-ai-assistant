@@ -12,7 +12,8 @@
  *   - 本 hook 主体保留：录音 / 实时 ASR 编排 + 状态聚合 + UI 操作回调
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, message } from 'antd'
+import { Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { InquiryData } from '@/store/types'
 
 // ── 测试期开关：录音文件是否上传到后端归档 ─────────────────────────────────────
@@ -40,7 +41,7 @@ import { dedupeVitalSignsAgainstRecord } from '@/utils/inquiryUtils'
 
 interface Props {
   visitType: 'outpatient' | 'inpatient'
-  getFormValues: () => Record<string, any>
+  getFormValues: () => Record<string, unknown>
   onApplyInquiry: (patch: Partial<InquiryData>) => void
   onApplyToRecord?: (patch: Partial<InquiryData>) => void
 }
@@ -62,7 +63,7 @@ export function useVoiceInputCard({
   // 实时 ASR 流句柄（含 stop 方法），录音期间存活
   const voiceStreamRef = useRef<VoiceStreamHandle | null>(null)
   // 录音音频文件采集器（用于存档 + 作为 WebSocket 失败时的兜底转写源）
-  const mediaRecorderRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const transcriptRef = useRef('')
@@ -152,7 +153,6 @@ export function useVoiceInputCard({
   //   等新 token 到了再渲染，避免无效 403。
   useEffect(() => {
     // 同步清空旧 token——cascading render 是有意为之的副作用，不算反模式
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAudioToken(null)
     if (!transcriptId) return
     // 用 cleanup + cancelled 标记防异步 race：连续切多个 transcriptId 时
@@ -302,10 +302,11 @@ export function useVoiceInputCard({
           },
         })
         voiceStreamRef.current = handle
-      } catch (err: any) {
+      } catch (err) {
         streamFallbackRef.current = true
+        const errMsg = (err as { message?: string })?.message || '连接失败'
         message.warning(
-          `实时转写未启用（${err?.message || '连接失败'}），录音继续，停止后自动云端转写`,
+          `实时转写未启用（${errMsg}），录音继续，停止后自动云端转写`,
           5
         )
       }

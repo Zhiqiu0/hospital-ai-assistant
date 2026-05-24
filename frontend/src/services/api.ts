@@ -15,7 +15,7 @@
  */
 
 import axios from 'axios'
-import { message } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import { captureAxiosError } from '@/sentry'
 

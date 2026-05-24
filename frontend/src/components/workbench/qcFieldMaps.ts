@@ -55,6 +55,24 @@ export const FIELD_TO_SECTION: Record<string, string> = {
   // ── 住院元信息 ──
   history_informant: '【病史陈述者】',
 
+  // ── 住院·首次病程记录章节（render_first_course_record 输出，治本 2026-05-19） ──
+  病例特点: '【病例特点】',
+  拟诊讨论: '【拟诊讨论】',
+  诊疗计划: '【诊疗计划】',
+
+  // ── 住院·出院记录章节（render_discharge_record 输出） ─────────────
+  入院情况: '【入院情况】',
+  诊疗经过: '【诊疗经过】',
+  出院情况: '【出院情况】',
+  出院诊断: '【出院诊断】',
+  出院医嘱: '【出院医嘱】',
+
+  // ── 住院·围手术期章节（render_pre_op_summary / op_record / post_op_record） ─
+  手术指征: '【手术指征】',
+  拟施手术名称及方式: '【拟施手术名称及方式】',
+  手术经过: '【手术经过】',
+  病情分析及术后恢复情况评估: '【病情分析及术后恢复情况评估】',
+
   // ── 住院专项评估 ──
   // 注：以下 7 项是【专项评估】下的子行（"· 疼痛评估：..."），由 FIELD_TO_LINE_PREFIX 处理
   // 不在这里映射成独立章节，否则会跟 LLM 一键生成的格式不一致 → 重复章节
@@ -137,6 +155,24 @@ export const FIELD_TO_LINE_PREFIX: Record<
   闻诊: { section: '【体格检查】', prefix: '闻诊：' },
   舌象: { section: '【体格检查】', prefix: '切诊·舌象：' },
   脉象: { section: '【体格检查】', prefix: '切诊·脉象：' },
+
+  // ── 治疗意见及措施：【治疗意见及措施】合并章节下 4 个子行 ──
+  // 病历模板（record_renderer.py render_outpatient）输出：
+  //   【治疗意见及措施】
+  //   治则治法：xxx
+  //   处理意见：xxx
+  //   复诊建议：xxx
+  //   注意事项：xxx (可选)
+  // 后端 QC 规则 target_field 用中文键，前端按行前缀精准替换占位符，
+  // 治治本"逐条修复时全段冲掉同章节其他子行"反复 bug 的根因（2026-05-19）。
+  治则治法: { section: '【治疗意见及措施】', prefix: '治则治法：' },
+  处理意见: { section: '【治疗意见及措施】', prefix: '处理意见：' },
+  复诊建议: { section: '【治疗意见及措施】', prefix: '复诊建议：' },
+  注意事项: { section: '【治疗意见及措施】', prefix: '注意事项：' },
+
+  // ── 诊断：【诊断】合并章节下 2 个子行（中医诊断为合并行 "X — Y"） ──
+  中医诊断: { section: '【诊断】', prefix: '中医诊断：' },
+  西医诊断: { section: '【诊断】', prefix: '西医诊断：' },
 
   // ── 住院专项评估 7 项：在【专项评估】下 ──
   pain_assessment: { section: '【专项评估】', prefix: '· 疼痛评估' },
@@ -255,6 +291,39 @@ export const FIELD_NAME_LABEL: Record<string, string> = {
   current_medications: '当前用药',
   religion_belief: '宗教信仰',
   menstrual_history: '月经史',
+  // 不可写字段（__xxx__ 内部键）→ 中文显示标签
+  // 避免医生看到 "__visit_time__" 这种工程实现细节
+  __patient_basic_info__: '患者基础信息',
+  __visit_time__: '就诊时间',
+  __tcm_four_diagnoses__: '中医四诊',
+  __special_assessment__: '专项评估',
+}
+
+/**
+ * 不可写入病历正文的字段——QC 规则要扣分但修复路径不是改正文章节。
+ *
+ * 这些字段由 backend/app/services/qc_engine/_writable_fields.py 的
+ * NON_WRITABLE_FIELDS 同步过来——后端 target_field 命中这里时，前端 QCIssuePanel：
+ *   - 隐藏/禁用"写入病历"按钮
+ *   - 显示对应 NON_WRITABLE_HINTS 文案，告诉医生去哪里修
+ *
+ * L2 契约护栏（2026-05-19）：前后端必须同步维护这份集合，
+ * qcFieldMaps.test.ts 会断言所有后端 NON_WRITABLE 都在这里。
+ */
+// 2026-05-24 治本：删除 __tcm_four_diagnoses__ / __special_assessment__——
+// 这些字段在病历正文里有独立子行（望/闻/舌/脉 + 7 项专项评估），
+// 旧设计错把它们标 NON_WRITABLE 引导去左侧问诊面板，违反"病历正文是
+// 唯一编辑入口"原则。新设计：这些字段在 WRITABLE_FIELDS / FIELD_TO_LINE_PREFIX
+// 里走正常行级写入，逐条修复 / 批量补全都能正常工作。
+export const NON_WRITABLE_FIELDS = new Set<string>([
+  '__patient_basic_info__', // 患者姓名/性别/年龄 → 患者表单（确实不在病历正文）
+  '__visit_time__', // 就诊时间 → 病历头部"就诊时间："那行（引导指向病历正文头部）
+])
+
+/** 不可写字段对应的 UI 引导文案——医生点修复按钮时显示。 */
+export const NON_WRITABLE_HINTS: Record<string, string> = {
+  __patient_basic_info__: '此项需在患者档案中补全（姓名/性别/年龄），不在病历正文里',
+  __visit_time__: '此项是接诊系统字段，请在病历最上方"就诊时间："那一行直接修改',
 }
 
 /**
@@ -470,11 +539,13 @@ function writeLineInSection(
   const placeholder = '[未填写，需补充]'
   const trimmedFix = fixText.trim()
 
-  // 2. 章节不存在 → 兜底追加新章节（取消写入则不动）
+  // 2. 章节不存在 → 治本（2026-05-19）：不再兜底追加新章节
+  //
+  // 旧实现把"映射缺失/章节没渲染"的 fix 文本悄悄写到病历末尾创建错误章节，
+  // 是治疗意见/中医诊断/舌脉反复 bug 的根因。
+  // 现在改成返回原 content，由调用方（QCIssuePanel）检测到"没变化"弹提示。
   if (sectionIdx === -1) {
-    if (!trimmedFix) return content
-    const newLine = mode === 'whole_line' ? trimmedFix : linePrefix + trimmedFix
-    return content + '\n\n' + sectionHeader + '\n' + newLine
+    return content
   }
 
   // 3. 章节范围内做行级处理
@@ -596,6 +667,13 @@ function readTcmDiagnosisBody(content: string): string {
  *   某一项时必须保留另一项，否则会冲掉。先 split 再 merge 后再走章节写入。
  */
 export function writeSectionToRecord(content: string, fieldName: string, fixText: string): string {
+  // 治本短路（2026-05-19）：不可写入正文的字段（如患者档案、就诊时间、中医四诊集合）
+  // 直接返回原 content。调用方（QCIssuePanel）应在调用前就拦截并显示
+  // NON_WRITABLE_HINTS 文案；这里是兜底安全网，防止误调用。
+  if (NON_WRITABLE_FIELDS.has(fieldName)) {
+    return content
+  }
+
   // 中医诊断合并行：先读现有 → 拆 → 用新值替换对应一项 → 合并 → 后续按整段写入
   if (fieldName === 'tcm_disease_diagnosis' || fieldName === 'tcm_syndrome_diagnosis') {
     const existing = readTcmDiagnosisBody(content)
@@ -663,11 +741,76 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
     return content.slice(0, headerEnd) + '\n\n' + (tail ? tail : '')
   }
 
-  // 写入：替换已有章节，或在末尾追加新章节
+  // 写入：替换已有章节
+  //
+  // 治本（2026-05-19）：原"章节不存在 → 兜底追加到病历末尾"是反复 bug 的根因——
+  // 映射缺失/拼写错误时悄悄追加错误章节，掩盖问题。改成返回原内容，
+  // 调用方（QCIssuePanel）的"nextContent === recordContent"检测会触发，
+  // 给医生弹"未能定位到章节"提示，让映射 bug 在交付前暴露。
   if (targetIdx === -1) {
-    return content + '\n\n' + header + '\n' + fixText
+    return content
   }
   const start = matches[targetIdx].index
   const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
   return content.slice(0, start) + header + '\n' + fixText + '\n' + content.slice(end).trimStart()
+}
+
+
+/**
+ * 定位字段在病历正文中的字符位置（用于 AI 写入字段池的 chip 跳转）
+ *
+ * 行级字段 → 找该行 prefix 在 content 中的 index
+ * 章节级字段 → 找 section header 的 index
+ * 未映射字段 → 返回 null
+ *
+ * Returns:
+ *   { start, end }：选区起止字符 index，调用方用 textarea.setSelectionRange
+ *                    + textarea.focus 把光标定位到该行。
+ *   null：找不到（字段未映射 / prefix 不在 content 里）。
+ */
+export function locateFieldInRecord(
+  content: string,
+  fieldName: string
+): { start: number; end: number } | null {
+  // 1. 行级：找 prefix
+  const lineConfig = FIELD_TO_LINE_PREFIX[fieldName]
+  if (lineConfig) {
+    // 先把冒号归一化（content 和 prefix 可能用中/英文冒号）
+    const normalizedContent = normalizeColon(content)
+    const normalizedPrefix = normalizeColon(lineConfig.prefix)
+    const idx = normalizedContent.indexOf(normalizedPrefix)
+    if (idx >= 0) {
+      // 找该行结束位置（下一个换行）
+      const lineEnd = normalizedContent.indexOf('\n', idx)
+      return {
+        start: idx,
+        end: lineEnd === -1 ? content.length : lineEnd,
+      }
+    }
+    // prefix 找不到 → 退回 section header 兜底
+    if (lineConfig.section) {
+      const sectionIdx = content.indexOf(lineConfig.section)
+      if (sectionIdx >= 0) {
+        return { start: sectionIdx, end: sectionIdx + lineConfig.section.length }
+      }
+    }
+    return null
+  }
+
+  // 2. 章节级：找 section header
+  const mapped = FIELD_TO_SECTION[fieldName]
+  if (mapped) {
+    const idx = content.indexOf(mapped)
+    if (idx >= 0) {
+      return { start: idx, end: idx + mapped.length }
+    }
+  }
+
+  // 3. fallback：尝试 fieldName 本身作 header
+  const fallbackHeader = `【${FIELD_NAME_LABEL[fieldName] || fieldName}】`
+  const idx = content.indexOf(fallbackHeader)
+  if (idx >= 0) {
+    return { start: idx, end: idx + fallbackHeader.length }
+  }
+  return null
 }

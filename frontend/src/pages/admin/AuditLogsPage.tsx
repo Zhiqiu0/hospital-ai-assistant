@@ -31,8 +31,22 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   error: { label: '失败', color: 'error' },
 }
 
+/** 审计日志行——对应后端 AuditLog schema */
+interface AuditLogRow {
+  id: string
+  created_at?: string | null
+  user_name?: string | null
+  user_role?: string | null
+  action: string
+  status: string // ok / error
+  resource_type?: string | null
+  resource_id?: string | null
+  detail?: string | null
+  ip_address?: string | null
+}
+
 export default function AuditLogsPage() {
-  const [logs, setLogs] = useState<any[]>([])
+  const [logs, setLogs] = useState<AuditLogRow[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
@@ -49,7 +63,10 @@ export default function AuditLogsPage() {
           keyword: kw,
           action: act,
         })
-        const data: any = await api.get(`/admin/audit-logs?${params}`)
+        const data = (await api.get(`/admin/audit-logs?${params}`)) as {
+          items?: AuditLogRow[]
+          total?: number
+        }
         setLogs(data.items || [])
         setTotal(data.total || 0)
       } finally {
@@ -61,6 +78,9 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     loadLogs()
+    // loadLogs 引用每次 render 都变，加进 deps 会无限循环；只需挂载时跑一次。
+    // setState（loadLogs 内部）在 effect 里也是这个语义下的预期，一并 disable。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = () => {
@@ -81,7 +101,7 @@ export default function AuditLogsPage() {
       dataIndex: 'user_name',
       key: 'user_name',
       width: 120,
-      render: (name: string, row: any) => (
+      render: (name: string, row: AuditLogRow) => (
         <div>
           <Text strong style={{ fontSize: 13 }}>
             {name || '—'}
@@ -122,7 +142,7 @@ export default function AuditLogsPage() {
       title: '资源',
       key: 'resource',
       width: 140,
-      render: (_: any, row: any) =>
+      render: (_: unknown, row: AuditLogRow) =>
         row.resource_type ? (
           <div>
             <Text style={{ fontSize: 12, color: 'var(--text-3)' }}>{row.resource_type}</Text>

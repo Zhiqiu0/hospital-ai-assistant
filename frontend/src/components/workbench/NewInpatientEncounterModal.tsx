@@ -14,17 +14,47 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Button, Form, Modal, Space } from 'antd'
+import type { Dayjs } from 'dayjs'
 import { UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import type { Patient } from '@/domain/medical'
 import { applyQuickStartResult } from '@/store/encounterIntake'
 import SearchStep from './newInpatient/SearchStep'
 import FormStep from './newInpatient/FormStep'
 import { ACCENT } from './newInpatient/constants'
 
+/** /encounters/quick-start 返回的最小载荷形状 */
+interface QuickStartResult {
+  encounter_id: string
+  patient: Patient
+  [key: string]: unknown
+}
+
+/** 住院新建表单的字段集合（与 FormStep 内的 antd Form 字段一一对应） */
+interface NewInpatientFormValues {
+  bed_no?: string
+  admission_route: string
+  admission_condition: string
+  patient_name?: string
+  gender?: 'male' | 'female' | 'unknown'
+  birth_date?: Dayjs | null
+  id_card?: string
+  phone?: string
+  address?: string
+  ethnicity?: string
+  marital_status?: string
+  occupation?: string
+  workplace?: string
+  contact_name?: string
+  contact_phone?: string
+  contact_relation?: string
+  blood_type?: string
+}
+
 interface Props {
   open: boolean
   onClose: () => void
-  onSuccess: (res: any) => void
+  onSuccess: (res: QuickStartResult) => void
 }
 
 export default function NewInpatientEncounterModal({ open, onClose, onSuccess }: Props) {
@@ -33,9 +63,9 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
   // 步骤：先搜患者（与门诊一致，避免门诊→住院时重复建档），再填表
   const [step, setStep] = useState<'search' | 'form'>('search')
   const [keyword, setKeyword] = useState('')
-  const [results, setResults] = useState<any[]>([])
+  const [results, setResults] = useState<Patient[]>([])
   const [searching, setSearching] = useState(false)
-  const [selectedPatient, setSelectedPatient] = useState<any | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 弹窗每次打开都重置状态，避免上次的 step / 选中态残留
@@ -65,8 +95,10 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
-        const res = await api.get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=8`)
-        setResults((res as any).items || [])
+        const res = (await api.get(
+          `/patients?keyword=${encodeURIComponent(kw)}&page_size=8`
+        )) as { items?: Patient[] }
+        setResults(res.items || [])
       } catch {
         setResults([])
       } finally {
@@ -75,12 +107,12 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
     }, 300)
   }
 
-  const selectPatient = (p: any) => {
+  const selectPatient = (p: Patient) => {
     setSelectedPatient(p)
     setStep('form')
   }
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: NewInpatientFormValues) => {
     setLoading(true)
     try {
       // 选中已有患者：仅传 patient_id + 入院信息，不重复传患者档案字段
@@ -114,18 +146,20 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
             admission_route: values.admission_route,
             admission_condition: values.admission_condition,
           }
-      let res: any
+      let res: QuickStartResult
       try {
-        res = await api.post('/encounters/quick-start', payload)
-      } catch (err: any) {
-        // 网络瞬断重试一次（与门诊 modal 一致），减少现场误触
-        if (!err?.response) {
+        res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
+      } catch (err) {
+        // 网络瞬断（无 response）时延后 3s 重试一次，与门诊 modal 一致
+        const e = err as { response?: unknown }
+        if (!e?.response) {
           await new Promise(r => setTimeout(r, 3000))
-          res = await api.post('/encounters/quick-start', payload)
+          res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
         } else throw err
       }
       // 同步患者档案到本地缓存（profile 字段跟随患者）
-      applyQuickStartResult(res)
+      // applyQuickStartResult 接收 EncounterIntakePayload，QuickStartResult 是兼容超集
+      applyQuickStartResult(res as Parameters<typeof applyQuickStartResult>[0])
       onSuccess(res)
       handleClose()
     } finally {
@@ -194,7 +228,13 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
         />
       )}
       {step === 'form' && (
-        <FormStep form={form} selectedPatient={selectedPatient} onFinish={handleSubmit} />
+        <FormStep
+          form={form}
+          selectedPatient={selectedPatient}
+          // antd Form 不能在类型层校验字段集合，FormStep 接到 unknown 后由本组件断言成
+          // NewInpatientFormValues（字段名与 FormStep 内部 Form.Item 的 name 一一对应）
+          onFinish={values => handleSubmit(values as NewInpatientFormValues)}
+        />
       )}
     </Modal>
   )

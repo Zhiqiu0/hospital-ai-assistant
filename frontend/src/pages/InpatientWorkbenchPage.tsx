@@ -12,7 +12,8 @@
  *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Empty, message, Modal } from 'antd'
+import { Layout, Button, Empty, Modal } from 'antd'
+import { message } from '@/services/messageBridge'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -23,8 +24,14 @@ import {
   resetAllWorkbench,
   setCurrentEncounterFromPatient,
 } from '@/store/activeEncounterStore'
-import type { VisitType } from '@/domain/medical'
-import { applyQuickStartResult, applySnapshotResult } from '@/store/encounterIntake'
+import type { VisitType, Patient, Gender } from '@/domain/medical'
+import {
+  applyQuickStartResult,
+  applySnapshotResult,
+  type QuickStartResult,
+  type SnapshotResult,
+} from '@/store/encounterIntake'
+import type { InquiryData } from '@/store/types'
 import api from '@/services/api'
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
@@ -65,6 +72,8 @@ export default function InpatientWorkbenchPage() {
 
   useEffect(() => {
     setRecordType('admission_note')
+    // setRecordType 来自 zustand store，引用稳定；只需挂载时设置一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）
@@ -110,18 +119,44 @@ export default function InpatientWorkbenchPage() {
     setSelectedNote(null)
   }, [currentEncounterId])
 
+  /** 病区列表点选某患者后传过来的最小载荷（仅取 encounter_id / patient_name 传 handleResume） */
+  interface WardPatientItem {
+    encounter_id: string
+    patient_name?: string
+  }
   // 从病区列表选择患者，复用 handleResume 加载工作台快照
-  const handleSelectWardPatient = async (p: any) => {
+  const handleSelectWardPatient = async (p: WardPatientItem) => {
     await handleResume({ encounter_id: p.encounter_id, patient_name: p.patient_name })
   }
 
+  /** 住院 quick-start 回调载荷：基础字段从 QuickStartResult 沿用，外加业务扩展字段。 */
+  type InpatientEncounterCreatedRes = QuickStartResult & {
+    resumed?: boolean
+    is_first_visit?: boolean
+    previous_inquiry?: Partial<InquiryData> | null
+    pending_encounters?: Array<{
+      doctor_name: string
+      visit_type: string
+      visited_at?: string
+    }>
+  }
   // 新建住院接诊成功回调（与门诊端对齐：写 patientCache、预填稳定字段、传递上次病历）
-  const handleEncounterCreated = (res: any) => {
+  const handleEncounterCreated = (res: InpatientEncounterCreatedRes) => {
     resetAllWorkbench()
     setRecordType('admission_note')
     applyQuickStartResult(res)
+    // 后端 patient.gender 是 string | null；与 syncPatientToCache 同步规则一致——
+    // 未知值统一归为 unknown，避免类型不匹配
+    const normalizedGender: Gender =
+      res.patient.gender === 'male' || res.patient.gender === 'female'
+        ? res.patient.gender
+        : 'unknown'
+    const patientForActive: Patient = {
+      ...res.patient,
+      gender: normalizedGender,
+    }
     // 一次性设置接诊指针 + 元信息（visitType / firstVisit / patientReused / previousRecordContent）
-    setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+    setCurrentEncounterFromPatient(patientForActive, res.encounter_id, {
       visitType: (res.visit_type || 'inpatient') as VisitType,
       // 用后端权威 is_first_visit（避免续接未签发接诊被误标"复诊"）；fallback 兼容
       isFirstVisit:
@@ -172,8 +207,9 @@ export default function InpatientWorkbenchPage() {
       // 与门诊路径一致：自动恢复时拉 snapshot 灌回 4 个 store
       void api
         .get(`/encounters/${res.encounter_id}/workspace`)
-        .then((snapshot: any) => {
-          if (snapshot) applySnapshotResult(snapshot)
+        .then(snapshot => {
+          // 后端 workspace 接口返回形状已被 SnapshotResult 描述
+          if (snapshot) applySnapshotResult(snapshot as SnapshotResult)
         })
         .catch(() => {
           /* 静默失败 */

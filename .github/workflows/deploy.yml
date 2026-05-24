@@ -176,6 +176,18 @@ jobs:
               echo "[deploy] crontab 已配置：$BACKUP_CRON"
             fi
 
+            # ── 自动配置 crontab：每天凌晨 4 点清理 30 天前的语音文件
+            # 转写文本与结构化病历永久保留，只删原始 webm（详见 cleanup_voice.py）
+            # 4 点跑避开 3 点备份高峰；保留 30 天满足"近一个月可回溯"
+            sudo touch /var/log/mediscribe-voice-cleanup.log
+            sudo chown "$(id -u):$(id -g)" /var/log/mediscribe-voice-cleanup.log
+            VOICE_CLEANUP_CRON="0 4 * * * cd /app && docker compose exec -T backend python scripts/cleanup_voice.py >> /var/log/mediscribe-voice-cleanup.log 2>&1"
+            if ! crontab -l 2>/dev/null | grep -qF "scripts/cleanup_voice.py"; then
+              echo "[deploy] 配置每日语音清理 crontab..."
+              (crontab -l 2>/dev/null; echo "$VOICE_CLEANUP_CRON") | crontab -
+              echo "[deploy] crontab 已配置：$VOICE_CLEANUP_CRON"
+            fi
+
             echo "Deploy finished at $(date) release=$SENTRY_RELEASE"
 
       - name: Health check

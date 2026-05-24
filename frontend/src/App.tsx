@@ -48,6 +48,16 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// PACS 工作台只对放射科医生（radiologist）和管理员开放：普通医生进来后端会返 403
+// 但 UI 入口本应在前端拦截，避免误显示"影像科"身份标签 + 误导性的空检查列表。
+function PacsRoute({ children }: { children: React.ReactNode }) {
+  const { token, user } = useAuthStore()
+  if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
+  const allowed = user && (user.role === 'radiologist' || ADMIN_ROLES.includes(user.role))
+  if (!allowed) return <Navigate to="/workbench" replace />
+  return <>{children}</>
+}
+
 function RootRedirect() {
   const { token, user, systemType } = useAuthStore()
   if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
@@ -118,9 +128,9 @@ export default function App() {
         <Route
           path="/pacs"
           element={
-            <PrivateRoute>
+            <PacsRoute>
               <PacsWorkbenchPage />
-            </PrivateRoute>
+            </PacsRoute>
           }
         />
         <Route

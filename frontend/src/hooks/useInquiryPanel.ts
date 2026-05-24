@@ -8,10 +8,11 @@
  *   - 生命体征快填处理
  */
 import { useEffect, useState } from 'react'
-import { Form, message } from 'antd'
+import { Form } from 'antd'
+import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import type { VisitType } from '@/domain/medical'
+import type { Patient, VisitType, Gender } from '@/domain/medical'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import {
@@ -25,6 +26,8 @@ import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
 import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
 import { INQUIRY_FORM_FIELDS, buildInquiryData, syncInquiryToRecord } from '@/utils/inquirySync'
+import type { InquiryData } from '@/store/types'
+import type { QuickStartResult } from '@/store/encounterIntake'
 
 export function useInquiryPanel() {
   const [form] = Form.useForm()
@@ -67,6 +70,8 @@ export function useInquiryPanel() {
     } else {
       setIsDirty(false)
     }
+    // inquiry 是整个表单状态，加进 deps 会让每次输入都重置——只在接诊切换时重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, currentEncounterId, inquirySavedAt])
 
   // 辅助检查由外部（如追问建议）写入时同步表单
@@ -75,6 +80,8 @@ export function useInquiryPanel() {
     if (inquiry.auxiliary_exam !== current) {
       form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
     }
+    // form 引用稳定，加进 deps 会让效果过度触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.auxiliary_exam])
 
   // 就诊时间从 store 初始化（workspace snapshot 的 visited_at）
@@ -82,6 +89,8 @@ export function useInquiryPanel() {
     if (inquiry.visit_time && !form.getFieldValue('visit_time')) {
       form.setFieldValue('visit_time', dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm'))
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.visit_time])
 
   // 现病史被追问建议修改时同步表单并激活保存按钮
@@ -91,6 +100,8 @@ export function useInquiryPanel() {
       form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
       setIsDirty(true)
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.history_present_illness])
 
   // AI 诊断建议写入 initial_impression 时同步表单
@@ -100,17 +111,21 @@ export function useInquiryPanel() {
       form.setFieldValue('initial_impression', inquiry.initial_impression || '')
       setIsDirty(true)
     }
+    // form 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.initial_impression])
 
-  const onSave = async (values: any) => {
+  const onSave = async (values: Record<string, unknown>) => {
     setSaving(true)
     const data = buildInquiryData(values)
 
     // 找出本次新增或修改的字段，用于 AI 规范化和病历章节同步
     const changedFields: Record<string, string> = {}
+    // inquiry 是 InquiryData，但下标访问要走 string 键——用 Record 视图绕开
+    const inquiryAsRecord = inquiry as unknown as Record<string, string | undefined>
     for (const key of INQUIRY_FORM_FIELDS) {
       const val = data[key] ?? ''
-      if (val && val !== ((inquiry as any)[key] ?? '')) changedFields[key] = val
+      if (val && val !== (inquiryAsRecord[key] ?? '')) changedFields[key] = val
     }
 
     const isFirstGeneration = !recordContent.trim()
@@ -118,7 +133,10 @@ export function useInquiryPanel() {
     let normalizedData = { ...data }
     if (!isFirstGeneration && Object.keys(changedFields).length > 0) {
       try {
-        const res: any = await api.post('/ai/normalize-fields', { fields: changedFields })
+        // 后端规范化接口仅返回被修改字段，形状不固定，故用 Record<string, string>
+        const res = (await api.post('/ai/normalize-fields', { fields: changedFields })) as {
+          fields?: Record<string, string>
+        } | null
         if (res?.fields) {
           normalizedData = { ...data, ...res.fields }
           form.setFieldsValue(res.fields)
@@ -128,7 +146,9 @@ export function useInquiryPanel() {
       }
     }
 
-    setInquiry(normalizedData as any)
+    // buildInquiryData 返回的 Record<string, string> 与 InquiryData 字段并集兼容
+    // （都是字符串型字段），借助 unknown 桥接，避免污染 inquirySync 的返回类型
+    setInquiry(normalizedData as unknown as InquiryData)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
     }
@@ -146,7 +166,7 @@ export function useInquiryPanel() {
     }
 
     // 急诊场景：保存后记录患者去向，驱动流转提示
-    if (isEmergency) setSavedDisposition(values.patient_disposition || '')
+    if (isEmergency) setSavedDisposition((values.patient_disposition as string) || '')
     message.success({ content: '问诊信息已保存', duration: 1.5 })
     setIsDirty(false)
     setSaving(false)
@@ -161,12 +181,22 @@ export function useInquiryPanel() {
         patient_id: currentPatient.id,
         patient_name: currentPatient.name,
         visit_type: 'inpatient',
-      })) as any
+      })) as QuickStartResult
       resetAllWorkbench()
       // 1.6 数据接入：把住院 quick-start 的 patient + profile 写入新 store
       applyQuickStartResult(res)
+      // 后端 patient.gender 是 string | null，domain Patient.gender 是 Gender 联合，
+      // 与 encounterIntake.syncPatientToCache 同步逻辑保持一致——未知值统一归为 unknown
+      const normalizedGender: Gender =
+        res.patient.gender === 'male' || res.patient.gender === 'female'
+          ? res.patient.gender
+          : 'unknown'
+      const patientForActive: Patient = {
+        ...res.patient,
+        gender: normalizedGender,
+      }
       // 一次性写入接诊指针 + 元信息（visitType/firstVisit/previousRecordContent 全在 options 里）
-      setCurrentEncounterFromPatient(res.patient, res.encounter_id, {
+      setCurrentEncounterFromPatient(patientForActive, res.encounter_id, {
         visitType: 'inpatient',
         isFirstVisit: false,
         previousRecordContent: emergencyRecord || null,
@@ -191,17 +221,19 @@ export function useInquiryPanel() {
   // marital/menstrual/current_medications/religion_belief），这些字段属于患者
   // 纵向档案，应路由到 PatientProfileCard（待医生确认后通过统一保存按钮提交），
   // 不再随 inquiry 一起 PUT 到接诊表
-  const applyVoiceInquiry = (patch: any) => {
+  const applyVoiceInquiry = (patch: Record<string, unknown>) => {
     // AI 返回的 patch 可能含 vital_signs 结构体，铺平到 form 顶层字段
-    const flattened = { ...patch }
+    const flattened: Record<string, unknown> = { ...patch }
     if (patch.vital_signs && typeof patch.vital_signs === 'object') {
-      Object.assign(flattened, patch.vital_signs)
+      Object.assign(flattened, patch.vital_signs as Record<string, unknown>)
       delete flattened.vital_signs
     }
     // 1) inquiry 字段填表单（profile 字段交给 form 也无影响，反正没对应 Form.Item）
     const nextValues = { ...form.getFieldsValue(), ...flattened }
     form.setFieldsValue(nextValues)
-    updateInquiryFields(buildInquiryData(nextValues) as any)
+    // buildInquiryData 返回的扁平字符串字典与 InquiryData 字段集兼容；
+    // 用 unknown 桥接而非 any，避免污染下游签名
+    updateInquiryFields(buildInquiryData(nextValues) as unknown as InquiryData)
     setIsDirty(true)
 
     // 2) profile 字段路由到 patientProfileEditStore
@@ -212,7 +244,7 @@ export function useInquiryPanel() {
   }
 
   // 追记模式：语音结构化结果写入病历对应章节（锁定后专用）
-  const applyVoiceToRecord = (patch: any) => {
+  const applyVoiceToRecord = (patch: Record<string, unknown>) => {
     applyVoiceToRecordWithFeedback(recordContent, patch, setRecordContent)
   }
 

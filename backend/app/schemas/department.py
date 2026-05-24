@@ -23,6 +23,17 @@ class DepartmentCreate(BaseModel):
     parent_id: Optional[str] = None  # 上级科室 ID（NULL 表示顶级科室）
 
 
+class DepartmentUpdate(BaseModel):
+    """编辑科室入参。
+
+    code 故意不允许通过本接口修改：HIS 同步、统计聚合、历史外键均依赖 code，
+    改 code 会让历史数据"找不到归属"。如确实需要重命名编码，走 SQL 直改 + 数据迁移。
+    """
+
+    name: Optional[str] = None       # 重命名科室显示名
+    parent_id: Optional[str] = None  # 调整上下级关系（设为 None 即顶级科室）
+
+
 class DepartmentResponse(BaseModel):
     """科室查询响应。"""
 

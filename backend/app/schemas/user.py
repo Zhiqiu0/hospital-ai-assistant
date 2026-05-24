@@ -16,6 +16,9 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+# 手机号统一走 app.core.validators.identity 的类型别名，规则集中维护
+from app.core.validators.identity import Phone
+
 
 class UserCreate(BaseModel):
     """管理员创建新用户的入参。
@@ -29,7 +32,9 @@ class UserCreate(BaseModel):
     role: str                   # 角色：doctor / dept_admin / hospital_admin / super_admin
     department_id: Optional[str] = None  # 所属科室 ID（普通医生必填，超级管理员可空）
     employee_no: Optional[str] = None    # 工号（与 HIS 对接用）
-    phone: Optional[str] = None
+    phone: Phone = None                  # 手机号（normalize + 11 位号段校验）
+    # email 暂不做强校验：项目内 email 字段几乎不用，加 EmailStr 需引入 email-validator
+    # 新依赖；若未来用作密码找回/通知则切换 EmailStr（一行字面改动）
     email: Optional[str] = None
 
 

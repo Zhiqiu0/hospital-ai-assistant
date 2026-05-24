@@ -21,7 +21,9 @@ const { Text } = Typography
 
 type VoiceInputCardProps = {
   visitType: 'outpatient' | 'inpatient'
-  getFormValues: () => Record<string, any>
+  // antd Form.getFieldsValue() 返回 Record<string, unknown>；本组件透传给
+  // useVoiceInputCard 用于 AI 整理时的上下文，不参与字段读写，unknown 即可
+  getFormValues: () => Record<string, unknown>
   onApplyInquiry: (patch: Partial<InquiryData>) => void
   onApplyToRecord?: (patch: Partial<InquiryData>) => void
 }

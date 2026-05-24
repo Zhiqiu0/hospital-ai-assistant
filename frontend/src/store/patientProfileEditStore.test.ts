@@ -58,7 +58,9 @@ describe('patientProfileEditStore — loadFromProfile', () => {
 describe('patientProfileEditStore — mergeVoicePatch', () => {
   it('合并语音 patch 中的 profile 字段，返回合并数量', () => {
     usePatientProfileEditStore.getState().loadFromProfile('p1', null)
-    const result = usePatientProfileEditStore.getState().mergeVoicePatch({
+    // mergeVoicePatch 接受 Record<string, unknown>，所以非 string 值（null/number）
+    // 直接传也合法；用 satisfies 验证 patch 形状仍是 Record<string, unknown>
+    const patch: Record<string, unknown> = {
       past_history: '颈椎病',
       allergy_history: '无过敏史',
       personal_history: '吸烟不喝酒',
@@ -69,7 +71,8 @@ describe('patientProfileEditStore — mergeVoicePatch', () => {
       // null/数字被忽略
       marital_history: null,
       religion_belief: 123,
-    } as any)
+    }
+    const result = usePatientProfileEditStore.getState().mergeVoicePatch(patch)
     expect(result.mergedCount).toBe(3)
     const f = usePatientProfileEditStore.getState().form
     expect(f.past_history).toBe('颈椎病')

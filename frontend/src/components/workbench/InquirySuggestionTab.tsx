@@ -3,7 +3,8 @@
  * 子组件：InquirySuggestionItem（追问条目）、DiagnosisSuggestionList（诊断建议）。
  */
 import { useState, useCallback, useEffect } from 'react'
-import { Button, Typography, Empty, Spin, message, Divider } from 'antd'
+import { Button, Typography, Empty, Spin, Divider } from 'antd'
+import { message } from '@/services/messageBridge'
 import { QuestionCircleOutlined, PlusOutlined, BulbOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
@@ -17,19 +18,31 @@ import api from '@/services/api'
 
 const { Text } = Typography
 
+/**
+ * 后端 /ai/inquiry-suggestions 返回的单条建议形状：
+ * 字段与 Suggestion 一致但缺 id / selectedOptions（前端补齐）。
+ */
+interface RawInquirySuggestion {
+  text: string
+  priority: 'high' | 'medium' | 'low'
+  is_red_flag: boolean
+  category: string
+  options?: string[]
+}
+
 async function fetchInquirySuggestions(
   chiefComplaint: string,
   history: string,
   initialImpression: string,
   encounterId?: string | null
 ): Promise<Suggestion[]> {
-  const data: any = await api.post('/ai/inquiry-suggestions', {
+  const data = (await api.post('/ai/inquiry-suggestions', {
     chief_complaint: chiefComplaint,
     history_present_illness: history,
     initial_impression: initialImpression,
     encounter_id: encounterId || undefined,
-  })
-  return (data.suggestions || []).map((s: any, idx: number) => ({
+  })) as { suggestions?: RawInquirySuggestion[] }
+  return (data.suggestions || []).map((s, idx) => ({
     ...s,
     id: `${Date.now()}-${idx}`,
     options: s.options || [],
@@ -83,6 +96,8 @@ export default function InquirySuggestionTab() {
       setDiagnosisSuggestions([])
       setAppliedDiagnosis(null)
     }
+    // 仅在主诉变化时清空诊断建议；isInputLocked / setter 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint])
 
   const handleLoadSuggestions = useCallback(async () => {
@@ -105,6 +120,8 @@ export default function InquirySuggestionTab() {
     } finally {
       setLoading(false)
     }
+    // currentEncounterId / setSuggestions 引用稳定，问诊三要素变化时重新拉取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   const handleLoadMore = useCallback(async () => {
@@ -130,6 +147,8 @@ export default function InquirySuggestionTab() {
     } finally {
       setLoadingMore(false)
     }
+    // setSuggestions 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inquiry.chief_complaint, inquiry.history_present_illness, inquiry.initial_impression])
 
   const handleSelectOption = (suggestionId: string, option: string) => {
@@ -155,14 +174,14 @@ export default function InquirySuggestionTab() {
       const answeredItems = suggestions
         .filter(s => s.selectedOptions.length > 0)
         .map(s => ({ question: s.text, answer: s.selectedOptions.join('、') }))
-      const data: any = await api.post('/ai/diagnosis-suggestion', {
+      const data = (await api.post('/ai/diagnosis-suggestion', {
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
         inquiry_answers: answeredItems,
         initial_impression: inquiry.initial_impression || '',
         encounter_id: currentEncounterId || undefined,
-      })
-      setDiagnosisSuggestions((data.diagnoses || []) as DiagnosisItem[])
+      })) as { diagnoses?: DiagnosisItem[] }
+      setDiagnosisSuggestions(data.diagnoses || [])
       if (!data.diagnoses?.length) message.info('暂无诊断建议，请补充更多问诊信息')
     } catch {
       message.error('获取诊断建议失败')

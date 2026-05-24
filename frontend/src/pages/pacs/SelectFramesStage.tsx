@@ -13,8 +13,17 @@ import DicomViewer from '@/components/workbench/DicomViewer'
 import AuthedThumbnail from './AuthedThumbnail'
 import type { Frame } from './types'
 
+/**
+ * 本组件实际仅消费 currentStudy.study_id，其他字段允许透传（来自父级 frames 接口响应）。
+ * 没必要拉一个完整的 Study 类型——子组件只 own 自己用到的字段，避免父子耦合过紧。
+ */
+interface SelectFramesCurrentStudy {
+  study_id: string
+  [key: string]: unknown
+}
+
 interface SelectFramesStageProps {
-  currentStudy: any
+  currentStudy: SelectFramesCurrentStudy
   frames: Frame[]
   selectedFrames: Set<string>
   previewFrame: string

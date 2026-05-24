@@ -7,12 +7,13 @@
  * 三态住院 Tag 与抽屉头部、复诊搜索保持一致。
  */
 import { Avatar, Empty, Space, Spin, Tag } from 'antd'
+import type { Patient } from '@/domain/medical'
 
 interface PatientPickerListProps {
-  patientList: any[]
+  patientList: Patient[]
   searching: boolean
   searchKeyword: string
-  onPick: (p: any) => void
+  onPick: (p: Patient) => void
 }
 
 export default function PatientPickerList({
@@ -39,7 +40,7 @@ export default function PatientPickerList({
   }
   return (
     <>
-      {patientList.map((p: any) => (
+      {patientList.map(p => (
         <div
           key={p.id}
           onClick={() => onPick(p)}

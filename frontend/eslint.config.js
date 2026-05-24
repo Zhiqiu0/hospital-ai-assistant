@@ -25,8 +25,11 @@ export default [
 
       // React Hooks
       ...reactHooks.configs.recommended.rules,
-      // useEffect 内同步调 setState 是刻意行为（换患者清空表单等），降为 warn
-      'react-hooks/set-state-in-effect': 'warn',
+      // useEffect 内同步调 setState 在本项目是刻意行为模式（换患者清空表单/弹窗打开
+      // 重置 step / props 变化时同步派生等），且 react-hooks v7 这条规则**判断不够
+      // 精确**，对异步 fetch 内部的 setState 也会误报。关掉它（zero-warning policy
+      // 下不能保留模糊规则当 warn），让团队靠 review + lint-staged 把关。
+      'react-hooks/set-state-in-effect': 'off',
 
       // React Refresh（Vite HMR）
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],

@@ -22,23 +22,40 @@ import {
   Tag,
   Typography,
   Popconfirm,
-  message,
 } from 'antd'
-import { PlusOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, StopOutlined, CheckCircleOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 
 const { Title } = Typography
 
+/** 科室列表行——对应后端 DepartmentResponse */
+interface DepartmentRow {
+  id: string
+  name: string
+  code: string
+  is_active: boolean
+}
+
+/** 新建/编辑科室表单字段；编辑模式 code 只读但表单仍持有 */
+interface DepartmentFormValues {
+  name: string
+  code: string
+}
+
 export default function DepartmentsPage() {
-  const [depts, setDepts] = useState<any[]>([])
+  const [depts, setDepts] = useState<DepartmentRow[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [form] = Form.useForm()
+  // editing=null：新建模式；editing=科室对象：编辑模式。两个模式共用同一份 Modal/Form
+  // 跟用户管理页一致：避免多套 Modal 漂移
+  const [editing, setEditing] = useState<DepartmentRow | null>(null)
+  const [form] = Form.useForm<DepartmentFormValues>()
 
   const loadDepts = async () => {
     setLoading(true)
     try {
-      const data: any = await api.get('/admin/departments')
+      const data = (await api.get('/admin/departments')) as { items?: DepartmentRow[] }
       setDepts(data.items || [])
     } finally {
       setLoading(false)
@@ -49,16 +66,30 @@ export default function DepartmentsPage() {
     loadDepts()
   }, [])
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: DepartmentFormValues) => {
     try {
-      await api.post('/admin/departments', values)
-      message.success('科室创建成功')
+      if (editing) {
+        // 编辑：只允许改 name；code 后端拒绝修改，从 payload 里剔除避免误传
+        await api.put(`/admin/departments/${editing.id}`, { name: values.name })
+        message.success('科室已更新')
+      } else {
+        await api.post('/admin/departments', values)
+        message.success('科室创建成功')
+      }
       setModalOpen(false)
+      setEditing(null)
       form.resetFields()
       loadDepts()
-    } catch (e: any) {
-      message.error(e?.detail || '创建失败')
+    } catch (e) {
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || (editing ? '更新失败' : '创建失败'))
     }
+  }
+
+  const openEdit = (record: DepartmentRow) => {
+    setEditing(record)
+    form.setFieldsValue({ name: record.name, code: record.code })
+    setModalOpen(true)
   }
 
   const handleDeactivate = async (id: string) => {
@@ -94,8 +125,11 @@ export default function DepartmentsPage() {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: DepartmentRow) => (
         <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+            编辑
+          </Button>
           {record.is_active ? (
             <Popconfirm title="确认停用该科室？" onConfirm={() => handleDeactivate(record.id)}>
               <Button size="small" danger icon={<StopOutlined />}>
@@ -124,6 +158,7 @@ export default function DepartmentsPage() {
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => {
+            setEditing(null)
             form.resetFields()
             setModalOpen(true)
           }}
@@ -139,9 +174,12 @@ export default function DepartmentsPage() {
         pagination={false}
       />
       <Modal
-        title="新建科室"
+        title={editing ? '编辑科室' : '新建科室'}
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          setModalOpen(false)
+          setEditing(null)
+        }}
         onOk={() => form.submit()}
         okText="确认"
         cancelText="取消"
@@ -158,8 +196,11 @@ export default function DepartmentsPage() {
             label="科室编码"
             name="code"
             rules={[{ required: true, message: '请输入编码' }]}
+            // 编辑模式下科室编码只读：HIS 同步、历史外键都依赖 code，改动会让旧数据失联。
+            // 跟后端 DepartmentUpdate 不接 code 字段的限制保持一致。
+            tooltip={editing ? '科室编码创建后不可修改' : undefined}
           >
-            <Input placeholder="如：NEIKE（英文大写）" />
+            <Input placeholder="如：NEIKE（英文大写）" disabled={!!editing} />
           </Form.Item>
         </Form>
       </Modal>

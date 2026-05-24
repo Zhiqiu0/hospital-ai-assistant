@@ -11,10 +11,16 @@
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { ConfigProvider } from 'antd'
+// AntApp 是 antd v5 的全局上下文容器，提供 message/notification/Modal 真正能渲染
+// 的 React 上下文（v5.4+ 静态 `import { message } from 'antd'` 不再消费上下文，
+// 一定要走 App.useApp()）。MessageBinder 把 App.useApp() 返回的 message instance
+// 注入到 services/messageBridge，业务代码继续用 `import { message } from
+// '@/services/messageBridge'` 不变。
+import { App as AntApp, ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { MessageBinder } from './services/MessageBinder'
 import { initSentry } from './sentry'
 import { scenes, neutral, radius, typography, shadow } from './theme/tokens'
 import './index.css'
@@ -96,9 +102,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
+      {/* AntApp 必须套在 ConfigProvider 之内、业务组件之上。
+          MessageBinder 在 AntApp 内部用 useApp() 拿 message 实例并桥接到全局 bridge。 */}
+      <AntApp>
+        <MessageBinder>
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
+        </MessageBinder>
+      </AntApp>
     </ConfigProvider>
   </React.StrictMode>
 )

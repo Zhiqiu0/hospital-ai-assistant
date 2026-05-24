@@ -10,13 +10,14 @@
  */
 import { Input, Spin, Avatar, Space, Tag, Button } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
+import type { Patient } from '@/domain/medical'
 
 interface SearchStepProps {
   keyword: string
   onSearch: (kw: string) => void
   searching: boolean
-  results: any[]
-  onSelect: (p: any) => void
+  results: Patient[]
+  onSelect: (p: Patient) => void
   onCreateNew: () => void
   accentColor: string
   isEmergency: boolean

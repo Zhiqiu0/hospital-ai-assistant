@@ -55,10 +55,10 @@ export default function WardView({
   const fetchWard = useCallback(async () => {
     setLoading(true)
     try {
-      const res = (await api.get('/inpatient/ward')) as any
+      const res = (await api.get('/inpatient/ward')) as { items?: WardPatient[] }
       // 在拉取后立即计算 admit_days（async 函数内调 Date.now() 不在 render path）
       const now = Date.now()
-      const items: WardPatient[] = (res.items || []).map((p: WardPatient) => ({
+      const items: WardPatient[] = (res.items || []).map(p => ({
         ...p,
         admit_days: p.visited_at
           ? Math.floor((now - new Date(p.visited_at).getTime()) / 86400000)

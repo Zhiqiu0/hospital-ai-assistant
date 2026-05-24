@@ -13,7 +13,8 @@
  *   上传逻辑较复杂（预览、校验、进度），与列表展示解耦更易维护。
  */
 import { useState } from 'react'
-import { Button, Modal, Upload, message, Spin, Typography } from 'antd'
+import { Button, Modal, Upload, Spin, Typography } from 'antd'
+import { message } from '@/services/messageBridge'
 import { UploadOutlined, FileTextOutlined, InboxOutlined } from '@ant-design/icons'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import api from '@/services/api'

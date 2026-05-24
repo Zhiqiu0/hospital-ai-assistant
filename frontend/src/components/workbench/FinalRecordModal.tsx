@@ -15,7 +15,8 @@
  *   存在必须修复项且未勾选 override 时，提交按钮 disabled。
  */
 import { useState } from 'react'
-import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio, message } from 'antd'
+import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio } from 'antd'
+import { message } from '@/services/messageBridge'
 import { CheckOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
@@ -25,6 +26,7 @@ import {
   setCurrentEncounterFromPatient,
 } from '@/store/activeEncounterStore'
 import api from '@/services/api'
+import type { Patient, VisitType } from '@/domain/medical'
 
 const { Text } = Typography
 
@@ -62,17 +64,18 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
       if (!encounterId) {
         const pName =
           patientName.trim() || inquiry.chief_complaint.slice(0, 6) + '患者' || '未知患者'
-        const res: any = await api.post('/encounters/quick-start', {
+        // quick-start 返回结构：本组件仅消费 encounter_id + patient，其余字段透传
+        const res = (await api.post('/encounters/quick-start', {
           patient_name: pName,
           gender: patientGender || 'unknown',
           age: patientAge.trim() ? parseInt(patientAge.trim()) : undefined,
           visit_type: inferredVisitType,
-        })
+        })) as { encounter_id: string; patient: Patient }
         const newEncounterId: string = res.encounter_id
         encounterId = newEncounterId
         // 通过聚合 helper 一次性 upsert 到 patientCacheStore + setActive 到指针 store
         setCurrentEncounterFromPatient(res.patient, newEncounterId, {
-          visitType: inferredVisitType as 'outpatient' | 'emergency' | 'inpatient',
+          visitType: inferredVisitType as VisitType,
         })
       }
 
@@ -89,8 +92,10 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
       useRecordStore.getState().setFinal(true)
       message.success('病历已签发，可继续转住院或开始下一位接诊')
       handleClose()
-    } catch (e: any) {
-      message.error('保存失败：' + (e?.detail || '请重试'))
+    } catch (e) {
+      // axios 拦截器抛出的是 response.data，detail 字段由后端 FastAPI 统一返回
+      const detail = (e as { detail?: string } | null)?.detail
+      message.error('保存失败：' + (detail || '请重试'))
     } finally {
       setSaving(false)
     }

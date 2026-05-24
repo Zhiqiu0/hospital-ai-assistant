@@ -3,7 +3,8 @@
  * 包含问题文本、优先级标签、选项按钮、已选答案展示、👍/👎 反馈。
  */
 import { useState } from 'react'
-import { Button, Tag, Typography, message } from 'antd'
+import { Button, Tag, Typography } from 'antd'
+import { message } from '@/services/messageBridge'
 import { CheckOutlined, LikeOutlined, DislikeOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'

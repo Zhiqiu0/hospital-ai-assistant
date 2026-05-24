@@ -7,7 +7,8 @@
  *   - 颜色区分活跃/已解决状态
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Button, Input, List, message, Popconfirm, Space, Tag, Tooltip, Typography } from 'antd'
+import { Button, Input, List, Popconfirm, Space, Tag, Tooltip, Typography } from 'antd'
+import { message } from '@/services/messageBridge'
 import {
   CheckOutlined,
   DeleteOutlined,
@@ -40,7 +41,9 @@ export default function ProblemListPanel() {
   const fetchProblems = useCallback(async () => {
     if (!currentEncounterId) return
     try {
-      const res = (await api.get(`/encounters/${currentEncounterId}/problems`)) as any
+      const res = (await api.get(`/encounters/${currentEncounterId}/problems`)) as {
+        items?: ProblemItem[]
+      }
       setProblems(res.items || [])
     } catch {
       setProblems([])

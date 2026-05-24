@@ -32,8 +32,6 @@ from app.schemas.ai_request import (
 )
 from app.services.ai.ai_utils import (
     compose_physical_exam,
-    get_active_prompt,
-    safe_format,
     stream_text,
     stream_with_lock,
 )
@@ -41,11 +39,13 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
     CONTINUE_PROMPT,
-    POLISH_PROMPT,
     RECORD_TYPE_LABELS,
-    SUPPLEMENT_PROMPT,
 )
-from app.services.ai.record_gen_v2_service import stream_record_v2
+from app.services.ai.record_gen_v2_service import (
+    stream_polish_v2,
+    stream_record_v2,
+)
+from app.services.ai.supplement_batch_service import run_quick_supplement_batch
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,17 @@ async def quick_supplement(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """根据质控问题一键补全病历（流式）。"""
+    """批量补全（行级写入路线）：一次 LLM 调用返回所有缺失字段的建议值。
+
+    治本路线（2026-05-24）—— 替换旧"整段重画"实现：
+      旧：LLM 重写完整 JSON → renderer 整段重画 → 覆盖医生现场修改
+           （bug：78 分逐条补全后整体补全回到 70）
+      新：LLM 一次返回 N 个 {field_name, value}，前端按 FIELD_TO_LINE_PREFIX
+           行级写入 —— 与"逐条修复"同一套机制，杜绝整段覆盖。
+
+    返回格式（非 SSE，普通 JSON 响应）：
+      {"items": [{"field_name": "舌象", "value": "..."}, ...]}
+    """
     await log_action(
         action="ai_quick_supplement",
         user_id=current_user.id,
@@ -191,57 +201,20 @@ async def quick_supplement(
         resource_type="medical_record",
         detail=f"record_type={req.record_type or 'outpatient'} issues_count={len(req.qc_issues or [])}",
     )
+    # 没有 qc_issues 时直接返回空（前端往往是误触；不浪费 LLM 调用）
     if not req.qc_issues:
-        return StreamingResponse(
-            iter(['data: {"type":"done"}\n\n']),
-            media_type="text/event-stream",
-        )
+        return {"items": []}
 
-    record_type = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
-    issues_text = "\n".join(
-        f"- [{item.get('risk_level', '').upper()}] {item.get('issue_description', '')}"
-        f"（建议：{item.get('suggestion', '')}）"
-        for item in req.qc_issues
-    )
-    composed_physical_exam = compose_physical_exam(
-        physical_exam=req.physical_exam,
-        temperature=req.temperature,
-        pulse=req.pulse,
-        respiration=req.respiration,
-        bp_systolic=req.bp_systolic,
-        bp_diastolic=req.bp_diastolic,
-        spo2=req.spo2,
-        height=req.height,
-        weight=req.weight,
-    )
-    prompt = SUPPLEMENT_PROMPT.format(
-        record_type=record_type,
-        patient_name=req.patient_name or "未知",
-        patient_gender=req.patient_gender or "未知",
-        patient_age=req.patient_age or "未知",
-        chief_complaint=req.chief_complaint or "未提供",
-        history_present_illness=req.history_present_illness or "未提供",
-        past_history=req.past_history or "未提供",
-        allergy_history=req.allergy_history or "未提供",
-        personal_history=req.personal_history or "未提供",
-        family_history=req.family_history or "未提供",
-        physical_exam=composed_physical_exam or "未提供",
-        auxiliary_exam=req.auxiliary_exam or "无",
-        initial_impression=req.initial_impression or "未提供",
-        onset_time=req.onset_time or "未提供",
-        visit_time=req.visit_time or "未提供",
-        current_content=req.current_content or "（空）",
-        qc_issues=issues_text,
-    )
-    model_options = await get_model_options(db, "generate")
+    # 仍然走 AI 生成锁，避免同一医生并发跑多次补全
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "supplement")
-    return StreamingResponse(
-        stream_with_lock(
-            stream_text(prompt, task_type="generate", model_options=model_options),
-            lock_key, lock_token,
-        ),
-        media_type="text/event-stream",
-    )
+    try:
+        return await run_quick_supplement_batch(db, req)
+    finally:
+        # 锁是 redis_cache 实现，token 不匹配则跳过删除（防误删别人的锁）
+        try:
+            await redis_cache.release_lock(lock_key, lock_token)
+        except Exception:
+            pass
 
 
 @router.post("/quick-polish")
@@ -250,22 +223,31 @@ async def quick_polish(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """润色病历（流式）。"""
+    """润色病历（JSON 模式 + renderer 重渲染）。
+
+    与 supplement 同构，但 prompt 禁止改动客观数据；输出经 renderer 拼装，
+    永远符合 QC 行格式契约。
+    """
     await log_action(
         action="ai_quick_polish",
         user_id=current_user.id,
         user_name=current_user.username,
         user_role=current_user.role,
         resource_type="medical_record",
+        detail=f"record_type={req.record_type or 'outpatient'}",
     )
-    db_prompt = await get_active_prompt(db, "polish")
-    template = db_prompt or POLISH_PROMPT
-    model_options = await get_model_options(db, "polish")
-    prompt = safe_format(template, content=req.content)
+    # 空草稿没有润色对象，直接 done
+    if not (req.current_content or "").strip():
+        return StreamingResponse(
+            iter(['data: {"type":"done"}\n\n']),
+            media_type="text/event-stream",
+        )
+
+    record_type = req.record_type or "outpatient"
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "polish")
     return StreamingResponse(
         stream_with_lock(
-            stream_text(prompt, task_type="polish", model_options=model_options),
+            stream_polish_v2(record_type, req, db),
             lock_key, lock_token,
         ),
         media_type="text/event-stream",
