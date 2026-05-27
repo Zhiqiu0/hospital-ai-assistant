@@ -12,17 +12,7 @@
  *   - 统计页按科室维度汇总病历量
  */
 import { useEffect, useState } from 'react'
-import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Space,
-  Tag,
-  Typography,
-  Popconfirm,
-} from 'antd'
+import { Table, Button, Modal, Form, Input, Space, Tag, Typography, Popconfirm } from 'antd'
 import { PlusOutlined, StopOutlined, CheckCircleOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { message } from '@/services/messageBridge'
@@ -78,7 +68,8 @@ export default function DepartmentsPage() {
       }
       setModalOpen(false)
       setEditing(null)
-      form.resetFields()
+      // form.resetFields 由下面 useEffect 监听 modalOpen 变化时统一处理
+      // 这里手动调会在 Modal 关闭后撞 "useForm not connected" 警告（Form 卸载了）
       loadDepts()
     } catch (e) {
       const detail = (e as { detail?: string })?.detail
@@ -88,9 +79,20 @@ export default function DepartmentsPage() {
 
   const openEdit = (record: DepartmentRow) => {
     setEditing(record)
-    form.setFieldsValue({ name: record.name, code: record.code })
     setModalOpen(true)
   }
+
+  // form.resetFields / setFieldsValue 必须等 Modal 内的 Form 挂载之后再调，
+  // 否则 useForm 实例没连接到任何 Form 元素，触发
+  // "Instance created by useForm is not connected to any Form element" 警告。
+  useEffect(() => {
+    if (!modalOpen) return
+    if (editing) {
+      form.setFieldsValue({ name: editing.name, code: editing.code })
+    } else {
+      form.resetFields()
+    }
+  }, [modalOpen, editing, form])
 
   const handleDeactivate = async (id: string) => {
     try {
@@ -158,8 +160,8 @@ export default function DepartmentsPage() {
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => {
+            // 新建按钮：先清 editing 再开 Modal，resetFields 由 useEffect 监听处理
             setEditing(null)
-            form.resetFields()
             setModalOpen(true)
           }}
         >

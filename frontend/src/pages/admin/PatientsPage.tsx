@@ -89,14 +89,20 @@ export default function PatientsPage() {
 
   const openEdit = (patient: PatientRow) => {
     setEditPatient(patient)
-    form.setFieldsValue({
-      name: patient.name,
-      gender: patient.gender ?? undefined,
-      phone: patient.phone ?? undefined,
-      birth_date: patient.birth_date ? dayjs(patient.birth_date) : undefined,
-    })
     setModalOpen(true)
   }
+
+  // form.setFieldsValue 必须等 Modal 内 Form 挂载后再调，否则触发
+  // "Instance created by useForm is not connected to any Form element" 警告
+  useEffect(() => {
+    if (!modalOpen || !editPatient) return
+    form.setFieldsValue({
+      name: editPatient.name,
+      gender: editPatient.gender ?? undefined,
+      phone: editPatient.phone ?? undefined,
+      birth_date: editPatient.birth_date ? dayjs(editPatient.birth_date) : undefined,
+    })
+  }, [modalOpen, editPatient, form])
 
   const handleSubmit = async (values: PatientFormValues) => {
     if (!editPatient) return
@@ -270,8 +276,9 @@ export default function PatientsPage() {
         }
         open={modalOpen}
         onCancel={() => {
+          // Modal 关闭后 Form 卸载（destroyOnHidden），不需要 form.resetFields，
+          // 否则触发 "useForm not connected" 警告
           setModalOpen(false)
-          form.resetFields()
         }}
         onOk={() => form.submit()}
         okText="保存"
