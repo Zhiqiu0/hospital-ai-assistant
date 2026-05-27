@@ -102,9 +102,15 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
   const embedEncounterId = useEmbedStore(s => s.session?.encounter_id)
   const inquiry = useInquiryStore(s => s.inquiry)
   // collectFields: AutoFillButton 点击时收集当前问诊 + 病历内容,
-  // 打包成 Agent /fill 入参。MVP 阶段:整段 record.content + 关键 intake 字段。
-  // 注意:defaultInquiry 数值字段默认是 '' 空字符串(不是 null/undefined),
-  // 所以判断要用 nonEmpty(去空格后真有值),不能用 != null 否则空字段全推上去。
+  // 打包成 Agent /fill 入参。
+  //
+  // 数据来源:
+  //   - intake.* (生命体征/身高体重): 从 inquiryStore 取(医生原始填的数字)
+  //   - record.*: 从 recordContent 正文按【XX】标题拆出各 section
+  //     原因:AI 一键生成 / 补全后的病历内容只在 recordContent 里,inquiry
+  //     store 不会同步,直接从 inquiry 取的话大部分 section 是空的。
+  //
+  // 注意:defaultInquiry 数值字段默认是 '' 空字符串,不是 null。
   const collectFieldsForFill = () => {
     const fields: Array<{
       section: 'intake' | 'record' | 'diagnosis'
@@ -113,10 +119,10 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
     }> = []
     const nonEmpty = (v: unknown): boolean => {
       if (v == null) return false
-      const s = String(v).trim()
-      return s !== ''
+      return String(v).trim() !== ''
     }
-    // intake: 从问诊 store 取生命体征 + 体格检查关键字段
+
+    // ── intake: 从 inquiry store 取生命体征 / 体格检查关键字段 ─────────
     if (nonEmpty(inquiry.temperature))
       fields.push({ section: 'intake', field_key: 'temperature', value: inquiry.temperature })
     if (nonEmpty(inquiry.pulse))
@@ -136,29 +142,61 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
       fields.push({ section: 'intake', field_key: 'height', value: inquiry.height })
     if (nonEmpty(inquiry.weight))
       fields.push({ section: 'intake', field_key: 'weight', value: inquiry.weight })
-    // record: 病历主页各 section
-    if (nonEmpty(inquiry.chief_complaint))
-      fields.push({
-        section: 'record',
-        field_key: 'chief_complaint',
-        value: inquiry.chief_complaint,
-      })
-    if (nonEmpty(inquiry.history_present_illness))
-      fields.push({
-        section: 'record',
-        field_key: 'history_present_illness',
-        value: inquiry.history_present_illness,
-      })
-    if (nonEmpty(inquiry.past_history))
-      fields.push({ section: 'record', field_key: 'past_history', value: inquiry.past_history })
-    if (nonEmpty(inquiry.allergy_history))
-      fields.push({
-        section: 'record',
-        field_key: 'allergy_history',
-        value: inquiry.allergy_history,
-      })
-    if (nonEmpty(recordContent))
-      fields.push({ section: 'record', field_key: 'full_text', value: recordContent })
+
+    // ── record: 解析 recordContent 的【XX】章节,跟 jinsuanpan_map.yaml
+    //   record_page.fields 的 label_name 对齐(中文标题 = field_key) ─────
+    // 已知 record_renderer 输出的 section 标题清单:
+    const sectionTitles = [
+      '主诉',
+      '现病史',
+      '既往史',
+      '过敏史',
+      '个人史',
+      '家族史',
+      '婚育史',
+      '体格检查',
+      '中医四诊',
+      '辅助检查',
+      '诊断',
+      '中医诊断',
+      '西医诊断',
+      '治则治法',
+      '处理意见',
+      '复诊建议',
+      '注意事项',
+      '追问补充',
+    ]
+    // 拆分:遇到 【标题】 行就切一段;两个 标题 之间的内容归前一个标题
+    // 兼容【X】和【 X】(空格)两种,以及【主 诉】这种空格分隔
+    if (nonEmpty(recordContent)) {
+      const lines = recordContent.split(/\r?\n/)
+      let currentSection: string | null = null
+      let buf: string[] = []
+      const flush = () => {
+        if (currentSection && buf.length) {
+          const value = buf.join('\n').trim()
+          // 跳过占位符 / 空段(避免把"[未填写,需补充]"也填进 HIS)
+          if (value && !/^\[未填写[,，]?\s*需补充\]?$/.test(value) && value !== '暂无') {
+            fields.push({ section: 'record', field_key: currentSection!, value })
+          }
+        }
+        buf = []
+      }
+      for (const line of lines) {
+        // 匹配【标题】行,允许标题里有空格,如【主 诉】
+        const m = line.match(/^\s*【\s*([^】]+?)\s*】\s*$/)
+        if (m) {
+          flush()
+          // 标题里的空格去掉,以便和 sectionTitles 匹配(主 诉 → 主诉)
+          const title = m[1].replace(/\s+/g, '')
+          // 只采纳已知标题,避免医生自定义的奇怪段污染填入
+          currentSection = sectionTitles.includes(title) ? title : null
+        } else if (currentSection) {
+          buf.push(line)
+        }
+      }
+      flush()
+    }
     return fields
   }
 
