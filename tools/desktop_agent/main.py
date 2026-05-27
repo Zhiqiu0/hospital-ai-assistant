@@ -12,6 +12,7 @@
 """
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -48,7 +49,10 @@ def find_available_port() -> int:
 
 
 def run_http_server(port: int) -> None:
-    """后台线程跑 FastAPI HTTP Server。"""
+    """后台线程跑 FastAPI HTTP Server(仅在 NON-reload 模式下被子线程调用)。
+
+    生产模式(打包 exe)主线程跑托盘 + 快捷键,HTTP Server 跑在子线程。
+    """
     logger.info("HTTP Server 启动于 127.0.0.1:%d", port)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
@@ -68,7 +72,27 @@ def main() -> None:
         }
     )
 
-    # 3. 后台线程跑 HTTP Server
+    # 3. 启动 HTTP Server
+    # 开发模式 (MEDISCRIBE_AGENT_RELOAD=1) 直接在主线程跑 uvicorn reload:
+    #   - uvicorn reload 要在主线程注册 SIGINT/SIGTERM 信号,放子线程会报
+    #     "signal only works in main thread"
+    #   - 反正骨架版主线程也没事干(托盘 / 快捷键还没接),让给 uvicorn
+    # 生产模式跑 daemon 子线程,把主线程让给托盘 / 快捷键监听
+    reload = os.environ.get("MEDISCRIBE_AGENT_RELOAD") == "1"
+
+    if reload:
+        logger.info("HTTP Server (reload) 主线程启动于 127.0.0.1:%d", port)
+        uvicorn.run(
+            "http_server:app",
+            host="127.0.0.1",
+            port=port,
+            log_level="info",
+            reload=True,
+            reload_dirs=[str(Path(__file__).parent)],
+        )
+        return  # uvicorn 自己处理 Ctrl+C 退出
+
+    # 生产路径
     server_thread = threading.Thread(
         target=run_http_server, args=(port,), daemon=True, name="agent-http-server"
     )

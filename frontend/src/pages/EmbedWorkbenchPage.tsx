@@ -46,14 +46,23 @@ export default function EmbedWorkbenchPage() {
     // 2. 拉嵌入会话上下文（项目里 axios 拦截器已把 response.data 当返回值，所以 cast 即可）
     ;(api.get(`/embed/session/${encounterId}`) as unknown as Promise<EmbedSession>)
       .then(session => {
+        // 后端 /embed/start 必然返回带 patient_id 的会话（找已有或新建），
+        // null 只在 TypeScript schema 容错语义下出现，运行时拿到 null 视为异常
+        if (!session.patient_id) {
+          setError('嵌入会话缺少患者 ID，请重新从 HIS 触发 AI 助手')
+          return
+        }
         useEmbedStore.getState().setEmbed(session)
-        // 把当前接诊塞进 activeEncounterStore，WorkbenchPage 接管后直接进入接诊状态
-        // activeEncounterStore 仅记录 encounterId + visitType + isFirstVisit，
-        // 患者档案 / 姓名等由 WorkbenchPage 内部根据 encounterId 自己拉
-        useActiveEncounterStore.setState({
+        // 用 setActive 而不是 setState：encounterId 变化时它会自动 reset 4 个子 store
+        // (inquiry / record / qc / aiSuggestion)，避免上次 SaaS 测试残留的 inquiry
+        // 数据污染嵌入会话（AutoFillButton collectFields 会误读到旧字段）。
+        useActiveEncounterStore.getState().setActive({
+          patientId: session.patient_id,
           encounterId: session.encounter_id,
           visitType: session.visit_type as 'outpatient' | 'emergency' | 'inpatient',
           isFirstVisit: session.is_first_visit,
+          isPatientReused: false,
+          previousRecordContent: null,
         })
         setReady(true)
       })

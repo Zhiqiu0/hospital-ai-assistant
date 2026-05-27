@@ -6,13 +6,19 @@ CORS 严格白名单:只允许 mediscribe.cn / localhost:5174。
 所有写入操作(/fill)必须带 Bearer token(后端签发的 embed_token)。
 
 骨架版:实现 /ping 和 /fill stub,真正的 UI Automation 在 his/writer.py 完成。
+
+Mock 模式:
+  环境变量 MEDISCRIBE_AGENT_MOCK_HIS=1 → _try_detect_his() 直接返回 True,
+  /fill 也模拟成功响应。开发期没装金算盘 HIS 时走完整流程用。
+  真实部署到医生电脑时去掉该环境变量。
 """
 
 import logging
+import os
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -21,15 +27,22 @@ logger = logging.getLogger("mediscribe.agent.http")
 app = FastAPI(title="MediScribe Agent", version="0.1.0-mvp")
 
 # CORS 白名单 — 防止恶意网站调本地 Agent
+# 注意:浏览器把 localhost 和 127.0.0.1 当不同 origin,所以两个都要列上。
+# fetch /fill 是 cross-origin(页面 localhost:5174 → Agent 127.0.0.1:7788)
+# 带 Authorization header 会触发 CORS preflight OPTIONS,这里必须放行。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://mediscribe.cn",
-        "http://localhost:5174",  # 开发期前端
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5173",  # vite 默认端口兜底
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["*"],
 )
 
 # 由 main.py 注入 — 包含 port / version / config_dir
@@ -131,6 +144,22 @@ async def fill_his(req: FillRequest) -> FillResult:
     )
 
 
+@app.websocket("/progress")
+async def progress_ws(ws: WebSocket) -> None:
+    """填入进度推送 WebSocket。
+
+    骨架版:接连接立即关闭(stub /fill 同步返回,不需要异步推送)。
+    真实实现要把 his/writer.py 的每个字段填入事件通过这里推给前端。
+    """
+    await ws.accept()
+    try:
+        # 骨架不发任何消息,等客户端主动关闭
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        return
+
+
 @app.get("/patient/current")
 async def get_current_patient() -> dict:
     """读 HIS 当前选中的患者(Ctrl+Alt+M 触发后用)。
@@ -153,6 +182,12 @@ async def get_current_patient() -> dict:
 
 
 def _try_detect_his() -> bool:
-    """尝试探测金算盘窗口。骨架版 stub,真实在 his/detector.py。"""
+    """尝试探测金算盘窗口。骨架版 stub,真实在 his/detector.py。
+
+    开发期支持 MOCK 模式:环境变量 MEDISCRIBE_AGENT_MOCK_HIS=1 时直接返回 True,
+    让前端 AutoFillButton 走通完整流程(不需要真装金算盘 HIS)。
+    """
+    if os.environ.get("MEDISCRIBE_AGENT_MOCK_HIS") == "1":
+        return True
     # TODO: 调 his.detector.find_jinsuanpan_window()
     return False

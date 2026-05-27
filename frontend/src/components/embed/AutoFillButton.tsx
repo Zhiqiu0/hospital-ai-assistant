@@ -59,6 +59,13 @@ export default function AutoFillButton({ encounterId, collectFields }: AutoFillB
       return
     }
 
+    // 提前收集字段：空字段直接提示，不弹 modal 避免医生看"准备开始…"卡那里困惑
+    const fields = collectFields()
+    if (fields.length === 0) {
+      message.warning('没有可填入的内容，请先填写问诊或生成病历')
+      return
+    }
+
     setFilling(true)
     setProgress(0)
     setDoneFields([])
@@ -71,20 +78,26 @@ export default function AutoFillButton({ encounterId, collectFields }: AutoFillB
     })
 
     try {
-      const fields = collectFields()
       const result = await desktopAgent.fill({ encounter_id: encounterId, fields })
 
-      // 处理结果
+      // WebSocket 进度推送是 nice-to-have（真填入时实时刷新）；fill 响应自带
+      // field_results 列表，就算 WS 没发任何消息，这里也能把每条结果灌进 modal
+      // 让医生看清楚每个字段的成功/失败。
+      setDoneFields(result.field_results)
+      setProgress(100)
+
+      // 处理结果 toast
       if (result.status === 'success') {
         message.success(
           `填入完成 ${result.succeeded}/${result.total_fields} 字段，耗时 ${(result.duration_ms / 1000).toFixed(1)}s`
         )
+        // 成功后 1.5s 自动关闭 modal,医生不用手动点 X
+        setTimeout(() => setProgressModalOpen(false), 1500)
       } else if (result.status === 'partial') {
         message.warning(`部分字段失败 (${result.failed}/${result.total_fields})，已复制到剪贴板`)
       } else {
         message.error('填入失败，完整病历已复制到剪贴板')
       }
-      setProgress(100)
     } catch (e) {
       message.error(`填入异常：${(e as Error).message}`)
     } finally {

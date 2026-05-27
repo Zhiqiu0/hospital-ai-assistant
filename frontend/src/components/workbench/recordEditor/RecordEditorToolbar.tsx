@@ -16,8 +16,11 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
+import AutoFillButton from '@/components/embed/AutoFillButton'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useAuthStore } from '@/store/authStore'
+import { useEmbedStore } from '@/store/embedStore'
+import { useInquiryStore } from '@/store/inquiryStore'
 import type { Patient } from '@/domain/medical'
 
 const { Text } = Typography
@@ -92,6 +95,72 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
   // App.useApp() 拿到的 modal 实例能 consume 主题 context；
   // 不要用 Modal.warning/info/confirm 静态方法（会绕开 ConfigProvider 主题）。
   const { modal } = App.useApp()
+
+  // HIS 嵌入模式状态：决定是否在工具栏渲染"自动填入 HIS"按钮。
+  // SaaS 用户 isEmbed=false，按钮完全不渲染，行为零变化。
+  const isEmbed = useEmbedStore(s => s.isEmbed)
+  const embedEncounterId = useEmbedStore(s => s.session?.encounter_id)
+  const inquiry = useInquiryStore(s => s.inquiry)
+  // collectFields: AutoFillButton 点击时收集当前问诊 + 病历内容,
+  // 打包成 Agent /fill 入参。MVP 阶段:整段 record.content + 关键 intake 字段。
+  // 注意:defaultInquiry 数值字段默认是 '' 空字符串(不是 null/undefined),
+  // 所以判断要用 nonEmpty(去空格后真有值),不能用 != null 否则空字段全推上去。
+  const collectFieldsForFill = () => {
+    const fields: Array<{
+      section: 'intake' | 'record' | 'diagnosis'
+      field_key: string
+      value: unknown
+    }> = []
+    const nonEmpty = (v: unknown): boolean => {
+      if (v == null) return false
+      const s = String(v).trim()
+      return s !== ''
+    }
+    // intake: 从问诊 store 取生命体征 + 体格检查关键字段
+    if (nonEmpty(inquiry.temperature))
+      fields.push({ section: 'intake', field_key: 'temperature', value: inquiry.temperature })
+    if (nonEmpty(inquiry.pulse))
+      fields.push({ section: 'intake', field_key: 'heart_rate', value: inquiry.pulse })
+    if (nonEmpty(inquiry.respiration))
+      fields.push({ section: 'intake', field_key: 'respiration', value: inquiry.respiration })
+    if (nonEmpty(inquiry.bp_systolic) && nonEmpty(inquiry.bp_diastolic)) {
+      fields.push({
+        section: 'intake',
+        field_key: 'blood_pressure',
+        value: `${inquiry.bp_systolic}/${inquiry.bp_diastolic}`,
+      })
+    }
+    if (nonEmpty(inquiry.spo2))
+      fields.push({ section: 'intake', field_key: 'spo2', value: inquiry.spo2 })
+    if (nonEmpty(inquiry.height))
+      fields.push({ section: 'intake', field_key: 'height', value: inquiry.height })
+    if (nonEmpty(inquiry.weight))
+      fields.push({ section: 'intake', field_key: 'weight', value: inquiry.weight })
+    // record: 病历主页各 section
+    if (nonEmpty(inquiry.chief_complaint))
+      fields.push({
+        section: 'record',
+        field_key: 'chief_complaint',
+        value: inquiry.chief_complaint,
+      })
+    if (nonEmpty(inquiry.history_present_illness))
+      fields.push({
+        section: 'record',
+        field_key: 'history_present_illness',
+        value: inquiry.history_present_illness,
+      })
+    if (nonEmpty(inquiry.past_history))
+      fields.push({ section: 'record', field_key: 'past_history', value: inquiry.past_history })
+    if (nonEmpty(inquiry.allergy_history))
+      fields.push({
+        section: 'record',
+        field_key: 'allergy_history',
+        value: inquiry.allergy_history,
+      })
+    if (nonEmpty(recordContent))
+      fields.push({ section: 'record', field_key: 'full_text', value: recordContent })
+    return fields
+  }
 
   // 按当前接诊的 visit_type 决定下拉框该出哪些病历类型——
   // 门诊 / 急诊医生只看到"门诊病历"；住院端只看到 8 项住院病历类型。
@@ -290,6 +359,14 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
         >
           导出 Word
         </Button>
+
+        {/*
+         * HIS 嵌入模式专属按钮：调本地桌面 Agent 把病历自动填回金算盘 HIS。
+         * SaaS 用户 isEmbed=false → 完全不渲染，UI/行为零差异。
+         */}
+        {isEmbed && embedEncounterId && (
+          <AutoFillButton encounterId={embedEncounterId} collectFields={collectFieldsForFill} />
+        )}
       </Space>
     </div>
   )

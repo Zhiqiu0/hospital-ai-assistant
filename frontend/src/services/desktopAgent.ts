@@ -14,6 +14,8 @@
  *   - CORS 由 Agent 端配置：仅允许 https://mediscribe.cn / http://localhost:5174
  */
 
+import { useAuthStore } from '@/store/authStore'
+
 const DEFAULT_AGENT_PORT = 7788
 const AGENT_PORT_RANGE = [7788, 7789, 7790, 7791, 7792]
 
@@ -53,11 +55,16 @@ interface FillResult {
 
 class DesktopAgentClient {
   private port: number = DEFAULT_AGENT_PORT
-  private token: string | null = null
   private cachedPing: { result: PingResponse; at: number } | null = null
 
-  setToken(token: string) {
-    this.token = token
+  /** 每次请求时从 authStore 实时拿 token,刷新后不丢(authStore localStorage persist) */
+  private getToken(): string | null {
+    return useAuthStore.getState().token
+  }
+
+  /** @deprecated 保留兼容,token 现在统一从 authStore 取 */
+  setToken(_token: string) {
+    /* no-op: 改为每次请求时从 authStore.getState().token 读 */
   }
 
   /** 尝试在端口范围内找到运行中的 Agent，找到后绑定端口供后续调用 */
@@ -103,14 +110,15 @@ class DesktopAgentClient {
 
   /** 调用 Agent 把生成的病历填入 HIS */
   async fill(req: FillRequest): Promise<FillResult> {
-    if (!this.token) {
-      throw new Error('未设置 embed token，无法调用 Agent')
+    const token = this.getToken()
+    if (!token) {
+      throw new Error('未登录，无法调用 Agent')
     }
     const r = await fetch(`http://127.0.0.1:${this.port}/fill`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(req),
       // 整体填入预期 < 40 秒（YAML global_settings.total_timeout_s）
@@ -124,12 +132,13 @@ class DesktopAgentClient {
 
   /** 订阅填入进度 WebSocket，回调收到每个字段的填入事件 */
   connectProgress(onEvent: (e: FillFieldResult & { progress?: number }) => void): WebSocket {
-    if (!this.token) {
-      throw new Error('未设置 embed token，无法订阅进度')
+    const token = this.getToken()
+    if (!token) {
+      throw new Error('未登录，无法订阅进度')
     }
     // 通过 query 传 token（WebSocket 协议不支持自定义请求头）
     const ws = new WebSocket(
-      `ws://127.0.0.1:${this.port}/progress?token=${encodeURIComponent(this.token)}`
+      `ws://127.0.0.1:${this.port}/progress?token=${encodeURIComponent(token)}`
     )
     ws.onmessage = e => {
       try {
