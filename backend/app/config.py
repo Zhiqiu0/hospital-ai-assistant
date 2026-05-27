@@ -96,6 +96,15 @@ class Settings(BaseSettings):
     # 本地开发不需要传，留空表示不带 release tag
     sentry_release: str = ""
 
+    # ── HIS 对接（金算盘等院内 HIS 嵌入模式）──────────────────────────────────
+    # 全局保险丝：false 时所有 /embed/* 和 /desktop/* 路由直接 503，
+    # 完全不影响现有 SaaS（mediscribe.cn 普通医生登录使用）。
+    # 上线初期保持 false，确认稳定后再开 true。任何嵌入相关 bug 都可以
+    # 通过把这个改回 false + 重启后端 5 秒内全院切回纯 SaaS。
+    his_adapter_enabled: bool = False
+    # 嵌入会话 token 有效期（小时），默认 4h（够医生写完一份病历）
+    his_embed_token_ttl_hours: int = 4
+
     @property
     def origins_list(self) -> list[str]:
         """将逗号分隔的 allowed_origins 字符串转换为列表，供 CORS 中间件使用。"""

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, desktop
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -25,3 +25,8 @@ router.include_router(sentry_tunnel.router, prefix="", tags=["可观测性"])
 
 # 后台管理：单一聚合 router，自带 audit_admin_action 依赖（修复"管理员操作零审计"硬伤）
 router.include_router(admin_router, prefix="/admin")
+
+# HIS 嵌入模式 + 桌面 Agent（HIS_ADAPTER_ENABLED=false 时统一 503）
+# 跟 SaaS 严格隔离的"另一种入口"，共享所有 service 层代码
+router.include_router(embed.router, tags=["HIS嵌入"])
+router.include_router(desktop.router, tags=["HIS桌面Agent"])

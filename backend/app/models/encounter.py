@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -79,6 +80,14 @@ class Encounter(Base, TimestampMixin):
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     # 操作医生 ID（一般 = doctor_id，但保留独立字段以备将来值班医生强取等场景）
     cancelled_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
+
+    # ── HIS 嵌入模式外部标识（2026-05-27 加）────────────────────────────────
+    # 嵌入模式接诊关联的 HIS 患者标识，普通 SaaS 接诊为 NULL。
+    # JSONB 字段结构见 his_adapter/models.py:HISExternalRef，示例：
+    #   {"his_brand": "jinsuanpan", "hospital_code": "H33052300957",
+    #    "his_patient_no": "Y1232605260025", "his_visit_no": "20260526000200"}
+    # 加 GIN 索引（his_patient_no 路径），方便医生从 HIS 切回查上次接诊。
+    his_external_ref: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # 关联患者信息
     patient: Mapped["Patient"] = relationship(back_populates="encounters")
