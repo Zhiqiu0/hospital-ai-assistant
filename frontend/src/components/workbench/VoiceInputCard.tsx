@@ -57,7 +57,7 @@ export default function VoiceInputCard(props: VoiceInputCardProps) {
     <Card
       size="small"
       style={{ marginBottom: 12, borderRadius: 10, background: '#f8fbff', borderColor: '#dbeafe' }}
-      bodyStyle={{ padding: 12 }}
+      styles={{ body: { padding: 12 } }}
     >
       <div
         style={{

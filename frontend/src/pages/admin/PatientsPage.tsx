@@ -14,18 +14,7 @@
  *   由医生开一次接诊登记同步建档。
  */
 import { useEffect, useState, useCallback } from 'react'
-import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Space,
-  Tag,
-  Typography,
-  DatePicker,
-} from 'antd'
+import { Table, Button, Modal, Form, Input, Select, Space, Tag, Typography, DatePicker } from 'antd'
 import { EditOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
@@ -131,7 +120,9 @@ export default function PatientsPage() {
       key: 'patient_no',
       width: 120,
       render: (v: string) => (
-        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-3)' }}>{v || '—'}</Text>
+        <Text style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-3)' }}>
+          {v || '—'}
+        </Text>
       ),
     },
     {
@@ -285,7 +276,7 @@ export default function PatientsPage() {
         onOk={() => form.submit()}
         okText="保存"
         width={480}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 16 }}>
           <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>

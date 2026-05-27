@@ -82,7 +82,7 @@ export default function SelectFramesStage({
             </Space>
           }
           style={{ height: 'calc(100vh - 140px)', display: 'flex', flexDirection: 'column' }}
-          bodyStyle={{ flex: 1, overflow: 'auto', padding: 8 }}
+          styles={{ body: { flex: 1, overflow: 'auto', padding: 8 } }}
         >
           {loadingFrames ? (
             <div style={{ textAlign: 'center', padding: 40 }}>

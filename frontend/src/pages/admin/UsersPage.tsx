@@ -321,7 +321,7 @@ export default function UsersPage() {
         onOk={() => form.submit()}
         okText="确认"
         cancelText="取消"
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
           {!editUser && (
@@ -371,7 +371,7 @@ export default function UsersPage() {
         cancelText="取消"
         okButtonProps={{ loading: resetSubmitting }}
         onOk={submitReset}
-        destroyOnClose
+        destroyOnHidden
         width={460}
       >
         <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 13 }}>

@@ -95,7 +95,7 @@ export default function CancelEncounterModal({ open, onClose, onConfirm }: Props
       onOk={handleSubmit}
       onCancel={handleCancel}
       maskClosable={false}
-      destroyOnClose
+      destroyOnHidden
       width={520}
     >
       <Alert

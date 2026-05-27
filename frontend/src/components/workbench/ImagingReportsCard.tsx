@@ -61,12 +61,16 @@ export default function ImagingReportsCard({ patientId }: Props) {
     <Card
       size="small"
       style={{ marginBottom: 10, borderRadius: 8 }}
-      bodyStyle={{ padding: 8 }}
+      styles={{ body: { padding: 8 } }}
       title={
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
           <ScanOutlined style={{ color: '#0891B2' }} />
           既往影像报告
-          {reports.length > 0 && <Tag color="cyan" style={{ marginLeft: 4 }}>{reports.length}</Tag>}
+          {reports.length > 0 && (
+            <Tag color="cyan" style={{ marginLeft: 4 }}>
+              {reports.length}
+            </Tag>
+          )}
         </span>
       }
     >
@@ -84,7 +88,9 @@ export default function ImagingReportsCard({ patientId }: Props) {
             key: r.study_id,
             label: (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <Tag color="blue" style={{ marginRight: 0 }}>{r.modality || '未知'}</Tag>
+                <Tag color="blue" style={{ marginRight: 0 }}>
+                  {r.modality || '未知'}
+                </Tag>
                 <Text strong style={{ fontSize: 12 }}>
                   {r.body_part || r.series_description || '未标注部位'}
                 </Text>

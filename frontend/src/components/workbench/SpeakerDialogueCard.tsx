@@ -27,7 +27,7 @@ export default function SpeakerDialogueCard({ items }: Props) {
     <Card
       size="small"
       style={{ marginBottom: 8, borderRadius: 8, background: 'var(--surface)' }}
-      bodyStyle={{ padding: 10 }}
+      styles={{ body: { padding: 10 } }}
     >
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Tag color="cyan" style={{ marginRight: 0 }}>

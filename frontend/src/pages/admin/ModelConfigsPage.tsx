@@ -124,7 +124,7 @@ export default function ModelConfigsPage() {
           {
             title: '配置',
             render: (_: unknown, record: ModelConfigRow) => (
-              <Card size="small" bodyStyle={{ padding: 12 }}>
+              <Card size="small" styles={{ body: { padding: 12 } }}>
                 <Form
                   layout="inline"
                   initialValues={record}

@@ -300,7 +300,7 @@ export default function RecordsPage() {
         okButtonProps={{ loading: reviseSubmitting, danger: true }}
         onOk={submitRevise}
         width={760}
-        destroyOnClose
+        destroyOnHidden
       >
         <div
           style={{
