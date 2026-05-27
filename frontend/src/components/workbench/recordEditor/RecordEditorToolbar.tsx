@@ -5,7 +5,7 @@
  * 字段众多（病历类型选择、生成/润色/质控/补全/出具/导出 5 个核心按钮 + 已签发标签），
  * 每个按钮都依赖外部 hook 状态——抽出来后 props 较多但语义清晰，主组件只剩"组合"职责。
  */
-import { Button, Modal, Select, Space, Tag, Typography } from 'antd'
+import { App, Button, Select, Space, Tag, Typography } from 'antd'
 import {
   EditOutlined,
   FileDoneOutlined,
@@ -88,6 +88,10 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
     handleSupplement,
     setFinalModalOpen,
   } = props
+
+  // App.useApp() 拿到的 modal 实例能 consume 主题 context；
+  // 不要用 Modal.warning/info/confirm 静态方法（会绕开 ConfigProvider 主题）。
+  const { modal } = App.useApp()
 
   // 按当前接诊的 visit_type 决定下拉框该出哪些病历类型——
   // 门诊 / 急诊医生只看到"门诊病历"；住院端只看到 8 项住院病历类型。
@@ -250,7 +254,7 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
           disabled={!recordContent.trim() || isBusy}
           onClick={() => {
             if (qcPass === false) {
-              Modal.warning({
+              modal.warning({
                 title: `结构检查未通过，无法提交${gradeScore?.grade_score != null ? `（当前 ${gradeScore.grade_score} 分）` : ''}`,
                 content:
                   '请修复右侧质控提示中标注「必须修复」的所有结构性问题后重新质控，通过后方可出具正式病历。',
@@ -280,14 +284,7 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
           size="small"
           disabled={!recordContent.trim() || isBusy}
           onClick={() =>
-            exportWordDoc(
-              recordContent,
-              currentPatient,
-              recordType,
-              finalizedAt,
-              null,
-              exportCtx
-            )
+            exportWordDoc(recordContent, currentPatient, recordType, finalizedAt, null, exportCtx)
           }
           style={{ borderRadius: 8, fontSize: 12, height: 30 }}
         >

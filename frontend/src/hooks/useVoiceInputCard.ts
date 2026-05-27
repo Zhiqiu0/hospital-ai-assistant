@@ -12,7 +12,7 @@
  *   - 本 hook 主体保留：录音 / 实时 ASR 编排 + 状态聚合 + UI 操作回调
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal } from 'antd'
+import { App } from 'antd'
 import { message } from '@/services/messageBridge'
 import { InquiryData } from '@/store/types'
 
@@ -52,6 +52,8 @@ export function useVoiceInputCard({
   onApplyInquiry,
   onApplyToRecord,
 }: Props) {
+  // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.confirm 静态方法
+  const { modal } = App.useApp()
   const isRecordMode = !!onApplyToRecord
   const inquiry = useInquiryStore(s => s.inquiry)
   // 病历草稿全文：续录场景下优先作为 LLM 增量分析的"已知信息基线"，因为它含医生手改
@@ -305,10 +307,7 @@ export function useVoiceInputCard({
       } catch (err) {
         streamFallbackRef.current = true
         const errMsg = (err as { message?: string })?.message || '连接失败'
-        message.warning(
-          `实时转写未启用（${errMsg}），录音继续，停止后自动云端转写`,
-          5
-        )
+        message.warning(`实时转写未启用（${errMsg}），录音继续，停止后自动云端转写`, 5)
       }
 
       setListening(true)
@@ -380,7 +379,7 @@ export function useVoiceInputCard({
       return
     }
     if (lastAnalyzedTranscript && lastAnalyzedTranscript === fullTranscript) {
-      Modal.confirm({
+      modal.confirm({
         title: '转写内容未变化',
         content: '当前转写与上次分析完全相同，重新分析将覆盖已有问诊内容和病历草稿，确认继续？',
         okText: '确认重新分析',
@@ -393,7 +392,7 @@ export function useVoiceInputCard({
   }
 
   const handleClearTranscript = () => {
-    Modal.confirm({
+    modal.confirm({
       title: '确认清空重录？',
       content: '将删除此段录音及转写内容，删除后不可恢复。',
       okText: '确认删除',

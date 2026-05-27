@@ -71,11 +71,20 @@ export default function NewEncounterModal({
   // 每次弹窗打开时按当前 mode 重置所有状态，防止上次的 step 残留
   useEffect(() => {
     if (open) {
-      setStep(mode === 'new' ? 'form' : 'search')
+      const initialStep = mode === 'new' ? 'form' : 'search'
+      setStep(initialStep)
       setKeyword('')
       setResults([])
       setSelectedPatient(null)
-      form.resetFields()
+      // 注意：form.resetFields() 必须在 Form 元素挂载时才能调用——
+      //   - mode='new'：下面会渲染 <Form>，可以重置
+      //   - mode='search'：先进搜索步骤，Form 没挂载；等用户点"新患者直接填写"
+      //     切到 form 步骤时（见后面 onCreateNew 回调）会再 resetFields。
+      // 之前这里无条件 resetFields，在复诊场景触发
+      // "Instance created by useForm is not connected to any Form element" 警告。
+      if (initialStep === 'form') {
+        form.resetFields()
+      }
     }
     // setState 在 open 变化时是预期的初始化路径
     // eslint-disable-next-line react-hooks/exhaustive-deps
