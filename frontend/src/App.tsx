@@ -30,6 +30,7 @@ import WorkbenchPage from '@/pages/WorkbenchPage'
 import EmergencyWorkbenchPage from '@/pages/EmergencyWorkbenchPage'
 import InpatientWorkbenchPage from '@/pages/InpatientWorkbenchPage'
 import PacsWorkbenchPage from '@/pages/PacsWorkbenchPage'
+import EmbedWorkbenchPage from '@/pages/EmbedWorkbenchPage'
 import AdminLayout from '@/pages/admin/AdminLayout'
 import { useAuthStore, isTokenExpired } from '@/store/authStore'
 
@@ -101,6 +102,11 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/*
+         * HIS 嵌入模式入口（无需登录，URL token 自代理）。
+         * 桌面 Agent 触发 → /embed?token=...&encounter_id=... → setup 完跳 /workbench
+         */}
+        <Route path="/embed" element={<EmbedWorkbenchPage />} />
         <Route
           path="/workbench"
           element={
