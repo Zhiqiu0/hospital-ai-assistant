@@ -121,6 +121,13 @@ class QCService:
             else:
                 level = "low"
             issue_data = {
+                # issue_type 是 qc_issues 表的 NOT NULL 字段（admin 统计按它分组）。
+                # 新引擎走 Rubric 评分，本质都是"病历该写没写/写得不规范"的完整性问题，
+                # 统一归类为 "completeness"，与旧版 check_completeness 同语义。
+                # 旧引擎在 completeness_rules.py 里手填 "completeness"，新引擎重写时
+                # 漏了，导致 INSERT 时 issue_type=NULL 触发 NotNullViolationError →
+                # PendingRollbackError，整个 qc_scan 接口 500。
+                "issue_type": "completeness",
                 "risk_level": level,
                 "field_name": ded.item_name,
                 "issue_description": ded.description,
