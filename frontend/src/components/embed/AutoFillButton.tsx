@@ -91,8 +91,10 @@ export default function AutoFillButton({ encounterId, collectFields }: AutoFillB
         message.success(
           `填入完成 ${result.succeeded}/${result.total_fields} 字段，耗时 ${(result.duration_ms / 1000).toFixed(1)}s`
         )
-        // 成功后 1.5s 自动关闭 modal,医生不用手动点 X
-        setTimeout(() => setProgressModalOpen(false), 1500)
+        // 成功后自动关闭 modal,让医生有时间看每条字段结果再合上
+        // 时长按字段数动态:每个字段 0.4s + 1s 基础,封顶 6s
+        const closeDelay = Math.min(1000 + result.total_fields * 400, 6000)
+        setTimeout(() => setProgressModalOpen(false), closeDelay)
       } else if (result.status === 'partial') {
         message.warning(`部分字段失败 (${result.failed}/${result.total_fields})，已复制到剪贴板`)
       } else {

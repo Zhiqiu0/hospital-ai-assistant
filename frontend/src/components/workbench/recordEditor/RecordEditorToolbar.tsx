@@ -145,8 +145,10 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
 
     // ── record: 解析 recordContent 的【XX】章节,跟 jinsuanpan_map.yaml
     //   record_page.fields 的 label_name 对齐(中文标题 = field_key) ─────
-    // 已知 record_renderer 输出的 section 标题清单:
+    // 标题清单覆盖 backend/app/services/ai/record_renderer.py 全部
+    // _section("【XXX】", ...) 输出 (门诊 + 急诊 + 住院三种形态全包)
     const sectionTitles = [
+      // 病史类
       '主诉',
       '现病史',
       '既往史',
@@ -154,18 +156,71 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
       '个人史',
       '家族史',
       '婚育史',
+      '月经史',
+      '病史陈述者',
+      // 评估 / 检查
+      '专项评估',
       '体格检查',
-      '中医四诊',
       '辅助检查',
+      '辅助检查(入院前)',
+      // 诊断
       '诊断',
+      '入院诊断',
       '中医诊断',
       '西医诊断',
+      // 治疗意见(门诊主标题)
+      '治疗意见及措施',
+      // 治疗意见的子项(医生现场也可能加成独立标题,兼容)
       '治则治法',
       '处理意见',
       '复诊建议',
       '注意事项',
+      // 急诊专属
+      '急诊处置',
+      '急诊留观记录',
+      '患者去向',
+      // 追问补充
       '追问补充',
     ]
+    // 复合段:HIS 没有这些"父标题"独立字段,内部各子项才是真字段
+    //   【治疗意见及措施】 行内: 治则治法:.. 处理意见:.. 复诊建议:.. 注意事项:..
+    //   【诊断】 行内: 中医诊断:.. 西医诊断:..
+    //   【体格检查】 行内: 望诊:.. 闻诊:.. 切诊·舌象:.. 切诊·脉象:..
+    // 子项 key 跟 backend/app/services/ai/record_renderer.py 的输出标签对齐,
+    // 不要加别名(如"舌象"vs"切诊·舌象")避免同段被两个 key 重复匹配。
+    // 最终能写入 HIS 哪些字段、要不要合并,由 Agent 按 jinsuanpan_map.yaml 决定。
+    const COMPOUND_SECTIONS: Record<string, string[]> = {
+      治疗意见及措施: ['治则治法', '处理意见', '复诊建议', '注意事项'],
+      诊断: ['中医诊断', '西医诊断', '中医疾病诊断', '中医证候诊断'],
+      体格检查: ['望诊', '闻诊', '切诊·舌象', '切诊·脉象'],
+    }
+
+    // 把一段复合内容里的"标签:..."子项拆出来推送
+    const pushCompoundSubfields = (section: string, body: string) => {
+      const subKeys = COMPOUND_SECTIONS[section]
+      let matched = false
+      for (const subKey of subKeys) {
+        // 匹配"标签:内容" 或 "标签:内容\n标签2:内容2"
+        // 用非贪婪匹配,内容直到下一个已知子标签或段尾
+        const escaped = subKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(
+          `${escaped}[:：]\\s*([\\s\\S]*?)(?=\\n\\s*(?:${subKeys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[:：]|$)`
+        )
+        const m = body.match(re)
+        if (m) {
+          const value = m[1].trim()
+          if (value && !/^\[未填写[,，]?\s*需补充\]?$/.test(value) && value !== '暂无') {
+            fields.push({ section: 'record', field_key: subKey, value })
+            matched = true
+          }
+        }
+      }
+      // 没找到任何子项就把整段当一个字段(兜底,真生产 Agent 写不进会转剪贴板)
+      if (!matched) {
+        fields.push({ section: 'record', field_key: section, value: body })
+      }
+    }
+
     // 拆分:遇到 【标题】 行就切一段;两个 标题 之间的内容归前一个标题
     // 兼容【X】和【 X】(空格)两种,以及【主 诉】这种空格分隔
     if (nonEmpty(recordContent)) {
@@ -177,7 +232,12 @@ export default function RecordEditorToolbar(props: RecordEditorToolbarProps) {
           const value = buf.join('\n').trim()
           // 跳过占位符 / 空段(避免把"[未填写,需补充]"也填进 HIS)
           if (value && !/^\[未填写[,，]?\s*需补充\]?$/.test(value) && value !== '暂无') {
-            fields.push({ section: 'record', field_key: currentSection!, value })
+            if (COMPOUND_SECTIONS[currentSection]) {
+              // 复合段: HIS 没父标题字段,继续拆成子字段推
+              pushCompoundSubfields(currentSection, value)
+            } else {
+              fields.push({ section: 'record', field_key: currentSection, value })
+            }
           }
         }
         buf = []
