@@ -54,11 +54,13 @@ export default function ReportStage({
             </Space>
           }
           style={{ height: 'calc(100vh - 140px)' }}
-          bodyStyle={{
-            display: 'flex',
-            flexDirection: 'column',
-            height: 'calc(100% - 57px)',
-            padding: 12,
+          styles={{
+            body: {
+              display: 'flex',
+              flexDirection: 'column',
+              height: 'calc(100% - 57px)',
+              padding: 12,
+            },
           }}
         >
           <TextArea

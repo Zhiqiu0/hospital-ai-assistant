@@ -75,12 +75,17 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
       setKeyword('')
       setResults([])
       setSelectedPatient(null)
-      form.resetFields()
+      // 注意：住院端默认走 'search' 步骤，此时 <Form> 没挂载，调 form.resetFields()
+      // 会触发 "Instance created by useForm is not connected to any Form element" 警告。
+      // 切到 form 步骤的两处入口（line 225 / 选中已有患者）都已显式 resetFields。
     }
   }, [open, form])
 
   const handleClose = () => {
-    form.resetFields()
+    // 关闭时 form 实例可能已被回收，避免在 Form 未挂载场景触发 useForm 警告
+    if (step === 'form') {
+      form.resetFields()
+    }
     onClose()
   }
 
@@ -95,9 +100,9 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
-        const res = (await api.get(
-          `/patients?keyword=${encodeURIComponent(kw)}&page_size=8`
-        )) as { items?: Patient[] }
+        const res = (await api.get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=8`)) as {
+          items?: Patient[]
+        }
         setResults(res.items || [])
       } catch {
         setResults([])

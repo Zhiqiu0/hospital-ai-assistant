@@ -12,18 +12,7 @@
  *   通过管理页热更新比改代码重部署效率高。
  */
 import { useEffect, useState } from 'react'
-import {
-  List,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Tag,
-  Typography,
-  Card,
-  Popconfirm,
-} from 'antd'
+import { List, Button, Modal, Form, Input, Select, Tag, Typography, Card, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { message } from '@/services/messageBridge'
@@ -80,15 +69,24 @@ export default function PromptsPage() {
 
   const openCreate = () => {
     setEditPrompt(null)
-    form.resetFields()
     setModalOpen(true)
   }
 
   const openEdit = (p: PromptRow) => {
     setEditPrompt(p)
-    form.setFieldsValue(p)
     setModalOpen(true)
   }
+
+  // form.resetFields / setFieldsValue 必须等 Modal 内 Form 挂载后再调，否则触发
+  // "Instance created by useForm is not connected to any Form element" 警告
+  useEffect(() => {
+    if (!modalOpen) return
+    if (editPrompt) {
+      form.setFieldsValue(editPrompt)
+    } else {
+      form.resetFields()
+    }
+  }, [modalOpen, editPrompt, form])
 
   const handleSubmit = async (values: PromptFormValues) => {
     try {

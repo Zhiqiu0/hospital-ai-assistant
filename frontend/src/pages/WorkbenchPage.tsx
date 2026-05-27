@@ -15,7 +15,7 @@
  *   WorkbenchStatusBar→ 底部状态栏
  */
 import { useState, useEffect } from 'react'
-import { Layout, Tabs, Modal } from 'antd'
+import { App, Layout, Tabs } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -66,6 +66,8 @@ interface WorkbenchPageProps {
 }
 
 export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProps) {
+  // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.info 静态方法
+  const { modal } = App.useApp()
   const isEmergency = mode === 'emergency'
   const accentColor = isEmergency ? '#dc2626' : '#0891B2'
   const accentLight = isEmergency ? '#ef4444' : '#06b6d4'
@@ -159,7 +161,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     })
     // 跨医生未完成接诊警示（非阻断）：让医生看到该患者还有别的医生留下的进行中接诊
     if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
-      Modal.info({
+      modal.info({
         title: '该患者尚有未完成接诊',
         width: 480,
         content: (

@@ -8,7 +8,7 @@
  * 本主文件只负责组合：状态从 hook 取出 → 透传给两个子组件 + 渲染 TextArea + 出具签发 Modal。
  */
 import { useEffect, useRef } from 'react'
-import { Input, Modal } from 'antd'
+import { App, Input } from 'antd'
 import type { TextAreaRef } from 'antd/es/input/TextArea'
 import FinalRecordModal from './FinalRecordModal'
 import PreviousRecordPanel from './PreviousRecordPanel'
@@ -24,6 +24,9 @@ import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 const { TextArea } = Input
 
 export default function RecordEditor() {
+  // App.useApp() 拿到的 modal 实例能 consume 主题 context；
+  // 不要用 Modal.confirm/warning/info 静态方法（会绕开 ConfigProvider 主题）。
+  const { modal } = App.useApp()
   const previousRecordContent = useActiveEncounterStore(s => s.previousRecordContent)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const {
@@ -131,7 +134,7 @@ export default function RecordEditor() {
       setFinalModalOpen(true)
       return
     }
-    Modal.confirm({
+    modal.confirm({
       title: `还有 ${fields.length} 处 AI 补全未确认`,
       content: (
         <div>

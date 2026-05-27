@@ -45,6 +45,32 @@ export default function InquiryBasicFields({ isFirstVisit }: InquiryBasicFieldsP
         />
       </Form.Item>
 
+      {/* 复诊警示必须放在 Form.Item 外面：
+          Form.Item 带 name 时只允许一个子节点（antd 会把 value/onChange 注入这个子节点），
+          多子节点会触发 "[antd: Form.Item] must have a single child element" 警告。 */}
+      {!isFirstVisit && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 6,
+            background: '#fffbeb',
+            border: '1px solid #fcd34d',
+            borderRadius: 6,
+            padding: '6px 10px',
+            marginBottom: 6,
+            fontSize: 12,
+            color: '#92400e',
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ fontSize: 14, flexShrink: 0 }}>⚠️</span>
+          <span>
+            <b>复诊必填：</b>
+            须记录上次治疗后症状改变情况（好转／无变化／加重），否则质控不通过。
+          </span>
+        </div>
+      )}
       <Form.Item
         style={fs}
         name="history_present_illness"
@@ -54,29 +80,6 @@ export default function InquiryBasicFields({ isFirstVisit }: InquiryBasicFieldsP
           </span>
         }
       >
-        {!isFirstVisit && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 6,
-              background: '#fffbeb',
-              border: '1px solid #fcd34d',
-              borderRadius: 6,
-              padding: '6px 10px',
-              marginBottom: 6,
-              fontSize: 12,
-              color: '#92400e',
-              lineHeight: 1.5,
-            }}
-          >
-            <span style={{ fontSize: 14, flexShrink: 0 }}>⚠️</span>
-            <span>
-              <b>复诊必填：</b>
-              须记录上次治疗后症状改变情况（好转／无变化／加重），否则质控不通过。
-            </span>
-          </div>
-        )}
         <TextArea
           rows={isFirstVisit ? 4 : 5}
           placeholder={

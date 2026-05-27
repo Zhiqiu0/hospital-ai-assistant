@@ -12,7 +12,7 @@
  *   - 选中病程记录 → ProgressNotePanel（独立编辑/签发）
  */
 import { useState, useEffect } from 'react'
-import { Layout, Button, Empty, Modal } from 'antd'
+import { App, Layout, Button, Empty } from 'antd'
 import { message } from '@/services/messageBridge'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
@@ -64,6 +64,8 @@ const RECORD_TYPE_LABEL: Record<string, string> = {
 }
 
 export default function InpatientWorkbenchPage() {
+  // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.info 静态方法
+  const { modal } = App.useApp()
   const { user } = useAuthStore()
   const currentPatient = useCurrentPatient()
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
@@ -171,7 +173,7 @@ export default function InpatientWorkbenchPage() {
     }
     // 跨医生未完成接诊警示（非阻断），与门诊端一致
     if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
-      Modal.info({
+      modal.info({
         title: '该患者尚有未完成接诊',
         width: 480,
         content: (

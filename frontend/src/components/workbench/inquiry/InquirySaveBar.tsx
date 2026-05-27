@@ -8,7 +8,7 @@
  *
  * 注：profile 单独保存过不算"已保存"，因为问诊是这块面板的主任务。
  */
-import { Button, Modal, Tooltip } from 'antd'
+import { App, Button, Tooltip } from 'antd'
 import { SaveOutlined, CheckOutlined, MedicineBoxOutlined } from '@ant-design/icons'
 
 interface InquirySaveBarProps {
@@ -37,6 +37,8 @@ export default function InquirySaveBar({
   handleAdmitToInpatient,
   hasUnsignedRecord,
 }: InquirySaveBarProps) {
+  // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.confirm 静态方法
+  const { modal } = App.useApp()
   const anyDirty = isDirty || profileDirty
   const anySaving = saving || profileSaving
 
@@ -54,7 +56,7 @@ export default function InquirySaveBar({
 
   // 转住院按钮的二次确认（门诊/急诊都显示；住院工作台不渲染 InquiryPanel，不会错触发）
   const confirmAdmit = () => {
-    Modal.confirm({
+    modal.confirm({
       title: '转入住院',
       content: '确认将当前患者转入住院？已填的问诊信息和已签发的病历会作为入院参考带入。',
       okText: '确认转住院',

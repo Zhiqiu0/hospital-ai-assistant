@@ -3,7 +3,7 @@
  * 从 InpatientWorkbenchPage 提取，避免页面文件过长。
  */
 import { useState } from 'react'
-import { Button, Space, Tag, Typography, Avatar, Divider, Modal } from 'antd'
+import { App, Button, Space, Tag, Typography, Avatar, Divider } from 'antd'
 import { message } from '@/services/messageBridge'
 import { Layout } from 'antd'
 import {
@@ -52,13 +52,15 @@ export default function InpatientHeader({
   onDischarged,
   onOpenCancel,
 }: Props) {
+  // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.confirm 静态方法
+  const { modal } = App.useApp()
   const [discharging, setDischarging] = useState(false)
 
   // 办理出院：二次确认弹窗 → POST /encounters/{id}/discharge → 成功回调
   // 注：出院 ≠ 删除，已签发病历仍可在「历史病历」抽屉中查阅。
   const handleDischarge = () => {
     if (!currentEncounterId || !currentPatient) return
-    Modal.confirm({
+    modal.confirm({
       title: '办理出院',
       icon: <ExclamationCircleOutlined style={{ color: '#f59e0b' }} />,
       content: (

@@ -128,19 +128,30 @@ export default function UsersPage() {
 
   const openCreate = () => {
     setEditUser(null)
-    form.resetFields()
     setModalOpen(true)
   }
 
   const openEdit = (user: UserRow) => {
     setEditUser(user)
-    form.setFieldsValue({
-      real_name: user.real_name,
-      role: user.role,
-      department_id: user.department_id ?? undefined,
-    })
     setModalOpen(true)
   }
+
+  // form.resetFields / setFieldsValue 必须等 Modal 内的 Form 挂载之后再调，
+  // 否则 useForm 实例没连接到任何 Form 元素，触发
+  // "Instance created by useForm is not connected to any Form element" 警告。
+  // 监听 modalOpen + editUser 变化在 effect 里同步初值。
+  useEffect(() => {
+    if (!modalOpen) return
+    if (editUser) {
+      form.setFieldsValue({
+        real_name: editUser.real_name,
+        role: editUser.role,
+        department_id: editUser.department_id ?? undefined,
+      })
+    } else {
+      form.resetFields()
+    }
+  }, [modalOpen, editUser, form])
 
   const handleSubmit = async (values: UserFormValues) => {
     try {
@@ -321,7 +332,7 @@ export default function UsersPage() {
         onOk={() => form.submit()}
         okText="确认"
         cancelText="取消"
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
           {!editUser && (
@@ -371,7 +382,7 @@ export default function UsersPage() {
         cancelText="取消"
         okButtonProps={{ loading: resetSubmitting }}
         onOk={submitReset}
-        destroyOnClose
+        destroyOnHidden
         width={460}
       >
         <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 13 }}>
