@@ -38,6 +38,26 @@ def coalesce_field(value, default: str = PLACEHOLDER) -> str:
     return text if text else default
 
 
+def sanitize_inline_field(value, default: str = PLACEHOLDER, max_len: int = 64) -> str:
+    """单行身份类字段（患者姓名/性别/年龄等）的 prompt 注入清洗（2026-06-11）。
+
+    这些字段会被直接 format 进 prompt 模板的行结构里，恶意或异常输入中的
+    换行/回车/空字符可以伪造新的 prompt 段落（prompt 注入面）。
+    与 coalesce_field 的区别：本函数会压平换行 + 截断超长——只能用于
+    天然单行的短字段，**不要**用于现病史等合法多行内容。
+    """
+    text = coalesce_field(value, default)
+    if text == default:
+        return text
+    # 换行/回车/制表/空字符统一压成单空格，再合并连续空格
+    text = text.replace("\x00", "").replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    text = " ".join(text.split())
+    # 身份字段超长基本是异常输入（正常姓名/年龄远小于 64 字符），截断防 prompt 膨胀
+    if len(text) > max_len:
+        text = text[:max_len]
+    return text if text else default
+
+
 # record_type → 中文标签（唯一权威映射，prompt / QC / 评分 共用）。
 # 从 prompts_generation.py 迁来——L3 阶段 4 删除老 prompt 文件后，
 # 这个映射作为 schema 层基础常量保留。

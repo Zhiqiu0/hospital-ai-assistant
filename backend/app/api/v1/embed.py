@@ -77,16 +77,19 @@ async def start_embed_session(
             except ValueError:
                 pass  # 无法解析就留空，不阻塞创建
 
+        # commit=False：建患者与下方建接诊合并为同一事务（2026-06-11 治本）——
+        # 否则接诊创建失败时会留下无接诊关联的孤儿患者档案
         new_patient = await patient_service.create(
             PatientCreate(
                 name=req.patient_name,
                 gender=req.patient_gender,
                 birth_date=birth_date,
-            )
+            ),
+            commit=False,
         )
         patient_id = new_patient["id"]
 
-    # 2. 创建嵌入接诊，落 HIS 标识
+    # 2. 创建嵌入接诊，落 HIS 标识（与上方建患者同一事务，一次 commit）
     encounter = Encounter(
         patient_id=patient_id,
         doctor_id=current_user.id,

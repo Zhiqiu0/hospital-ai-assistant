@@ -35,6 +35,7 @@ from app.services.ai.prompts import (
     VOICE_STRUCTURE_PROMPT_INPATIENT,
     VOICE_STRUCTURE_PROMPT_OUTPATIENT,
 )
+from app.services.ai.record_schemas import sanitize_inline_field
 from app.services.ai.task_logger import log_ai_task
 from app.services.audit_service import log_action
 
@@ -368,10 +369,12 @@ async def voice_structure(
         existing_baseline = json.dumps(req.existing_inquiry, ensure_ascii=False)
     else:
         existing_baseline = "（无）"
+    # 身份字段防 prompt 注入清洗（2026-06-11）：压平换行 + 截断超长，
+    # 防止异常患者姓名等外部输入伪造新的 prompt 段落
     prompt = prompt_template.format(
-        patient_name=req.patient_name or "未提供",
-        patient_gender=req.patient_gender or "未提供",
-        patient_age=req.patient_age or "未提供",
+        patient_name=sanitize_inline_field(req.patient_name, "未提供"),
+        patient_gender=sanitize_inline_field(req.patient_gender, "未提供"),
+        patient_age=sanitize_inline_field(req.patient_age, "未提供"),
         existing_baseline=existing_baseline,
         transcript=transcript,
     )

@@ -69,6 +69,9 @@ async def _call_llm_json_with_retry(
             # 最后一次直接抛，由上层 SSE error 事件兜底
             if attempt == max_retries:
                 raise
+            # 重试前短退避（2026-06-11）：给上游瞬时抖动（限流/5xx/网络）恢复时间，
+            # 立刻重试大概率撞上同一个故障窗口
+            await asyncio.sleep(1.0 * (attempt + 1))
     # 不会到这里，typing 兜底
     raise last_exc if last_exc else RuntimeError("unreachable")
 

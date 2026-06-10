@@ -2,6 +2,7 @@
  * QC 字段映射常量 + 记录内容写入工具
  * 供 QCIssuePanel、AISuggestionPanel 等共享使用
  */
+import { COMPOUND_SECTION_PREFIXES, mergeCompoundSectionBody } from './compoundSectionWriter'
 
 /** field_name → 病历中的章节标题（用于定位写入位置）
  *
@@ -736,6 +737,15 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
     const start = matches[targetIdx].index
     const headerEnd = start + matches[targetIdx].header.length
     const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
+    // 复合段保护（2026-06-11）：清空复合段时只清自由文本，受保护子行
+    // （望诊/舌脉/中西医诊断等医生可能已填的行）原样保留，防止回滚时丢数据
+    const clearPrefixes = COMPOUND_SECTION_PREFIXES[matches[targetIdx].header]
+    if (clearPrefixes) {
+      const oldBody = content.slice(headerEnd, end)
+      const keptBody = mergeCompoundSectionBody(oldBody, '[未填写，需补充]', clearPrefixes)
+      const tail = content.slice(end).replace(/^\s+/, '')
+      return content.slice(0, headerEnd) + '\n' + keptBody + '\n\n' + (tail ? tail : '')
+    }
     // 保留 header + 一个换行，让再次写入能定位到原位置
     const tail = content.slice(end).replace(/^\s+/, '')
     return content.slice(0, headerEnd) + '\n\n' + (tail ? tail : '')
@@ -752,9 +762,22 @@ export function writeSectionToRecord(content: string, fieldName: string, fixText
   }
   const start = matches[targetIdx].index
   const end = targetIdx + 1 < matches.length ? matches[targetIdx + 1].index : content.length
+
+  // 复合段保护（2026-06-11 治本）：【体格检查】【诊断】【治疗意见及措施】这类
+  // 含受保护子行（望诊/舌脉/中西医诊断等）的段，章节级写入改走结构化合并——
+  // 只更新修复文本明确给出的子行与自由文本，其余子行（医生已填内容）原样保留。
+  // 否则整段替换会把医生手填的切诊·舌象/脉象等数据冲掉（E2E 实测复现的 P0 bug）。
+  const protectedPrefixes = COMPOUND_SECTION_PREFIXES[header]
+  if (protectedPrefixes) {
+    const oldBody = content.slice(start + header.length, end)
+    const mergedBody = mergeCompoundSectionBody(oldBody, fixText, protectedPrefixes)
+    return (
+      content.slice(0, start) + header + '\n' + mergedBody + '\n\n' + content.slice(end).trimStart()
+    )
+  }
+
   return content.slice(0, start) + header + '\n' + fixText + '\n' + content.slice(end).trimStart()
 }
-
 
 /**
  * 定位字段在病历正文中的字符位置（用于 AI 写入字段池的 chip 跳转）

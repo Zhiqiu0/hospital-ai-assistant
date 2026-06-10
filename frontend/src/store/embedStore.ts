@@ -31,7 +31,14 @@ interface EmbedState {
   /** true = 当前是金算盘等 HIS 嵌入模式 */
   isEmbed: boolean
   session: EmbedSession | null
-  setEmbed: (session: EmbedSession) => void
+  /**
+   * embed_token 过期时刻（epoch 毫秒，来自 JWT exp）。
+   * 2026-06-11 治本：token 4h 过期后 sessionStorage 里的嵌入态还在，
+   * 医生刷新页面表面正常、实际所有请求 401。存过期时间让入口页/API 层
+   * 能主动检测并给出"请重新从 HIS 触发"的明确提示。
+   */
+  tokenExpiresAt: number | null
+  setEmbed: (session: EmbedSession, tokenExpiresAt?: number | null) => void
   clearEmbed: () => void
 }
 
@@ -40,8 +47,9 @@ export const useEmbedStore = create<EmbedState>()(
     set => ({
       isEmbed: false,
       session: null,
-      setEmbed: session => set({ isEmbed: true, session }),
-      clearEmbed: () => set({ isEmbed: false, session: null }),
+      tokenExpiresAt: null,
+      setEmbed: (session, tokenExpiresAt = null) => set({ isEmbed: true, session, tokenExpiresAt }),
+      clearEmbed: () => set({ isEmbed: false, session: null, tokenExpiresAt: null }),
     }),
     {
       name: 'mediscribe-embed',

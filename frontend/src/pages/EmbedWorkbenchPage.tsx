@@ -22,6 +22,19 @@ import type { EmbedSession } from '@/store/embedStore'
 import { desktopAgent } from '@/services/desktopAgent'
 import api from '@/services/api'
 
+/**
+ * 解析 JWT 的 exp 声明（秒级 epoch）→ 毫秒级 epoch；解析失败返回 null。
+ * 仅做 base64 解码读字段，不验签（验签是后端的事，前端只用于提前提示过期）。
+ */
+function parseJwtExpiresAt(token: string): number | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
 export default function EmbedWorkbenchPage() {
   const [params] = useSearchParams()
   const [loading, setLoading] = useState(true)
@@ -30,10 +43,26 @@ export default function EmbedWorkbenchPage() {
 
   const token = params.get('token')
   const encounterId = params.get('encounter_id')
+  // api 层捕获到嵌入态 401 时跳回 /embed?expired=1，在这里给医生明确提示
+  const expiredFlag = params.get('expired')
 
   useEffect(() => {
+    if (expiredFlag) {
+      setError('嵌入会话已过期（有效期 4 小时），请回到 HIS 重新触发 AI 助手')
+      setLoading(false)
+      return
+    }
     if (!token || !encounterId) {
       setError('缺少 token 或 encounter_id 参数')
+      setLoading(false)
+      return
+    }
+
+    // token 已过期的直接拦截（医生从浏览器历史/书签重新打开旧链接的场景），
+    // 不发请求就给出明确指引，避免落到通用 401 报错
+    const tokenExpiresAt = parseJwtExpiresAt(token)
+    if (tokenExpiresAt !== null && tokenExpiresAt <= Date.now()) {
+      setError('嵌入会话已过期（有效期 4 小时），请回到 HIS 重新触发 AI 助手')
       setLoading(false)
       return
     }
@@ -52,7 +81,8 @@ export default function EmbedWorkbenchPage() {
           setError('嵌入会话缺少患者 ID，请重新从 HIS 触发 AI 助手')
           return
         }
-        useEmbedStore.getState().setEmbed(session)
+        // 把 token 过期时刻一并入库，供 API 层 401 时判断"是过期还是别的问题"
+        useEmbedStore.getState().setEmbed(session, parseJwtExpiresAt(token))
         // 用 setActive 而不是 setState：encounterId 变化时它会自动 reset 4 个子 store
         // (inquiry / record / qc / aiSuggestion)，避免上次 SaaS 测试残留的 inquiry
         // 数据污染嵌入会话（AutoFillButton collectFields 会误读到旧字段）。
@@ -78,7 +108,7 @@ export default function EmbedWorkbenchPage() {
         }
       })
       .finally(() => setLoading(false))
-  }, [token, encounterId])
+  }, [token, encounterId, expiredFlag])
 
   if (loading) {
     return (

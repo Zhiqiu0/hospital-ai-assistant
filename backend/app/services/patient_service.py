@@ -278,8 +278,13 @@ class PatientService:
                 active.add(pid)
         return active, ever
 
-    async def create(self, data: PatientCreate) -> dict:
+    async def create(self, data: PatientCreate, *, commit: bool = True) -> dict:
         """创建新患者档案。
+
+        commit 参数（2026-06-11 治本）：
+          True（默认）——方法内部 commit，保持原有行为；
+          False——只 flush 拿主键不提交，由调用方把"建患者 + 后续写入"包进
+          同一事务（embed/start 用，防止接诊创建失败时留下孤儿患者档案）。
 
         使用 exclude_none=True 避免将 None 字段写入数据库，
         保留数据库字段的默认值（如 is_from_his=False）。
@@ -320,7 +325,11 @@ class PatientService:
         patient.name_pinyin, patient.name_pinyin_initials = compute_pinyin(patient.name)
         self.db.add(patient)
         try:
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
+            else:
+                # flush 同样会触发 partial unique index 校验，IntegrityError 兜底依然有效
+                await self.db.flush()
         except IntegrityError as e:
             # 并发 race 兜底：上面查重和这里 commit 之间另一个请求恰好插入了同号
             # DB 的 partial unique index 会拦下来；这里回滚 + 重新查一次，转 409

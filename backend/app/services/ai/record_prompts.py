@@ -24,6 +24,7 @@ from app.services.ai.record_schemas import (
     PLACEHOLDER,
     coalesce_field,
     get_schema,
+    sanitize_inline_field,
 )
 
 # L3 阶段 3 已全量接入：10 个 record_type 全部走 JSON 模式。
@@ -77,9 +78,11 @@ def _build_request_block(req: Any, *, include_tcm: bool) -> str:
         weight=getattr(req, "weight", "") or "",
     )
     lines: list[str] = [
-        f"姓名：{coalesce_field(getattr(req, 'patient_name', None), '患者')}  "
-        f"性别：{coalesce_field(getattr(req, 'patient_gender', None), '未知')}  "
-        f"年龄：{coalesce_field(getattr(req, 'patient_age', None), '未知')}",
+        # 身份字段走 sanitize_inline_field：压平换行 + 截断超长，防 prompt 注入
+        # （患者姓名等是外部可控输入，换行可伪造新的 prompt 段落）2026-06-11
+        f"姓名：{sanitize_inline_field(getattr(req, 'patient_name', None), '患者')}  "
+        f"性别：{sanitize_inline_field(getattr(req, 'patient_gender', None), '未知')}  "
+        f"年龄：{sanitize_inline_field(getattr(req, 'patient_age', None), '未知')}",
         f"主诉：{coalesce_field(getattr(req, 'chief_complaint', None))}",
         f"现病史：{coalesce_field(getattr(req, 'history_present_illness', None))}",
         f"既往史：{coalesce_field(getattr(req, 'past_history', None))}",
@@ -175,9 +178,10 @@ def _build_inpatient_request_block(req: Any) -> str:
         weight=getattr(req, "weight", "") or "",
     )
     return "\n".join([
-        f"姓名：{coalesce_field(getattr(req, 'patient_name', None), '患者')}  "
-        f"性别：{coalesce_field(getattr(req, 'patient_gender', None), '未知')}  "
-        f"年龄：{coalesce_field(getattr(req, 'patient_age', None), '未知')}",
+        # 身份字段防 prompt 注入清洗，同 _build_request_block（2026-06-11）
+        f"姓名：{sanitize_inline_field(getattr(req, 'patient_name', None), '患者')}  "
+        f"性别：{sanitize_inline_field(getattr(req, 'patient_gender', None), '未知')}  "
+        f"年龄：{sanitize_inline_field(getattr(req, 'patient_age', None), '未知')}",
         f"主诉：{coalesce_field(getattr(req, 'chief_complaint', None))}",
         f"现病史：{coalesce_field(getattr(req, 'history_present_illness', None))}",
         f"既往史：{coalesce_field(getattr(req, 'past_history', None))}",

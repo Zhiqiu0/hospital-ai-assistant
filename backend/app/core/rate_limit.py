@@ -111,3 +111,10 @@ login_limiter = RateLimiter(max_calls=10, window=timedelta(minutes=10), name="lo
 # AI 功能接口（生成/质控/润色等）：按 IP 限速
 # 30次/分钟，防止单用户高频调用消耗大量 LLM token
 ai_limiter = RateLimiter(max_calls=30, window=timedelta(minutes=1), name="ai")
+
+# 用户名查重接口（公开端点，登录页要用）：按 IP 限速
+# 2026-06-11 安全加固：无限速时可被脚本批量枚举全院账号（CWE-203），
+# 20次/分钟对正常用户（登录页输入时查一次）完全无感，对批量枚举是硬约束
+username_check_limiter = RateLimiter(
+    max_calls=20, window=timedelta(minutes=1), name="check_username"
+)

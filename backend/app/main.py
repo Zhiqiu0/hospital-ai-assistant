@@ -13,6 +13,7 @@ FastAPI 应用入口（main.py）
 """
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,7 @@ from app.api.v1 import router as api_v1_router
 from app.config import settings
 from app.core.logging_config import setup_logging
 from app.core.request_context import RequestIDMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.sentry_init import init_sentry
 from app.database import AsyncSessionLocal
 from app.schema_compat import apply_schema_compatibility
@@ -41,6 +43,16 @@ init_sentry(
     release=settings.sentry_release or None,
 )
 
+# ── 生命周期（lifespan）──────────────────────────────────────────────────────
+# 2026-06-11：替换弃用的 @app.on_event("startup")，行为不变：
+# 启动时打日志 + 执行 schema 兼容性检查（自动为旧版 DB 补缺失字段）
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    logger.info("app.startup: ok")
+    await apply_schema_compatibility()
+    yield
+
+
 # ── FastAPI 实例 ──────────────────────────────────────────────────────────────
 app = FastAPI(
     title="MediScribe 临床接诊智能助手",
@@ -48,6 +60,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",      # Swagger UI，仅开发环境开放
     redoc_url="/redoc",    # ReDoc 文档
+    lifespan=lifespan,
 )
 
 # ── 请求 ID 中间件 ─────────────────────────────────────────────────────────────
@@ -58,13 +71,19 @@ app.add_middleware(RequestIDMiddleware)
 
 # ── CORS 跨域中间件 ────────────────────────────────────────────────────────────
 # allowed_origins 从 settings 读取（支持逗号分隔多域名），生产环境需精确配置
+# 2026-06-11 安全加固：方法/请求头从通配收窄为实际使用的白名单（等保审计项）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,  # 允许的前端域名列表
     allow_credentials=True,               # 允许携带 Cookie/Authorization
-    allow_methods=["*"],                  # 允许所有 HTTP 方法
-    allow_headers=["*"],                  # 允许所有请求头
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],      # 让前端报错时能读到请求 ID 用于排查
+    max_age=3600,                         # 预检结果缓存 1h，减少 OPTIONS 请求
 )
+
+# ── 安全响应头中间件 ───────────────────────────────────────────────────────────
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ── 路由挂载 ──────────────────────────────────────────────────────────────────
 # 所有业务 API 均挂载在 /api/v1 前缀下
@@ -83,25 +102,14 @@ async def catch_all_exception_handler(request: Request, exc: Exception):
         request.url.path,
         type(exc).__name__,
     )
+    # 2026-06-11 安全加固：不再返回 error_type——内部异常类型名暴露实现细节
+    # （等保 2.0 三级要求错误消息不含系统内部信息），细节只进日志/Sentry
     return JSONResponse(
         status_code=500,
         content={
             "detail": "服务器内部错误，请稍后重试（技术细节已记录到服务端日志）",
-            "error_type": type(exc).__name__,
         },
     )
-
-
-# ── 生命周期钩子 ──────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时执行：
-    1. 打印启动日志
-    2. 执行 schema_compat 兼容性检查（自动为旧版 DB 补充缺失字段）
-    """
-    logger.info("app.startup: ok")
-    await apply_schema_compatibility()
 
 
 # ── 健康检查 ──────────────────────────────────────────────────────────────────
