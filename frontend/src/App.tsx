@@ -39,10 +39,13 @@ const InpatientWorkbenchPage = lazy(() => import('@/pages/InpatientWorkbenchPage
 const PacsWorkbenchPage = lazy(() => import('@/pages/PacsWorkbenchPage'))
 const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout'))
 
-/** 懒加载路由切换时的过渡画面（与应用启动 Spin 风格一致） */
+/** 懒加载路由切换时的过渡画面（与应用启动 Spin 风格一致）
+ *  Spin 的 tip 只在"嵌套模式"下生效（antd 约定），所以给个空容器当 children */
 const lazyFallback = (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-    <Spin size="large" tip="加载中..." />
+    <Spin size="large" tip="加载中...">
+      <div style={{ minHeight: 60, minWidth: 60 }} />
+    </Spin>
   </div>
 )
 import { useAuthStore, isTokenExpired } from '@/store/authStore'
@@ -106,7 +109,9 @@ export default function App() {
           height: '100vh',
         }}
       >
-        <Spin size="large" tip="加载中..." />
+        <Spin size="large" tip="加载中...">
+          <div style={{ minHeight: 60, minWidth: 60 }} />
+        </Spin>
       </div>
     )
   }

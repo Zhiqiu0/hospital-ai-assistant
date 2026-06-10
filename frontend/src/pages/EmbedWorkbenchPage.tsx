@@ -120,7 +120,9 @@ export default function EmbedWorkbenchPage() {
           height: '100vh',
         }}
       >
-        <Spin size="large" tip="正在打开嵌入工作台..." />
+        <Spin size="large" tip="正在打开嵌入工作台...">
+          <div style={{ minHeight: 60, minWidth: 60 }} />
+        </Spin>
       </div>
     )
   }

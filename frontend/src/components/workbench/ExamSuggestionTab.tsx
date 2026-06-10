@@ -72,7 +72,13 @@ export default function ExamSuggestionTab() {
         history_present_illness: inquiry.history_present_illness,
         initial_impression: inquiry.initial_impression,
         encounter_id: currentEncounterId || undefined,
-      })) as { suggestions?: ExamSuggestion[] }
+      })) as { suggestions?: ExamSuggestion[]; degraded?: boolean }
+      // degraded=true 是后端 AI 故障兜底，提示医生而不是静默显示"无建议"（2026-06-11）
+      if (data.degraded) {
+        message.error('AI 服务暂时不可用，请稍后重试')
+        setExamSuggestions([])
+        return
+      }
       setExamSuggestions(data.suggestions || [])
     } catch {
       setExamSuggestions([])

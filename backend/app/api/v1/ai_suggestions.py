@@ -87,7 +87,8 @@ async def inquiry_suggestions(
         return result
     except Exception as exc:
         logger.exception("ai.inquiry_suggestions: failed err=%s", exc)
-        return {"suggestions": []}
+        # degraded=True 让前端区分"AI 故障"和"真的没有建议"（2026-06-11）
+        return {"suggestions": [], "degraded": True}
 
 
 @router.post("/exam-suggestions")
@@ -127,7 +128,8 @@ async def exam_suggestions(
         return result
     except Exception as exc:
         logger.exception("ai.exam_suggestions: failed err=%s", exc)
-        return {"suggestions": []}
+        # degraded=True 让前端区分"AI 故障"和"真的没有建议"（2026-06-11）
+        return {"suggestions": [], "degraded": True}
 
 
 @router.post("/diagnosis-suggestion")
@@ -177,4 +179,5 @@ async def diagnosis_suggestion(
         return result
     except Exception as exc:
         logger.exception("ai.diagnosis_suggestion: failed err=%s", exc)
-        return {"diagnoses": []}
+        # degraded=True 让前端区分"AI 故障"和"真的没有建议"（2026-06-11）
+        return {"diagnoses": [], "degraded": True}

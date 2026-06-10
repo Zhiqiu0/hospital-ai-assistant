@@ -125,3 +125,38 @@ describe('writeSectionToRecord — 复合段集成（P0 回归用例）', () => 
     expect(next).toContain('【辅助检查】\n血常规未见异常')
   })
 })
+
+describe('writeSectionToRecord — 2026-06-11 映射修复回归', () => {
+  const outpatientRecord = [
+    '【主诉】',
+    '咳嗽2天',
+    '',
+    '【治疗意见及措施】',
+    '治则治法：[未填写，需补充]',
+    '处理意见：[未填写，需补充]',
+    '复诊建议：3天后复诊',
+    '注意事项：[未填写，需补充]',
+  ].join('\n')
+
+  it('治疗意见及措施 父段写入落到真实章节且保留医生已填子行（原映射指向不存在的【处理意见】）', () => {
+    const next = writeSectionToRecord(
+      outpatientRecord,
+      '治疗意见及措施',
+      '治则治法：疏风散寒；处理意见：口服中药'
+    )
+    expect(next).toContain('治则治法：疏风散寒')
+    expect(next).toContain('处理意见：口服中药')
+    expect(next).toContain('复诊建议：3天后复诊') // 医生已填，保留
+  })
+
+  it('英文键 treatment_plan 走行级写入【治疗意见及措施】子行', () => {
+    const next = writeSectionToRecord(outpatientRecord, 'treatment_plan', '口服抗生素')
+    expect(next).toContain('处理意见：口服抗生素')
+  })
+
+  it('行级章节缺失时回退章节级：日常病程记录的独立【注意事项】能写入', () => {
+    const courseRecord = '【患者病情记录】\n病情平稳\n\n【注意事项】\n[未填写，需补充]'
+    const next = writeSectionToRecord(courseRecord, '注意事项', '低盐饮食，监测血压')
+    expect(next).toContain('【注意事项】\n低盐饮食，监测血压')
+  })
+})
