@@ -2,19 +2,20 @@
 管理后台 Prompt 模板接口（/api/v1/admin/prompts/*）
 
 支持按场景（scene）管理 LLM prompt 模板，激活的模板将覆盖代码内置默认值。
+
+业务逻辑已下沉到 app/services/prompt_template_service.py（2026-06-11 Round 5 迁移），
+本文件只保留请求解析 + 鉴权 + 调 service。
 """
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import require_admin
 from app.database import get_db
-from app.models.config import PromptTemplate
 from app.schemas.config import PromptTemplateCreate, PromptTemplateResponse, PromptTemplateUpdate
-from app.services.ai.ai_utils import invalidate_active_prompt
+from app.services.prompt_template_service import PromptTemplateService
 
 router = APIRouter()
 
@@ -24,8 +25,9 @@ async def list_prompts(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    result = await db.execute(select(PromptTemplate).order_by(PromptTemplate.created_at.desc()))
-    items = result.scalars().all()
+    """列出全部 Prompt 模板（按创建时间倒序）。"""
+    service = PromptTemplateService(db)
+    items = await service.list_templates()
     return {"items": [PromptTemplateResponse.model_validate(item) for item in items]}
 
 
@@ -35,18 +37,9 @@ async def create_prompt(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    template = PromptTemplate(
-        name=data.name,
-        scene=data.scene,
-        content=data.content,
-        version=data.version or "v1",
-    )
-    db.add(template)
-    await db.commit()
-    await db.refresh(template)
-    # 该 scene 下激活模板可能变了，立即失效缓存让新配置生效
-    await invalidate_active_prompt(template.scene)
-    return template
+    """新建 Prompt 模板（写库后自动失效该 scene 的激活模板缓存）。"""
+    service = PromptTemplateService(db)
+    return await service.create(data)
 
 
 @router.put("/{prompt_id}", response_model=PromptTemplateResponse)
@@ -56,16 +49,9 @@ async def update_prompt(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    result = await db.execute(select(PromptTemplate).where(PromptTemplate.id == prompt_id))
-    template = result.scalar_one_or_none()
-    if not template:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
-    for field, value in data.model_dump(exclude_none=True).items():
-        setattr(template, field, value)
-    await db.commit()
-    await db.refresh(template)
-    await invalidate_active_prompt(template.scene)
-    return template
+    """更新 Prompt 模板（写库后自动失效缓存）。"""
+    service = PromptTemplateService(db)
+    return await service.update(prompt_id, data)
 
 
 @router.delete("/{prompt_id}", status_code=204)
@@ -74,11 +60,6 @@ async def delete_prompt(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    result = await db.execute(select(PromptTemplate).where(PromptTemplate.id == prompt_id))
-    template = result.scalar_one_or_none()
-    if not template:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
-    scene = template.scene
-    await db.delete(template)
-    await db.commit()
-    await invalidate_active_prompt(scene)
+    """删除 Prompt 模板（写库后自动失效缓存）。"""
+    service = PromptTemplateService(db)
+    await service.delete(prompt_id)
