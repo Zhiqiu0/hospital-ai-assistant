@@ -14,11 +14,13 @@
  * Audit Round 4 M6 拆分：
  *   - 单条问题渲染 → qcIssue/QCIssueItem.tsx
  *   - 颜色/标签常量 → qcIssue/qcConstants.ts
- *   - 本主文件保留：状态聚合 + AI 修复 / 写入逻辑 + 三种空态视图 + 列表分组
+ * 2026-06-11 Round 5.5 拆分（纯搬家不改逻辑）：
+ *   - 大项分组块 → qcIssue/RubricItemGroup.tsx
+ *   - 空态/通过态视图 → qcIssue/QCPanelStates.tsx
+ *   - 本主文件保留：状态聚合 + AI 修复 / 写入逻辑 + 列表分组
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Empty, Spin, Tag, Tooltip, Typography } from 'antd'
-import { CaretDownOutlined, CaretRightOutlined, WarningOutlined } from '@ant-design/icons'
+import { Alert, Spin, Typography } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
@@ -35,6 +37,8 @@ import {
 } from './qcFieldMaps'
 import GradeScoreCard from './GradeScoreCard'
 import QCIssueItem from './qcIssue/QCIssueItem'
+import RubricItemGroup from './qcIssue/RubricItemGroup'
+import { QCInitialEmpty, QCPassedView } from './qcIssue/QCPanelStates'
 import api from '@/services/api'
 
 const { Text } = Typography
@@ -96,9 +100,7 @@ export default function QCIssuePanel() {
     // 治本（2026-05-19）：不可写入正文的字段（患者档案/就诊时间/中医四诊集合）
     // 不走写入路径——告诉医生去哪里修，避免在病历末尾创建错误章节。
     if (NON_WRITABLE_FIELDS.has(item.field_name)) {
-      message.info(
-        NON_WRITABLE_HINTS[item.field_name] || '该问题需手动修改，无法自动写入病历'
-      )
+      message.info(NON_WRITABLE_HINTS[item.field_name] || '该问题需手动修改，无法自动写入病历')
       return
     }
     if (writtenSet.has(idx)) {
@@ -187,35 +189,11 @@ export default function QCIssuePanel() {
   }, [scoreReport, blockingIssues])
 
   if (qcIssues.length === 0 && qcPass === null) {
-    return (
-      <>
-        {gradeScore != null && <GradeScoreCard gradeScore={gradeScore} />}
-        <Empty
-          description={
-            <span style={{ fontSize: 13, color: 'var(--text-4)' }}>
-              点击「AI质控」进行病历质量检查
-            </span>
-          }
-          style={{ marginTop: gradeScore ? 16 : 40 }}
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-        />
-      </>
-    )
+    return <QCInitialEmpty gradeScore={gradeScore} />
   }
 
   if (qcPass === true && qcIssues.length === 0) {
-    return (
-      <>
-        {gradeScore != null && <GradeScoreCard gradeScore={gradeScore} />}
-        <Alert
-          message="质控通过"
-          description={qcSummary || '病历内容符合规范要求'}
-          type="success"
-          showIcon
-          style={{ marginTop: 8, borderRadius: 8 }}
-        />
-      </>
-    )
+    return <QCPassedView gradeScore={gradeScore} qcSummary={qcSummary} />
   }
 
   const renderItem = (item: QCIssue) => {
@@ -254,23 +232,21 @@ export default function QCIssuePanel() {
               ▍必须修复（共 {blockingIssues.length} 项，修复后重新质控即可出具病历）
             </Text>
             {/* A 方案：score_report 在 → 按 PDF 大项分组；缺 → 退到平铺旧 UI */}
-            {groupedBlocking ? (
-              groupedBlocking.map(g => (
-                <RubricItemGroup
-                  key={g.item.name}
-                  itemName={g.item.name}
-                  maxPoints={g.item.max_points}
-                  deducted={g.item.deducted}
-                  rawSum={g.rawSum}
-                  cappedDown={g.cappedDown}
-                  vetoTriggered={g.item.veto_triggered}
-                  issues={g.issues}
-                  renderItem={renderItem}
-                />
-              ))
-            ) : (
-              blockingIssues.map(renderItem)
-            )}
+            {groupedBlocking
+              ? groupedBlocking.map(g => (
+                  <RubricItemGroup
+                    key={g.item.name}
+                    itemName={g.item.name}
+                    maxPoints={g.item.max_points}
+                    deducted={g.item.deducted}
+                    rawSum={g.rawSum}
+                    cappedDown={g.cappedDown}
+                    vetoTriggered={g.item.veto_triggered}
+                    issues={g.issues}
+                    renderItem={renderItem}
+                  />
+                ))
+              : blockingIssues.map(renderItem)}
           </>
         )}
         {(suggestionIssues.length > 0 || qcLlmLoading) && (
@@ -300,124 +276,5 @@ export default function QCIssuePanel() {
         )}
       </div>
     </>
-  )
-}
-
-
-/** 单大项分组块（A 方案核心组件）。
- *
- * 显示：
- *   ▶ 现病史 (实际扣 7/20 分)              ← 头部，可点击折叠
- *     [-5 分] 现病史缺失或主要症状描述不清
- *     [-2 分] 缺诊治经过
- *
- *   ▶ 治疗意见及措施 (实际扣 10/10 分 ⚠️ 已达上限)
- *     [-5 分] 检查治疗项目不明确
- *     [-5 分] 治则治法与证型不符
- *     [-5 分] 无复诊建议或注意事项
- *     原始扣分 15 分 → 按 PDF 大项上限保护实际扣 10 分
- *
- * 默认展开（医生需要一屏看完），头部可点击切折叠。
- */
-interface RubricItemGroupProps {
-  itemName: string
-  maxPoints: number
-  deducted: number
-  rawSum: number
-  cappedDown: boolean
-  vetoTriggered: boolean
-  issues: QCIssue[]
-  renderItem: (issue: QCIssue) => JSX.Element
-}
-
-function RubricItemGroup({
-  itemName,
-  maxPoints,
-  deducted,
-  rawSum,
-  cappedDown,
-  vetoTriggered,
-  issues,
-  renderItem,
-}: RubricItemGroupProps) {
-  // 默认展开（A 方案核心：一屏看完所有问题，医生可手动折叠）
-  const [expanded, setExpanded] = useState(true)
-
-  return (
-    <div
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        background: 'var(--surface-1)',
-        marginBottom: 8,
-      }}
-    >
-      {/* 头部：大项名 + 实际扣分/满分 + 角标 */}
-      <div
-        onClick={() => setExpanded(v => !v)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '8px 12px',
-          cursor: 'pointer',
-          userSelect: 'none',
-          background: vetoTriggered ? '#fff1f2' : '#fffbeb',
-          borderRadius: '8px 8px 0 0',
-          fontSize: 12,
-        }}
-      >
-        {expanded ? (
-          <CaretDownOutlined style={{ fontSize: 10, color: 'var(--text-4)' }} />
-        ) : (
-          <CaretRightOutlined style={{ fontSize: 10, color: 'var(--text-4)' }} />
-        )}
-        <Text strong style={{ fontSize: 12 }}>
-          {itemName}
-        </Text>
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          （实际扣 <Text type="danger">{deducted}</Text>/{maxPoints} 分）
-        </Text>
-        {vetoTriggered && (
-          <Tag color="red" style={{ fontSize: 10, marginLeft: 4 }}>
-            单项否决
-          </Tag>
-        )}
-        {cappedDown && !vetoTriggered && (
-          <Tooltip
-            title={`原始扣分 ${rawSum} 分 → 按 PDF 大项上限保护实际扣 ${deducted} 分（同一项扣分不超过该项满分）`}
-          >
-            <Tag
-              color="orange"
-              icon={<WarningOutlined />}
-              style={{ fontSize: 10, marginLeft: 4 }}
-            >
-              已达上限
-            </Tag>
-          </Tooltip>
-        )}
-      </div>
-
-      {/* 展开后：该大项内所有 issue */}
-      {expanded && (
-        <div style={{ padding: '4px 8px 8px 8px' }}>
-          {issues.map(renderItem)}
-          {cappedDown && !vetoTriggered && (
-            <Text
-              type="secondary"
-              style={{
-                display: 'block',
-                fontSize: 10,
-                marginTop: 4,
-                paddingLeft: 8,
-                fontStyle: 'italic',
-              }}
-            >
-              ↑ 原始扣分总计 {rawSum} 分，按 PDF 大项上限保护实际扣 {deducted} 分
-            </Text>
-          )}
-        </div>
-      )}
-    </div>
   )
 }

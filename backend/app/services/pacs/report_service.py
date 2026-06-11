@@ -3,8 +3,10 @@
 """
 PACS 影像报告 ORM 服务（services/pacs/report_service.py）
 
-职责（纯 DB 查询 / 状态流转，不抛 HTTPException——鉴权与 404/403 判断留在路由层）：
+职责（DB 查询 / 状态流转；鉴权与 404/403 判断留在路由层）：
   - AI 分析结果落库（ImagingReport upsert + study 状态流转 → analyzed）
+  - 上传幂等查重（find_duplicate_study，跨患者冲突时抛 HTTPException 409）
+  - 上传成功后写 ImagingStudy 业务行（create_imaging_study）
   - 患者已发布报告列表查询（临床医生用）
   - 影像科工作列表查询（放射科医生 / 管理员用）
 
@@ -14,10 +16,79 @@ PACS 影像报告 ORM 服务（services/pacs/report_service.py）
 """
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.imaging import ImagingReport, ImagingStudy
+from app.services.pacs.dicom_service import AUTO_ANALYZE_THRESHOLD
+
+
+async def find_duplicate_study(
+    db: AsyncSession,
+    study_uid: str,
+    patient_id: str,
+) -> Optional[dict]:
+    """上传幂等查重：同一份 DICOM 包（同 study_instance_uid）二次上传时不再
+    重复创建业务行，避免触发 unique 约束 IntegrityError 500。
+
+    医院真实场景：医生误操作重传 / 网络重试 / 同包发给多人审核都很常见。
+    上传路由在两处调用（pydicom 预检快路径 + STOW 后兜底），逻辑完全一致。
+
+    返回值：
+      - 同患者重复  → 返回幂等响应 dict（含原 study_id，前端据此跳转）
+      - 不重复      → None（由调用方继续上传主流程）
+    异常：
+      - 跨患者重复  → HTTPException 409（DICOM UID 全局唯一，几乎一定是医生选错患者）
+    """
+    existing_q = await db.execute(
+        select(ImagingStudy).where(ImagingStudy.study_instance_uid == study_uid)
+    )
+    existing_study = existing_q.scalar_one_or_none()
+    if not existing_study:
+        return None
+    if existing_study.patient_id != patient_id:
+        raise HTTPException(
+            409,
+            f"该影像已归属其他患者，不能再绑定到当前患者（已有 study_id={existing_study.id}）。"
+            "请先在 PACS 列表中处理原记录，或选择正确的患者。",
+        )
+    # 同患者重复 → 幂等：返回原 study_id 让前端跳转
+    return {
+        "study_id": existing_study.id,
+        "study_instance_uid": study_uid,
+        "total_frames": existing_study.total_frames,
+        "modality": existing_study.modality,
+        "body_part": existing_study.body_part,
+        "auto_select": (existing_study.total_frames or 0) <= AUTO_ANALYZE_THRESHOLD,
+        "duplicate": True,
+        "message": "该影像之前已上传过，已为你定位到原记录",
+    }
+
+
+async def create_imaging_study(
+    db: AsyncSession,
+    patient_id: str,
+    uploaded_by: str,
+    study_uid: str,
+    meta: dict,
+) -> ImagingStudy:
+    """上传成功后写业务表 ImagingStudy（meta 来自 frame_service.fetch_study_metadata）。"""
+    study = ImagingStudy(
+        patient_id=patient_id,
+        uploaded_by=uploaded_by,
+        study_instance_uid=study_uid,
+        modality=meta.get("modality"),
+        body_part=meta.get("body_part"),
+        series_description=meta.get("series_description"),
+        total_frames=meta.get("total_instances", 0),
+        storage_dir=None,  # R1 后不再使用本地存储
+        status="pending",
+    )
+    db.add(study)
+    await db.commit()
+    await db.refresh(study)
+    return study
 
 
 async def upsert_analysis_report(

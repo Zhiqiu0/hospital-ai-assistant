@@ -9,35 +9,34 @@ R1 迁移后职责变化：
   ImagingReport 的关联维护。
 
 端点列表：
-  POST /upload                    上传 DICOM ZIP/RAR，解压后 STOW 到 Orthanc
-  GET  /{study_id}/frames         返回该 study 的 instance UID 列表 + 智能抽帧建议
-  GET  /{study_id}/thumbnail/{i}  通过 WADO 渲染缩略图（支持自定义窗宽窗位）
-  GET  /{study_id}/dicom/{i}      通过 WADO 返回原始 DCM 文件（供前端 viewer 加载）
-  POST /{study_id}/analyze        从 Orthanc 拉关键帧 → 千问 VL 分析
-  PUT  /{study_id}/report         保存（草稿）影像报告
-  POST /{study_id}/publish        发布影像报告（正式签发）
-  GET  /patient/{patient_id}/reports  获取患者已发布的影像报告列表
-  POST /analyze-image             临床医生上传单张 JPG/PNG 直接分析（不入库）
-  GET  /studies                   影像科工作列表
+  POST /upload                       上传压缩包，解压后 STOW 到 Orthanc
+  GET  /{study_id}/frames            instance UID 列表 + 智能抽帧建议
+  GET  /{study_id}/thumbnail|preview/{instance_uid}  缩略图 / 高清预览 JPEG
+  GET  /{study_id}/dicom/{instance_uid}  原始 DCM 文件（供前端 viewer 加载）
+  POST /{study_id}/analyze           从 Orthanc 拉关键帧 → 千问 VL 分析
+  PUT  /{study_id}/report            保存影像报告（body.publish=True 同时签发）
+  GET  /patient/{patient_id}/reports 患者已发布报告列表
+  POST /analyze-image                单张 JPG/PNG/DCM 直接分析（不入库）
+  DELETE /{study_id}                 删除未发布 study（Orthanc + DB 级联）
+  GET  /studies                      影像科工作列表
 
 权限分层：
   普通医生（doctor）: 只能访问自己有接诊的患者的已发布报告 + 单图分析
   影像科医生（radiologist）/ 管理员: 全量影像列表、AI 分析、发布报告
 
-URL 路径中的 study_id 是业务表 ImagingStudy.id（自生成 UUID），
-不是 DICOM StudyInstanceUID——前者用于前端引用稳定，后者用于 Orthanc 检索。
-端点内部从 DB 查到 study.study_instance_uid 后再转发到 Orthanc。
+URL 路径中的 study_id 是业务表 ImagingStudy.id（自生成 UUID），不是 DICOM
+StudyInstanceUID——前者前端引用稳定，后者 Orthanc 检索；端点内部从 DB 查到
+study.study_instance_uid 再转发 Orthanc。路径里的 instance_uid 是
+SOPInstanceUID（R1 前曾是 DCM 文件名），前端从 /frames 响应取用。
 
-端点路径里的 {filename} 历史上是 DCM 文件名，R1 后改为 Orthanc 的
-SOPInstanceUID（一个 instance 唯一标识）；前端从 /frames 拿到 UID 列表后
-直接用作后续端点的路径参数即可。
-
-2026-06-11 Round 5 迁移：业务逻辑已抽到 app/services/pacs/ 包——
-  dicom_service（解压/pydicom 元数据/智能抽帧）、frame_service（Orthanc 帧
-  查询/渲染缓存）、analysis_service（千问 VL）、report_service（报告 ORM）。
+2026-06-11 Round 5 迁移 + Round 6 瘦身：业务逻辑已抽到 app/services/pacs/ 包——
+  dicom_service（解压/pydicom 元数据/智能抽帧）、frame_service（Orthanc 帧查询）、
+  render_cache（本地渲染 + Redis 缓存）、analysis_service（千问 VL）、
+  report_service（报告 ORM / 幂等查重）。
 本文件只保留：路由编排、鉴权、HTTPException、响应组装（行为零改变）。
 """
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -53,19 +52,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.config import settings
 from app.core.security import get_current_user
 from app.core.authz import PACS_WRITE_ROLES, assert_pacs_write, assert_patient_access
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingReport, ImagingStudy
 from app.services.orthanc_client import orthanc_client
-from app.services.redis_cache import redis_cache
-from app.services.dicom_renderer import render_thumbnail, render_preview
 from app.services.ai.prompts_pacs import build_study_prompt, build_image_prompt
-# Round 5：PACS 业务逻辑服务包（解压/帧查询/AI 分析/报告 ORM）
-from app.services.pacs import analysis_service, dicom_service, frame_service, report_service
-from app.services.pacs.analysis_service import AI_FRAME_JPEG_QUALITY
+# Round 5/6：PACS 业务逻辑服务包（解压/帧查询/渲染缓存/AI 分析/报告 ORM）
+from app.services.pacs import analysis_service, dicom_service, frame_service, render_cache, report_service
 from app.services.pacs.dicom_service import AUTO_ANALYZE_THRESHOLD, AUTO_SAMPLE_COUNT
 
 logger = logging.getLogger(__name__)
@@ -110,54 +105,21 @@ async def upload_study(
     # 临时工作目录：STOW 完成或异常后立即清理
     work_dir = TEMP_UPLOAD_DIR / f"upload_{datetime.now().timestamp():.6f}".replace(".", "")
     work_dir.mkdir(parents=True, exist_ok=True)
-    extract_dir = work_dir / "extracted"
-    extract_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # 1) 落盘压缩包（用原始扩展名让 7-Zip 自动识别格式）
-        archive_path = work_dir / f"source.{archive_kind}"
-        archive_path.write_bytes(await file.read())
-
-        # 2) 解压（按格式自动选择 zipfile 或 7-Zip）
-        dicom_service.extract_archive(archive_path, extract_dir, archive_kind)
-
-        # 3) 找所有 DCM 文件路径（先扫一遍，不读字节）
-        dcm_paths = [
-            f for f in extract_dir.rglob("*")
-            if f.is_file() and f.suffix.lower() == ".dcm"
-        ]
+        # 1-3) 落盘压缩包 → 解压 → 扫描 .dcm 路径（不读字节，已下沉 dicom_service）
+        dcm_paths = dicom_service.extract_and_scan_dcm(await file.read(), work_dir, archive_kind)
         if not dcm_paths:
             raise HTTPException(400, "压缩包中未找到 DCM 文件")
 
         # 3.5) ⚡ 幂等快路径：只读第一个 DCM 的 metadata 拿 StudyInstanceUID 查 DB
         #      命中已存在 → 立即返回原 study_id，不读其他文件、不上传 Orthanc
-        #      重传 537 帧 study 从分钟级降到亚秒级
+        #      重传 537 帧 study 从分钟级降到亚秒级（查重已下沉 report_service）
         preflight_study_uid = dicom_service.read_preflight_study_uid(dcm_paths[0])
-
         if preflight_study_uid:
-            existing_q = await db.execute(
-                select(ImagingStudy).where(
-                    ImagingStudy.study_instance_uid == preflight_study_uid
-                )
-            )
-            existing_study = existing_q.scalar_one_or_none()
-            if existing_study:
-                if existing_study.patient_id != patient_id:
-                    raise HTTPException(
-                        409,
-                        f"该影像已归属其他患者，不能再绑定到当前患者（已有 study_id={existing_study.id}）。"
-                        "请先在 PACS 列表中处理原记录，或选择正确的患者。",
-                    )
-                return {
-                    "study_id": existing_study.id,
-                    "study_instance_uid": preflight_study_uid,
-                    "total_frames": existing_study.total_frames,
-                    "modality": existing_study.modality,
-                    "body_part": existing_study.body_part,
-                    "auto_select": (existing_study.total_frames or 0) <= AUTO_ANALYZE_THRESHOLD,
-                    "duplicate": True,
-                    "message": "该影像之前已上传过，已为你定位到原记录",
-                }
+            dup = await report_service.find_duplicate_study(db, preflight_study_uid, patient_id)
+            if dup:
+                return dup
 
         # 3.6) 不重复 → 读所有文件字节 + pydicom 解析每个 SOPInstanceUID/SeriesInstanceUID/InstanceNumber
         # （仅 metadata 不读 pixel，单张 ~5ms；frames_meta 用于 /frames 端点的
@@ -178,10 +140,9 @@ async def upload_study(
 
         async def _do_render():
             if target_study_uid:
-                await frame_service.render_and_cache_all(target_study_uid, instances_for_render)
+                await render_cache.render_and_cache_all(target_study_uid, instances_for_render)
 
-        import asyncio as _asyncio
-        stow_resp, _ = await _asyncio.gather(_do_stow(), _do_render())
+        stow_resp, _ = await asyncio.gather(_do_stow(), _do_render())
 
         # 5) 从 STOW 响应取 StudyInstanceUID（preflight 拿到的优先）
         study_uid = target_study_uid or frame_service.extract_study_uid_from_stow_response(stow_resp)
@@ -189,62 +150,22 @@ async def upload_study(
             raise HTTPException(500, "Orthanc 上传成功但未返回 StudyInstanceUID")
 
         # 5.5) 把 frames_meta 存到 Redis，让 /frames 端点免去实时查 Orthanc QIDO
-        # 一次 SET，后续 /frames 调用 < 50ms（vs 实时查 ~2-10s）
-        import json as _json
-        await redis_cache.set_bytes(
-            f"pacs:frames:{study_uid}",
-            _json.dumps(frames_meta).encode("utf-8"),
-            ttl=settings.thumbnail_cache_ttl,
-        )
+        await render_cache.cache_frames_meta(study_uid, frames_meta)
 
-        # 6) 幂等性检查：同一份 DICOM 包（同 study_instance_uid）二次上传时不再
-        #    重复创建业务行，避免触发 unique 约束 IntegrityError 500。
-        #    医院真实场景：医生误操作重传 / 网络重试 / 同包发给多人审核都很常见。
-        existing = await db.execute(
-            select(ImagingStudy).where(ImagingStudy.study_instance_uid == study_uid)
-        )
-        existing_study = existing.scalar_one_or_none()
-        if existing_study:
-            if existing_study.patient_id != patient_id:
-                # 跨患者重复：DICOM UID 全局唯一，几乎一定是医生选错患者
-                raise HTTPException(
-                    409,
-                    f"该影像已归属其他患者，不能再绑定到当前患者（已有 study_id={existing_study.id}）。"
-                    "请先在 PACS 列表中处理原记录，或选择正确的患者。",
-                )
-            # 同患者重复 → 幂等：返回原 study_id 让前端跳转
-            return {
-                "study_id": existing_study.id,
-                "study_instance_uid": study_uid,
-                "total_frames": existing_study.total_frames,
-                "modality": existing_study.modality,
-                "body_part": existing_study.body_part,
-                "auto_select": (existing_study.total_frames or 0) <= AUTO_ANALYZE_THRESHOLD,
-                "duplicate": True,
-                "message": "该影像之前已上传过，已为你定位到原记录",
-            }
+        # 6) 幂等性兜底（preflight 读不到 UID 时由 STOW 响应再查一次）
+        dup = await report_service.find_duplicate_study(db, study_uid, patient_id)
+        if dup:
+            return dup
 
         # 7) 取 study 元数据（modality / body_part / series_description / 实例总数）
         meta = await frame_service.fetch_study_metadata(study_uid)
 
-        # 8) 写业务表 ImagingStudy
-        study = ImagingStudy(
-            patient_id=patient_id,
-            uploaded_by=current_user.id,
-            study_instance_uid=study_uid,
-            modality=meta.get("modality"),
-            body_part=meta.get("body_part"),
-            series_description=meta.get("series_description"),
-            total_frames=meta.get("total_instances", 0),
-            storage_dir=None,  # R1 后不再使用本地存储
-            status="pending",
-        )
-        db.add(study)
-        await db.commit()
-        await db.refresh(study)
-
+        # 8) 写业务表 ImagingStudy（已下沉 report_service）
         # 注：上面 asyncio.gather 已经把所有 instance 的缩略图 + 高清预览
         # 用 pydicom 本地渲染并写入 Redis 完毕。此处不再额外预热。
+        study = await report_service.create_imaging_study(
+            db, patient_id, current_user.id, study_uid, meta
+        )
 
         return {
             "study_id": study.id,
@@ -280,25 +201,9 @@ async def get_frames(
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
 
-    # ⚡ 优先从 Redis 读 frames 元数据（上传时已写入），免去实时查 Orthanc QIDO
-    import json as _json
-    cache_key = f"pacs:frames:{study.study_instance_uid}"
-    cached = await redis_cache.get_bytes(cache_key)
-    if cached:
-        try:
-            instances = _json.loads(cached.decode("utf-8"))
-        except Exception:
-            instances = await frame_service.list_study_instances(study.study_instance_uid)
-    else:
-        # 老 study（R1 预热前上传的）走 Orthanc QIDO 兜底，并把结果回写 Redis
-        instances = await frame_service.list_study_instances(study.study_instance_uid)
-        if instances:
-            await redis_cache.set_bytes(
-                cache_key,
-                _json.dumps(instances).encode("utf-8"),
-                ttl=settings.thumbnail_cache_ttl,
-            )
-
+    # ⚡ 优先从 Redis 读 frames 元数据（上传时已写入），免去实时查 Orthanc QIDO；
+    # 未命中走 QIDO 兜底并回写（已下沉 render_cache.get_frames_meta）
+    instances = await render_cache.get_frames_meta(study.study_instance_uid)
     total = len(instances)
 
     # 智能非均匀抽样（按索引→映射回 instance_uid）
@@ -314,25 +219,14 @@ async def get_frames(
     }
 
 
-# ─── 缩略图服务（WADO render，Orthanc 自带 GDCM 渲染；series 反查搬至 frame_service）──
+# ─── 缩略图 / 高清预览（共享编排：校验 → 鉴权 → render_cache 缓存/渲染）────
 
-@router.get("/{study_id}/thumbnail/{instance_uid}")
-async def get_thumbnail(
-    study_id: str,
-    instance_uid: str,
-    wc: Optional[float] = None,
-    ww: Optional[float] = None,
-    series_uid: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """缩略图服务（含 PHI，必须鉴权）。
-
-    instance_uid 是 SOPInstanceUID（DICOM 标准全局唯一），不是文件名。
-    Orthanc 用 GDCM 实时渲染 + 应用窗位窗宽，无需本地缓存目录。
-
-    series_uid 是性能优化：前端从 /frames 响应里已经拿到 series_uid，
-    调本端点时一并带上，后端可免去一次反查（537 帧 study 加载从分钟级降到秒级）。
+async def _serve_frame_jpeg(
+    db: AsyncSession, study_id: str, instance_uid: str, series_uid: Optional[str],
+    wc: Optional[float], ww: Optional[float], current_user,
+    *, kind: str, resolve_before_cache: bool,
+) -> Response:
+    """thumbnail / preview 两端点的共享编排（Round 6 合并，参数差异见 render_cache）。
 
     历史漏洞修复（保留说明）：曾完全无鉴权——任何人拿到 study_id+filename
     即可下载缩略图（属于 PHI 泄露级漏洞）。已接入 assert_patient_access。
@@ -349,62 +243,39 @@ async def get_thumbnail(
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
 
-    # 优先用前端传的 series_uid（0 次 Orthanc 调用），没传才走兜底反查
-    resolved_series = series_uid or await frame_service.resolve_instance(
-        study.study_instance_uid, instance_uid
-    )
-    if not resolved_series:
-        raise HTTPException(404, "影像帧不存在")
-
     # ⚡ 优化 3：Redis 优先，没命中走 pydicom 本地渲染（不再走 Orthanc 渲染）
-    # 自定义窗位窗宽不缓存（key 空间无穷），实时渲染
-    is_default_window = wc is None and ww is None
-    cache_key = f"pacs:thumb:{study.study_instance_uid}:{instance_uid}" if is_default_window else None
-
-    if cache_key:
-        cached = await redis_cache.get_bytes(cache_key)
-        if cached:
-            return Response(
-                content=cached,
-                media_type="image/jpeg",
-                headers={"Cache-Control": "private, max-age=86400", "X-Cache": "HIT"},
-            )
-
-    # 没命中 / 自定义窗位 → 拉 raw DCM + pydicom 渲染
-    try:
-        dcm_bytes = await orthanc_client.get_instance_dicom(
-            study.study_instance_uid, resolved_series, instance_uid
-        )
-    except httpx.HTTPError as e:
-        logger.error("pacs.fetch_dcm: failed instance=%s err=%s", instance_uid, e)
-        raise HTTPException(502, "影像加载失败")
-
-    import asyncio as _asyncio
-    loop = _asyncio.get_event_loop()
-    jpeg_bytes = await loop.run_in_executor(
-        None,
-        lambda: render_thumbnail(dcm_bytes, window_center=wc, window_width=ww),
+    jpeg_bytes, cache_status = await render_cache.fetch_render_jpeg(
+        study.study_instance_uid, instance_uid, series_uid, wc, ww,
+        kind=kind, resolve_before_cache=resolve_before_cache,
     )
-    if not jpeg_bytes:
-        raise HTTPException(500, "DICOM 渲染失败")
-
-    # 默认窗位窗宽 → 异步写缓存（不阻塞响应）
-    if cache_key:
-        _asyncio.create_task(
-            redis_cache.set_bytes(cache_key, jpeg_bytes, ttl=settings.thumbnail_cache_ttl)
-        )
-
     return Response(
         content=jpeg_bytes,
         media_type="image/jpeg",
-        headers={
-            "Cache-Control": "private, max-age=86400",
-            "X-Cache": "MISS",
-        },
+        headers={"Cache-Control": "private, max-age=86400", "X-Cache": cache_status},
     )
 
 
-# ─── 高清预览 JPEG（DicomViewer 主区用，1024 quality 85）─────────────────
+@router.get("/{study_id}/thumbnail/{instance_uid}")
+async def get_thumbnail(
+    study_id: str,
+    instance_uid: str,
+    wc: Optional[float] = None,
+    ww: Optional[float] = None,
+    series_uid: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """缩略图服务（256×256，含 PHI，必须鉴权）。
+
+    instance_uid 是 SOPInstanceUID（DICOM 标准全局唯一），不是文件名。
+    series_uid 是性能优化：前端从 /frames 响应里已经拿到 series_uid，
+    调本端点时一并带上，后端可免去一次反查（537 帧 study 加载从分钟级降到秒级）。
+    """
+    return await _serve_frame_jpeg(
+        db, study_id, instance_uid, series_uid, wc, ww, current_user,
+        kind="thumb", resolve_before_cache=True,
+    )
+
 
 @router.get("/{study_id}/preview/{instance_uid}")
 async def get_preview(
@@ -420,75 +291,11 @@ async def get_preview(
 
     DicomViewer 主区 <img> 直接加载本端点 URL。比 raw DICOM (~860KB +
     cornerstone3D 客户端解码) 快得多——浏览器原生 JPEG 渲染，秒级出图。
-
-    数据来源：
-      - 上传时 backend pydicom 已渲染好高清版，存 Redis key `pacs:preview:{}:{}`
-      - 没命中走 Orthanc 拉 raw DCM + pydicom 实时渲染（写回 Redis）
-
-    自定义窗位窗宽（wc/ww）：实时渲染，不缓存。
+    上传时 backend pydicom 已渲染好高清版存 Redis；自定义窗位窗宽实时渲染不缓存。
     """
-    if not all(c.isdigit() or c == "." for c in instance_uid):
-        raise HTTPException(400, "非法 instance UID")
-    if series_uid and not all(c.isdigit() or c == "." for c in series_uid):
-        raise HTTPException(400, "非法 series UID")
-    study = await db.get(ImagingStudy, study_id)
-    if not study:
-        raise HTTPException(404, "检查不存在")
-    await assert_patient_access(db, study.patient_id, current_user)
-    if not study.study_instance_uid:
-        raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
-
-    is_default_window = wc is None and ww is None
-    cache_key = (
-        f"pacs:preview:{study.study_instance_uid}:{instance_uid}"
-        if is_default_window
-        else None
-    )
-
-    if cache_key:
-        cached = await redis_cache.get_bytes(cache_key)
-        if cached:
-            return Response(
-                content=cached,
-                media_type="image/jpeg",
-                headers={"Cache-Control": "private, max-age=86400", "X-Cache": "HIT"},
-            )
-
-    resolved_series = series_uid or await frame_service.resolve_instance(
-        study.study_instance_uid, instance_uid
-    )
-    if not resolved_series:
-        raise HTTPException(404, "影像帧不存在")
-
-    try:
-        dcm_bytes = await orthanc_client.get_instance_dicom(
-            study.study_instance_uid, resolved_series, instance_uid
-        )
-    except httpx.HTTPError as e:
-        logger.error("pacs.fetch_dcm: failed instance=%s err=%s", instance_uid, e)
-        raise HTTPException(502, "影像加载失败")
-
-    import asyncio as _asyncio
-    loop = _asyncio.get_event_loop()
-    jpeg_bytes = await loop.run_in_executor(
-        None,
-        lambda: render_preview(dcm_bytes, window_center=wc, window_width=ww),
-    )
-    if not jpeg_bytes:
-        raise HTTPException(500, "DICOM 渲染失败")
-
-    if cache_key:
-        _asyncio.create_task(
-            redis_cache.set_bytes(cache_key, jpeg_bytes, ttl=settings.thumbnail_cache_ttl)
-        )
-
-    return Response(
-        content=jpeg_bytes,
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "private, max-age=86400",
-            "X-Cache": "MISS",
-        },
+    return await _serve_frame_jpeg(
+        db, study_id, instance_uid, series_uid, wc, ww, current_user,
+        kind="preview", resolve_before_cache=False,
     )
 
 
@@ -711,35 +518,8 @@ async def analyze_image(
 
     if is_dcm:
         # DCM → JPEG：临时 STOW 到 Orthanc → WADO render 拿 JPEG → 删除临时 study
-        # 这种"分析完即删"模式不污染 Orthanc 索引，也不需要本地 pydicom/PIL 渲染
-        temp_study_uid: Optional[str] = None
-        try:
-            stow_resp = await orthanc_client.stow_instances([raw_bytes])
-            temp_study_uid = frame_service.extract_study_uid_from_stow_response(stow_resp)
-            if not temp_study_uid:
-                raise HTTPException(400, "DCM 文件解析失败：Orthanc 未返回 StudyInstanceUID")
-            series_list = await orthanc_client.find_series(temp_study_uid)
-            if not series_list:
-                raise HTTPException(400, "DCM 文件解析失败：未找到 series")
-            series_uid = (series_list[0].get("0020000E", {}).get("Value") or [None])[0]
-            inst_list = await orthanc_client.find_instances(temp_study_uid, series_uid)
-            if not inst_list:
-                raise HTTPException(400, "DCM 文件解析失败：未找到 instance")
-            instance_uid = (inst_list[0].get("00080018", {}).get("Value") or [None])[0]
-            img_bytes = await orthanc_client.get_instance_rendered(
-                temp_study_uid, series_uid, instance_uid, quality=AI_FRAME_JPEG_QUALITY,
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(400, f"DCM 文件解析失败: {e}")
-        finally:
-            # 无论成功失败都清理 Orthanc 临时数据，避免索引污染
-            if temp_study_uid:
-                try:
-                    await orthanc_client.delete_study(temp_study_uid)
-                except Exception as e:
-                    logger.warning("pacs.upload: temp_study_cleanup_failed study=%s err=%s", temp_study_uid, e)
+        # （"分析完即删"模式不污染 Orthanc 索引，已下沉 frame_service）
+        img_bytes = await frame_service.dcm_to_jpeg_via_orthanc(raw_bytes)
         mime = "image/jpeg"
     else:
         img_bytes = raw_bytes
@@ -794,9 +574,7 @@ async def delete_study(
             logger.error("pacs.delete: orthanc_delete_failed study=%s err=%s", study.study_instance_uid, e)
             raise HTTPException(502, f"Orthanc 数据清理失败，DB 行未删除: {e}")
         # 清 Redis 里该 study 的所有缓存（frames 元数据 + 缩略图 + 高清预览）
-        await redis_cache.delete(f"pacs:frames:{study.study_instance_uid}")
-        await redis_cache.delete_prefix(f"pacs:thumb:{study.study_instance_uid}:")
-        await redis_cache.delete_prefix(f"pacs:preview:{study.study_instance_uid}:")
+        await render_cache.clear_study_cache(study.study_instance_uid)
 
     # 2) 删 ImagingReport（如有）
     from sqlalchemy import delete as _sql_delete

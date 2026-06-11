@@ -24,6 +24,11 @@ from app.models.inpatient import ProgressNote
 
 VALID_STATUSES = {"draft", "submitted"}
 
+# 病程记录类型白名单（2026-06-11 补，与前端 domain/inpatient/recordRules.ts 的
+# NOTE_TYPE_RULES 键一致）。此前 note_type 无校验，任意字符串可入库——
+# 脏类型会让前端时间轴按未知类型渲染兜底样式且无法套用时限规则
+VALID_NOTE_TYPES = {"first_course", "daily_course", "surgery_pre", "surgery_post", "discharge"}
+
 
 def parse_iso_naive(s: Optional[str]) -> Optional[datetime]:
     """把前端发来的 ISO 字符串解析为 naive UTC datetime（适配 TIMESTAMP WITHOUT TIME ZONE）。
@@ -63,7 +68,16 @@ async def create_note(
     recorded_at_raw: Optional[str],
     recorded_by: str,
 ) -> ProgressNote:
-    """新建一条病程记录（默认 status=draft，recorded_at 缺省为当前时间）。"""
+    """新建一条病程记录（默认 status=draft，recorded_at 缺省为当前时间）。
+
+    Raises:
+        HTTPException(400): note_type 不在白名单内。
+    """
+    if note_type not in VALID_NOTE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"note_type 必须是 {sorted(VALID_NOTE_TYPES)} 之一",
+        )
     parsed = parse_iso_naive(recorded_at_raw)
     recorded_at = parsed or datetime.now()
 

@@ -215,6 +215,25 @@ def extract_archive(archive_path: Path, dest_dir: Path, archive_kind: str) -> No
             current_input = tars[0]
 
 
+def extract_and_scan_dcm(archive_bytes: bytes, work_dir: Path, archive_kind: str) -> list[Path]:
+    """落盘压缩包 → 解压 → 扫描所有 .dcm 文件路径（只扫路径，不读字节）。
+
+    上传路由"解析"阶段的前半段（Round 6 下沉）：
+      1) 用原始扩展名落盘，让 7-Zip 自动识别格式
+      2) 解压到 work_dir/extracted（解压失败由 extract_archive 抛 HTTPException 400）
+      3) rglob 找出全部 .dcm 路径返回（找不到时返回空列表，由路由层抛 400）
+    """
+    archive_path = work_dir / f"source.{archive_kind}"
+    archive_path.write_bytes(archive_bytes)
+    extract_dir = work_dir / "extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    extract_archive(archive_path, extract_dir, archive_kind)
+    return [
+        f for f in extract_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() == ".dcm"
+    ]
+
+
 # ─── 上传包内 DCM 元数据解析（pydicom，仅 metadata 不读 pixel） ─────────────
 
 def read_preflight_study_uid(dcm_path: Path) -> Optional[str]:

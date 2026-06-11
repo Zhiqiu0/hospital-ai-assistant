@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
 # 2026-06-11 Round 5 迁移：以下函数从 app/api/v1/pacs.py 原样搬入（纯函数搬家，行为零改变）
 """
-PACS Orthanc 帧查询与渲染缓存服务（services/pacs/frame_service.py）
+PACS Orthanc 帧查询服务（services/pacs/frame_service.py）
 
-职责（均为与 Orthanc / Redis 交互的无状态函数，不碰 DB、不碰请求上下文）：
+职责（均为与 Orthanc 交互的无状态函数，不碰 DB、不碰请求上下文）：
   - STOW-RS 响应解析 StudyInstanceUID
   - study 元数据聚合查询（modality / body_part / series_description / 实例总数）
   - study 下 instance 列表查询（QIDO）+ instance → series 反查
-  - 上传时用 pydicom 本地渲染缩略图/高清预览并写 Redis（优化 3 核心）
+  - 单个 DCM 临时 STOW → JPEG 渲染 → 即删（analyze-image 端点用）
 
-Redis key 约定（与路由层缓存读取严格一致，勿改）：
-  pacs:thumb:{study_uid}:{instance_uid}    → 256 缩略图（列表用）
-  pacs:preview:{study_uid}:{instance_uid}  → 1024 高清预览（DicomViewer 主区用）
+2026-06-11 Round 6 瘦身：渲染 + Redis 缓存逻辑（render_and_cache_all 等）
+已迁至同包 render_cache.py，本模块只保留纯 Orthanc 查询/转换。
 """
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
+
 from app.config import settings
-from app.services.dicom_renderer import render_preview, render_thumbnail
 from app.services.orthanc_client import orthanc_client
-from app.services.redis_cache import redis_cache
+from app.services.pacs.analysis_service import AI_FRAME_JPEG_QUALITY
 
 logger = logging.getLogger(__name__)
 
@@ -44,62 +44,44 @@ def extract_study_uid_from_stow_response(stow_resp: dict) -> Optional[str]:
     return parts[1].split("/")[0]
 
 
-async def render_and_cache_all(
-    study_uid: str,
-    instances_with_bytes: list[tuple[str, bytes]],
-    concurrency: int = 8,
-) -> None:
-    """用 pydicom 本地渲染所有 instance 的 256 缩略图 + 1024 高清预览，写 Redis。
+async def dcm_to_jpeg_via_orthanc(raw_bytes: bytes) -> bytes:
+    """单个 DCM → JPEG：临时 STOW 到 Orthanc → WADO render 拿 JPEG → 删除临时 study。
 
-    这是优化 3 的核心：替代之前调 Orthanc 渲染（每张 ~150-600ms），改用
-    backend 进程内 pydicom + Pillow 渲染（每张 ~3-5ms），快 30 倍。
+    analyze-image 端点（临床医生上传单张 DCM 直接分析）专用。
+    这种"分析完即删"模式不污染 Orthanc 索引，也不需要本地 pydicom/PIL 渲染。
 
-    instances_with_bytes: [(instance_uid, dcm_bytes), ...]
-    并发度通过 ThreadPoolExecutor 控制（pydicom + Pillow 释放 GIL，真并行）。
-
-    Redis key 约定：
-      pacs:thumb:{study_uid}:{instance_uid}    → 256 缩略图（列表用）
-      pacs:preview:{study_uid}:{instance_uid}  → 1024 高清预览（DicomViewer 主区用）
+    异常语义（与原路由内联实现一致）：
+      - 任一步骤失败 → HTTPException(400, "DCM 文件解析失败...")
+      - 无论成功失败，finally 都清理 Orthanc 临时 study（失败仅记 warning）
     """
-    import asyncio as _asyncio
-
-    if not instances_with_bytes:
-        return
-
-    loop = _asyncio.get_event_loop()
-    sem = _asyncio.Semaphore(concurrency)
-
-    async def _one(iuid: str, dcm_bytes: bytes) -> None:
-        async with sem:
-            # 在线程池里跑 pydicom（CPU 密集，run_in_executor 释放 event loop）
+    temp_study_uid: Optional[str] = None
+    try:
+        stow_resp = await orthanc_client.stow_instances([raw_bytes])
+        temp_study_uid = extract_study_uid_from_stow_response(stow_resp)
+        if not temp_study_uid:
+            raise HTTPException(400, "DCM 文件解析失败：Orthanc 未返回 StudyInstanceUID")
+        series_list = await orthanc_client.find_series(temp_study_uid)
+        if not series_list:
+            raise HTTPException(400, "DCM 文件解析失败：未找到 series")
+        series_uid = (series_list[0].get("0020000E", {}).get("Value") or [None])[0]
+        inst_list = await orthanc_client.find_instances(temp_study_uid, series_uid)
+        if not inst_list:
+            raise HTTPException(400, "DCM 文件解析失败：未找到 instance")
+        instance_uid = (inst_list[0].get("00080018", {}).get("Value") or [None])[0]
+        return await orthanc_client.get_instance_rendered(
+            temp_study_uid, series_uid, instance_uid, quality=AI_FRAME_JPEG_QUALITY,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"DCM 文件解析失败: {e}")
+    finally:
+        # 无论成功失败都清理 Orthanc 临时数据，避免索引污染
+        if temp_study_uid:
             try:
-                thumb_jpeg = await loop.run_in_executor(None, render_thumbnail, dcm_bytes)
-                preview_jpeg = await loop.run_in_executor(None, render_preview, dcm_bytes)
+                await orthanc_client.delete_study(temp_study_uid)
             except Exception as e:
-                logger.warning("pacs.preview: render_failed instance=%s err=%s", iuid, e)
-                return
-            if thumb_jpeg:
-                await redis_cache.set_bytes(
-                    f"pacs:thumb:{study_uid}:{iuid}",
-                    thumb_jpeg,
-                    ttl=settings.thumbnail_cache_ttl,
-                )
-            if preview_jpeg:
-                await redis_cache.set_bytes(
-                    f"pacs:preview:{study_uid}:{iuid}",
-                    preview_jpeg,
-                    ttl=settings.thumbnail_cache_ttl,
-                )
-
-    await _asyncio.gather(
-        *[_one(iuid, dcm) for iuid, dcm in instances_with_bytes],
-        return_exceptions=True,
-    )
-    logger.info(
-        "pacs.render: done study=%s frames=%d（缩略+预览）",
-        study_uid[-12:],
-        len(instances_with_bytes),
-    )
+                logger.warning("pacs.upload: temp_study_cleanup_failed study=%s err=%s", temp_study_uid, e)
 
 
 async def fetch_study_metadata(study_uid: str) -> dict:

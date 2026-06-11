@@ -19,56 +19,17 @@
  * 2026-05-16 加：病案首页（合规级"签发时冻结身份信息"）。原来弹窗只显示
  * 姓名/性别/年龄+正文，医生导出/打印都丢身份信息；现在三个入口共用 buildPatientHeaderHtml
  * 以及 inline 卡片，统一展示完整首页。
+ *
+ * 2026-06-11 Round 5.5 拆分：病案首页卡片移至 ./recordView/PatientHeaderCard.tsx，
+ * ViewableRecord 类型与打印/格式化辅助函数移至 ./recordView/viewableRecord.ts，
+ * 本文件只保留弹窗骨架。
  */
-import { Modal, Space, Tag, Button, Typography, Row, Col } from 'antd'
+import { Modal, Space, Tag, Button, Typography } from 'antd'
 import { FileTextOutlined, CheckOutlined, PrinterOutlined } from '@ant-design/icons'
-import {
-  printRecord,
-  type RecordExportSnapshot,
-  type RecordExportContext,
-  type RecordExportPatient,
-} from '@/utils/recordExport'
+import PatientHeaderCard from './recordView/PatientHeaderCard'
+import { handlePrint, type ViewableRecord } from './recordView/viewableRecord'
 
 const { Text } = Typography
-
-/**
- * 病历详情视图所需字段。
- * 后端 medical-records 接口联表后字段较多（含医生 / 患者 / 接诊信息），
- * 这里取本组件实际用到的字段集合作为入参契约，其他字段透传不消费。
- */
-interface ViewableRecord {
-  id?: string
-  record_type: string
-  visit_type?: string | null
-  status?: string
-  content?: string
-  submitted_at?: string | null
-  patient_name?: string
-  patient_gender?: string
-  patient_age?: number | null
-  doctor_name?: string | null
-  submitted_by_name?: string | null
-  // ── 病案首页扩展字段（2026-05-16 加）────────────────────────────────
-  // 优先用 patient_snapshot（签发时冻结）；为空回落到 patient_xxx 实时字段
-  patient_snapshot?: RecordExportSnapshot | null
-  patient_no?: string | null
-  patient_phone?: string | null
-  patient_id_card?: string | null
-  patient_address?: string | null
-  patient_ethnicity?: string | null
-  patient_marital_status?: string | null
-  patient_occupation?: string | null
-  patient_workplace?: string | null
-  patient_contact_name?: string | null
-  patient_contact_phone?: string | null
-  patient_contact_relation?: string | null
-  patient_blood_type?: string | null
-  patient_birth_date?: string | null
-  visit_time?: string | null
-  bed_no?: string | null
-  department_name?: string | null
-  [key: string]: unknown
-}
 
 interface RecordViewModalProps {
   record: ViewableRecord | null
@@ -77,166 +38,6 @@ interface RecordViewModalProps {
   tagColor: string
   recordTypeLabel: (type: string) => string
   showPrint?: boolean
-}
-
-// 把 ViewableRecord 上的 patient_xxx 实时字段提取成 RecordExportPatient
-function toExportPatient(r: ViewableRecord): RecordExportPatient {
-  return {
-    name: r.patient_name,
-    gender: r.patient_gender,
-    age: r.patient_age ?? null,
-    patient_no: r.patient_no ?? null,
-    birth_date: r.patient_birth_date ?? null,
-    id_card: r.patient_id_card ?? null,
-    phone: r.patient_phone ?? null,
-    address: r.patient_address ?? null,
-    ethnicity: r.patient_ethnicity ?? null,
-    marital_status: r.patient_marital_status ?? null,
-    occupation: r.patient_occupation ?? null,
-    workplace: r.patient_workplace ?? null,
-    contact_name: r.patient_contact_name ?? null,
-    contact_phone: r.patient_contact_phone ?? null,
-    contact_relation: r.patient_contact_relation ?? null,
-    blood_type: r.patient_blood_type ?? null,
-  }
-}
-
-function toExportCtx(r: ViewableRecord): RecordExportContext {
-  return {
-    visit_type: r.visit_type ?? null,
-    visit_time: r.visit_time ?? null,
-    bed_no: r.bed_no ?? null,
-    doctor_name: r.doctor_name ?? null,
-    department_name: r.department_name ?? null,
-  }
-}
-
-const GENDER_LABEL: Record<string, string> = { male: '男', female: '女', unknown: '未知' }
-const VISIT_TYPE_LABEL: Record<string, string> = {
-  outpatient: '门诊',
-  emergency: '急诊',
-  inpatient: '住院',
-}
-
-function pick<T>(...vs: (T | null | undefined)[]): T | null {
-  return vs.find(v => v !== null && v !== undefined && v !== '') ?? null
-}
-
-function calcAgeFromBirth(birth?: string | null): number | null {
-  if (!birth) return null
-  const d = new Date(birth)
-  if (Number.isNaN(d.getTime())) return null
-  const now = new Date()
-  let age = now.getFullYear() - d.getFullYear()
-  const m = now.getMonth() - d.getMonth()
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--
-  return age >= 0 ? age : null
-}
-
-function fmtDateTime(s?: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN')
-}
-
-function fmtDate(s?: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString('zh-CN')
-}
-
-/**
- * 病案首页（inline 渲染版本）。打印/导出走 buildPatientHeaderHtml；
- * Modal 内是 React 节点。两者都按 "snapshot → patient → ctx" 顺序取值。
- */
-function PatientHeaderCard({ record }: { record: ViewableRecord }) {
-  const s = record.patient_snapshot || {}
-  const p = toExportPatient(record)
-  const c = toExportCtx(record)
-
-  const name = pick(s.name, p.name) || '—'
-  const genderRaw = pick(s.gender, p.gender)
-  const gender = genderRaw ? GENDER_LABEL[genderRaw] || genderRaw : '—'
-  const birth = pick(s.birth_date, p.birth_date)
-  // age 优先用后端返回值（PatientService 计算）；admin/records 没有 age 字段
-  // 但有 birth_date，这里 fallback 算一下避免显示 "—"
-  const ageVal = p.age ?? calcAgeFromBirth(birth)
-  const ageText = ageVal != null ? `${ageVal}岁` : '—'
-  const visitTypeRaw = pick(s.visit_type, c.visit_type)
-  const visitType = visitTypeRaw ? VISIT_TYPE_LABEL[visitTypeRaw] || visitTypeRaw : '—'
-
-  const items: Array<[string, string]> = [
-    ['姓名', name],
-    ['性别', gender],
-    ['年龄', ageText],
-    ['出生日期', fmtDate(birth)],
-    ['民族', pick(s.ethnicity, p.ethnicity) || '—'],
-    ['血型', pick(s.blood_type, p.blood_type) || '—'],
-    ['婚姻', pick(s.marital_status, p.marital_status) || '—'],
-    ['职业', pick(s.occupation, p.occupation) || '—'],
-    ['身份证号', pick(s.id_card, p.id_card) || '—'],
-    ['联系电话', pick(s.phone, p.phone) || '—'],
-    ['家庭住址', pick(s.address, p.address) || '—'],
-    ['工作单位', pick(s.workplace, p.workplace) || '—'],
-    ['紧急联系人', pick(s.contact_name, p.contact_name) || '—'],
-    ['联系人电话', pick(s.contact_phone, p.contact_phone) || '—'],
-    ['与患者关系', pick(s.contact_relation, p.contact_relation) || '—'],
-    ['患者编号', pick(s.patient_no, p.patient_no) || '—'],
-    ['就诊类型', visitType],
-    ['床位号', pick(s.bed_no, c.bed_no) || '—'],
-    ['接诊医生', pick(s.doctor_name, c.doctor_name) || '—'],
-    ['所属科室', pick(s.department_name, c.department_name) || '—'],
-    ['就诊时间', fmtDateTime(pick(s.visit_time, c.visit_time))],
-  ]
-
-  return (
-    <div
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        padding: '10px 14px',
-        marginBottom: 10,
-        fontSize: 12.5,
-      }}
-    >
-      <div
-        style={{
-          fontWeight: 600,
-          fontSize: 12,
-          color: 'var(--text-3)',
-          marginBottom: 6,
-          letterSpacing: 0.3,
-        }}
-      >
-        病案首页
-        {record.patient_snapshot && (
-          <Text type="secondary" style={{ fontSize: 11, fontWeight: 400, marginLeft: 6 }}>
-            （签发时冻结）
-          </Text>
-        )}
-      </div>
-      <Row gutter={[8, 4]}>
-        {items.map(([label, value]) => (
-          <Col span={12} key={label}>
-            <span style={{ color: 'var(--text-3)', marginRight: 6 }}>{label}：</span>
-            <span style={{ color: 'var(--text-1)' }}>{value}</span>
-          </Col>
-        ))}
-      </Row>
-    </div>
-  )
-}
-
-function handlePrint(record: ViewableRecord, recordTypeLabel: (type: string) => string) {
-  const patient = toExportPatient(record)
-  const ctx = toExportCtx(record)
-  const snapshot = record.patient_snapshot ?? null
-  const signedAt = record.submitted_at ? new Date(record.submitted_at).toLocaleString('zh-CN') : ''
-  // recordExport.printRecord 走 RECORD_TYPE_LABEL；这里调用方传的 recordTypeLabel
-  // 仅用于弹窗顶部标题展示，不影响打印（打印自己查 RECORD_TYPE_LABEL[record_type]）
-  void recordTypeLabel
-  printRecord(record.content || '', patient, record.record_type, signedAt, snapshot, ctx)
 }
 
 export default function RecordViewModal({
@@ -278,10 +79,7 @@ export default function RecordViewModal({
       footer={
         <Space>
           {showPrint && record && (
-            <Button
-              icon={<PrinterOutlined />}
-              onClick={() => handlePrint(record, recordTypeLabel)}
-            >
+            <Button icon={<PrinterOutlined />} onClick={() => handlePrint(record, recordTypeLabel)}>
               打印 / 导出PDF
             </Button>
           )}
