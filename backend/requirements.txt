@@ -33,6 +33,7 @@ sentry-sdk[fastapi]==2.18.0
 
 # 测试依赖
 pytest>=9.0
+pytest-cov>=7.0  # 覆盖率报告（2026-06-11 加，找测试盲区用）
 pytest-asyncio>=1.0
 httpx>=0.27
 aiosqlite>=0.20

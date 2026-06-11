@@ -31,22 +31,22 @@ URL 路径中的 study_id 是业务表 ImagingStudy.id（自生成 UUID），
 端点路径里的 {filename} 历史上是 DCM 文件名，R1 后改为 Orthanc 的
 SOPInstanceUID（一个 instance 唯一标识）；前端从 /frames 拿到 UID 列表后
 直接用作后续端点的路径参数即可。
+
+2026-06-11 Round 5 迁移：业务逻辑已抽到 app/services/pacs/ 包——
+  dicom_service（解压/pydicom 元数据/智能抽帧）、frame_service（Orthanc 帧
+  查询/渲染缓存）、analysis_service（千问 VL）、report_service（报告 ORM）。
+本文件只保留：路由编排、鉴权、HTTPException、响应组装（行为零改变）。
 """
 # ── 标准库 ────────────────────────────────────────────────────────────────────
-import base64
 import logging
-import os
 import shutil
-import subprocess
 import tempfile
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
-import pydicom  # 仅用于读 DICOM metadata（不做像素渲染）— 上传幂等快路径需要
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -63,6 +63,10 @@ from app.services.orthanc_client import orthanc_client
 from app.services.redis_cache import redis_cache
 from app.services.dicom_renderer import render_thumbnail, render_preview
 from app.services.ai.prompts_pacs import build_study_prompt, build_image_prompt
+# Round 5：PACS 业务逻辑服务包（解压/帧查询/AI 分析/报告 ORM）
+from app.services.pacs import analysis_service, dicom_service, frame_service, report_service
+from app.services.pacs.analysis_service import AI_FRAME_JPEG_QUALITY
+from app.services.pacs.dicom_service import AUTO_ANALYZE_THRESHOLD, AUTO_SAMPLE_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -73,189 +77,8 @@ router = APIRouter()
 TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "mediscribe_pacs_upload"
 TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# 自动抽帧：instance 数超过此值才需要前端选帧
-AUTO_ANALYZE_THRESHOLD = 18
-# 自动抽帧目标帧数
-AUTO_SAMPLE_COUNT = 18
-
-# AI 分析单帧 JPEG 质量（85 兼顾清晰度与 token 消耗）
-AI_FRAME_JPEG_QUALITY = 85
-
-
-def _smart_sample_indices(total: int, n: int = AUTO_SAMPLE_COUNT) -> list[int]:
-    """
-    非均匀智能抽帧（按索引返回）：头尾各取少量，中间 60% 区域集中取样。
-    适合脊柱/颈椎 CT 等关键病变集中在中段的序列。
-
-    分配比例（n=18 为例）：
-      头部 0-20%  → 3 帧
-      中部 20-80% → 12 帧（密集）
-      尾部 80-100%→ 3 帧
-
-    返回索引列表（升序、去重），调用方拿索引去 instance 列表里取对应 UID。
-    R1 之前接受文件名列表；R1 后接受 total + 返回索引，调用方自由映射，
-    避免把"文件名"这个本地概念漏到 Orthanc 时代。
-    """
-    if total <= n:
-        return list(range(total))
-
-    n_edge = max(2, n // 6)       # 头尾各抽约 3 帧
-    n_mid = n - 2 * n_edge        # 中间约 12 帧
-
-    mid_start = int(total * 0.20)
-    mid_end = int(total * 0.80)
-
-    # 头部：0 ~ mid_start 均匀取 n_edge 个索引
-    head = [int(mid_start * i / n_edge) for i in range(n_edge)]
-
-    # 中部：mid_start ~ mid_end 均匀取 n_mid 个索引（密集）
-    mid_span = mid_end - mid_start
-    middle = [
-        mid_start + int(mid_span * i / max(n_mid - 1, 1))
-        for i in range(n_mid)
-    ]
-
-    # 尾部：mid_end ~ total-1 均匀取 n_edge 个索引
-    tail_span = (total - 1) - mid_end
-    tail = [
-        mid_end + int(tail_span * i / max(n_edge - 1, 1))
-        for i in range(n_edge)
-    ]
-
-    seen: set[int] = set()
-    result: list[int] = []
-    for idx in head + middle + tail:
-        if idx not in seen and idx < total:
-            seen.add(idx)
-            result.append(idx)
-    return sorted(result)[:n]
-
 
 # ─── 上传 ZIP/RAR → STOW 到 Orthanc ────────────────────────────────────────
-
-def _find_sevenzip() -> Optional[str]:
-    """定位 7-Zip 可执行文件（仅在 module 加载时调用一次）。
-
-    查找顺序（任一命中即返回）：
-      1. settings.sevenzip_path（用户在 .env 显式指定，最优先）
-      2. 系统 PATH 里的 7z / 7za
-      3. Windows 常见安装位置：Program Files / 用户自定义目录（C:\\APP 等）
-      4. Linux 常见路径：/usr/bin/7z / /usr/local/bin/7z
-
-    全盘 glob 太慢且权限受限，因此只搜常见父目录的两层深度。
-    结果会缓存在 module-level `SEVENZIP_PATH`，请求路径不要再调本函数。
-    """
-    # 1) 配置优先
-    if settings.sevenzip_path and os.path.exists(settings.sevenzip_path):
-        return settings.sevenzip_path
-
-    # 2) PATH
-    exe = shutil.which("7z") or shutil.which("7za")
-    if exe:
-        return exe
-
-    # 3+4) 常见安装位置（Windows + Linux）
-    candidates = [
-        r"C:\Program Files\7-Zip\7z.exe",
-        r"C:\Program Files (x86)\7-Zip\7z.exe",
-        "/usr/bin/7z",
-        "/usr/local/bin/7z",
-        "/opt/homebrew/bin/7z",
-    ]
-    # 国内用户常见自定义安装路径模式：<盘符>:\APP|Tools|App|Software\...
-    import glob as _glob
-    for drive in "CDEF":
-        for parent in ("APP", "App", "Tools", "ToolApp", "Software", "Apps", "Program"):
-            # 限定 2 层深度：drive:\<parent>\.../7-Zip/7z.exe
-            candidates += _glob.glob(rf"{drive}:\{parent}\*\7-Zip\7z.exe")
-            candidates += _glob.glob(rf"{drive}:\{parent}\7-Zip\7z.exe")
-
-    return next((p for p in candidates if os.path.exists(p)), None)
-
-
-# Module 加载时一次性定位 7-Zip，避免每次 RAR 上传都触发全盘 glob（慢 + 泄露目录结构）。
-# 未检测到时记 warn（不阻塞启动；解压 RAR 等格式时再 HTTPException 400）。
-SEVENZIP_PATH: Optional[str] = _find_sevenzip()
-if SEVENZIP_PATH:
-    logger.info("pacs.sevenzip: detected path=%s", SEVENZIP_PATH)
-else:
-    logger.warning(
-        "pacs.sevenzip: 未检测到 7-Zip，仅 ZIP 上传可用；"
-        "RAR/7Z/TAR/ISO 等格式将在上传时返回 400"
-    )
-
-
-# 支持的压缩/打包格式（医院 PACS 真实场景常见）：
-#   ZIP  - Windows 默认
-#   RAR  - 国内医生常用
-#   7Z   - 国内医生常用
-#   TAR/TAR.GZ/TGZ/TAR.BZ2/TBZ - Linux 系统下科室自动归档
-#   ISO  - CT/MR 设备直接刻盘的 DICOMDIR 光盘镜像
-#
-# 注：.tar.gz / .tar.bz2 是双后缀，必须先匹配再 fallback 到单后缀
-ARCHIVE_EXTENSIONS = (
-    ".tar.gz", ".tar.bz2", ".tar.xz",  # 双后缀（必须先匹配）
-    ".zip", ".rar", ".7z",
-    ".tar", ".tgz", ".tbz", ".tbz2", ".txz",
-    ".iso", ".gz", ".bz2", ".xz",
-)
-
-
-def _detect_archive_kind(filename: str) -> Optional[str]:
-    """按文件名后缀识别压缩类型，返回内部 kind 标识；未识别返回 None。"""
-    fn = filename.lower()
-    # 双后缀优先匹配
-    for ext in (".tar.gz", ".tar.bz2", ".tar.xz"):
-        if fn.endswith(ext):
-            return ext.lstrip(".")  # "tar.gz"
-    # 单后缀
-    for ext in (".zip", ".rar", ".7z", ".tar", ".tgz", ".tbz", ".tbz2", ".txz",
-                ".iso", ".gz", ".bz2", ".xz"):
-        if fn.endswith(ext):
-            return ext.lstrip(".")
-    return None
-
-
-def _extract_archive(archive_path: Path, dest_dir: Path, archive_kind: str) -> None:
-    """解压任意支持的格式到目标目录。
-
-    - ZIP 走 Python 标准库 zipfile（无外部依赖）
-    - 其余全部走 7-Zip（一个工具吃掉 RAR/7Z/TAR/GZ/BZ2/XZ/ISO 等十来种）
-    """
-    if archive_kind == "zip":
-        with zipfile.ZipFile(str(archive_path), "r") as zf:
-            zf.extractall(str(dest_dir))
-        return
-    # 7-Zip 兜底：覆盖 RAR / 7Z / TAR.* / ISO / GZ 等
-    # SEVENZIP_PATH 在 module 加载时已检测一次，请求路径不再 glob
-    if not SEVENZIP_PATH:
-        raise HTTPException(
-            400, f"服务器未安装 7-Zip，无法解压 {archive_kind.upper()} 文件"
-        )
-    sevenzip = SEVENZIP_PATH
-    # tar.gz / tar.bz2 这种双层格式，7z 单次只能解一层（先解 .gz → 得到 .tar），
-    # 因此双后缀格式跑两遍 7z：第一遍解外层得到 tar，第二遍把 tar 解成文件
-    rounds = 2 if archive_kind in {"tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz", "tbz2", "txz", "gz", "bz2", "xz"} else 1
-    current_input = archive_path
-    for round_idx in range(rounds):
-        # 中间产物放到一个隔离目录，避免污染最终输出
-        round_out = dest_dir if round_idx == rounds - 1 else (dest_dir.parent / f"_inter_{round_idx}")
-        round_out.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            [sevenzip, "x", str(current_input), f"-o{round_out}", "-y"],
-            capture_output=True, text=True, timeout=600,
-        )
-        if result.returncode != 0:
-            raise HTTPException(
-                400, f"{archive_kind.upper()} 解压失败: {result.stderr or result.stdout}"
-            )
-        # 下一轮的输入：解出来的第一个 tar 文件（双后缀场景）
-        if round_idx < rounds - 1:
-            tars = list(round_out.rglob("*.tar"))
-            if not tars:
-                # 没有 tar，说明是单层 .gz/.bz2/.xz（如单文件压缩），直接结束
-                break
-            current_input = tars[0]
 
 
 @router.post("/upload")
@@ -276,7 +99,7 @@ async def upload_study(
     """
     # 只允许影像科医生 + 管理员上传；临床医生看影像走只读路径
     assert_pacs_write(current_user)
-    archive_kind = _detect_archive_kind(file.filename or "")
+    archive_kind = dicom_service.detect_archive_kind(file.filename or "")
     if not archive_kind:
         raise HTTPException(
             400,
@@ -296,7 +119,7 @@ async def upload_study(
         archive_path.write_bytes(await file.read())
 
         # 2) 解压（按格式自动选择 zipfile 或 7-Zip）
-        _extract_archive(archive_path, extract_dir, archive_kind)
+        dicom_service.extract_archive(archive_path, extract_dir, archive_kind)
 
         # 3) 找所有 DCM 文件路径（先扫一遍，不读字节）
         dcm_paths = [
@@ -309,14 +132,7 @@ async def upload_study(
         # 3.5) ⚡ 幂等快路径：只读第一个 DCM 的 metadata 拿 StudyInstanceUID 查 DB
         #      命中已存在 → 立即返回原 study_id，不读其他文件、不上传 Orthanc
         #      重传 537 帧 study 从分钟级降到亚秒级
-        try:
-            ds = pydicom.dcmread(str(dcm_paths[0]), stop_before_pixels=True)
-            preflight_study_uid = (
-                str(ds.StudyInstanceUID) if hasattr(ds, "StudyInstanceUID") else None
-            )
-        except Exception as e:
-            logger.warning("pacs.upload: preflight_metadata_read_failed 跳过幂等快路径 err=%s", e)
-            preflight_study_uid = None
+        preflight_study_uid = dicom_service.read_preflight_study_uid(dcm_paths[0])
 
         if preflight_study_uid:
             existing_q = await db.execute(
@@ -344,35 +160,11 @@ async def upload_study(
                 }
 
         # 3.6) 不重复 → 读所有文件字节 + pydicom 解析每个 SOPInstanceUID/SeriesInstanceUID/InstanceNumber
-        # （仅 metadata 不读 pixel，单张 ~5ms）
-        import io as _io
-        dicom_bytes_list: list[bytes] = []
-        instance_uids: list[str] = []
-        # frames_meta: 每帧的 instance_uid + series_uid + instance_number，用于
-        # /frames 端点的 Redis 缓存（避免实时查 Orthanc QIDO 慢 5-10s）
-        frames_meta: list[dict] = []
-        for f in dcm_paths:
-            try:
-                b = f.read_bytes()
-                ds = pydicom.dcmread(_io.BytesIO(b), stop_before_pixels=True)
-                sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
-                ser_uid = str(getattr(ds, "SeriesInstanceUID", "") or "")
-                inst_num = getattr(ds, "InstanceNumber", 0) or 0
-                if not sop_uid:
-                    continue
-                dicom_bytes_list.append(b)
-                instance_uids.append(sop_uid)
-                frames_meta.append({
-                    "instance_uid": sop_uid,
-                    "series_uid": ser_uid,
-                    "instance_number": int(inst_num) if str(inst_num).isdigit() else 0,
-                })
-            except Exception as e:
-                logger.warning("pacs.upload: dicom_parse_failed file=%s err=%s", f, e)
+        # （仅 metadata 不读 pixel，单张 ~5ms；frames_meta 用于 /frames 端点的
+        # Redis 缓存，避免实时查 Orthanc QIDO 慢 5-10s；已按 instance_number 排序）
+        dicom_bytes_list, instance_uids, frames_meta = dicom_service.parse_dicom_files(dcm_paths)
         if not dicom_bytes_list:
             raise HTTPException(400, "DCM 文件读取失败")
-        # 按 instance_number 排序（DICOM 切片顺序）
-        frames_meta.sort(key=lambda x: x["instance_number"])
 
         # 4) ⚡ 并行：STOW 到 Orthanc + pydicom 本地渲染 256/1024 JPEG → Redis
         # 优化 3 核心：backend 渲染每张 ~3ms × 537 / 8 路 ≈ 0.2s
@@ -386,13 +178,13 @@ async def upload_study(
 
         async def _do_render():
             if target_study_uid:
-                await _render_and_cache_all(target_study_uid, instances_for_render)
+                await frame_service.render_and_cache_all(target_study_uid, instances_for_render)
 
         import asyncio as _asyncio
         stow_resp, _ = await _asyncio.gather(_do_stow(), _do_render())
 
         # 5) 从 STOW 响应取 StudyInstanceUID（preflight 拿到的优先）
-        study_uid = target_study_uid or _extract_study_uid_from_stow_response(stow_resp)
+        study_uid = target_study_uid or frame_service.extract_study_uid_from_stow_response(stow_resp)
         if not study_uid:
             raise HTTPException(500, "Orthanc 上传成功但未返回 StudyInstanceUID")
 
@@ -433,7 +225,7 @@ async def upload_study(
             }
 
         # 7) 取 study 元数据（modality / body_part / series_description / 实例总数）
-        meta = await _fetch_study_metadata(study_uid)
+        meta = await frame_service.fetch_study_metadata(study_uid)
 
         # 8) 写业务表 ImagingStudy
         study = ImagingStudy(
@@ -468,148 +260,7 @@ async def upload_study(
         shutil.rmtree(str(work_dir), ignore_errors=True)
 
 
-def _extract_study_uid_from_stow_response(stow_resp: dict) -> Optional[str]:
-    """从 STOW-RS 响应解析 StudyInstanceUID。
-
-    DICOM JSON 中 ReferencedSOPSequence (0008,1199) 是数组，每个元素的
-    RetrieveURL (0008,1190) 形如 .../studies/{study_uid}/series/.../instances/...
-    所有 instance 都属于同一个 study（一次上传一个 study），取第一个即可。
-    """
-    refs = stow_resp.get("00081199", {}).get("Value", [])
-    if not refs:
-        return None
-    retrieve_url = refs[0].get("00081190", {}).get("Value", [None])[0]
-    if not retrieve_url:
-        return None
-    # URL 格式: http://host/dicom-web/studies/{study_uid}/series/{s_uid}/instances/{i_uid}
-    parts = retrieve_url.split("/studies/")
-    if len(parts) != 2:
-        return None
-    return parts[1].split("/")[0]
-
-
-async def _render_and_cache_all(
-    study_uid: str,
-    instances_with_bytes: list[tuple[str, bytes]],
-    concurrency: int = 8,
-) -> None:
-    """用 pydicom 本地渲染所有 instance 的 256 缩略图 + 1024 高清预览，写 Redis。
-
-    这是优化 3 的核心：替代之前调 Orthanc 渲染（每张 ~150-600ms），改用
-    backend 进程内 pydicom + Pillow 渲染（每张 ~3-5ms），快 30 倍。
-
-    instances_with_bytes: [(instance_uid, dcm_bytes), ...]
-    并发度通过 ThreadPoolExecutor 控制（pydicom + Pillow 释放 GIL，真并行）。
-
-    Redis key 约定：
-      pacs:thumb:{study_uid}:{instance_uid}    → 256 缩略图（列表用）
-      pacs:preview:{study_uid}:{instance_uid}  → 1024 高清预览（DicomViewer 主区用）
-    """
-    import asyncio as _asyncio
-
-    if not instances_with_bytes:
-        return
-
-    loop = _asyncio.get_event_loop()
-    sem = _asyncio.Semaphore(concurrency)
-
-    async def _one(iuid: str, dcm_bytes: bytes) -> None:
-        async with sem:
-            # 在线程池里跑 pydicom（CPU 密集，run_in_executor 释放 event loop）
-            try:
-                thumb_jpeg = await loop.run_in_executor(None, render_thumbnail, dcm_bytes)
-                preview_jpeg = await loop.run_in_executor(None, render_preview, dcm_bytes)
-            except Exception as e:
-                logger.warning("pacs.preview: render_failed instance=%s err=%s", iuid, e)
-                return
-            if thumb_jpeg:
-                await redis_cache.set_bytes(
-                    f"pacs:thumb:{study_uid}:{iuid}",
-                    thumb_jpeg,
-                    ttl=settings.thumbnail_cache_ttl,
-                )
-            if preview_jpeg:
-                await redis_cache.set_bytes(
-                    f"pacs:preview:{study_uid}:{iuid}",
-                    preview_jpeg,
-                    ttl=settings.thumbnail_cache_ttl,
-                )
-
-    await _asyncio.gather(
-        *[_one(iuid, dcm) for iuid, dcm in instances_with_bytes],
-        return_exceptions=True,
-    )
-    logger.info(
-        "pacs.render: done study=%s frames=%d（缩略+预览）",
-        study_uid[-12:],
-        len(instances_with_bytes),
-    )
-
-
-async def _fetch_study_metadata(study_uid: str) -> dict:
-    """从 Orthanc 拉 study 主要元数据：modality / body_part / series_description / 实例总数。
-
-    取所有 series 后聚合：modality 取第一个非空值，body_part 取第一个非空值，
-    series_description 拼接所有 series（去重）。
-
-    QIDO-RS 默认不返回 BodyPartExamined / NumberOfSeriesRelatedInstances，
-    必须显式 includefield。
-    """
-    series_list = await orthanc_client.find_series(
-        study_uid,
-        include_fields=["BodyPartExamined", "NumberOfSeriesRelatedInstances"],
-    )
-    modality = None
-    body_part = None
-    series_descs: list[str] = []
-    total_instances = 0
-    for s in series_list:
-        # DICOM JSON 字段：00080060=Modality 00180015=BodyPartExamined 0008103E=SeriesDescription
-        m = (s.get("00080060", {}).get("Value") or [None])[0]
-        bp = (s.get("00180015", {}).get("Value") or [None])[0]
-        sd = (s.get("0008103E", {}).get("Value") or [None])[0]
-        # 00201209 = Number of Series Related Instances
-        n = (s.get("00201209", {}).get("Value") or [0])[0]
-        if m and not modality:
-            modality = str(m)
-        if bp and not body_part:
-            body_part = str(bp)
-        if sd and sd not in series_descs:
-            series_descs.append(str(sd))
-        try:
-            total_instances += int(n)
-        except (TypeError, ValueError):
-            pass
-    return {
-        "modality": modality,
-        "body_part": body_part,
-        "series_description": " / ".join(series_descs)[:200] if series_descs else None,
-        "total_instances": total_instances,
-    }
-
-
-# ─── 获取切片列表（QIDO 查 Orthanc）───────────────────────────────────────
-
-async def _list_study_instances(study_uid: str) -> list[dict]:
-    """返回 study 下所有 instance 的精简信息（按 InstanceNumber 排序）。
-
-    每条形如 {"instance_uid": "...", "series_uid": "...", "instance_number": 1}
-    """
-    raw = await orthanc_client.find_all_instances_in_study(study_uid)
-    result = []
-    for inst in raw:
-        # 00080018 = SOPInstanceUID; 00200013 = InstanceNumber
-        instance_uid = (inst.get("00080018", {}).get("Value") or [None])[0]
-        instance_number = (inst.get("00200013", {}).get("Value") or [0])[0]
-        if not instance_uid:
-            continue
-        result.append({
-            "instance_uid": instance_uid,
-            "series_uid": inst.get("_seriesInstanceUID"),
-            "instance_number": int(instance_number) if instance_number else 0,
-        })
-    return result
-
+# ─── 获取切片列表（QIDO 查 Orthanc，已搬至 frame_service）───────────────────
 
 @router.get("/{study_id}/frames")
 async def get_frames(
@@ -637,10 +288,10 @@ async def get_frames(
         try:
             instances = _json.loads(cached.decode("utf-8"))
         except Exception:
-            instances = await _list_study_instances(study.study_instance_uid)
+            instances = await frame_service.list_study_instances(study.study_instance_uid)
     else:
         # 老 study（R1 预热前上传的）走 Orthanc QIDO 兜底，并把结果回写 Redis
-        instances = await _list_study_instances(study.study_instance_uid)
+        instances = await frame_service.list_study_instances(study.study_instance_uid)
         if instances:
             await redis_cache.set_bytes(
                 cache_key,
@@ -651,7 +302,7 @@ async def get_frames(
     total = len(instances)
 
     # 智能非均匀抽样（按索引→映射回 instance_uid）
-    suggested_indices = _smart_sample_indices(total, AUTO_SAMPLE_COUNT)
+    suggested_indices = dicom_service.smart_sample_indices(total, AUTO_SAMPLE_COUNT)
     suggested = [instances[i]["instance_uid"] for i in suggested_indices]
 
     return {
@@ -663,53 +314,7 @@ async def get_frames(
     }
 
 
-# ─── 缩略图服务（WADO render，Orthanc 自带 GDCM 渲染）─────────────────────
-
-async def _resolve_instance(study_uid: str, instance_uid: str) -> Optional[str]:
-    """通过 instance_uid 反查 series_uid（O(1) 走 Orthanc 私有 REST）。
-
-    历史 bug：曾经遍历该 study 所有 series + 所有 instance（O(N²) 网络往返），
-    537 帧 study 单张缩略图加载耗时 12 秒，整个列表加载预计 107 分钟。
-    现在改用 `tools/find Level=Instance` 一次定位 instance + 一次拿 series UID，
-    总共 2 次 Orthanc 调用，与帧数无关。
-
-    更优做法：前端从 /frames 响应里就已经有 series_uid，调 thumbnail/dicom
-    端点时一并传过来，免去本函数调用。本函数只在前端没传时兜底。
-    """
-    import httpx as _httpx
-    try:
-        async with _httpx.AsyncClient(
-            auth=(settings.orthanc_username, settings.orthanc_password),
-            timeout=10.0,
-        ) as c:
-            # 1) 用 SOPInstanceUID 找 Orthanc 内部 instance id
-            r = await c.post(
-                f"{settings.orthanc_base_url.rstrip('/')}/tools/find",
-                json={
-                    "Level": "Instance",
-                    "Query": {
-                        "StudyInstanceUID": study_uid,
-                        "SOPInstanceUID": instance_uid,
-                    },
-                },
-            )
-            r.raise_for_status()
-            ids = r.json()
-            if not ids:
-                return None
-            # 2) 拿 instance 详情，里面有 ParentSeries（Orthanc 内部 series id）
-            r = await c.get(f"{settings.orthanc_base_url.rstrip('/')}/instances/{ids[0]}")
-            r.raise_for_status()
-            parent_series = r.json().get("ParentSeries")
-            if not parent_series:
-                return None
-            # 3) 拿 series 详情，里面有 SeriesInstanceUID（DICOM 标准 UID）
-            r = await c.get(f"{settings.orthanc_base_url.rstrip('/')}/series/{parent_series}")
-            r.raise_for_status()
-            return r.json().get("MainDicomTags", {}).get("SeriesInstanceUID")
-    except _httpx.HTTPError:
-        return None
-
+# ─── 缩略图服务（WADO render，Orthanc 自带 GDCM 渲染；series 反查搬至 frame_service）──
 
 @router.get("/{study_id}/thumbnail/{instance_uid}")
 async def get_thumbnail(
@@ -745,7 +350,7 @@ async def get_thumbnail(
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
 
     # 优先用前端传的 series_uid（0 次 Orthanc 调用），没传才走兜底反查
-    resolved_series = series_uid or await _resolve_instance(
+    resolved_series = series_uid or await frame_service.resolve_instance(
         study.study_instance_uid, instance_uid
     )
     if not resolved_series:
@@ -849,7 +454,7 @@ async def get_preview(
                 headers={"Cache-Control": "private, max-age=86400", "X-Cache": "HIT"},
             )
 
-    resolved_series = series_uid or await _resolve_instance(
+    resolved_series = series_uid or await frame_service.resolve_instance(
         study.study_instance_uid, instance_uid
     )
     if not resolved_series:
@@ -926,7 +531,7 @@ async def get_dicom_file(
 
     if not series_uid:
         t0 = _time.perf_counter()
-        series_uid = await _resolve_instance(study.study_instance_uid, instance_uid)
+        series_uid = await frame_service.resolve_instance(study.study_instance_uid, instance_uid)
         perf["resolve_instance"] = _time.perf_counter() - t0
     if not series_uid:
         raise HTTPException(404, "影像帧不存在")
@@ -953,92 +558,11 @@ async def get_dicom_file(
     return Response(content=dcm_bytes, media_type="application/dicom")
 
 
-# ─── AI 分析（从 Orthanc 拉关键帧 → 千问 VL）────────────────────────────────
-
-async def _call_qwen_vl(
-    prompt: str,
-    images: list[tuple[bytes, str]],
-    max_tokens: int = 1000,
-) -> str:
-    """统一的千问 VL（阿里云 DashScope OpenAI 兼容接口）调用入口。
-
-    抽取自原 analyze_study / analyze_image 两份重复代码，作用：
-      - 统一 messages 构造（system 用 prompt，user content 是图像数组）
-      - 统一 base64 + dataurl 拼装（不同 mime 共用同一段逻辑）
-      - 统一异常处理（HTTP 非 200 / 网络异常都转 HTTPException 500）
-
-    参数:
-      prompt     : 用户级文本提示（已含放射科结构化模板，参见 prompts_pacs）
-      images     : [(image_bytes, mime), ...] 列表；mime 形如 "image/jpeg"
-      max_tokens : 生成上限。study 多帧默认 1000；image 单图原本 800
-
-    返回: 模型文本响应（一般是结构化报告字符串）
-
-    异常: HTTPException(500) — 上游 API 非 200 / 网络异常 / 解析失败
-    """
-    images_content = [
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{mime};base64,{base64.b64encode(b).decode()}"
-            },
-        }
-        for b, mime in images
-    ]
-    messages = [
-        {
-            "role": "user",
-            "content": [{"type": "text", "text": prompt}] + images_content,
-        }
-    ]
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{settings.aliyun_base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.aliyun_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.aliyun_model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                },
-            )
-            if resp.status_code != 200:
-                raise HTTPException(500, f"AI 分析失败: {resp.text}")
-            return resp.json()["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"AI 服务异常: {e}")
-
+# ─── AI 分析（从 Orthanc 拉关键帧 → 千问 VL；调用逻辑搬至 analysis_service）──
 
 class AnalyzeRequest(BaseModel):
     """前端传选中的 instance UID 列表（R1 后不再用文件名）。"""
     selected_frames: List[str]
-
-
-# Modality 自适应采样上限：CT/MR 切片多取 18 帧、X 光本就 1-3 张全取、超声中等
-MODALITY_FRAME_CAP = {
-    "CT": 18,
-    "MR": 18,
-    "MRI": 18,
-    "PT": 18,   # PET
-    "US": 6,    # 超声
-    "DR": 4,    # 数字 X 线
-    "DX": 4,
-    "CR": 4,    # 计算机 X 线
-    "XA": 6,    # 血管造影
-    "MG": 4,    # 乳腺
-}
-
-
-def _frame_cap_for(modality: Optional[str]) -> int:
-    """按 modality 决定一次 AI 分析最多送几帧。未知类型默认 18。"""
-    if not modality:
-        return AUTO_SAMPLE_COUNT
-    return MODALITY_FRAME_CAP.get(modality.upper(), AUTO_SAMPLE_COUNT)
 
 
 @router.post("/{study_id}/analyze")
@@ -1062,68 +586,26 @@ async def analyze_study(
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持分析")
 
-    cap = _frame_cap_for(study.modality)
+    cap = analysis_service.frame_cap_for(study.modality)
     selected = body.selected_frames[:cap]
     if not selected:
         raise HTTPException(400, "未选中任何影像帧")
 
-    # 一次性查所有 series + instance UID 反向索引（避免每帧都重新 QIDO）
-    instance_to_series: dict[str, str] = {}
-    for series in await orthanc_client.find_series(study.study_instance_uid):
-        s_uid = (series.get("0020000E", {}).get("Value") or [None])[0]
-        if not s_uid:
-            continue
-        for inst in await orthanc_client.find_instances(study.study_instance_uid, s_uid):
-            i_uid = (inst.get("00080018", {}).get("Value") or [None])[0]
-            if i_uid:
-                instance_to_series[i_uid] = s_uid
-
-    # 从 Orthanc 拉每帧 JPEG（保留质量，给千问 VL 看）
-    images: list[tuple[bytes, str]] = []
-    for instance_uid in selected:
-        series_uid = instance_to_series.get(instance_uid)
-        if not series_uid:
-            logger.warning("pacs.analyze: instance_not_in_study instance=%s study=%s 跳过", instance_uid, study.study_instance_uid)
-            continue
-        try:
-            jpeg_bytes = await orthanc_client.get_instance_rendered(
-                study.study_instance_uid,
-                series_uid,
-                instance_uid,
-                quality=AI_FRAME_JPEG_QUALITY,
-            )
-        except httpx.HTTPError as e:
-            logger.warning("pacs.analyze: frame_fetch_failed instance=%s err=%s", instance_uid, e)
-            continue
-        images.append((jpeg_bytes, "image/jpeg"))
-
+    # 从 Orthanc 拉选中帧 JPEG（series 反向索引 + WADO render，搬至 analysis_service）
+    images = await analysis_service.fetch_frames_for_analysis(
+        study.study_instance_uid, selected
+    )
     if not images:
         raise HTTPException(400, "没有可分析的影像帧")
 
-    # 构建 prompt + 调千问 VL（统一走 _call_qwen_vl，与单图分析共用代码路径）
+    # 构建 prompt + 调千问 VL（统一走 call_qwen_vl，与单图分析共用代码路径）
     prompt = build_study_prompt(study.modality, study.body_part)
-    ai_result = await _call_qwen_vl(prompt, images, max_tokens=1000)
+    ai_result = await analysis_service.call_qwen_vl(prompt, images, max_tokens=1000)
 
-    # 保存到数据库（unique 约束保证一个 study 至多一条 report）
-    result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
-    report = result.scalar_one_or_none()
-
-    if report:
-        report.selected_frames = selected
-        report.ai_analysis = ai_result
-        report.final_report = ai_result
-    else:
-        report = ImagingReport(
-            study_id=study_id,
-            radiologist_id=current_user.id,
-            selected_frames=selected,
-            ai_analysis=ai_result,
-            final_report=ai_result,
-        )
-        db.add(report)
-
-    study.status = "analyzed"
-    await db.commit()
+    # 保存到数据库（unique 约束保证一个 study 至多一条 report，搬至 report_service）
+    await report_service.upsert_analysis_report(
+        db, study, study_id, selected, ai_result, current_user.id
+    )
 
     return {"ai_analysis": ai_result}
 
@@ -1204,27 +686,8 @@ async def get_patient_reports(
         if not enc.scalar_one_or_none():
             raise HTTPException(403, "无权访问该患者影像资料")
 
-    result = await db.execute(
-        select(ImagingStudy, ImagingReport)
-        .join(ImagingReport, ImagingReport.study_id == ImagingStudy.id, isouter=True)
-        .where(ImagingStudy.patient_id == patient_id)
-        .where(ImagingStudy.status == "published")
-        .order_by(ImagingStudy.created_at.desc())
-    )
-    rows = result.all()
-    return [
-        {
-            "study_id": s.id,
-            "modality": s.modality,
-            "body_part": s.body_part,
-            "series_description": s.series_description,
-            "total_frames": s.total_frames,
-            "created_at": s.created_at.isoformat(),
-            "final_report": r.final_report if r else None,
-            "published_at": r.published_at.isoformat() if r and r.published_at else None,
-        }
-        for s, r in rows
-    ]
+    # 查询 + 序列化已搬至 report_service（行为零改变）
+    return await report_service.list_patient_published_reports(db, patient_id)
 
 
 # ─── 临床医生：直接上传 JPG/PNG 分析 ────────────────────────────────────────
@@ -1252,7 +715,7 @@ async def analyze_image(
         temp_study_uid: Optional[str] = None
         try:
             stow_resp = await orthanc_client.stow_instances([raw_bytes])
-            temp_study_uid = _extract_study_uid_from_stow_response(stow_resp)
+            temp_study_uid = frame_service.extract_study_uid_from_stow_response(stow_resp)
             if not temp_study_uid:
                 raise HTTPException(400, "DCM 文件解析失败：Orthanc 未返回 StudyInstanceUID")
             series_list = await orthanc_client.find_series(temp_study_uid)
@@ -1282,9 +745,9 @@ async def analyze_image(
         img_bytes = raw_bytes
         mime = content_type if content_type in allowed_img else "image/jpeg"
 
-    # 构建 prompt + 调千问 VL（与 analyze_study 共用 _call_qwen_vl）
+    # 构建 prompt + 调千问 VL（与 analyze_study 共用 analysis_service.call_qwen_vl）
     prompt = build_image_prompt(image_type)
-    analysis = await _call_qwen_vl(prompt, [(img_bytes, mime)], max_tokens=800)
+    analysis = await analysis_service.call_qwen_vl(prompt, [(img_bytes, mime)], max_tokens=800)
     return {"analysis": analysis}
 
 
@@ -1360,21 +823,5 @@ async def list_studies(
     if getattr(current_user, "role", "doctor") not in PACS_WRITE_ROLES:
         raise HTTPException(403, "仅放射科医生可访问影像列表")
 
-    q = select(ImagingStudy).order_by(ImagingStudy.created_at.desc())
-    if status:
-        q = q.where(ImagingStudy.status == status)
-    result = await db.execute(q)
-    studies = result.scalars().all()
-    return [
-        {
-            "study_id": s.id,
-            "patient_id": s.patient_id,
-            "modality": s.modality,
-            "body_part": s.body_part,
-            "series_description": s.series_description,
-            "total_frames": s.total_frames,
-            "status": s.status,
-            "created_at": s.created_at.isoformat(),
-        }
-        for s in studies
-    ]
+    # 查询 + 序列化已搬至 report_service（行为零改变）
+    return await report_service.list_studies_data(db, status)
