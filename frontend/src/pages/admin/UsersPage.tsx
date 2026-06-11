@@ -10,83 +10,22 @@
  *
  * 密码策略：
  *   创建时要求 ≥8 位；管理员可强制重置密码但不能查看原密码。
+ *
+ * 2026-06-11 Round 5.5 拆分：表单弹窗 / 重置密码弹窗 / 表格列定义 / 共享类型
+ * 移至 ./users/ 子目录，本文件只保留数据加载与页面编排。
  */
 import { useEffect, useState } from 'react'
-import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Space,
-  Tag,
-  Tooltip,
-  Typography,
-  Popconfirm,
-} from 'antd'
+import { Table, Button, Typography } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
-import {
-  PlusOutlined,
-  EditOutlined,
-  StopOutlined,
-  CheckCircleOutlined,
-  KeyOutlined,
-  CopyOutlined,
-} from '@ant-design/icons'
+import { PlusOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import type { UserRow, DeptOption, UserFormValues } from './users/types'
+import { buildUserColumns } from './users/userColumns'
+import UserFormModal from './users/UserFormModal'
+import ResetPasswordModal from './users/ResetPasswordModal'
 
 const { Title } = Typography
-
-/**
- * 生成强随机密码（默认 12 位，含字母数字大小写）。
- * 仅在重置密码弹窗里给管理员一个起点，管理员可手动修改。
- * 不引入 third-party 依赖，使用 crypto.getRandomValues 保证随机性。
- */
-function generateRandomPassword(length = 12): string {
-  const charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789' // 去除易混淆的 I,L,O,1,0
-  const arr = new Uint32Array(length)
-  crypto.getRandomValues(arr)
-  return Array.from(arr, n => charset[n % charset.length]).join('')
-}
-
-const ROLE_MAP: Record<string, { label: string; color: string }> = {
-  super_admin: { label: '超级管理员', color: 'red' },
-  hospital_admin: { label: '医院管理员', color: 'orange' },
-  dept_admin: { label: '科室管理员', color: 'gold' },
-  doctor: { label: '医生', color: 'blue' },
-  nurse: { label: '护士', color: 'cyan' },
-}
-
-/** 用户列表行类型（后端 UserResponse 子集，仅含本页用到的字段） */
-interface UserRow {
-  id: string
-  username: string
-  real_name: string
-  role: string
-  is_active: boolean
-  department_id?: string | null
-  department_name?: string | null
-}
-
-/** 科室下拉项（仅取 id + name 用于 Select options） */
-interface DeptOption {
-  id: string
-  name: string
-}
-
-/** 新建/编辑用户表单字段——与后端 UserCreate/UserUpdate 对齐 */
-interface UserFormValues {
-  username?: string
-  password?: string
-  real_name: string
-  role: string
-  department_id?: string | null
-  employee_no?: string
-  phone?: string
-  email?: string
-}
 
 export default function UsersPage() {
   // 当前登录管理员 ID——用于禁用"自己停用自己"按钮（防误操作把自己锁出系统）
@@ -98,7 +37,8 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editUser, setEditUser] = useState<UserRow | null>(null)
-  const [form] = Form.useForm<UserFormValues>()
+  // 重置密码弹窗的目标用户（null = 关闭）；密码状态/API 调用在 ResetPasswordModal 内部
+  const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
 
   const loadUsers = async (p = page) => {
     setLoading(true)
@@ -135,23 +75,6 @@ export default function UsersPage() {
     setEditUser(user)
     setModalOpen(true)
   }
-
-  // form.resetFields / setFieldsValue 必须等 Modal 内的 Form 挂载之后再调，
-  // 否则 useForm 实例没连接到任何 Form 元素，触发
-  // "Instance created by useForm is not connected to any Form element" 警告。
-  // 监听 modalOpen + editUser 变化在 effect 里同步初值。
-  useEffect(() => {
-    if (!modalOpen) return
-    if (editUser) {
-      form.setFieldsValue({
-        real_name: editUser.real_name,
-        role: editUser.role,
-        department_id: editUser.department_id ?? undefined,
-      })
-    } else {
-      form.resetFields()
-    }
-  }, [modalOpen, editUser, form])
 
   const handleSubmit = async (values: UserFormValues) => {
     try {
@@ -192,113 +115,14 @@ export default function UsersPage() {
     }
   }
 
-  // ── 重置密码（2026-05-03 加）─────────────────────────────────────────────
-  // 密码原文不可"看"——bcrypt 单向哈希。管理员只能"重置"：手输或一键生成强随机串，
-  // 弹窗展示新密码一次（带"复制"按钮），关闭后再也看不到。
-  // 真实场景下应该再加"用户首次登录强制改密码"的标志位，本期 MVP 暂不强制。
-  const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
-  const [newPassword, setNewPassword] = useState('')
-  const [resetSubmitting, setResetSubmitting] = useState(false)
-
-  const openReset = (user: { id: string; username: string }) => {
-    setResetUser(user)
-    // 默认生成 12 位强随机密码（含字母数字）；管理员可在弹窗内修改
-    setNewPassword(generateRandomPassword(12))
-  }
-
-  const submitReset = async () => {
-    if (!resetUser || !newPassword || newPassword.length < 6) {
-      message.warning('密码至少 6 位')
-      return
-    }
-    setResetSubmitting(true)
-    try {
-      await api.post(`/admin/users/${resetUser.id}/reset-password`, {
-        new_password: newPassword,
-      })
-      message.success('密码已重置，请将新密码告知用户')
-      // 不立即关弹窗，让管理员有机会复制；点"知道了"才关
-    } catch (e: unknown) {
-      const detail = (e as { detail?: string })?.detail
-      message.error(detail || '重置失败')
-    } finally {
-      setResetSubmitting(false)
-    }
-  }
-
-  const closeReset = () => {
-    setResetUser(null)
-    setNewPassword('')
-  }
-
-  const copyPassword = async () => {
-    try {
-      await navigator.clipboard.writeText(newPassword)
-      message.success('已复制到剪贴板')
-    } catch {
-      message.warning('复制失败，请手动选中复制')
-    }
-  }
-
-  const columns = [
-    { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '姓名', dataIndex: 'real_name', key: 'real_name' },
-    {
-      title: '角色',
-      dataIndex: 'role',
-      key: 'role',
-      render: (role: string) => {
-        const r = ROLE_MAP[role] || { label: role, color: 'default' }
-        return <Tag color={r.color}>{r.label}</Tag>
-      },
-    },
-    {
-      title: '状态',
-      dataIndex: 'is_active',
-      key: 'is_active',
-      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '启用' : '停用'}</Tag>,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_: unknown, record: UserRow) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Button
-            size="small"
-            icon={<KeyOutlined />}
-            onClick={() => openReset({ id: record.id, username: record.username })}
-          >
-            重置密码
-          </Button>
-          {record.is_active ? (
-            // 自己不能停用自己——按钮禁用 + tooltip 解释
-            record.id === myId ? (
-              <Tooltip title="不能停用自己的账号，请由其他管理员操作">
-                <Button size="small" danger icon={<StopOutlined />} disabled>
-                  停用
-                </Button>
-              </Tooltip>
-            ) : (
-              <Popconfirm title="确认停用该用户？" onConfirm={() => handleDeactivate(record.id)}>
-                <Button size="small" danger icon={<StopOutlined />}>
-                  停用
-                </Button>
-              </Popconfirm>
-            )
-          ) : (
-            <Popconfirm title="确认启用该用户？" onConfirm={() => handleActivate(record.id)}>
-              <Button size="small" type="primary" icon={<CheckCircleOutlined />}>
-                启用
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
-    },
-  ]
+  // 表格列定义在 ./users/userColumns.tsx，这里注入页面侧回调
+  const columns = buildUserColumns({
+    myId,
+    onEdit: openEdit,
+    onReset: setResetUser,
+    onDeactivate: handleDeactivate,
+    onActivate: handleActivate,
+  })
 
   return (
     <div>
@@ -325,107 +149,18 @@ export default function UsersPage() {
           },
         }}
       />
-      <Modal
-        title={editUser ? '编辑用户' : '新建用户'}
+
+      {/* 新建/编辑用户弹窗（表单 UI 在子组件，提交 API 在本页 handleSubmit） */}
+      <UserFormModal
         open={modalOpen}
+        editUser={editUser}
+        departments={departments}
         onCancel={() => setModalOpen(false)}
-        onOk={() => form.submit()}
-        okText="确认"
-        cancelText="取消"
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
-          {!editUser && (
-            <>
-              <Form.Item label="用户名" name="username" rules={[{ required: true }]}>
-                <Input placeholder="登录用户名" autoComplete="off" />
-              </Form.Item>
-              <Form.Item label="密码" name="password" rules={[{ required: true, min: 6 }]}>
-                <Input.Password placeholder="至少6位" autoComplete="new-password" />
-              </Form.Item>
-            </>
-          )}
-          <Form.Item label="姓名" name="real_name" rules={[{ required: true }]}>
-            <Input placeholder="真实姓名" />
-          </Form.Item>
-          <Form.Item label="角色" name="role" rules={[{ required: true }]}>
-            <Select
-              options={Object.entries(ROLE_MAP).map(([v, r]) => ({ value: v, label: r.label }))}
-            />
-          </Form.Item>
-          <Form.Item label="所属科室" name="department_id">
-            <Select
-              allowClear
-              placeholder="选择科室（可选）"
-              options={departments.map(d => ({ value: d.id, label: d.name }))}
-            />
-          </Form.Item>
-          {!editUser && (
-            <>
-              <Form.Item label="工号" name="employee_no">
-                <Input placeholder="员工编号（可选）" />
-              </Form.Item>
-              <Form.Item label="手机号" name="phone">
-                <Input placeholder="手机号（可选）" />
-              </Form.Item>
-            </>
-          )}
-        </Form>
-      </Modal>
+        onSubmit={handleSubmit}
+      />
 
       {/* 重置密码弹窗：密码原文不可"看"，只能"重置"——展示一次后由用户登录改回 */}
-      <Modal
-        title="重置密码"
-        open={!!resetUser}
-        onCancel={closeReset}
-        okText="确认重置"
-        cancelText="取消"
-        okButtonProps={{ loading: resetSubmitting }}
-        onOk={submitReset}
-        destroyOnHidden
-        width={460}
-      >
-        <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 13 }}>
-          为用户 <Tag>{resetUser?.username}</Tag> 重置密码：
-        </div>
-        <Input.Password
-          value={newPassword}
-          onChange={e => setNewPassword(e.target.value)}
-          placeholder="新密码（至少 6 位）"
-          addonAfter={
-            <Button
-              type="text"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={copyPassword}
-              title="复制密码到剪贴板"
-            />
-          }
-        />
-        <div style={{ marginTop: 8, fontSize: 12 }}>
-          <Button
-            type="link"
-            size="small"
-            style={{ padding: 0 }}
-            onClick={() => setNewPassword(generateRandomPassword(12))}
-          >
-            重新生成随机密码
-          </Button>
-        </div>
-        <div
-          style={{
-            marginTop: 12,
-            padding: '8px 10px',
-            background: '#fef9c3',
-            border: '1px solid #fde047',
-            borderRadius: 6,
-            fontSize: 12,
-            color: '#854d0e',
-          }}
-        >
-          ⚠️ 提交后请<b>立即复制</b>新密码并告知用户。关闭弹窗后系统不再保留原文，只存哈希值。
-        </div>
-      </Modal>
+      <ResetPasswordModal user={resetUser} onClose={() => setResetUser(null)} />
     </div>
   )
 }

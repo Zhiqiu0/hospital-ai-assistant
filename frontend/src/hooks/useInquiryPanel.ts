@@ -1,37 +1,28 @@
 /**
  * 门诊/急诊问诊面板逻辑（hooks/useInquiryPanel.ts）
  *
- * 从 InquiryPanel 提取的业务逻辑 hook，包含：
- *   - 表单初始化与字段同步（useEffect）
- *   - 保存逻辑（AI 规范化 + 病历章节同步）
- *   - 语音录入处理（填表 / 追记病历）
- *   - 生命体征快填处理
+ * 从 InquiryPanel 提取的业务逻辑 hook。
+ * 2026-06-11 Round 5.5 拆分（纯搬家不改逻辑，门面签名与返回值结构不变）：
+ *   - 表单初始化与字段同步（useEffect 组）→ inquiryPanel/useInquiryFormSync.ts
+ *   - 保存逻辑（AI 规范化 + 病历章节同步 + 统一保存）→ inquiryPanel/useInquirySave.ts
+ *   - 急诊流转（转住院 / 留观追记）→ inquiryPanel/useEmergencyFlow.ts
+ *   - 语音录入处理（填表 / 追记病历）→ inquiryPanel/useVoiceIntake.ts
+ *   - 本门面保留：store 订阅 + 派生状态 + 子 hook 组装
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Form } from 'antd'
-import { message } from '@/services/messageBridge'
-import { useNavigate } from 'react-router-dom'
-import dayjs from 'dayjs'
-import type { Patient, VisitType, Gender } from '@/domain/medical'
+import type { VisitType } from '@/domain/medical'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
-import {
-  useActiveEncounterStore,
-  useCurrentPatient,
-  resetAllWorkbench,
-  setCurrentEncounterFromPatient,
-} from '@/store/activeEncounterStore'
-import { applyQuickStartResult } from '@/store/encounterIntake'
+import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
-import api from '@/services/api'
-import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
-import { INQUIRY_FORM_FIELDS, buildInquiryData, syncInquiryToRecord } from '@/utils/inquirySync'
-import type { InquiryData } from '@/store/types'
-import type { QuickStartResult } from '@/store/encounterIntake'
+import { useInquiryFormSync } from './inquiryPanel/useInquiryFormSync'
+import { useInquirySave } from './inquiryPanel/useInquirySave'
+import { useEmergencyFlow } from './inquiryPanel/useEmergencyFlow'
+import { useVoiceIntake } from './inquiryPanel/useVoiceIntake'
 
 export function useInquiryPanel() {
   const [form] = Form.useForm()
-  const navigate = useNavigate()
   // 拆分后从子 store 读字段：
   //   inquiry / record 各管自己的；接诊上下文走 activeEncounterStore；
   //   currentPatient 通过 useCurrentPatient 聚合 patientCache + activeEncounter
@@ -53,200 +44,45 @@ export function useInquiryPanel() {
   const isEmergency = currentVisitType === 'emergency'
 
   const [isDirty, setIsDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
-  // 保存后的患者去向，用于驱动急诊流转提示
-  const [savedDisposition, setSavedDisposition] = useState<string>('')
 
-  // 切换接诊或 inquirySavedAt 更新时全量同步表单
-  useEffect(() => {
-    form.setFieldsValue({
-      ...inquiry,
-      visit_time: inquiry.visit_time ? dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm') : dayjs(),
-      onset_time: inquiry.onset_time ? dayjs(inquiry.onset_time, 'YYYY-MM-DD HH:mm') : null,
-    })
-    // inquirySavedAt=0 且有数据说明是刷新前填了但未保存，保持 dirty 提示用户保存
-    if (inquirySavedAt === 0 && inquiry.chief_complaint) {
-      setIsDirty(true)
-    } else {
-      setIsDirty(false)
-    }
-    // inquiry 是整个表单状态，加进 deps 会让每次输入都重置——只在接诊切换时重置
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, currentEncounterId, inquirySavedAt])
+  // 表单初始化与字段同步副作用（接诊切换 / store 字段被外部写入时同步表单）
+  useInquiryFormSync({ form, inquiry, currentEncounterId, inquirySavedAt, setIsDirty })
 
-  // 辅助检查由外部（如追问建议）写入时同步表单
-  useEffect(() => {
-    const current = form.getFieldValue('auxiliary_exam') || ''
-    if (inquiry.auxiliary_exam !== current) {
-      form.setFieldValue('auxiliary_exam', inquiry.auxiliary_exam || '')
-    }
-    // form 引用稳定，加进 deps 会让效果过度触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inquiry.auxiliary_exam])
+  // 1.6.3 统一保存：让组件订阅档案 store 的 dirty/saving，组合成统一按钮态
+  const profileDirty = usePatientProfileEditStore(s => s.isDirty)
+  const profileSaving = usePatientProfileEditStore(s => s.saving)
 
-  // 就诊时间从 store 初始化（workspace snapshot 的 visited_at）
-  useEffect(() => {
-    if (inquiry.visit_time && !form.getFieldValue('visit_time')) {
-      form.setFieldValue('visit_time', dayjs(inquiry.visit_time, 'YYYY-MM-DD HH:mm'))
-    }
-    // form 引用稳定
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inquiry.visit_time])
+  // 保存逻辑（onSave / saveAll + saving / savedDisposition 状态）
+  const { saving, savedDisposition, onSave, saveAll } = useInquirySave({
+    form,
+    inquiry,
+    setInquiry,
+    currentEncounterId,
+    recordContent,
+    setRecordContent,
+    setPendingGenerate,
+    isEmergency,
+    isDirty,
+    setIsDirty,
+    profileDirty,
+    currentPatient,
+  })
 
-  // 现病史被追问建议修改时同步表单并激活保存按钮
-  useEffect(() => {
-    const current = form.getFieldValue('history_present_illness') || ''
-    if (inquiry.history_present_illness !== current) {
-      form.setFieldValue('history_present_illness', inquiry.history_present_illness || '')
-      setIsDirty(true)
-    }
-    // form 引用稳定
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inquiry.history_present_illness])
+  // 急诊流转动作（转住院 / 留观追记）
+  const { handleAdmitToInpatient, handleAddObservationNote } = useEmergencyFlow({
+    currentPatient,
+    recordContent,
+    setRecordContent,
+  })
 
-  // AI 诊断建议写入 initial_impression 时同步表单
-  useEffect(() => {
-    const current = form.getFieldValue('initial_impression') || ''
-    if (inquiry.initial_impression !== current) {
-      form.setFieldValue('initial_impression', inquiry.initial_impression || '')
-      setIsDirty(true)
-    }
-    // form 引用稳定
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inquiry.initial_impression])
-
-  const onSave = async (values: Record<string, unknown>) => {
-    setSaving(true)
-    const data = buildInquiryData(values)
-
-    // 找出本次新增或修改的字段，用于 AI 规范化和病历章节同步
-    const changedFields: Record<string, string> = {}
-    // inquiry 是 InquiryData，但下标访问要走 string 键——用 Record 视图绕开
-    const inquiryAsRecord = inquiry as unknown as Record<string, string | undefined>
-    for (const key of INQUIRY_FORM_FIELDS) {
-      const val = data[key] ?? ''
-      if (val && val !== (inquiryAsRecord[key] ?? '')) changedFields[key] = val
-    }
-
-    const isFirstGeneration = !recordContent.trim()
-
-    let normalizedData = { ...data }
-    if (!isFirstGeneration && Object.keys(changedFields).length > 0) {
-      try {
-        // 后端规范化接口仅返回被修改字段，形状不固定，故用 Record<string, string>
-        const res = (await api.post('/ai/normalize-fields', { fields: changedFields })) as {
-          fields?: Record<string, string>
-        } | null
-        if (res?.fields) {
-          normalizedData = { ...data, ...res.fields }
-          form.setFieldsValue(res.fields)
-        }
-      } catch {
-        /* 规范化失败时继续用原值 */
-      }
-    }
-
-    // buildInquiryData 返回的 Record<string, string> 与 InquiryData 字段并集兼容
-    // （都是字符串型字段），借助 unknown 桥接，避免污染 inquirySync 的返回类型
-    setInquiry(normalizedData as unknown as InquiryData)
-    if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
-    }
-
-    // 将已改动的字段同步到右侧病历对应章节
-    // 既往/过敏/个人/月经史 已迁到 PatientProfileCard，由其保存时单独同步章节
-    if (recordContent) {
-      const updated = syncInquiryToRecord(recordContent, normalizedData, changedFields)
-      if (updated !== recordContent) setRecordContent(updated)
-    }
-
-    // 病历为空且已填主诉时，触发自动生成
-    if (!recordContent.trim() && data.chief_complaint) {
-      setPendingGenerate(true)
-    }
-
-    // 急诊场景：保存后记录患者去向，驱动流转提示
-    if (isEmergency) setSavedDisposition((values.patient_disposition as string) || '')
-    message.success({ content: '问诊信息已保存', duration: 1.5 })
-    setIsDirty(false)
-    setSaving(false)
-  }
-
-  // 急诊→住院：保留急诊病历作参考，创建住院接诊并跳转
-  const handleAdmitToInpatient = async () => {
-    if (!currentPatient) return
-    const emergencyRecord = recordContent
-    try {
-      const res = (await api.post('/encounters/quick-start', {
-        patient_id: currentPatient.id,
-        patient_name: currentPatient.name,
-        visit_type: 'inpatient',
-      })) as QuickStartResult
-      resetAllWorkbench()
-      // 1.6 数据接入：把住院 quick-start 的 patient + profile 写入新 store
-      applyQuickStartResult(res)
-      // 后端 patient.gender 是 string | null，domain Patient.gender 是 Gender 联合，
-      // 与 encounterIntake.syncPatientToCache 同步逻辑保持一致——未知值统一归为 unknown
-      const normalizedGender: Gender =
-        res.patient.gender === 'male' || res.patient.gender === 'female'
-          ? res.patient.gender
-          : 'unknown'
-      const patientForActive: Patient = {
-        ...res.patient,
-        gender: normalizedGender,
-      }
-      // 一次性写入接诊指针 + 元信息（visitType/firstVisit/previousRecordContent 全在 options 里）
-      setCurrentEncounterFromPatient(patientForActive, res.encounter_id, {
-        visitType: 'inpatient',
-        isFirstVisit: false,
-        previousRecordContent: emergencyRecord || null,
-      })
-      navigate('/inpatient')
-      message.success(`已为「${res.patient.name}」创建住院接诊`)
-    } catch {
-      message.error('创建住院接诊失败，请稍后重试')
-    }
-  }
-
-  // 急诊留观追记：在病历末尾插入带时间戳的追记块
-  const handleAddObservationNote = () => {
-    const timestamp = dayjs().format('YYYY-MM-DD HH:mm')
-    const block = `\n\n【留观追记 ${timestamp}】\n[请在此记录病情变化及处理措施]`
-    setRecordContent(recordContent + block)
-    message.success('已在病历末尾添加留观追记，请在右侧编辑')
-  }
-
-  // 问诊模式：语音结构化结果分流入左侧表单 + 患者档案
-  // 1.6.3：语音 LLM 输出含 8 个 profile 字段（past/allergy/personal/family/
-  // marital/menstrual/current_medications/religion_belief），这些字段属于患者
-  // 纵向档案，应路由到 PatientProfileCard（待医生确认后通过统一保存按钮提交），
-  // 不再随 inquiry 一起 PUT 到接诊表
-  const applyVoiceInquiry = (patch: Record<string, unknown>) => {
-    // AI 返回的 patch 可能含 vital_signs 结构体，铺平到 form 顶层字段
-    const flattened: Record<string, unknown> = { ...patch }
-    if (patch.vital_signs && typeof patch.vital_signs === 'object') {
-      Object.assign(flattened, patch.vital_signs as Record<string, unknown>)
-      delete flattened.vital_signs
-    }
-    // 1) inquiry 字段填表单（profile 字段交给 form 也无影响，反正没对应 Form.Item）
-    const nextValues = { ...form.getFieldsValue(), ...flattened }
-    form.setFieldsValue(nextValues)
-    // buildInquiryData 返回的扁平字符串字典与 InquiryData 字段集兼容；
-    // 用 unknown 桥接而非 any，避免污染下游签名
-    updateInquiryFields(buildInquiryData(nextValues) as unknown as InquiryData)
-    setIsDirty(true)
-
-    // 2) profile 字段路由到 patientProfileEditStore
-    const { mergedCount } = usePatientProfileEditStore.getState().mergeVoicePatch(patch)
-    if (mergedCount > 0) {
-      message.info(`已将 ${mergedCount} 项档案信息填入患者档案，请确认后保存`)
-    }
-  }
-
-  // 追记模式：语音结构化结果写入病历对应章节（锁定后专用）
-  const applyVoiceToRecord = (patch: Record<string, unknown>) => {
-    applyVoiceToRecordWithFeedback(recordContent, patch, setRecordContent)
-  }
+  // 语音录入处理（问诊填表 / 追记病历）
+  const { applyVoiceInquiry, applyVoiceToRecord } = useVoiceIntake({
+    form,
+    updateInquiryFields,
+    setIsDirty,
+    recordContent,
+    setRecordContent,
+  })
 
   // 就诊类型标签颜色和文字
   const visitNatureColor = isFirstVisit ? '#2563eb' : '#7c3aed'
@@ -258,70 +94,10 @@ export function useInquiryPanel() {
   // 性的"已保存"。恢复接诊时 setInquiry(snapshot) 也会打戳，符合预期。
   const hasSavedInquiry = inquirySavedAt > 0
 
-  // 1.6.3 统一保存：让组件订阅档案 store 的 dirty/saving，组合成统一按钮态
-  const profileDirty = usePatientProfileEditStore(s => s.isDirty)
-  const profileSaving = usePatientProfileEditStore(s => s.saving)
-
   // 转住院前置条件：有病历草稿但未签发时禁止转住院（A 方案，强制先签发）
   // 原因：转住院会创建新接诊并跳走，未签发的门诊草稿留在原接诊里悬空，
   // 既污染待办列表也让责任界限模糊。等医生测试后再评估是否放宽。
   const hasUnsignedRecord = !!recordContent.trim() && !isFinal
-
-  /**
-   * 统一保存：profile dirty 时调 PUT /patients/:id/profile；
-   * inquiry dirty 时调 form.submit()（触发 onSave → PUT /encounters/:id/inquiry）。
-   * 两个动作并发执行，互不阻塞。
-   *
-   * ── 2026-05-03 治本：必填校验守卫 ─────────────────────────────────────────
-   * 之前直接调 form.submit() 而不 await validateFields：antd 校验失败时只在
-   * 字段下方显示红字（如"请选择病发时间"），但 form.submit 不抛 error 给调用
-   * 方，saveAll 继续往下走 → profile 仍然保存 → 弹"已保存" toast → 用户感知
-   * "保存成功"。再叠加病历自动生成 → recordContent 非空 → isInputLocked=true
-   * → 整个表单变灰，必填字段再也填不进去。
-   * 修法：inquiry dirty 时先 await form.validateFields()，校验失败立刻 return
-   * 并连 profile 一起停（避免"半保存"困惑）。校验过了再走原并发保存路径。
-   */
-  const saveAll = async () => {
-    if (isDirty) {
-      try {
-        await form.validateFields()
-      } catch (errInfo) {
-        // form.validateFields() 默认不滚动也不聚焦——只 antd 字段下显示红字。
-        // 用户反馈"提示了哪里没填但没跳过去看不见"，所以手动 scroll + focus 第一个错误字段，
-        // 让医生填完它再点保存如果还有缺失，下次又会自动跳到下一个字段（errorFields 按
-        // 表单声明顺序返回，第一个就是页面最靠上的那个，天然支持"逐个补"流程）。
-        // antd validateFields rejection 形状是稳定的 ValidateErrorEntity<unknown>，
-        // 这里用 inline type assertion 避免 any 触发 lint 阈值
-        const errFields = (errInfo as { errorFields?: Array<{ name: unknown; errors: string[] }> })
-          ?.errorFields
-        const first = errFields?.[0]
-        if (first?.name !== undefined) {
-          form.scrollToField(first.name as string | number | (string | number)[], {
-            behavior: 'smooth',
-            block: 'center',
-          })
-          // setTimeout 等 scroll 动画大致结束再 focus，避免 focus 把页面位置又拽走
-          setTimeout(() => {
-            const inst = form.getFieldInstance(
-              first.name as string | number | (string | number)[]
-            ) as { focus?: () => void } | undefined
-            inst?.focus?.()
-          }, 300)
-        }
-        message.error(first?.errors?.[0] || '请补全必填项后再保存')
-        return
-      }
-    }
-    const profilePromise = profileDirty
-      ? usePatientProfileEditStore.getState().save(currentPatient?.id || '')
-      : Promise.resolve('noop' as const)
-    if (isDirty) form.submit() // 校验已通过，submit 直接触发 onSave
-    const profileResult = await profilePromise
-    if (profileResult === true) {
-      message.success({ content: '患者档案已保存', duration: 1.5 })
-    }
-    // inquiry 的 toast 由 onSave 内部弹；profile === 'noop' / false 不再额外弹
-  }
 
   return {
     form,
