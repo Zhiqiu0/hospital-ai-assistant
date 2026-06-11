@@ -92,7 +92,7 @@ export default function PacsWorkbenchPage() {
       .get('/patients?page=1&page_size=100')
       .then(d => {
         // 响应拦截器把 data 直接返回；后端可能直接给数组或 { items: [] }，向后兼容
-        const data = (d as unknown) as { items?: PacsPatientOption[] } | PacsPatientOption[] | null
+        const data = d as unknown as { items?: PacsPatientOption[] } | PacsPatientOption[] | null
         if (Array.isArray(data)) setPatients(data)
         else setPatients(data?.items || [])
       })
@@ -105,7 +105,7 @@ export default function PacsWorkbenchPage() {
       .get('/pacs/studies')
       // 响应拦截器把 data 直接返回了，但 axios 类型仍标注成 AxiosResponse；
       // 这里走 unknown 桥接到真实数组形状，避免触发 lint
-      .then(d => setStudies(((d as unknown) as Study[] | null) || []))
+      .then(d => setStudies((d as unknown as Study[] | null) || []))
       .finally(() => setLoadingStudies(false))
   }, [])
 
@@ -168,8 +168,11 @@ export default function PacsWorkbenchPage() {
       setSelectedFrames(new Set(autoAll ? allUids : suggestedUids))
       setPreviewFrame(allFrames[0]?.instance_uid || '')
       setStage('select_frames')
-    } catch {
-      message.error('加载切片列表失败')
+    } catch (e) {
+      // 透传后端具体原因（如 410"该检查为旧版本数据，已不支持查看"），
+      // 否则医生点旧数据只看到泛化报错，会误以为系统坏了（2026-06-11）
+      const detail = (e as { detail?: string })?.detail
+      message.error(detail || '加载切片列表失败')
     } finally {
       setLoadingFrames(false)
     }

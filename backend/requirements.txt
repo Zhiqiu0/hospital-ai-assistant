@@ -7,18 +7,21 @@ psycopg[binary]>=3.1.0
 redis==5.1.1
 pydantic==2.9.2
 pydantic-settings==2.5.2
-python-jose[cryptography]==3.3.0
+# 2026-06-11 安全升级：3.3.0 有 CVE-2024-33663（ECDSA 算法混淆）+
+# CVE-2024-33664（JWE 解码炸弹 DoS），3.4.0 起修复
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.12
 httpx==0.27.2
 openai==1.51.0
 python-dotenv==1.0.1
-alibabacloud-bssopenapi20171214
-pymupdf
-numpy
-pydicom
-Pillow
+# 2026-06-11 钉死版本：未钉版本的依赖会让构建不可复现 + 有供应链风险
+alibabacloud-bssopenapi20171214==5.1.1
+pymupdf==1.27.2.2
+numpy==2.4.3
+pydicom==3.0.2
+Pillow==12.1.1
 
 # 中文姓名拼音索引（患者搜索框支持拼音/首字母/混拼，纯 Python 无 C 扩展）
 # 仅在 PatientService 写入和查询时调用，运行时开销可忽略

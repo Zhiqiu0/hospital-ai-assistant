@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.ai_utils import safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts_qc import QC_FIX_BATCH_PROMPT
 from app.services.ai.task_logger import log_ai_task
 
@@ -156,6 +157,24 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
         result.get("items") if isinstance(result, dict) else None,
         allowed_fields,
     )
+
+    # 数值真实性守卫（2026-06-11 治本）：prompt 红线是软约束，LLM 仍可能编造
+    # "默认正常"生命体征。这里做确定性后校验：数值在医生录入数据里查无出处的
+    # 体征 token 一律剔除（qc_issues 不算出处——它本身可能含 LLM 生成内容）
+    source_text = "\n".join(
+        str(v) for v in req.model_dump(exclude={"qc_issues"}).values() if v
+    ) if hasattr(req, "model_dump") else (getattr(req, "current_content", "") or "")
+    guarded: list[dict] = []
+    for item in items:
+        cleaned = strip_unsubstantiated_vitals(item["value"], source_text)
+        if cleaned != item["value"]:
+            logger.warning(
+                "supplement_batch.guard: stripped_fabricated_vitals field=%s",
+                item["field_name"],
+            )
+        if cleaned:
+            guarded.append({"field_name": item["field_name"], "value": cleaned})
+    items = guarded
     logger.info(
         "supplement_batch: done issues=%d returned=%d kept=%d",
         issue_count,

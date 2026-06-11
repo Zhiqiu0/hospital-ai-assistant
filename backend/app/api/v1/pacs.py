@@ -315,7 +315,7 @@ async def upload_study(
                 str(ds.StudyInstanceUID) if hasattr(ds, "StudyInstanceUID") else None
             )
         except Exception as e:
-            logger.warning("读取首个 DCM metadata 失败，跳过幂等快路径: %s", e)
+            logger.warning("pacs.upload: preflight_metadata_read_failed 跳过幂等快路径 err=%s", e)
             preflight_study_uid = None
 
         if preflight_study_uid:
@@ -368,7 +368,7 @@ async def upload_study(
                     "instance_number": int(inst_num) if str(inst_num).isdigit() else 0,
                 })
             except Exception as e:
-                logger.warning("读取/解析 DICOM 失败 [%s]: %s", f, e)
+                logger.warning("pacs.upload: dicom_parse_failed file=%s err=%s", f, e)
         if not dicom_bytes_list:
             raise HTTPException(400, "DCM 文件读取失败")
         # 按 instance_number 排序（DICOM 切片顺序）
@@ -520,7 +520,7 @@ async def _render_and_cache_all(
                 thumb_jpeg = await loop.run_in_executor(None, render_thumbnail, dcm_bytes)
                 preview_jpeg = await loop.run_in_executor(None, render_preview, dcm_bytes)
             except Exception as e:
-                logger.warning("渲染失败 [%s]: %s", iuid, e)
+                logger.warning("pacs.preview: render_failed instance=%s err=%s", iuid, e)
                 return
             if thumb_jpeg:
                 await redis_cache.set_bytes(
@@ -540,7 +540,7 @@ async def _render_and_cache_all(
         return_exceptions=True,
     )
     logger.info(
-        "[RENDER] study=%s 完成本地渲染 %d 帧（缩略+预览）",
+        "pacs.render: done study=%s frames=%d（缩略+预览）",
         study_uid[-12:],
         len(instances_with_bytes),
     )
@@ -771,7 +771,7 @@ async def get_thumbnail(
             study.study_instance_uid, resolved_series, instance_uid
         )
     except httpx.HTTPError as e:
-        logger.error("拉 DCM 失败 [%s]: %s", instance_uid, e)
+        logger.error("pacs.fetch_dcm: failed instance=%s err=%s", instance_uid, e)
         raise HTTPException(502, "影像加载失败")
 
     import asyncio as _asyncio
@@ -860,7 +860,7 @@ async def get_preview(
             study.study_instance_uid, resolved_series, instance_uid
         )
     except httpx.HTTPError as e:
-        logger.error("拉 DCM 失败 [%s]: %s", instance_uid, e)
+        logger.error("pacs.fetch_dcm: failed instance=%s err=%s", instance_uid, e)
         raise HTTPException(502, "影像加载失败")
 
     import asyncio as _asyncio
@@ -938,13 +938,13 @@ async def get_dicom_file(
         )
         perf["orthanc_fetch"] = _time.perf_counter() - t0
     except httpx.HTTPError as e:
-        logger.error("WADO instance 获取失败 [%s]: %s", instance_uid, e)
+        logger.error("pacs.wado: instance_fetch_failed instance=%s err=%s", instance_uid, e)
         raise HTTPException(502, "影像下载失败")
 
     total = _time.perf_counter() - perf_start
     if total > 1.0:  # 只记录慢请求避免日志刷屏
         logger.warning(
-            "[PERF] dicom %s: total=%.3fs %s",
+            "pacs.render: perf instance=%s total=%.3fs %s",
             instance_uid[-12:],
             total,
             " ".join(f"{k}={v:.3f}" for k, v in perf.items()),
@@ -1083,7 +1083,7 @@ async def analyze_study(
     for instance_uid in selected:
         series_uid = instance_to_series.get(instance_uid)
         if not series_uid:
-            logger.warning("AI 分析：instance %s 不属于 study %s，跳过", instance_uid, study.study_instance_uid)
+            logger.warning("pacs.analyze: instance_not_in_study instance=%s study=%s 跳过", instance_uid, study.study_instance_uid)
             continue
         try:
             jpeg_bytes = await orthanc_client.get_instance_rendered(
@@ -1093,7 +1093,7 @@ async def analyze_study(
                 quality=AI_FRAME_JPEG_QUALITY,
             )
         except httpx.HTTPError as e:
-            logger.warning("AI 分析：拉帧失败 %s: %s", instance_uid, e)
+            logger.warning("pacs.analyze: frame_fetch_failed instance=%s err=%s", instance_uid, e)
             continue
         images.append((jpeg_bytes, "image/jpeg"))
 
@@ -1276,7 +1276,7 @@ async def analyze_image(
                 try:
                     await orthanc_client.delete_study(temp_study_uid)
                 except Exception as e:
-                    logger.warning("清理临时 study 失败 [%s]: %s", temp_study_uid, e)
+                    logger.warning("pacs.upload: temp_study_cleanup_failed study=%s err=%s", temp_study_uid, e)
         mime = "image/jpeg"
     else:
         img_bytes = raw_bytes
@@ -1328,7 +1328,7 @@ async def delete_study(
         try:
             await orthanc_client.delete_study(study.study_instance_uid)
         except Exception as e:
-            logger.error("Orthanc 删除失败 [%s]: %s", study.study_instance_uid, e)
+            logger.error("pacs.delete: orthanc_delete_failed study=%s err=%s", study.study_instance_uid, e)
             raise HTTPException(502, f"Orthanc 数据清理失败，DB 行未删除: {e}")
         # 清 Redis 里该 study 的所有缓存（frames 元数据 + 缩略图 + 高清预览）
         await redis_cache.delete(f"pacs:frames:{study.study_instance_uid}")

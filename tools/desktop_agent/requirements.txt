@@ -1,0 +1,27 @@
+# MediScribe 桌面 Agent 依赖
+# 与后端 backend/requirements.txt 独立 — Agent 跑在医生 Windows 电脑
+
+# Windows UI Automation
+# 金算盘 HIS 是 Chromium + ExtJS 架构,uiautomation 比 pywinauto 在 Chromium 内核上更稳
+uiautomation==2.0.20
+
+# 本地 HTTP Server(给前端调)
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+
+# 调云端后端(签发 token、上报审计、拉配置)
+httpx==0.27.2
+
+# 全局快捷键 Ctrl+Alt+M
+pynput==1.7.7
+
+# 系统托盘
+pystray==0.19.5
+Pillow==11.0.0  # pystray 需要
+
+# YAML 字段映射加载
+pyyaml==6.0.2
+
+# 打包成单文件 exe (开发期不需要,build 用)
+# pyinstaller==6.10.0

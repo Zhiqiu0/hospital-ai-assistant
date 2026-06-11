@@ -41,7 +41,12 @@ async function fetchInquirySuggestions(
     history_present_illness: history,
     initial_impression: initialImpression,
     encounter_id: encounterId || undefined,
-  })) as { suggestions?: RawInquirySuggestion[] }
+  })) as { suggestions?: RawInquirySuggestion[]; degraded?: boolean }
+  // degraded=true 表示后端 AI 调用失败兜底返回空，不是"真的没有建议"——
+  // 抛错让调用方走失败提示，避免医生误以为已无可追问（2026-06-11）
+  if (data.degraded) {
+    throw new Error('AI 服务暂时不可用，请稍后重试')
+  }
   return (data.suggestions || []).map((s, idx) => ({
     ...s,
     id: `${Date.now()}-${idx}`,
@@ -180,7 +185,12 @@ export default function InquirySuggestionTab() {
         inquiry_answers: answeredItems,
         initial_impression: inquiry.initial_impression || '',
         encounter_id: currentEncounterId || undefined,
-      })) as { diagnoses?: DiagnosisItem[] }
+      })) as { diagnoses?: DiagnosisItem[]; degraded?: boolean }
+      // degraded=true 是后端 AI 故障兜底，不是"真的没有可建议的诊断"（2026-06-11）
+      if (data.degraded) {
+        message.error('AI 服务暂时不可用，请稍后重试')
+        return
+      }
       setDiagnosisSuggestions(data.diagnoses || [])
       if (!data.diagnoses?.length) message.info('暂无诊断建议，请补充更多问诊信息')
     } catch {

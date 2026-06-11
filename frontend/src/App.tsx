@@ -22,15 +22,32 @@
  *   其他 → /workbench（门诊，默认）
  */
 
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Spin } from 'antd'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
-import EmergencyWorkbenchPage from '@/pages/EmergencyWorkbenchPage'
-import InpatientWorkbenchPage from '@/pages/InpatientWorkbenchPage'
-import PacsWorkbenchPage from '@/pages/PacsWorkbenchPage'
-import AdminLayout from '@/pages/admin/AdminLayout'
+import EmbedWorkbenchPage from '@/pages/EmbedWorkbenchPage'
+
+// 路由级懒加载（2026-06-11 性能治本）：
+//   PACS 页带着整套 cornerstone3D（DICOM 渲染引擎，约占原首包一半体积），
+//   原先静态 import 导致门诊医生打开登录页也要下载影像引擎。
+//   懒加载后这些页面的代码只在真正访问对应路由时才拉取。
+//   登录/门诊工作台/嵌入入口保持静态导入——它们是首屏主路径。
+const EmergencyWorkbenchPage = lazy(() => import('@/pages/EmergencyWorkbenchPage'))
+const InpatientWorkbenchPage = lazy(() => import('@/pages/InpatientWorkbenchPage'))
+const PacsWorkbenchPage = lazy(() => import('@/pages/PacsWorkbenchPage'))
+const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout'))
+
+/** 懒加载路由切换时的过渡画面（与应用启动 Spin 风格一致）
+ *  Spin 的 tip 只在"嵌套模式"下生效（antd 约定），所以给个空容器当 children */
+const lazyFallback = (
+  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+    <Spin size="large" tip="加载中...">
+      <div style={{ minHeight: 60, minWidth: 60 }} />
+    </Spin>
+  </div>
+)
 import { useAuthStore, isTokenExpired } from '@/store/authStore'
 
 const ADMIN_ROLES = ['super_admin', 'hospital_admin', 'dept_admin']
@@ -92,57 +109,67 @@ export default function App() {
           height: '100vh',
         }}
       >
-        <Spin size="large" tip="加载中..." />
+        <Spin size="large" tip="加载中...">
+          <div style={{ minHeight: 60, minWidth: 60 }} />
+        </Spin>
       </div>
     )
   }
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/workbench"
-          element={
-            <PrivateRoute>
-              <WorkbenchPage />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/emergency"
-          element={
-            <PrivateRoute>
-              <EmergencyWorkbenchPage />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/inpatient"
-          element={
-            <PrivateRoute>
-              <InpatientWorkbenchPage />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/pacs"
-          element={
-            <PacsRoute>
-              <PacsWorkbenchPage />
-            </PacsRoute>
-          }
-        />
-        <Route
-          path="/admin/*"
-          element={
-            <AdminRoute>
-              <AdminLayout />
-            </AdminRoute>
-          }
-        />
-        <Route path="/" element={<RootRedirect />} />
-      </Routes>
+      {/* Suspense 兜底懒加载路由的 chunk 拉取过程 */}
+      <Suspense fallback={lazyFallback}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          {/*
+           * HIS 嵌入模式入口（无需登录，URL token 自代理）。
+           * 桌面 Agent 触发 → /embed?token=...&encounter_id=... → setup 完跳 /workbench
+           */}
+          <Route path="/embed" element={<EmbedWorkbenchPage />} />
+          <Route
+            path="/workbench"
+            element={
+              <PrivateRoute>
+                <WorkbenchPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/emergency"
+            element={
+              <PrivateRoute>
+                <EmergencyWorkbenchPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/inpatient"
+            element={
+              <PrivateRoute>
+                <InpatientWorkbenchPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/pacs"
+            element={
+              <PacsRoute>
+                <PacsWorkbenchPage />
+              </PacsRoute>
+            }
+          />
+          <Route
+            path="/admin/*"
+            element={
+              <AdminRoute>
+                <AdminLayout />
+              </AdminRoute>
+            }
+          />
+          <Route path="/" element={<RootRedirect />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

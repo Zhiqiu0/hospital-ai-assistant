@@ -1,0 +1,184 @@
+# 金算盘 HIS 字段映射配置
+# ──────────────────────────────────────────────────────────────────────────
+# 桌面 Agent 启动时加载此文件，按里面的 AutomationId / label 定位 HIS 控件。
+# 跨医院适配只需要复制本文件改 hospital + 字段 ID，不需要改 Agent 代码。
+#
+# 数据来源：his_inspect.py 在金算盘 HIS 上扫描的 4 份 JSON（2026-05-26）
+# 完整覆盖：1453 个控件
+# ──────────────────────────────────────────────────────────────────────────
+
+hospital:
+  name: 安吉濮氏中西医结合医院
+  code: H33052300957
+  his_brand: jinsuanpan
+  his_version: "全科医生综合平台"
+
+# 主窗口定位（Agent 启动时探测）
+window:
+  title_pattern: "全科医生"
+  class_name: "Chrome_WidgetWin_1"
+  # 多窗口共存时，按这些条件挑选（按优先级）
+  active_first: true  # 优先取当前前台窗口
+
+# ─── 接诊弹窗（基础信息）─────────────────────────────────────────────────
+intake_dialog:
+  detection:
+    # 这些控件都存在 → 当前是接诊弹窗状态
+    - control_type: EditControl
+      automation_id: tbName$text
+
+  fields:
+    patient_name:
+      automation_id: tbName$text
+      control_type: EditControl
+      strategy: skip_if_filled  # HIS 已有就不重填
+    id_card:
+      automation_id: tbIdCard$text
+      control_type: EditControl
+      strategy: skip_if_filled
+    phone:
+      automation_id: tbPhone$text
+      control_type: EditControl
+      strategy: set_value_if_empty
+    address:
+      automation_id: tbAddr$text
+      control_type: EditControl
+      strategy: set_value_if_empty
+    drug_allergy:
+      # 核心：AI 生成过敏史时写这里
+      automation_id: lkDrugAllergy$text
+      control_type: EditControl
+      strategy: set_value
+    marital_status:
+      automation_id: cmbMarried$text
+      control_type: ComboBox
+      strategy: set_combo_value
+    occupation:
+      automation_id: cmbJob$text
+      control_type: ComboBox
+      strategy: set_combo_value
+
+# ─── 接诊弹窗（体征 DataGrid）────────────────────────────────────────────
+# 金算盘体征是表格里的可编辑单元格，要 Click → SendKeys → Tab 触发提交
+vital_signs:
+  detection:
+    - control_type: DataItemControl
+      automation_id_pattern: "^\\d+\\$cell\\$5$"  # 数字$cell$5 格式
+
+  fields:
+    height:
+      cell_id: "65$cell$5"
+      strategy: click_send_tab
+      value_format: numeric
+    weight:
+      cell_id: "66$cell$5"
+      strategy: click_send_tab
+      value_format: numeric
+    bmi:
+      cell_id: "67$cell$5"
+      strategy: click_send_tab
+      value_format: numeric
+      auto_calc: true  # HIS 可能自动算，先填不强求
+    heart_rate:
+      cell_id: "69$cell$5"
+      strategy: click_send_tab
+    blood_pressure:
+      cell_id: "70$cell$5"
+      strategy: click_send_tab
+      value_format: "{systolic}/{diastolic}"  # 拼成 "120/80"
+    respiration:
+      cell_id: "71$cell$5"
+      strategy: click_send_tab
+    spo2:
+      cell_id: "72$cell$5"
+      strategy: click_send_tab
+    waist:
+      cell_id: "73$cell$5"
+      strategy: click_send_tab
+    glucose_fasting:
+      cell_id: "74$cell$9"
+      strategy: click_send_tab
+    glucose_postprandial:
+      cell_id: "75$cell$9"
+      strategy: click_send_tab
+
+# ─── 病历主页（XTextDocument 各 section）────────────────────────────────
+# baseControl* 的具体 ID 跨患者稳定但跨模板版本可能变。
+# 用 label_name 定位是稳定策略，按 sibling 关系找值容器。
+record_page:
+  detection:
+    - control_type: TextControl
+      name: "主 诉："
+
+  fields:
+    chief_complaint:
+      label_name: "主 诉："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    history_present_illness:
+      label_name: "现 病 史："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    past_history:
+      label_name: "既 往 史："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    allergy_history:
+      label_name: "过 敏 史："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    family_history:
+      label_name: "家族史："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    physical_exam:
+      label_name: "体格检查："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    tcm_4diagnosis:
+      label_name: "中医四诊及辩证分析："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    auxiliary_exam:
+      label_name: "辅助检查："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    treatment_plan:
+      label_name: "门诊处理："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+    suggestion:
+      label_name: "建 议："
+      strategy: find_sibling_set_value
+      sibling_id_prefix: "baseControl"
+
+# ─── 诊断面板（typeahead）─────────────────────────────────────────────
+diagnosis_panel:
+  show_button:
+    automation_id: btnShowPnlDiag
+    control_type: HyperlinkControl
+  add_diagnosis_row:
+    # 全局快捷键 F2 添加新行
+    hotkey: F2
+  search_input:
+    automation_id: cboDiseaseName$text
+    control_type: EditControl
+    # 支持拼音首字母搜索（如 "gm" 命中"感冒"）
+  dropdown_container:
+    automation_id_pattern: "mini-\\d+"
+    wait_ms: 500
+  result_item:
+    control_type: CustomControl
+    # 用 name 直接匹配诊断名
+    match_by: name
+
+# ─── 全局配置 ────────────────────────────────────────────────────────────
+global_settings:
+  # 单字段填入最大重试次数（失败后转剪贴板兜底）
+  max_retries: 2
+  # 单字段超时（毫秒）
+  field_timeout_ms: 2000
+  # 整体填入超时（秒）
+  total_timeout_s: 40
+  # 失败兜底策略
+  fallback_on_failure: clipboard  # clipboard / abort / continue

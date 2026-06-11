@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
 from app.core.client_ip import get_client_ip
-from app.core.rate_limit import login_limiter
+from app.core.rate_limit import login_limiter, username_check_limiter
 from app.database import get_db
 from app.models.revoked_token import RevokedToken
 from app.schemas.auth import LoginRequest, TokenResponse
@@ -138,12 +138,18 @@ async def logout(
 
 
 @router.get("/check-username")
-async def check_username(username: str, db: AsyncSession = Depends(get_db)):
+async def check_username(
+    username: str, http_request: Request, db: AsyncSession = Depends(get_db)
+):
     """查询用户名是否已存在（注册/管理员创建用户前的唯一性校验）。
+
+    安全机制（2026-06-11）：公开端点，按 IP 限速 20次/分钟——
+    无限速时可被脚本批量枚举全院医生账号，再配合弱密码定向爆破。
 
     Returns:
         {"exists": bool, "message": "账号存在" | "账号不存在"}
     """
+    await username_check_limiter.check(http_request)
     service = AuthService(db)
     exists = await service.check_username_exists(username)
     return {

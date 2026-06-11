@@ -25,7 +25,10 @@ export default function AISuggestionPanel() {
   const inquirySuggestions = useAISuggestionStore(s => s.inquirySuggestions)
 
   const unansweredCount = inquirySuggestions.filter(s => s.selectedOptions.length === 0).length
-  const highRiskQcCount = qcIssues.filter(i => i.risk_level === 'high').length
+  // 角标 = 必须修复（阻塞出具）的问题数，与 QCIssuePanel 的"N 项必须修复"口径一致。
+  // 2026-06-11 修复：原先按 risk_level==='high' 计数，与面板数字对不上
+  // （E2E 实测角标 7 / 面板 9），医生不知道该信哪个数
+  const blockingQcCount = qcIssues.filter(i => i.source === 'rule' || i.source == null).length
 
   return (
     <Tabs
@@ -67,7 +70,7 @@ export default function AISuggestionPanel() {
         {
           key: 'qc',
           label: (
-            <Badge count={highRiskQcCount} size="small" offset={[4, -2]}>
+            <Badge count={blockingQcCount} size="small" offset={[4, -2]}>
               <span>
                 <SafetyOutlined style={{ marginRight: 4 }} />
                 质控提示
