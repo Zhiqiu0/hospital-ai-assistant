@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     his_writeback_app_id: str = ""        # HIS 分配给我方的凭证
     his_writeback_app_secret: str = ""
     his_writeback_timeout_seconds: int = 30
+    his_writeback_max_retries: int = 2    # 写入/刷新失败（网络异常或 5xx）重试次数
 
     @property
     def origins_list(self) -> list[str]:

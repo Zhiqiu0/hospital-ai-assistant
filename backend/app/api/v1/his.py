@@ -1,11 +1,16 @@
-"""HIS 对接外部接口（接诊推送接收等），HMAC 签名鉴权，受保险丝保护。"""
+"""HIS 对接外部接口（接诊推送接收 + 病历回写触发），受保险丝保护。"""
 from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.security import get_current_user
+from app.database import get_db
 from app.his_adapter.depends import require_his_enabled
 from app.his_adapter.models import AdmitPushRequest, ApiEnvelope, err, ok
 from app.his_adapter.signing import timestamp_fresh, verify_sign
+from app.his_adapter.writeback_sender import send_writeback
+from app.models.user import User
 
 router = APIRouter(
     prefix="/his",
@@ -40,3 +45,24 @@ async def admit_push(request: Request) -> ApiEnvelope:
 
     # 本期：仅确认收到（回声 visit_id）。后续按设计补患者/接诊联动。
     return ok({"visit_id": payload.visit_id})
+
+
+@router.post("/encounter/{encounter_id}/writeback", response_model=ApiEnvelope)
+async def trigger_writeback(
+    encounter_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ApiEnvelope:
+    """医生在工作台确认后触发病历回写（我方→HIS：写入 + 刷新）。
+
+    回写地址未配置时返回 skipped（联调前安全空跑）。
+    """
+    try:
+        result = await send_writeback(db, encounter_id)
+    except ValueError as exc:
+        return err(40005, str(exc))
+    if result.ok:
+        return ok({"status": "success", "his_doc_id": result.his_doc_id})
+    if result.status == "skipped":
+        return ok({"status": "skipped", "message": result.message})
+    return err(50001, f"回写失败({result.status})：{result.message}")
