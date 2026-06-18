@@ -115,3 +115,42 @@ class DesktopHeartbeat(BaseModel):
     doctor_id: Optional[str] = None  # Agent 启动后医生登录的 MediScribe 账号
     his_detected: bool = False
     his_brand: Optional[str] = None
+
+
+class ApiEnvelope(BaseModel):
+    """HIS 对接统一响应信封：{code, message, trace_id, data}。"""
+
+    code: int = 0
+    message: str = "success"
+    trace_id: str = ""
+    data: dict = Field(default_factory=dict)
+
+
+def ok(data: Optional[dict] = None, trace_id: str = "") -> ApiEnvelope:
+    """成功信封。"""
+    return ApiEnvelope(code=0, message="success", trace_id=trace_id, data=data or {})
+
+
+def err(code: int, message: str, trace_id: str = "") -> ApiEnvelope:
+    """失败信封（HTTP 仍 200，靠 code 区分）。"""
+    return ApiEnvelope(code=code, message=message, trace_id=trace_id, data={})
+
+
+class AdmitPushRequest(BaseModel):
+    """接诊推送请求体（HIS→我方）。visit_id/hospital_code/patient_name 必填，其余容错可空。"""
+
+    visit_id: str
+    hospital_code: str
+    patient_name: str
+    gender: Literal["male", "female", "unknown"] = "unknown"
+    birth_date: Optional[str] = None
+    id_card: Optional[str] = None
+    phone: Optional[str] = None
+    dept_code: Optional[str] = None
+    dept_name: Optional[str] = None
+    doctor_code: Optional[str] = None
+    doctor_name: Optional[str] = None
+    visit_type: Optional[str] = None
+    is_first_visit: Optional[bool] = None
+    agent_device_ip: Optional[str] = None
+    agent_device_mac: Optional[str] = None
