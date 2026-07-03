@@ -85,11 +85,22 @@ export default function InquiryPanel() {
         message.info('该患者暂无历史病历可同步')
         return
       }
-      const nextValues = { ...form.getFieldsValue(), ...res.fields }
+      // 只填空白，不覆盖医生已手填的内容：仅当当前框为空时才用上次的值补入。
+      const current = form.getFieldsValue()
+      const patch: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(res.fields)) {
+        const cur = current[key]
+        if (cur === undefined || cur === null || cur === '') patch[key] = value
+      }
+      if (Object.keys(patch).length === 0) {
+        message.info('当前问诊项均已填写，无需同步')
+        return
+      }
+      const nextValues = { ...current, ...patch }
       form.setFieldsValue(nextValues)
       updateInquiryFields(buildInquiryData(nextValues) as unknown as InquiryData)
       setIsDirty(true)
-      message.success('已同步上次病历，请核对并重新测量体征后保存')
+      message.success('已同步上次病历（仅补空白项），请核对并重新测量体征后保存')
     } catch {
       message.error('同步失败，请重试')
     } finally {
