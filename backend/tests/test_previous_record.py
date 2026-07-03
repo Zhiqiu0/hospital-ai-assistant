@@ -23,6 +23,7 @@ async def test_previous_record_copies_text_not_vitals(async_db):
         chief_complaint="高血压复诊", history_present_illness="血压控制尚可",
         past_history="高血压10年", western_diagnosis="原发性高血压",
         treatment_plan="继续口服降压药", tongue_coating="舌淡红",
+        visit_time="2026-06-01 09:00", onset_time="2026-05-20 08:00",
         temperature="36.5", bp_systolic="140", bp_diastolic="90", pulse="78",
     ))
     await async_db.commit()
@@ -43,6 +44,9 @@ async def test_previous_record_copies_text_not_vitals(async_db):
     # 体征数值绝不带回
     for vital in ("temperature", "bp_systolic", "bp_diastolic", "pulse"):
         assert vital not in f
+    # 时间字段绝不带回（前端 DatePicker 需 dayjs 对象，塞字符串会崩）
+    for t in ("visit_time", "onset_time"):
+        assert t not in f
     # 空字段不带回
     assert "menstrual_history" not in f
 

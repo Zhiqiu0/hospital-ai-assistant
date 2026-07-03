@@ -136,9 +136,13 @@ async def invalidate_my_encounters(doctor_id: str) -> None:
     await redis_cache.delete(_MY_ENCOUNTERS_KEY.format(doctor_id=doctor_id))
 
 
-# 一键同步上次病历：可复制的文字字段（体征数值不带回——本次需重新测量，守数值真实性）
+# 一键同步上次病历：可复制的「文字病历」字段。
+#   - 体征数值不带回——本次需重新测量，守数值真实性；
+#   - 时间字段（visit_time/onset_time）不带回——它们是本次就诊特有的结构化字段，
+#     前端用 DatePicker（需 dayjs 对象），把上次的字符串塞进去会让 antd DatePicker
+#     崩溃（date.isValid is not a function）。故此列表只含纯文本字段。
 _SYNC_COPY_FIELDS = [
-    "chief_complaint", "onset_time", "history_present_illness", "past_history",
+    "chief_complaint", "history_present_illness", "past_history",
     "allergy_history", "personal_history", "current_medications", "history_informant",
     "family_history", "marital_history", "menstrual_history", "physical_exam",
     "auxiliary_exam", "initial_impression", "tcm_inspection", "tcm_auscultation",
