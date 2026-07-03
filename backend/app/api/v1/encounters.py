@@ -383,6 +383,17 @@ async def save_inquiry_input(
     return await service.save_inquiry(encounter_id, data)
 
 
+@router.get("/{encounter_id}/previous-record")
+async def get_previous_record(
+    encounter_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """一键同步上次病历：返回该患者上次接诊的病历文字字段（体征不带回，需本次重测）。"""
+    service = EncounterService(db)
+    return await service.get_previous_record(encounter_id)
+
+
 @router.post("/{encounter_id}/inquiry-suggestions")
 async def get_inquiry_suggestions(
     encounter_id: str,
