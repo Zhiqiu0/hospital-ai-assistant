@@ -3,6 +3,10 @@
 
 供 /api/v1/medical-records/{id}/generate|continue|polish 路由调用，
 处理病历的 AI 生成、续写和润色，并将结果持久化为新版本。
+
+拆分（超标文件拆分：278 行 → 门面服务 + _record_gen_helpers）：
+  - _record_gen_helpers ：GENERATE_PROMPT / POLISH_PROMPT / RECORD_TYPE_MAP / _clean_ai_intro
+兼容：常量与 _clean_ai_intro 从本模块 re-export，既有内部引用保持可用。
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
@@ -20,107 +24,16 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.medical_record_service import MedicalRecordService
 
-# 模块级 logger：SSE 流里的异常 yield 给前端但后端原本无痕，靠这条上 Sentry
-logger = logging.getLogger(__name__)
-
-
-# AI 引言常见前缀，正文里出现这些就剥离
-# prompt 已经强约束禁止，本清洗作为兜底（LLM 偶尔越界）
-_AI_INTRO_PATTERNS = (
-    "根据您提供的信息",
-    "根据以上信息",
-    "现为您生成",
-    "以下是",
-    "以下为",
-    "请您查看",
-    "请医生审核",
-    "希望对您有帮助",
+# re-export：保持既有导入路径（提示词/常量/清洗函数原在本模块，拆出后 re-export 兼容）
+from app.services.ai._record_gen_helpers import (  # noqa: F401
+    GENERATE_PROMPT,
+    POLISH_PROMPT,
+    RECORD_TYPE_MAP,
+    _clean_ai_intro,
 )
 
-
-def _clean_ai_intro(text: str) -> str:
-    """剥离 AI 输出里的引言、Markdown 装饰、章节名包裹的星号。
-
-    医生看到的应该是纯病历内容，不要 AI "我现在为您生成..."这类元描述。
-
-    步骤：
-      1. 如果文本含 `【` 章节标题，剥离第一个 `【` 之前的所有前言（最干净）
-      2. 如果不含章节标题（如润色场景返回纯文本），按行剥离引言/装饰
-      3. 全文范围去掉 `**【XXX】**` 的多余星号包裹
-    """
-    if not text:
-        return text
-
-    # 步骤 0：先把 `**【XXX】**` → `【XXX】`，避免后面找 `【` 时残留前面的 `**`
-    import re as _re
-    text = _re.sub(r"\*\*(【[^】]+】)\*\*", r"\1", text)
-
-    # 优先方案：找到第一个 【 章节作为正文起点
-    # 这是入院记录、首次病程等结构化文档的明显特征
-    bracket_idx = text.find("【")
-    if bracket_idx > 0:
-        text = text[bracket_idx:].strip()
-
-    # 兜底：按行剥离开头的空行 / 装饰符号 / 引言行
-    lines = text.split("\n")
-    skip_idx = 0
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            skip_idx = i + 1
-            continue
-        if stripped in {"---", "###", "**"} or stripped.startswith("---") or stripped.startswith("###"):
-            skip_idx = i + 1
-            continue
-        if any(p in stripped for p in _AI_INTRO_PATTERNS):
-            skip_idx = i + 1
-            continue
-        break
-    cleaned = "\n".join(lines[skip_idx:]).strip()
-    return cleaned
-
-
-GENERATE_PROMPT = """你是一名专业的临床病历书写助手。根据以下问诊信息，生成标准化的{record_type}病历草稿。
-
-问诊信息：
-主诉：{chief_complaint}
-现病史：{history_present_illness}
-既往史：{past_history}
-过敏史：{allergy_history}
-个人史：{personal_history}
-体格检查：{physical_exam}
-初步印象：{initial_impression}
-
-请输出JSON格式，包含以下字段：
-{{
-  "chief_complaint": "规范化主诉（症状+时间，20字以内）",
-  "history_present_illness": "规范化现病史（时间顺序，书面语）",
-  "past_history": "规范化既往史",
-  "allergy_history": "规范化过敏史",
-  "personal_history": "规范化个人史",
-  "physical_exam": "规范化体格检查",
-  "initial_diagnosis": "初步诊断"
-}}
-
-要求：口语转书面语，时间线清晰，符合医疗文书规范。"""
-
-POLISH_PROMPT = """你是临床病历规范化专家。请对以下病历内容进行润色，要求：
-1. 口语转书面医学语言
-2. 消除重复内容
-3. 优化时间顺序
-4. 保持医学术语准确性
-
-原始内容：
-{content}
-
-请输出相同JSON结构，仅改善表达，不添加虚构内容。"""
-
-
-RECORD_TYPE_MAP = {
-    "outpatient": "门诊",
-    "admission_note": "入院记录",
-    "first_course_record": "首次病程记录",
-}
+# 模块级 logger：SSE 流里的异常 yield 给前端但后端原本无痕，靠这条上 Sentry
+logger = logging.getLogger(__name__)
 
 
 class RecordGenService:
