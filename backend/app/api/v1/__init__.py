@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, desktop, his
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, his
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -26,9 +26,10 @@ router.include_router(sentry_tunnel.router, prefix="", tags=["可观测性"])
 # 后台管理：单一聚合 router，自带 audit_admin_action 依赖（修复"管理员操作零审计"硬伤）
 router.include_router(admin_router, prefix="/admin")
 
-# HIS 嵌入模式 + 桌面 Agent（HIS_ADAPTER_ENABLED=false 时统一 503）
-# 跟 SaaS 严格隔离的"另一种入口"，共享所有 service 层代码
+# HIS 嵌入模式（HIS_ADAPTER_ENABLED=false 时统一 503）
+# 跟 SaaS 严格隔离的"另一种入口"，共享所有 service 层代码。
+# 注：旧的桌面 Agent「控件模式」(UI 自动化填表 + 字段映射) 已退休删除，
+# 改用接口模式回写（见 his.py 的 writeback）；将来的内网薄中转另行设计。
 router.include_router(embed.router, tags=["HIS嵌入"])
-router.include_router(desktop.router, tags=["HIS桌面Agent"])
-# HIS 外部接口（接诊推送接收等，HMAC 验签）
+# HIS 外部接口（接诊推送接收 + 病历回写，HMAC 验签）
 router.include_router(his.router, tags=["HIS对接"])

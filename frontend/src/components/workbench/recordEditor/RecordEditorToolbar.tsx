@@ -7,9 +7,9 @@
  *
  * 2026-06-11 Round 5 拆分：原文件 471 行超 300 行规范，按职责拆为同目录 3 个文件——
  *   - RecordEditorToolbarTypeSelect.tsx：左侧标题 + 已签发徽章 + 病历类型选择
- *   - RecordEditorToolbarActions.tsx：右侧动作按钮组（生成/润色/质控/补全/出具/导出/HIS填入）
- *   - collectFillFields.ts：复合段拆分纯函数（COMPOUND_SECTIONS / pushCompoundSubfields）
+ *   - RecordEditorToolbarActions.tsx：右侧动作按钮组（生成/润色/质控/补全/出具/导出）
  * 对外 API（默认导出组件名 + props 接口）完全不变，消费方零改动。
+ * （原「HIS 自动填入」控件模式按钮 + collectFillFields.ts 已随 UI 自动化方案退休删除。）
  */
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import RecordEditorToolbarTypeSelect from './RecordEditorToolbarTypeSelect'

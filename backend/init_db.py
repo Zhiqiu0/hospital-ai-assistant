@@ -44,8 +44,13 @@ async def init():
         """))
 
         # 创建默认管理员
+        # 密码从环境变量读，缺省沿用 admin123456（本地/开发方便）。
+        # 生产部署时在 .env 设 SEED_ADMIN_PASSWORD 为强密码即可，不必改代码。
+        # 注意：init_db 仅在 users 表为空时执行（见上方 count 判断），
+        # 改这里不影响任何已建账号（含生产在用的 admin）。
         admin_id = "00000000-0000-0000-0000-000000000001"
-        pwd_hash = hash_password("admin123456")
+        admin_pwd_plain = os.getenv("SEED_ADMIN_PASSWORD", "admin123456")
+        pwd_hash = hash_password(admin_pwd_plain)
         await session.execute(text("""
             INSERT INTO users (id, username, password_hash, real_name, role, is_active, created_at, updated_at)
             VALUES (:id, 'admin', :pwd, '系统管理员', 'super_admin', true, NOW(), NOW())
@@ -56,7 +61,8 @@ async def init():
             text("SELECT id FROM departments WHERE code='NEIKE' LIMIT 1")
         )
         dept_id = dept_result.scalar()
-        doctor_pwd = hash_password("doctor123")
+        doctor_pwd_plain = os.getenv("SEED_DOCTOR_PASSWORD", "doctor123")
+        doctor_pwd = hash_password(doctor_pwd_plain)
         await session.execute(text("""
             INSERT INTO users (id, username, password_hash, real_name, role, department_id, employee_no, is_active, created_at, updated_at)
             VALUES (gen_random_uuid(), 'doctor01', :pwd, '张医生', 'doctor', :dept_id, 'EMP001', true, NOW(), NOW())
@@ -111,8 +117,9 @@ async def init():
         print("")
         print("===================================")
         print("  默认账号：")
-        print("  管理员  - admin / admin123456")
-        print("  测试医生 - doctor01 / doctor123")
+        print(f"  管理员  - admin / {admin_pwd_plain}")
+        print(f"  测试医生 - doctor01 / {doctor_pwd_plain}")
+        print("  (密码可用 SEED_ADMIN_PASSWORD / SEED_DOCTOR_PASSWORD 覆盖)")
         print("===================================")
 
 
