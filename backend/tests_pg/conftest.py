@@ -24,9 +24,17 @@
 """
 
 import asyncio
+import os as _os
 
 import pytest
 import pytest_asyncio
+
+# Settings 里 secret_key / orthanc_password 是必填（无默认值），import app.config 即校验。
+# 本目录只需真实 DATABASE_URL（连 PG 建测试库），这两个与 PG 测试无关的必填项给测试兜底，
+# 否则 CI 环境(只设了 DATABASE_URL/SECRET_KEY)会在 import settings 时因缺 ORTHANC_PASSWORD 挂。
+# 必须在 `from app.config import settings` 之前 setdefault。
+_os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+_os.environ.setdefault("ORTHANC_PASSWORD", "test-orthanc-password-not-for-production")
 
 # asyncpg 是建库/拆库直连驱动，没装则本目录整体 skip
 asyncpg = pytest.importorskip("asyncpg")
