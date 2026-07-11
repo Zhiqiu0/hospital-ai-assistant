@@ -45,11 +45,35 @@ export function useRecordEditorShared(): RecordEditorShared {
   const abortRef = useRef<AbortController | null>(null)
 
   // 把 abortRef 与 streamSSE 衔接：每次新调用前换一个 AbortController，
-  // 卸载或主动取消时 abortRef.current?.abort() 触发流中止
+  // 卸载或主动取消时 abortRef.current?.abort() 触发流中止。
+  //
+  // 接诊指针守卫（P0）：编辑器组件切换患者时不卸载、只 reset store，卸载时才 abort
+  // 的旧机制挡不住"生成中途切患者"——上一位患者的流会继续把 chunk 追加进新患者的
+  // 编辑器，5 秒后还会以新患者的 encounter_id 落库。这里捕获发起时的 encounterId，
+  // 把 handlers 包一层：一旦指针变化立刻 abort 并停止写入，从根上杜绝跨患者串数据。
   const runSSE = async (url: string, body: object, handlers: Parameters<typeof streamSSE>[3]) => {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    return streamSSE(url, body, token || '', handlers, { signal: ctrl.signal })
+    const startEncounterId = useActiveEncounterStore.getState().encounterId
+    const stillSameEncounter = () =>
+      useActiveEncounterStore.getState().encounterId === startEncounterId
+    const guarded: typeof handlers = {
+      onChunk: text => {
+        if (!stillSameEncounter()) {
+          ctrl.abort()
+          return
+        }
+        handlers.onChunk?.(text)
+      },
+      onEvent: event => {
+        if (!stillSameEncounter()) {
+          ctrl.abort()
+          return
+        }
+        handlers.onEvent?.(event)
+      },
+    }
+    return streamSSE(url, body, token || '', guarded, { signal: ctrl.signal })
   }
 
   // 生成完成后，把病历各段落解析回左侧问诊字段，确保左右一致

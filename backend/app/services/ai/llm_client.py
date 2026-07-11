@@ -10,6 +10,7 @@ LLM 客户端封装（app/services/ai/llm_client.py）
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import json
+from contextvars import ContextVar
 from typing import Any, Optional, cast
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
@@ -19,11 +20,19 @@ from openai import AsyncOpenAI
 from app.config import settings
 
 
+# 每次 LLM 调用后的 token usage。用 ContextVar 而非实例属性：
+# llm_client 是模块级单例，若把 usage 存实例属性，两个医生并发跑 AI 时
+# A 的 usage 会被 B 的响应覆盖，导致 token 记账串号（admin 用量统计失真）。
+# ContextVar 按 asyncio 任务隔离——每个请求是独立 task、各持一份上下文副本，
+# 调用方 await 后在同一 task 内读回的一定是自己那次调用的 usage。
+_last_usage_var: ContextVar[Optional[Any]] = ContextVar("llm_last_usage", default=None)
+
+
 class LLMClient:
     """异步 LLM 客户端，封装 DeepSeek / OpenAI 兼容接口。
 
     使用模块级单例 ``llm_client`` 而非直接实例化。
-    ``_last_usage`` 在每次调用后更新，供上层记录 token 用量。
+    ``_last_usage`` 在每次调用后更新，供上层记录 token 用量（按请求隔离）。
     """
 
     def __init__(self):
@@ -34,7 +43,16 @@ class LLMClient:
             max_retries=2,
         )
         self.model = settings.deepseek_model
-        self._last_usage: Optional[Any] = None
+
+    # _last_usage 用 ContextVar 承载：读写语法与原实例属性完全一致，
+    # 所有既有调用点（`llm_client._last_usage`）无需改动，但获得了按请求隔离。
+    @property
+    def _last_usage(self) -> Optional[Any]:
+        return _last_usage_var.get()
+
+    @_last_usage.setter
+    def _last_usage(self, value: Optional[Any]) -> None:
+        _last_usage_var.set(value)
 
     async def chat(
         self,

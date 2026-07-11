@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.core.authz import assert_encounter_access
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.medical_record import (
@@ -51,6 +52,9 @@ async def auto_save_draft(
     返回 updated_at 让前端下次调用带回作为乐观锁凭证。
     409 表示多设备冲突（罕见，单医生单设备不会触发）。
     """
+    # 归属校验：只能给自己的接诊自动保存草稿，防止越权写他人接诊病历
+    await assert_encounter_access(db, data.encounter_id, current_user)
+
     # 把接诊维度写入 RequestContext（上游若有 AI 调用能用到，与 quick-generate 行为一致）
     from app.core.request_context import bind_encounter_context
     bind_encounter_context(encounter_id=data.encounter_id)
@@ -72,6 +76,8 @@ async def quick_save_record(
     current_user=Depends(get_current_user),
 ):
     """签发时快速保存病历到数据库"""
+    # 归属校验：只能签发自己的接诊，防止越权在他人接诊上签发/篡改病历
+    await assert_encounter_access(db, data.encounter_id, current_user)
     service = MedicalRecordService(db)
     record = await service.quick_save(
         encounter_id=data.encounter_id,
@@ -104,7 +110,8 @@ async def list_by_patient(
     权限设计：
       已签发病历是医院共享医疗数据，任意登录医生为诊疗目的均可查阅
       （初诊/复诊可能不同医生，复诊看历史是刚需）。本接口不做接诊关系拦截。
-      写入仍受限：只能改自己开的接诊/病历（在 save_content / quick_save 拦）。
+      写入仍受限：只能改自己开的接诊/病历——save_content 走 join(Encounter.doctor_id)
+      校验，quick_save / auto_save_draft 在路由层 assert_encounter_access 校验。
       合规：每次查阅都写审计日志（action='view_records'），admin 可在
       "操作日志"页面追溯任何医生何时查阅了哪个患者，符合等保 2.0 三级要求。
     """

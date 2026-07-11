@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, verify_password_async
 from app.models.user import User
 
 
@@ -54,7 +54,7 @@ class AuthService:
         user = result.scalar_one_or_none()
 
         # 用户不存在、密码不匹配、账号被禁用——统一返回 None，不暴露具体原因
-        if not user or not verify_password(password, user.password_hash):
+        if not user or not await verify_password_async(password, user.password_hash):
             return None
         if not user.is_active:
             return None
@@ -96,7 +96,7 @@ class AuthService:
         user = result.scalar_one_or_none()
         if not user:
             return "账号不存在"
-        if not verify_password(password, user.password_hash):
+        if not await verify_password_async(password, user.password_hash):
             return "密码不正确"
         if not user.is_active:
             return "账号已被禁用"

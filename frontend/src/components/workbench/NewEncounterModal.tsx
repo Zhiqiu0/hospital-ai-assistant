@@ -12,6 +12,7 @@ import { Button, Form, Modal, Select, Space } from 'antd'
 import type { Dayjs } from 'dayjs'
 import { UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 import type { Patient, VisitType } from '@/domain/medical'
 import SearchStep from './newEncounter/SearchStep'
 import NewPatientFields from './newEncounter/NewPatientFields'
@@ -163,6 +164,17 @@ export default function NewEncounterModal({
       }
       onSuccess(res, values.visit_type || (isEmergency ? 'emergency' : 'outpatient'))
       handleClose()
+    } catch (err) {
+      // 400/422（如"该患者已有进行中接诊"等业务校验）不被 api 拦截器 toast，
+      // 之前无 catch 会静默失败：按钮 loading 停、弹窗不关、医生零反馈（P1）。
+      // 这里提取后端 detail 提示；网络错误已被拦截器提示，不重复弹。弹窗保持打开供重试。
+      const body = err as { detail?: unknown }
+      const detail = body?.detail
+      let text = ''
+      if (typeof detail === 'string') text = detail
+      else if (Array.isArray(detail) && detail.length > 0)
+        text = '请检查填写项是否完整、格式是否正确'
+      if (text) message.error(`开始接诊失败：${text}`)
     } finally {
       setLoading(false)
     }

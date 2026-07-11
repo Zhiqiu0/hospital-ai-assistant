@@ -38,6 +38,13 @@ async def admit_push(request: Request) -> ApiEnvelope:
         return err(40003, "appId 无效")
     if not verify_sign(app_id, timestamp, nonce, body_raw, sign, settings.his_inbound_app_secret):
         return err(40001, "签名校验失败")
+    # 防重放：签名通过后，用一次性 nonce 拦截时间窗内的重放请求。
+    # TTL 取时间戳偏差窗口 + 60s 缓冲；超窗后 timestamp_fresh 已会拒，nonce 无需再记。
+    from app.services.redis_cache import redis_cache
+    if not await redis_cache.claim_nonce(
+        "his_admit", nonce, ttl=settings.his_sign_clock_skew_seconds + 60
+    ):
+        return err(40006, "nonce 重复（疑似重放）")
     try:
         payload = AdmitPushRequest.model_validate_json(body_raw)
     except ValidationError:

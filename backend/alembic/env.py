@@ -23,6 +23,11 @@ import app.models.voice_record         # noqa
 import app.models.imaging              # noqa
 import app.models.lab_report           # noqa
 import app.models.revoked_token        # noqa
+# 这两个之前漏导：inpatient（vital_signs/problem_list/progress_notes）与
+# ai_feedback（ai_suggestion_feedback）。漏导会让 autogenerate 误以为这些在用的表
+# 已被删除，生成 drop_table 的迁移——不细看直接 upgrade 就是删库级事故。
+import app.models.inpatient            # noqa
+import app.models.ai_feedback          # noqa
 
 target_metadata = Base.metadata
 

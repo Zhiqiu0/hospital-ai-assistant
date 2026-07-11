@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import api from '@/services/api'
 import { useRecordStore } from '@/store/recordStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 const { Text } = Typography
 
@@ -50,17 +51,22 @@ export default function ComplianceBar({ encounterId }: Props) {
 
   const fetchCompliance = useCallback(async () => {
     if (!encounterId) return
+    const forEncounterId = encounterId
     try {
-      const res = (await api.get(`/encounters/${encounterId}/compliance`)) as {
+      const res = (await api.get(`/encounters/${forEncounterId}/compliance`)) as {
         items?: ComplianceItem[]
       }
+      // 竞态守卫：切接诊时旧响应回来时已过期，丢弃以免串显示上一位患者的合规项（P1）
+      if (useActiveEncounterStore.getState().encounterId !== forEncounterId) return
       setItems(res.items || [])
     } catch {
-      setItems([])
+      if (useActiveEncounterStore.getState().encounterId === forEncounterId) setItems([])
     }
   }, [encounterId])
 
   useEffect(() => {
+    // 切接诊先清空旧列表，再拉新接诊
+    setItems([])
     fetchCompliance()
     // 每分钟刷新一次时效状态
     const timer = setInterval(fetchCompliance, 60000)

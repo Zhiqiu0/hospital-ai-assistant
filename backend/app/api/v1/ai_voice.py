@@ -18,6 +18,8 @@ from typing import Optional
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+
+from app.core.upload_limits import MAX_AUDIO_BYTES, read_upload_capped
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -182,7 +184,8 @@ async def upload_voice_record(
     suffix = Path(file.filename or "recording.webm").suffix or ".webm"
     file_name = f"{generate_uuid()}{suffix}"
     rel_path = rel_dir / file_name
-    audio_bytes = await file.read()
+    # 分块读 + 超 50MB 即 413，避免超大录音吃满内存
+    audio_bytes = await read_upload_capped(file, MAX_AUDIO_BYTES)
     (uploads_root / rel_path).write_bytes(audio_bytes)
 
     # 浏览器端转写优先；无则 Qwen-Audio 兜底

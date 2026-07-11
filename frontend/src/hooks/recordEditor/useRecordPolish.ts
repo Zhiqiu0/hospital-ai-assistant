@@ -10,6 +10,7 @@
  */
 import { message } from '@/services/messageBridge'
 import { useRecordStore } from '@/store/recordStore'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import type { RecordEditorShared } from './useRecordEditorShared'
 
 export function useRecordPolish(shared: RecordEditorShared) {
@@ -23,6 +24,11 @@ export function useRecordPolish(shared: RecordEditorShared) {
     }
     setPolishing(true)
     const original = recordContent
+    // 指针守卫基准：润色写回/回滚前都要确认还是同一个接诊，
+    // 否则会把上一位患者的原文（回滚）或润色结果串进新患者编辑器（P0）。
+    const startEncounterId = useActiveEncounterStore.getState().encounterId
+    const stillSameEncounter = () =>
+      useActiveEncounterStore.getState().encounterId === startEncounterId
 
     // 【追问补充】区块在新架构下仍由前端独立维护——它是医生勾选的"问：答"对
     // 不参与 LLM 润色（防止被合并成自然语言导致勾选数据丢失），润色完原样拼回末尾
@@ -46,6 +52,9 @@ export function useRecordPolish(shared: RecordEditorShared) {
           }
         },
       })
+      // 指针守卫：流恰好在切患者瞬间正常结束时，onChunk/onEvent 未必来得及 abort，
+      // 这里再挡一次——切了患者就直接退出，别把内容写进新患者编辑器。
+      if (!stillSameEncounter()) return
       // 后端 renderer 已保证章节唯一，不再需要 restoreMissingSections 守卫
       // 只把保护下来的【追问补充】区块原样拼回末尾即可
       if (gotError) {
@@ -58,7 +67,8 @@ export function useRecordPolish(shared: RecordEditorShared) {
         setRecordContent(polished.trimEnd() + '\n\n' + supplementSection)
       }
     } catch (e) {
-      if ((e as { name?: string })?.name !== 'AbortError') {
+      // 切患者导致的 AbortError 不算错误；非 abort 错误且仍是同一接诊才回滚原文
+      if ((e as { name?: string })?.name !== 'AbortError' && stillSameEncounter()) {
         message.error('润色失败，请重试')
         setRecordContent(original)
       }

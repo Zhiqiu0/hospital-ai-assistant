@@ -90,6 +90,9 @@ export function useRecordGenerate(shared: RecordEditorShared) {
           onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
         }
       )
+      // 指针守卫：流刚好在切患者瞬间正常结束时，runSSE 未必来得及 abort，
+      // 这里再挡一次，避免把上一位患者的病历回写进新患者的问诊字段（P0）。
+      if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
       syncGeneratedRecordToInquiry(useRecordStore.getState().recordContent)
     } catch (e) {
       // AbortError 是用户主动取消，正常路径不弹错；其他错误统一提示

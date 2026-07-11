@@ -81,6 +81,9 @@ export default function InquiryPanel() {
         source_visit_time: string | null
         fields: Partial<InquiryData>
       }
+      // 指针守卫（P0）：慢响应期间医生可能已切到别的患者（切换后表单被 reset 成空，
+      // 所有字段都会被当成"空白"整套填入）。落地前确认还是发起时那个接诊，否则丢弃。
+      if (useActiveEncounterStore.getState().encounterId !== encounterId) return
       if (!res.fields || Object.keys(res.fields).length === 0) {
         message.info('该患者暂无历史病历可同步')
         return

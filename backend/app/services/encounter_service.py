@@ -667,12 +667,14 @@ class EncounterService:
         if encounter is None:
             raise HTTPException(status_code=404, detail="接诊不存在")
         # 该患者最近一次「其它」接诊的最新问诊
+        # 排除 cancelled 接诊：已取消的接诊在业务上「没发生过」，不能当复诊参考带回。
         prev = (await self.db.execute(
             select(InquiryInput)
             .join(Encounter, InquiryInput.encounter_id == Encounter.id)
             .where(
                 Encounter.patient_id == encounter.patient_id,
                 Encounter.id != encounter_id,
+                Encounter.status != "cancelled",
             )
             .order_by(desc(InquiryInput.created_at))
             .limit(1)
@@ -696,10 +698,15 @@ class EncounterService:
         Returns:
             包含保存成功信息和更新后版本号的字典。
         """
+        # (encounter_id) 无唯一约束，并发首次保存可能各插一条造成多行；
+        # 读侧(512/677行)一律 order_by+取最新，这里也必须一致——
+        # 不能用 scalar_one_or_none()，多行会抛 MultipleResultsFound 让此后每次保存都 500。
         result = await self.db.execute(
-            select(InquiryInput).where(InquiryInput.encounter_id == encounter_id)
+            select(InquiryInput)
+            .where(InquiryInput.encounter_id == encounter_id)
+            .order_by(desc(InquiryInput.updated_at))
         )
-        inquiry = result.scalar_one_or_none()
+        inquiry = result.scalars().first()
 
         if inquiry:
             # 只更新传入的非 None 字段（None 表示"不修改"）

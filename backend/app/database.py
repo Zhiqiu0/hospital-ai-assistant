@@ -21,6 +21,7 @@
          ...
 """
 
+import asyncio
 import os as _os
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -85,5 +86,9 @@ async def get_db():
         try:
             yield session
         finally:
-            # 确保 session 总是被关闭，释放连接回连接池
-            await session.close()
+            # 客户端在 SSE/流式响应中途断开时，请求任务会被取消。若此处
+            # await session.close() 的收尾网络 IO（rollback/归还连接）直接被
+            # CancelledError 打断，asyncpg 连接就来不及归还连接池，最终只能等
+            # GC 兜底 terminate（error.log 里那条 "non-checked-in connection" 警告）。
+            # 用 shield 保护关闭动作：即使调用方已被取消，关闭也会跑完，连接必归还。
+            await asyncio.shield(session.close())

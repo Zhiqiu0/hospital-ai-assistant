@@ -16,6 +16,7 @@
     3. 即使 URL 被日志记录，5 分钟后自动失效，且只能访问该特定音频
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -50,6 +51,19 @@ def hash_password(password: str) -> str:
 def verify_password(plain: str, hashed: str) -> bool:
     """验证明文密码与 bcrypt 哈希是否匹配。"""
     return pwd_context.verify(plain, hashed)
+
+
+# bcrypt 单次哈希/验证约 200-300ms 且是纯 CPU 同步调用，直接在 async 路由里跑会
+# 阻塞整个事件循环——早高峰多名医生同时登录时，所有在途请求（含 SSE 流）被串行卡住。
+# 下面两个 async 包装把 bcrypt 丢到线程池执行，事件循环不再被钉住。
+async def verify_password_async(plain: str, hashed: str) -> bool:
+    """在线程池里验证密码，避免阻塞事件循环（登录热路径专用）。"""
+    return await asyncio.to_thread(pwd_context.verify, plain, hashed)
+
+
+async def hash_password_async(password: str) -> str:
+    """在线程池里做 bcrypt 哈希，避免阻塞事件循环。"""
+    return await asyncio.to_thread(pwd_context.hash, password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
