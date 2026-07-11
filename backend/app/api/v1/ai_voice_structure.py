@@ -73,6 +73,14 @@ async def voice_structure(
         else VOICE_STRUCTURE_PROMPT_OUTPATIENT
     )
     model_options = await get_model_options(db, "generate")
+
+    # 连接池护栏：上面的读已取完（voice_record + model_options），下面是最长 270s 的
+    # LLM 调用。这里先 commit 结束只读事务、把 asyncpg 连接还回池——否则整个 LLM 期间
+    # 都占着一条连接，十几个医生并发跑就把 30 连接的池占满、其余请求排队超时。
+    # expire_on_commit=False，voice_record 对象 commit 后仍可读写；LLM 完再写回时
+    # 会短暂重新借一条连接，不影响。
+    await db.commit()
+
     # 增量分析基线选择：
     #   优先 existing_record（病历草稿全文，含医生手改，最权威）
     #   退化 existing_inquiry（问诊字段 JSON，仅在病历未生成时使用）

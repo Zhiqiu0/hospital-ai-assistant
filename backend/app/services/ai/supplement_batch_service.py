@@ -132,6 +132,9 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
 
     try:
         opts = await get_model_options(db, "qc")
+        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
+        # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
+        await db.commit()
         result = await llm_client.chat_json_stream(
             [{"role": "user", "content": prompt}],
             temperature=opts["temperature"],

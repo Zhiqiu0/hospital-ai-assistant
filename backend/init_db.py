@@ -68,16 +68,14 @@ async def init():
             VALUES (gen_random_uuid(), 'doctor01', :pwd, '张医生', 'doctor', :dept_id, 'EMP001', true, NOW(), NOW())
         """), {"pwd": doctor_pwd, "dept_id": dept_id})
 
-        # 插入默认质控规则
-        await session.execute(text("""
-            INSERT INTO qc_rules (id, name, description, rule_type, field_name, condition, risk_level, is_active, created_at, updated_at) VALUES
-            (gen_random_uuid(), '主诉不能为空', '病历主诉字段为必填项，不得留空', 'completeness', 'chief_complaint', '不能为空', 'high', true, NOW(), NOW()),
-            (gen_random_uuid(), '现病史不能为空', '现病史是病历核心内容，不得留空', 'completeness', 'history_present_illness', '不能为空', 'high', true, NOW(), NOW()),
-            (gen_random_uuid(), '初步诊断不能为空', '须填写初步诊断意见', 'completeness', 'initial_diagnosis', '不能为空', 'high', true, NOW(), NOW()),
-            (gen_random_uuid(), '主诉不超过20字', '主诉应简明扼要，通常不超过20字', 'format', 'chief_complaint', '长度不超过20字', 'medium', true, NOW(), NOW()),
-            (gen_random_uuid(), '过敏史不能为空', '必须明确记录过敏史或否认过敏史', 'completeness', 'allergy_history', '不能为空', 'medium', true, NOW(), NOW()),
-            (gen_random_uuid(), '体格检查不能为空', '体格检查结果为必填项', 'completeness', 'physical_exam', '不能为空', 'medium', true, NOW(), NOW())
-        """))
+        # 注：原「默认质控规则」种子已移除（2026-07 修）。
+        # 原 INSERT 引用的 qc_rules.condition 列在 QCRule schema 重构（迁移
+        # b1c2d3e4f5a6_qc_rules_new_schema）后已不存在、且漏了 NOT NULL 的 rule_code，
+        # 在全新库上必然 INSERT 失败——因为所有种子在同一事务里，一挂会把
+        # 科室/admin/doctor01/规则/模板整批回滚，导致全新部署"一条种子都进不去"。
+        # 而这些完整性检查现在由质控 Rubric 引擎（ZJ_OUTPATIENT_EMERGENCY_V2023 等）
+        # 统一负责，qc_rules 表改为承载 admin 后台管理的关键词/医保规则（按需在 UI 添加），
+        # 不再需要硬编码默认规则。故此段删除，全新库种子恢复正常。
 
         # 插入默认 Prompt 模板
         await session.execute(text("""

@@ -166,6 +166,10 @@ async def quick_continue(
         current_content=req.current_content or "（暂无内容）",
     )
     model_options = await get_model_options(db, "generate")
+    # 连接池护栏：下面 stream_text 全程只调 LLM、不碰 db，但本请求的 db session 会
+    # 一直活到流式响应发完。若不 commit，get_model_options 借的这条连接会被整段
+    # LLM 流（最长 270s）占用。先 commit 结束只读事务、把连接还回池。
+    await db.commit()
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "continue")
     return StreamingResponse(
         stream_with_lock(
@@ -284,6 +288,9 @@ async def normalize_fields(
 
     try:
         model_options = await get_model_options(db, "generate")
+        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
+        # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
+        await db.commit()
         content = await llm_client.chat(
             messages=[{"role": "user", "content": prompt}],
             **(model_options or {}),
