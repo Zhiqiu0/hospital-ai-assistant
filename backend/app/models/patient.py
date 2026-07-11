@@ -16,7 +16,7 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,21 @@ class Patient(Base, TimestampMixin):
     """
 
     __tablename__ = "patients"
+
+    # 与真实 DB 对齐：id_card 上的「部分唯一索引」（由 alembic b8c9d0e1f2a3 建），
+    # 保证「同一身份证只允许一份活跃档案」（NULL 及已软删记录不参与唯一）。
+    # 原 model 未声明 → autogenerate 判为「需删除」。这里显式复刻其 WHERE 谓词。
+    # postgresql_where / sqlite_where 同时给出：SQLite 3.45 也支持部分索引，
+    # 让测试库 create_all 出的索引与 PG 语义一致，避免整列唯一误伤查重测试。
+    __table_args__ = (
+        Index(
+            "uq_patients_id_card_active",
+            "id_card",
+            unique=True,
+            postgresql_where=text("id_card IS NOT NULL AND is_deleted = false"),
+            sqlite_where=text("id_card IS NOT NULL AND is_deleted = false"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # HIS 系统患者编号，全局唯一（HIS 同步来的患者才有）
@@ -96,9 +111,24 @@ class Patient(Base, TimestampMixin):
     #     ... 共 7 个字段（月经史已移除——时变信息走 inquiry_inputs.menstrual_history）
     #   }
     # 字段不存在 = 该项档案从未录入；字段存在但 value 为空 = 显式置空。
-    # 旧的 profile_past_history 等 8 个 TEXT 列在 DB 中保留作历史归档，model 不再映射，
-    # 由 schema_compat 的迁移 SQL 把数据搬到本字段。
+    # 旧的 profile_past_history 等 8 个 TEXT 列 + profile_updated_at 在 DB 中保留作
+    # 历史归档，数据已由 schema_compat 的迁移 SQL 一次性搬入本 JSONB 字段。
     profile: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+
+    # ── 【已弃用】旧扁平档案列（DEPRECATED，保留以对齐真实 DB，勿再读写）──────────
+    # 现役档案统一走上面的 profile JSONB；这 9 个 TEXT/TIMESTAMP 列是 JSONB 重构前
+    # 的老结构，数据已迁移完毕，业务代码不再引用。之所以在 model 里「显式声明」而非
+    # 沉默丢弃：它们真实存在于生产 DB，声明出来才能让 alembic check 归零（零 DB 改动、
+    # 零数据风险）。真正的物理 drop_column 属高风险不可逆操作，留作未来单独审慎迁移。
+    profile_past_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_allergy_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_family_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_personal_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_current_medications: Mapped[Optional[str]] = mapped_column(Text)
+    profile_marital_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_menstrual_history: Mapped[Optional[str]] = mapped_column(Text)
+    profile_religion_belief: Mapped[Optional[str]] = mapped_column(Text)
+    profile_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
 
     # 该患者的所有接诊记录（按时间倒序使用时在服务层处理）
     encounters: Mapped[list["Encounter"]] = relationship(back_populates="patient")

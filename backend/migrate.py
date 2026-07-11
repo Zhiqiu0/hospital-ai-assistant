@@ -124,66 +124,14 @@ async def migrate():
             print(f"    qc_issues.medical_record_id - SKIP ({e})")
         print()
 
-        # 6a. Patient 档案字段：过敏/既往/家族/个人/用药等迁到患者级别（FHIR 对齐）
-        print("[6a] patients 新增 profile_* 档案字段...")
-        patient_profile_columns = [
-            ("profile_past_history",        "TEXT"),
-            ("profile_allergy_history",     "TEXT"),
-            ("profile_family_history",      "TEXT"),
-            ("profile_personal_history",    "TEXT"),
-            ("profile_current_medications", "TEXT"),
-            ("profile_marital_history",     "TEXT"),
-            ("profile_menstrual_history",   "TEXT"),
-            ("profile_religion_belief",     "TEXT"),
-            ("profile_updated_at",          "TIMESTAMP"),
-        ]
-        for col, col_type in patient_profile_columns:
-            try:
-                await conn.execute(text(
-                    f"ALTER TABLE patients ADD COLUMN IF NOT EXISTS {col} {col_type}"
-                ))
-                print(f"    patients.{col} - OK")
-            except Exception as e:
-                print(f"    patients.{col} - SKIP ({e})")
-        print()
-
-        # 6b. 回填：把每个患者最后一次接诊里非空的档案字段拷到 patients.profile_*
-        #     只回填当前 profile_* 为空的患者，已手动填过的不覆盖
-        print("[6b] 回填 patients.profile_* （取每个患者最后一次非空的接诊值）...")
-        profile_field_map = {
-            "profile_past_history":        "past_history",
-            "profile_allergy_history":     "allergy_history",
-            "profile_family_history":      "family_history",
-            "profile_personal_history":    "personal_history",
-            "profile_current_medications": "current_medications",
-            "profile_marital_history":     "marital_history",
-            "profile_menstrual_history":   "menstrual_history",
-            "profile_religion_belief":     "religion_belief",
-        }
-        for profile_col, inquiry_col in profile_field_map.items():
-            try:
-                # 子查询：对每个 patient 取该字段最新非空值
-                result = await conn.execute(text(f"""
-                    UPDATE patients p
-                    SET {profile_col} = sub.val,
-                        profile_updated_at = COALESCE(p.profile_updated_at, sub.updated_at)
-                    FROM (
-                        SELECT DISTINCT ON (e.patient_id)
-                               e.patient_id,
-                               i.{inquiry_col} AS val,
-                               i.updated_at
-                        FROM inquiry_inputs i
-                        JOIN encounters e ON e.id = i.encounter_id
-                        WHERE i.{inquiry_col} IS NOT NULL AND i.{inquiry_col} <> ''
-                        ORDER BY e.patient_id, i.updated_at DESC
-                    ) sub
-                    WHERE p.id = sub.patient_id
-                      AND (p.{profile_col} IS NULL OR p.{profile_col} = '')
-                """))
-                print(f"    {profile_col} ← inquiry_inputs.{inquiry_col}  更新 {result.rowcount} 条")
-            except Exception as e:
-                print(f"    {profile_col} - SKIP ({e})")
-        print()
+        # 6a/6b【已移除】patients.profile_* 扁平档案列的建列 + 回填逻辑。
+        # 原因：患者档案早已重构为 patients.profile JSONB 单字段，旧的 9 个
+        #   profile_*（8 TEXT + profile_updated_at TIMESTAMP）已弃用；其历史数据
+        #   一次性搬入 JSONB 的迁移逻辑在 app/schema_compat.py 里（幂等，仅当
+        #   profile='{}' 时执行）。这些弃用列现已在 models/patient.py 显式声明为
+        #   DEPRECATED 列，全新库经 create_all 自然带出，无需在此重复 ADD COLUMN；
+        #   inquiry→profile_* 的回填是 JSONB 化之前的一次性历史动作，早已完成，
+        #   继续保留只会每次部署重跑死列逻辑，故删除。真正物理 drop 属未来单独审慎迁移。
 
         # 7. qc_rules 重构：新增 rule_code / scope / keywords 等字段
         print("[6] qc_rules 新增扩展字段...")

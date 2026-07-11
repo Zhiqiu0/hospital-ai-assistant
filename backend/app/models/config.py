@@ -47,7 +47,10 @@ class QCRule(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(Text)
 
     # 规则类型：completeness（完整性） / insurance（医保风险）
-    rule_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # 声明与真实 DB 对齐（VARCHAR(30)、nullable）：早期 migrate.py 建列时用了
+    # VARCHAR(30) 且未加 NOT NULL，收窄类型/补 NOT NULL 对存量数据有风险，
+    # 故 model 侧放宽到 String(30)+nullable，消除 alembic 漂移。应用层保证写入非空。
+    rule_type: Mapped[str] = mapped_column(String(30), nullable=True)
     # 适用范围：all / inpatient / revisit / tcm
     scope: Mapped[str] = mapped_column(String(20), default="all", nullable=False)
     # 性别限制：all / female / male（如月经史只对女性触发）
@@ -60,7 +63,9 @@ class QCRule(Base, TimestampMixin):
     # 适应症词列表（JSON 数组，仅 insurance 规则使用）：附近出现这些词则不报警
     indication_keywords: Mapped[Optional[list]] = mapped_column(JSON)
 
-    risk_level: Mapped[str] = mapped_column(String(10), default="medium", nullable=False)
+    # 风险级别：low / medium / high。与真实 DB 对齐改为 nullable（早期建列未加
+    # NOT NULL），保留应用层 default="medium"；补 NOT NULL 对存量数据有风险不做。
+    risk_level: Mapped[str] = mapped_column(String(10), default="medium", nullable=True)
     issue_description: Mapped[Optional[str]] = mapped_column(Text)
     suggestion: Mapped[Optional[str]] = mapped_column(Text)
     score_impact: Mapped[Optional[str]] = mapped_column(String(20))
