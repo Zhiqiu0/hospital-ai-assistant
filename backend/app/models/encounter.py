@@ -21,7 +21,7 @@ visit_type 可选值：
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +43,19 @@ class Encounter(Base, TimestampMixin):
     """
 
     __tablename__ = "encounters"
+
+    # 与真实 DB 对齐：his_external_ref->'his_patient_no' 上的 GIN 函数索引
+    # （由 alembic c9d0e1f2a3b4 迁移建），用于「按 HIS 患者编号反查接诊」。
+    # 原 model 未声明此索引 → autogenerate 判为「需删除」。这里显式复刻。
+    # postgresql_using='gin' 仅 PostgreSQL 生效；SQLite 测试库经 create_all 时
+    # 该 kwarg 被忽略，退化为普通表达式索引（SQLite 3.45 支持 -> JSON 运算符）。
+    __table_args__ = (
+        Index(
+            "idx_encounters_his_patient_no",
+            text("(his_external_ref -> 'his_patient_no')"),
+            postgresql_using="gin",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 接诊患者（必填）

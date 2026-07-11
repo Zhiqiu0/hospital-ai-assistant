@@ -71,6 +71,21 @@ jobs:
           pip install ruff
           ruff check app --select E,F,W --ignore E501
 
+      - name: Alembic 单头检查
+        # 迁移链必须只有 1 个 head：多 head(两条迁移从同一父节点分叉)会让
+        # `alembic upgrade head` 报错、部署时才炸。这里不连 DB、只读迁移文件的
+        # revision 图，几百毫秒就能挡住多 head 合并事故。
+        # 注：完整的"迁移能在干净库上 upgrade"门禁需要本项目 schema 先做成
+        # migration-first(目前是 migrations + migrate.py + schema_compat + create_all
+        # 四通道混管)，属更大的重构，暂不在 CI 做。
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+        run: |
+          heads=$(python -m alembic heads 2>/dev/null | grep -c "(head)")
+          echo "alembic heads count = $heads"
+          test "$heads" -eq 1 || { echo "::error::检测到多个 alembic head，迁移链分叉，需先合并"; exit 1; }
+
       - name: Run tests
         # Settings 在 import 时校验 DATABASE_URL/SECRET_KEY；CI 没有 .env，
         # 用假值让 Settings 初始化通过（实际测试用 conftest 内的 sqlite 内存库）

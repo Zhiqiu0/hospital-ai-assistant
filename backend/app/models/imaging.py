@@ -19,7 +19,16 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +48,21 @@ class ImagingStudy(Base, TimestampMixin):
 
     __tablename__ = "imaging_studies"
 
+    # ── 索引/约束显式声明（与真实 DB 对齐，消除 alembic 漂移）──────────────────
+    # 真实 DB（由 schema_compat 的 `ADD COLUMN ... UNIQUE` + `CREATE INDEX` 建）
+    # 对 study_instance_uid 同时存在两个对象：
+    #   1) 唯一约束 imaging_studies_study_instance_uid_key（保证 UID 全局唯一）
+    #   2) 普通 btree 索引 idx_imaging_studies_study_instance_uid（加速 UID 查询）
+    # 原 model 用列级 unique=True + index=True 会生成单个「唯一索引 ix_...」，
+    # 与 DB 的「约束 + 独立索引」两对象形态不一致 → autogenerate 反复报漂移。
+    # 这里改为在列上去掉 unique/index，改由 __table_args__ 精确复刻 DB 两对象。
+    __table_args__ = (
+        UniqueConstraint(
+            "study_instance_uid", name="imaging_studies_study_instance_uid_key"
+        ),
+        Index("idx_imaging_studies_study_instance_uid", "study_instance_uid"),
+    )
+
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 关联患者（必填）
     patient_id: Mapped[str] = mapped_column(ForeignKey("patients.id"), nullable=False)
@@ -50,9 +74,8 @@ class ImagingStudy(Base, TimestampMixin):
     # 业务表的 id 仍是自生成 UUID（前端引用用），study_instance_uid 是与
     # Orthanc/外部 PACS 互通的标准 ID。Nullable 是为了向后兼容旧数据，
     # 新建的 ImagingStudy 必须填这个字段。
-    study_instance_uid: Mapped[Optional[str]] = mapped_column(
-        String(128), unique=True, index=True
-    )
+    # 唯一约束与索引改到 __table_args__ 显式声明（见上），此处仅声明列本身
+    study_instance_uid: Mapped[Optional[str]] = mapped_column(String(128))
 
     # ── 影像元数据（缓存 Orthanc 常用字段，避免每次 QIDO 远程查询）──────────
     # 检查设备类型："CT" / "MR" / "DR" / "US"
@@ -106,7 +129,10 @@ class ImagingReport(Base, TimestampMixin):
     radiologist_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
     # 实际签发（发布）报告的影像科医生，可与 radiologist_id 不同（如 A 分析 + B 复核签发）。
     # 由 publish_report 端点写入，是审计链的"签发责任人"字段。
-    published_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"))
+    # 注：真实 DB 里该列由 schema_compat 的 `ADD COLUMN published_by VARCHAR` 建，
+    # 未带外键约束；此处 model 同步声明为纯 String（不加 ForeignKey），与 DB 对齐、
+    # 消除 autogenerate 的 add_fk 漂移。给 DB 补外键会校验存量数据、有风险，故不做。
+    published_by: Mapped[Optional[str]] = mapped_column(String)
 
     # 用户选中的关键帧文件名列表（JSON 数组，如 ["0001.DCM", "0050.DCM"]）
     # 只有选中的帧会发送给 AI 分析，避免切片过多超出 token 限制
