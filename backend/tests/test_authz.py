@@ -20,6 +20,13 @@ def _user(uid: str, role: str = "doctor"):
     return SimpleNamespace(id=uid, role=role)
 
 
+def _embed_user(uid: str, encounter_id: str):
+    """构造一个 embed 作用域用户（模拟 get_current_user 对 embed token 挂的标记）。"""
+    return SimpleNamespace(
+        id=uid, role="doctor", _embed_scoped=True, _embed_encounter_id=encounter_id
+    )
+
+
 # ── assert_patient_access ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -75,6 +82,49 @@ async def test_patient_access_doctor_without_encounter_blocked(async_db):
 
 
 # ── assert_pacs_write ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_embed_token_confined_to_its_own_encounter(async_db):
+    """embed 作用域令牌只能访问它绑定的那条接诊，别的接诊(哪怕同医生)一律 403。"""
+    own = Encounter(
+        id="enc-embed-own", patient_id="pat-e", doctor_id="doc-embed",
+        visit_type="outpatient", status="in_progress", visited_at=datetime(2026, 4, 1),
+    )
+    other = Encounter(
+        id="enc-embed-other", patient_id="pat-e2", doctor_id="doc-embed",
+        visit_type="outpatient", status="in_progress", visited_at=datetime(2026, 4, 1),
+    )
+    async_db.add_all([own, other])
+    await async_db.commit()
+
+    user = _embed_user("doc-embed", "enc-embed-own")
+    # 自己那条：放行
+    await assert_encounter_access(async_db, "enc-embed-own", user)
+    # 同医生的另一条：embed 作用域拒绝
+    with pytest.raises(HTTPException) as exc:
+        await assert_encounter_access(async_db, "enc-embed-other", user)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_embed_token_confined_to_its_own_patient(async_db):
+    """embed 作用域令牌只能读它绑定接诊对应的那位患者，别的患者 403。"""
+    pat = Patient(id="pat-embed", name="嵌入患者")
+    enc = Encounter(
+        id="enc-embed-p", patient_id=pat.id, doctor_id="doc-embed",
+        visit_type="outpatient", status="in_progress", visited_at=datetime(2026, 4, 1),
+    )
+    async_db.add_all([pat, enc])
+    await async_db.commit()
+
+    user = _embed_user("doc-embed", "enc-embed-p")
+    # 绑定接诊的患者：放行
+    await assert_patient_access(async_db, "pat-embed", user)
+    # 别的患者：拒绝
+    with pytest.raises(HTTPException) as exc:
+        await assert_patient_access(async_db, "some-other-patient", user)
+    assert exc.value.status_code == 403
+
 
 def test_pacs_write_allows_radiologist_and_admins():
     """PACS 写权限只放行放射科医生和三种 admin。"""

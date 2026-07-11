@@ -8,8 +8,8 @@
  * 为什么不直接渲染工作台：
  *   把"嵌入模式 setup"和"工作台渲染"解耦，WorkbenchPage 零改动风险。
  *   现有 SaaS 用户访问 /workbench 行为完全不变；只有嵌入入口写了
- *   embedStore.isEmbed=true 后，WorkbenchPage 内部按 isEmbed 决定是否
- *   显示 AutoFillButton 等嵌入专属 UI。
+ *   embedStore.isEmbed=true 后，WorkbenchPage 内部按 isEmbed 决定嵌入专属行为。
+ *   （旧的「自动填入 HIS」控件模式按钮已随 UI 自动化方案退休删除。）
  */
 
 import { useEffect, useState } from 'react'
@@ -19,7 +19,6 @@ import { useAuthStore } from '@/store/authStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useEmbedStore } from '@/store/embedStore'
 import type { EmbedSession } from '@/store/embedStore'
-import { desktopAgent } from '@/services/desktopAgent'
 import api from '@/services/api'
 
 /**
@@ -70,7 +69,6 @@ export default function EmbedWorkbenchPage() {
     // 1. 用 URL token 绑定到 authStore（跳过登录页）
     //    Agent 签发 token 时 sub=医生ID，相当于代理登录
     useAuthStore.setState({ token })
-    desktopAgent.setToken(token)
 
     // 2. 拉嵌入会话上下文（项目里 axios 拦截器已把 response.data 当返回值，所以 cast 即可）
     ;(api.get(`/embed/session/${encounterId}`) as unknown as Promise<EmbedSession>)
@@ -85,7 +83,7 @@ export default function EmbedWorkbenchPage() {
         useEmbedStore.getState().setEmbed(session, parseJwtExpiresAt(token))
         // 用 setActive 而不是 setState：encounterId 变化时它会自动 reset 4 个子 store
         // (inquiry / record / qc / aiSuggestion)，避免上次 SaaS 测试残留的 inquiry
-        // 数据污染嵌入会话（AutoFillButton collectFields 会误读到旧字段）。
+        // 数据污染嵌入会话。
         useActiveEncounterStore.getState().setActive({
           patientId: session.patient_id,
           encounterId: session.encounter_id,

@@ -12,7 +12,7 @@
 所有端点均需登录认证（get_current_user）。
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.authz import assert_patient_access
@@ -49,6 +49,9 @@ async def list_patients(
     require_completed=True 时为复诊弹窗专用语义：
     过滤掉「档案在但从未真正完成过任何接诊」的患者，避免医生把这类患者误当复诊接。
     """
+    # 嵌入会话不允许枚举全院患者（embed token 只服务于它自己那一条接诊）
+    if getattr(current_user, "_embed_scoped", False):
+        raise HTTPException(status_code=403, detail="嵌入会话不支持患者检索")
     service = PatientService(db)
     return await service.search(keyword, page, page_size, require_completed=require_completed)
 

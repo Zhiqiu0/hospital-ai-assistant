@@ -17,11 +17,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
-import AutoFillButton from '@/components/embed/AutoFillButton'
-import { collectFillFields } from './collectFillFields'
 import { useAuthStore } from '@/store/authStore'
-import { useEmbedStore } from '@/store/embedStore'
-import { useInquiryStore } from '@/store/inquiryStore'
 import type { Patient, VisitType } from '@/domain/medical'
 
 /** AI 质控评分徽章（只取分数字段） */
@@ -100,15 +96,6 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
   // App.useApp() 拿到的 modal 实例能 consume 主题 context；
   // 不要用 Modal.warning/info/confirm 静态方法（会绕开 ConfigProvider 主题）。
   const { modal } = App.useApp()
-
-  // HIS 嵌入模式状态：决定是否在工具栏渲染"自动填入 HIS"按钮。
-  // SaaS 用户 isEmbed=false，按钮完全不渲染，行为零变化。
-  const isEmbed = useEmbedStore(s => s.isEmbed)
-  const embedEncounterId = useEmbedStore(s => s.session?.encounter_id)
-  const inquiry = useInquiryStore(s => s.inquiry)
-  // AutoFillButton 点击时收集当前问诊 + 病历内容，打包成 Agent /fill 入参。
-  // 拆分逻辑（含复合段 COMPOUND_SECTIONS）在 collectFillFields.ts。
-  const collectFieldsForFill = () => collectFillFields(inquiry, recordContent)
 
   // 导出 Word 时拼"病案首页"用的接诊上下文：医生姓名/科室来自 authStore，
   // visit_type 来自 activeEncounterStore（由父组件传入）。编辑器场景没有 snapshot，传 null。
@@ -245,14 +232,6 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
       >
         导出 Word
       </Button>
-
-      {/*
-       * HIS 嵌入模式专属按钮：调本地桌面 Agent 把病历自动填回金算盘 HIS。
-       * SaaS 用户 isEmbed=false → 完全不渲染，UI/行为零差异。
-       */}
-      {isEmbed && embedEncounterId && (
-        <AutoFillButton encounterId={embedEncounterId} collectFields={collectFieldsForFill} />
-      )}
     </Space>
   )
 }

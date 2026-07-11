@@ -37,6 +37,12 @@ async def assert_encounter_access(
     if not enc:
         raise HTTPException(status_code=404, detail="接诊不存在")
 
+    # 嵌入会话作用域：embed token 只能访问它绑定的那一条接诊，
+    # 即使是同一个医生的其它接诊也不行（把泄漏后的爆炸半径限制在一条接诊内）。
+    if getattr(user, "_embed_scoped", False):
+        if str(getattr(user, "_embed_encounter_id", "")) != str(encounter_id):
+            raise HTTPException(status_code=403, detail="嵌入会话只能访问其对应的接诊")
+
     role = getattr(user, "role", "")
     if role in ADMIN_ROLES:
         return enc
@@ -64,6 +70,15 @@ async def assert_patient_access(db: AsyncSession, patient_id: str, user) -> None
       - admin 三角色 / radiologist 直通
       - 其他角色（doctor/nurse）必须对该 patient 有过接诊关系（doctor_id 匹配）
     """
+    # 嵌入会话作用域：embed token 只能访问它绑定接诊对应的那一位患者，
+    # 不能借医生身份读其它患者的档案（PHI 泄漏面收到一位患者内）。
+    if getattr(user, "_embed_scoped", False):
+        embed_enc_id = getattr(user, "_embed_encounter_id", "")
+        enc = await db.get(EncounterModel, embed_enc_id) if embed_enc_id else None
+        if not enc or str(getattr(enc, "patient_id", "")) != str(patient_id):
+            raise HTTPException(status_code=403, detail="嵌入会话只能访问其对应接诊的患者")
+        return
+
     role = getattr(user, "role", "")
     if role in PACS_WRITE_ROLES:
         return

@@ -223,6 +223,14 @@ async def get_current_user(
     if not user or not user.is_active:
         raise credentials_exception
 
+    # 嵌入(embed)令牌作用域标记：embed token 是给"从 HIS 里嵌入打开"用的短期票，
+    # 只应服务于它对应的那一次接诊，不能等同完整医生令牌（防泄漏后 4h 内全账号被接管）。
+    # 这里把 embed 标记 + 绑定的 encounter_id 挂到 user 上（非持久化的临时属性），
+    # 由 authz.assert_encounter_access / assert_patient_access / 患者枚举按需收紧。
+    if payload.get("embed"):
+        user._embed_scoped = True
+        user._embed_encounter_id = payload.get("encounter_id")
+
     # 鉴权成功：把 user_id / username 绑定到当前请求上下文
     # 后续日志自动带 [uid=xxx]，Sentry event 自动带 user 字段
     from app.core.request_context import bind_user_context
