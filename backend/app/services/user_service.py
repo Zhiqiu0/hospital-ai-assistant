@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 
@@ -100,7 +100,7 @@ class UserService:
 
         user = User(
             username=data.username,
-            password_hash=hash_password(data.password),  # 明文密码在此处不可逆哈希
+            password_hash=await hash_password_async(data.password),  # 明文密码在此处不可逆哈希
             real_name=data.real_name,
             role=data.role,
             department_id=data.department_id,
@@ -184,5 +184,5 @@ class UserService:
         user = await self.get_by_id(user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        user.password_hash = hash_password(new_password)
+        user.password_hash = await hash_password_async(new_password)
         await self.db.commit()

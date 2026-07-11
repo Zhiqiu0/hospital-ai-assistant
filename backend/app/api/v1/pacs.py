@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
 from app.core.authz import PACS_WRITE_ROLES, assert_pacs_write, assert_patient_access
+from app.core.upload_limits import MAX_DICOM_BYTES, read_upload_capped
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingReport, ImagingStudy
@@ -108,7 +109,9 @@ async def upload_study(
 
     try:
         # 1-3) 落盘压缩包 → 解压 → 扫描 .dcm 路径（不读字节，已下沉 dicom_service）
-        dcm_paths = dicom_service.extract_and_scan_dcm(await file.read(), work_dir, archive_kind)
+        # 分块读 + 超 100MB 即 413，避免超大压缩包吃满内存
+        archive_bytes = await read_upload_capped(file, MAX_DICOM_BYTES)
+        dcm_paths = dicom_service.extract_and_scan_dcm(archive_bytes, work_dir, archive_kind)
         if not dcm_paths:
             raise HTTPException(400, "压缩包中未找到 DCM 文件")
 
@@ -514,7 +517,8 @@ async def analyze_image(
     if not is_dcm and content_type not in allowed_img and not any(filename.lower().endswith(e) for e in [".jpg", ".jpeg", ".png", ".webp"]):
         raise HTTPException(400, "请上传 JPG/PNG/WebP 或 DCM 格式文件")
 
-    raw_bytes = await file.read()
+    # 分块读 + 超 100MB 即 413（单张 DCM/图片，复用 DICOM 上限）
+    raw_bytes = await read_upload_capped(file, MAX_DICOM_BYTES)
 
     if is_dcm:
         # DCM → JPEG：临时 STOW 到 Orthanc → WADO render 拿 JPEG → 删除临时 study

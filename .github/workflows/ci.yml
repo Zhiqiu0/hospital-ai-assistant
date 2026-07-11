@@ -35,6 +35,11 @@ jobs:
       - name: ESLint
         run: npm run lint
 
+      - name: Unit tests (vitest)
+        # 前端有 10 个 *.test.ts(x)（含病历写入/QC 字段契约等核心逻辑），
+        # 之前 CI 从不执行，等于对发版零拦截。这里补上（test = vitest run，非 watch）。
+        run: npm run test
+
       - name: Build
         run: npm run build
 

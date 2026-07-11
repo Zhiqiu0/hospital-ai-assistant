@@ -14,7 +14,14 @@
  *   EmergencyDispositionBar → 急诊流转（仅急诊）
  *   InquirySaveBar      → 保存 + 转住院
  */
-import { Form, Divider, ConfigProvider } from 'antd'
+import { Form, Divider, ConfigProvider, Button } from 'antd'
+import { useState } from 'react'
+import { HistoryOutlined } from '@ant-design/icons'
+import { message } from '@/services/messageBridge'
+import api from '@/services/api'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { buildInquiryData } from '@/utils/inquirySync'
+import type { InquiryData } from '@/store/types'
 import VoiceInputCard from './VoiceInputCard'
 import DiagnosisSection from './DiagnosisSection'
 import TreatmentSection from './TreatmentSection'
@@ -62,6 +69,48 @@ export default function InquiryPanel() {
     hasUnsignedRecord,
   } = useInquiryPanel()
 
+  const encounterId = useActiveEncounterStore(s => s.encounterId)
+  const [syncing, setSyncing] = useState(false)
+
+  // 一键同步上次病历：拉该患者上次接诊的文字病历（体征不带回，需本次重新测量）
+  const handleSyncPrevious = async () => {
+    if (!encounterId) return
+    setSyncing(true)
+    try {
+      const res = (await api.get(`/encounters/${encounterId}/previous-record`)) as {
+        source_visit_time: string | null
+        fields: Partial<InquiryData>
+      }
+      // 指针守卫（P0）：慢响应期间医生可能已切到别的患者（切换后表单被 reset 成空，
+      // 所有字段都会被当成"空白"整套填入）。落地前确认还是发起时那个接诊，否则丢弃。
+      if (useActiveEncounterStore.getState().encounterId !== encounterId) return
+      if (!res.fields || Object.keys(res.fields).length === 0) {
+        message.info('该患者暂无历史病历可同步')
+        return
+      }
+      // 只填空白，不覆盖医生已手填的内容：仅当当前框为空时才用上次的值补入。
+      const current = form.getFieldsValue()
+      const patch: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(res.fields)) {
+        const cur = current[key]
+        if (cur === undefined || cur === null || cur === '') patch[key] = value
+      }
+      if (Object.keys(patch).length === 0) {
+        message.info('当前问诊项均已填写，无需同步')
+        return
+      }
+      const nextValues = { ...current, ...patch }
+      form.setFieldsValue(nextValues)
+      updateInquiryFields(buildInquiryData(nextValues) as unknown as InquiryData)
+      setIsDirty(true)
+      message.success('已同步上次病历（仅补空白项），请核对并重新测量体征后保存')
+    } catch {
+      message.error('同步失败，请重试')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <InquiryPanelHeader
@@ -75,6 +124,20 @@ export default function InquiryPanel() {
         setVisitMeta={setVisitMeta}
         setIsDirty={setIsDirty}
       />
+
+      {/* 一键同步上次病历（复诊参考：拉上次文字病历，体征不带回、需本次重测） */}
+      {encounterId && !isInputLocked && (
+        <div style={{ padding: '6px 16px 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            size="small"
+            icon={<HistoryOutlined />}
+            loading={syncing}
+            onClick={handleSyncPrevious}
+          >
+            同步上次病历
+          </Button>
+        </div>
+      )}
 
       {/* 表单主体 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px' }}>

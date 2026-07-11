@@ -15,6 +15,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import assert_patient_access
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.patient import (
@@ -74,6 +75,8 @@ async def get_patient(
     current_user=Depends(get_current_user),
 ):
     """按 UUID 查询单个患者详情。"""
+    # 归属校验：非管理员只能查自己接诊过的患者，防止越权读身份证号/住址等 PHI（IDOR）
+    await assert_patient_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.get_by_id(patient_id)
 
@@ -86,6 +89,8 @@ async def update_patient(
     current_user=Depends(get_current_user),
 ):
     """更新患者信息（只更新传入的非 None 字段）。"""
+    # 归属校验：只能改自己接诊过的患者，防止越权篡改他人档案
+    await assert_patient_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.update(patient_id, data)
 
@@ -101,6 +106,8 @@ async def get_patient_profile(
     该档案跟随患者本身，不跟随单次接诊，符合 FHIR 标准。
     复诊/再次住院时前端自动加载，医生无需重复询问。
     """
+    # 归属校验：只能读自己接诊过的患者档案，防止越权读过敏史/既往史等纵向 PHI
+    await assert_patient_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.get_profile(patient_id)
 
@@ -117,6 +124,8 @@ async def update_patient_profile(
     医生在问诊时发现新过敏史/新用药等，写入该接口持久化到患者档案。
     每个被改动的字段独立刷新 updated_at + updated_by（FHIR 字段级 verification 思路）。
     """
+    # 归属校验：只能改自己接诊过的患者档案
+    await assert_patient_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.update_profile(patient_id, data, doctor_id=current_user.id)
 
@@ -133,5 +142,7 @@ async def confirm_patient_profile_field(
     用于场景：医生看了既往史，确认 3 年前录入的内容现在还是这样，点一下让"X 天前确认"
     重新计时，但不需要真的修改值。对应 FHIR verificationStatus: confirmed。
     """
+    # 归属校验：只能确认自己接诊过的患者档案字段
+    await assert_patient_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.confirm_profile_field(patient_id, data.field, doctor_id=current_user.id)

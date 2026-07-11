@@ -83,8 +83,23 @@ export function useInquirySave({
     // buildInquiryData 返回的 Record<string, string> 与 InquiryData 字段并集兼容
     // （都是字符串型字段），借助 unknown 桥接，避免污染 inquirySync 的返回类型
     setInquiry(normalizedData as unknown as InquiryData)
+    // 服务端保存问诊必须 await 并按结果给提示——不能 fire-and-forget：
+    // PUT 失败却照样弹"已保存"、清 dirty，会让医生以为存上了，实际换设备/重登
+    // 走 snapshot 恢复时数据回退到旧版（P1 静默丢数据）。
+    let savedOk = true
     if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData).catch(() => {})
+      try {
+        await api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData)
+      } catch {
+        savedOk = false
+      }
+    }
+
+    if (!savedOk) {
+      message.error('问诊保存失败，请检查网络后重试')
+      setSaving(false)
+      // 保留 isDirty：让医生知道还没存上，可再次点击保存
+      return
     }
 
     // 将已改动的字段同步到右侧病历对应章节

@@ -37,25 +37,31 @@ export default function LabReportTab() {
   const [uploadingCount, setUploadingCount] = useState(0)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const fetchReports = async () => {
-    if (!currentEncounterId) return
+  const fetchReports = async (forEncounterId: string) => {
     setLoading(true)
     try {
       const data = (await api.get(
-        `/lab-reports/?encounter_id=${currentEncounterId}`
+        `/lab-reports/?encounter_id=${forEncounterId}`
       )) as LabReportItem[]
-      setReports(data)
+      // 竞态守卫：快速切患者时，旧接诊的慢响应回来时当前接诊已变，丢弃以免串数据（P1）。
+      if (useActiveEncounterStore.getState().encounterId !== forEncounterId) return
+      // 后端异常返回非数组时不让 .find/.map 崩溃
+      setReports(Array.isArray(data) ? data : [])
     } catch {
+      // 拉取失败也要清空：否则会继续显示上一位患者的报告
+      if (useActiveEncounterStore.getState().encounterId === forEncounterId) setReports([])
     } finally {
-      setLoading(false)
+      if (useActiveEncounterStore.getState().encounterId === forEncounterId) setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchReports()
-    // fetchReports 是 component-local 函数，加进 deps 会让 effect 每次 render 都跑；
-    // setState 在 fetchReports 内部是异步加载预期路径
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 切接诊先清空旧列表，再按新接诊拉取；无接诊时直接清空。
+    // fetchReports 只依赖入参 forEncounterId（不闭包 currentEncounterId），
+    // 故 deps 仅需 currentEncounterId，无需再禁 exhaustive-deps。
+    setReports([])
+    setExpandedId(null)
+    if (currentEncounterId) fetchReports(currentEncounterId)
   }, [currentEncounterId])
 
   const handleUpload = async (file: File) => {
@@ -162,7 +168,7 @@ export default function LabReportTab() {
         <Button
           size="small"
           icon={<ReloadOutlined />}
-          onClick={fetchReports}
+          onClick={() => currentEncounterId && fetchReports(currentEncounterId)}
           style={{ fontSize: 11, color: 'var(--text-4)' }}
         >
           刷新

@@ -116,19 +116,30 @@ export default function PatientHistoryDrawer({
       setTotal(0)
       return
     }
+    // 切患者先清空旧列表；竞态守卫：快速切换患者时旧响应回来时已过期，用 cancelled 丢弃（P1）
+    setRecords([])
+    setTotal(0)
+    let cancelled = false
     setLoading(true)
     api
       .get(`/medical-records/by-patient/${selected.id}`)
       .then(res => {
+        if (cancelled) return
         const data = res as { items?: HistoryRecord[]; total?: number }
-        setRecords(data.items || [])
+        setRecords(Array.isArray(data.items) ? data.items : [])
         setTotal(data.total || 0)
       })
       .catch(() => {
+        if (cancelled) return
         setRecords([])
         setTotal(0)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open, selected])
 
   // 搜索/列表加载：抽屉打开 + 搜索模式 + 没选中患者时拉患者列表

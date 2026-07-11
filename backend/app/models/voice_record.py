@@ -50,7 +50,9 @@ class VoiceRecord(Base, TimestampMixin):
 
     # ── 文件存储 ──────────────────────────────────────────────────────────────
     # 音频文件相对路径（相对于 uploads/ 目录），如 "voice_records/enc-xxx/uuid.webm"
-    audio_file_path: Mapped[Optional[str]] = mapped_column(String(300))
+    # 长度与 migrate.py（每次部署 ALTER 到 VARCHAR(500)）对齐——原来模型写 300、
+    # DB 实为 500，属长期漂移，让 alembic autogenerate 一直误报。统一成 500。
+    audio_file_path: Mapped[Optional[str]] = mapped_column(String(500))
     # 音频 MIME 类型，如 "audio/webm;codecs=opus"（用于 Content-Type 响应头）
     mime_type: Mapped[Optional[str]] = mapped_column(String(100))
 

@@ -277,6 +277,38 @@ class RedisCache:
             self._on_failure("release_lock", key, e)
             return False
 
+    async def claim_nonce(self, scope: str, nonce: str, *, ttl: int) -> bool:
+        """一次性 nonce 声明（防重放）。
+
+        用 SET NX EX 把 nonce 记为「已用」：首次声明返回 True（放行），
+        再次声明返回 False（判定为重放，应拒绝）。
+
+        Args:
+            scope: 命名空间（如 "his_admit"），避免不同业务 nonce 撞车。
+            nonce: 外部传入的一次性随机串。
+            ttl:   记忆时长（秒），应 >= 验签允许的时间戳偏差窗口——
+                   超过窗口后 timestamp_fresh 本身就会拒绝，nonce 无需再记。
+
+        Returns:
+            True  = nonce 首次出现（放行）；
+            False = nonce 已用过（重放，拒绝）。
+            Redis 不可用时返回 True（fail-open，与本模块降级哲学一致）：
+            此时防重放退化为仅靠时间戳窗口兜底，属已知取舍。
+        """
+        if not nonce:
+            # 没带 nonce 交给上层的签名/参数校验去拒，这里不放行也不误判
+            return False
+        client = self._get_client()
+        if client is None:
+            return True
+        try:
+            ok = await client.set(f"nonce:{scope}:{nonce}", "1", nx=True, ex=ttl)
+            self._on_success()
+            return bool(ok)
+        except Exception as e:
+            self._on_failure("claim_nonce", f"{scope}:{nonce}", e)
+            return True
+
     # ── 限流 / 计数器 ────────────────────────────────────────────────────────────
     async def incr_with_ttl(self, key: str, *, window_seconds: int) -> Optional[int]:
         """INCR + 首次 EXPIRE，用于固定窗口限流 / 登录爆破计数。

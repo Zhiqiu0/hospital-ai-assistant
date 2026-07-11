@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.core.authz import assert_encounter_access
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.ai_suggestion import InquirySuggestionRequest
@@ -356,6 +357,8 @@ async def get_encounter(
     current_user=Depends(get_current_user),
 ):
     """按 ID 查询单条接诊记录。"""
+    # 归属校验：非管理员只能读自己接诊，防止越权拿他人接诊详情（IDOR）
+    await assert_encounter_access(db, encounter_id, current_user)
     service = EncounterService(db)
     return await service.get_by_id(encounter_id)
 
@@ -379,8 +382,23 @@ async def save_inquiry_input(
     current_user=Depends(get_current_user),
 ):
     """保存 / 更新问诊输入字段。"""
+    # 归属校验：只能写自己接诊的问诊，防止越权覆写他人接诊数据
+    await assert_encounter_access(db, encounter_id, current_user)
     service = EncounterService(db)
     return await service.save_inquiry(encounter_id, data)
+
+
+@router.get("/{encounter_id}/previous-record")
+async def get_previous_record(
+    encounter_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """一键同步上次病历：返回该患者上次接诊的病历文字字段（体征不带回，需本次重测）。"""
+    # 归属校验：只能对自己的接诊拉上次病历，防止越权拿他人患者的历史问诊全文
+    await assert_encounter_access(db, encounter_id, current_user)
+    service = EncounterService(db)
+    return await service.get_previous_record(encounter_id)
 
 
 @router.post("/{encounter_id}/inquiry-suggestions")
@@ -391,6 +409,8 @@ async def get_inquiry_suggestions(
     current_user=Depends(get_current_user),
 ):
     """生成问诊追问建议（流式）。"""
+    # 归属校验：只能对自己的接诊生成建议（流开始前先挡住越权）
+    await assert_encounter_access(db, encounter_id, current_user)
     service = InquiryService(db)
     return StreamingResponse(
         service.stream_suggestions(encounter_id, request),
@@ -406,5 +426,7 @@ async def get_exam_suggestions(
     current_user=Depends(get_current_user),
 ):
     """生成辅助检查建议。"""
+    # 归属校验：只能对自己的接诊生成建议
+    await assert_encounter_access(db, encounter_id, current_user)
     service = ExamService(db)
     return await service.get_suggestions(encounter_id, request)

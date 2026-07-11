@@ -135,6 +135,21 @@ services:
       # release 标识：CI deploy 时由 deploy.yml 注入 git short SHA
       # 本地手动 docker compose up 不传，event 没有 release tag 但不影响功能
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # ── HIS 对接（讯飞智医助理同款接口）───────────────────────────────
+      # 镜像构建时 .dockerignore 排除了 .env，容器内 pydantic 的 env_file 路径都不存在，
+      # 故 HIS_* 必须在这里显式透传，否则生产环境 his_adapter_enabled 永远 False、
+      # 验签密钥永远为空——到医院联调时改服务器 .env 也不会生效。默认值与 config.py 一致。
+      HIS_ADAPTER_ENABLED: ${HIS_ADAPTER_ENABLED:-false}
+      HIS_EMBED_TOKEN_TTL_HOURS: ${HIS_EMBED_TOKEN_TTL_HOURS:-4}
+      HIS_INBOUND_APP_ID: ${HIS_INBOUND_APP_ID:-}
+      HIS_INBOUND_APP_SECRET: ${HIS_INBOUND_APP_SECRET:-}
+      HIS_SIGN_CLOCK_SKEW_SECONDS: ${HIS_SIGN_CLOCK_SKEW_SECONDS:-300}
+      HIS_WRITEBACK_URL: ${HIS_WRITEBACK_URL:-}
+      HIS_WRITEBACK_REFRESH_URL: ${HIS_WRITEBACK_REFRESH_URL:-}
+      HIS_WRITEBACK_APP_ID: ${HIS_WRITEBACK_APP_ID:-}
+      HIS_WRITEBACK_APP_SECRET: ${HIS_WRITEBACK_APP_SECRET:-}
+      HIS_WRITEBACK_TIMEOUT_SECONDS: ${HIS_WRITEBACK_TIMEOUT_SECONDS:-30}
+      HIS_WRITEBACK_MAX_RETRIES: ${HIS_WRITEBACK_MAX_RETRIES:-2}
     volumes:
       - uploads_data:/app/uploads
       - /app/logs:/app/logs

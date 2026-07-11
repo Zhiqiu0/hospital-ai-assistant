@@ -104,6 +104,19 @@ class Settings(BaseSettings):
     his_adapter_enabled: bool = False
     # 嵌入会话 token 有效期（小时），默认 4h（够医生写完一份病历）
     his_embed_token_ttl_hours: int = 4
+    # ── HIS 接诊推送验签（HIS→我方）──────────────────────────────
+    # 我方分配给 HIS 的一对凭证，用于验证 HIS 接诊推送的 HMAC 签名
+    his_inbound_app_id: str = ""
+    his_inbound_app_secret: str = ""
+    # 签名时间戳允许误差（秒），防重放，默认 5 分钟
+    his_sign_clock_skew_seconds: int = 300
+    # ── HIS 病历回写（我方→HIS，待厂商确认后填，先占位）──────────
+    his_writeback_url: str = ""           # 回写写入接口地址
+    his_writeback_refresh_url: str = ""   # 触发前端刷新接口地址
+    his_writeback_app_id: str = ""        # HIS 分配给我方的凭证
+    his_writeback_app_secret: str = ""
+    his_writeback_timeout_seconds: int = 30
+    his_writeback_max_retries: int = 2    # 写入/刷新失败（网络异常或 5xx）重试次数
 
     @property
     def origins_list(self) -> list[str]:

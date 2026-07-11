@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.core.authz import assert_encounter_access
+from app.core.upload_limits import MAX_LAB_BYTES, read_upload_capped
 from app.database import get_db
 from app.services import lab_reports_service
 
@@ -48,7 +49,8 @@ async def upload_lab_report(
     if encounter_id:
         await assert_encounter_access(db, encounter_id, current_user)
 
-    content = await file.read()
+    # 分块读 + 超 20MB 即 413
+    content = await read_upload_capped(file, MAX_LAB_BYTES)
     report = await lab_reports_service.process_and_create_report(
         db,
         content=content,

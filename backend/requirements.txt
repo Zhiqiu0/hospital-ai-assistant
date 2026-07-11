@@ -1,4 +1,9 @@
-fastapi==0.115.0
+# 2026-07-07 安全升级：fastapi 0.115.0 钉死 starlette<0.39，而 starlette 0.38.6 有
+# CVE-2024-47874（multipart 表单无大小限制内存耗尽 DoS，0.40.0 修复）。升到
+# fastapi 0.115.6 放开到 starlette 0.41.x（含修复），登录/上传等未认证表单端点不再可被打。
+fastapi==0.115.6
+# 显式钉住 starlette（fastapi 0.115.6 允许 0.40~0.41）：0.41.3 含 CVE-2024-47874 修复
+starlette==0.41.3
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 alembic==1.13.3
@@ -12,7 +17,8 @@ pydantic-settings==2.5.2
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
-python-multipart==0.0.12
+# 2026-07-07 安全升级：0.0.12 有 CVE-2024-53981（畸形 boundary CPU 耗尽 DoS），0.0.18 修复
+python-multipart==0.0.18
 httpx==0.27.2
 openai==1.51.0
 python-dotenv==1.0.1

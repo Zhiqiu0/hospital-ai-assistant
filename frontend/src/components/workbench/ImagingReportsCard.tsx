@@ -41,16 +41,26 @@ export default function ImagingReportsCard({ patientId }: Props) {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!patientId) {
-      setReports([])
-      return
-    }
+    // 切患者先清空旧列表，避免加载期间残留上一位患者的影像报告
+    setReports([])
+    if (!patientId) return
+    // 竞态守卫：快速切患者时旧请求的慢响应回来时已过期，用 cancelled 标记丢弃（P1）
+    let cancelled = false
     setLoading(true)
     api
       .get(`/pacs/patient/${patientId}/reports`)
-      .then(d => setReports(Array.isArray(d) ? (d as ImagingReport[]) : []))
-      .catch(() => setReports([]))
-      .finally(() => setLoading(false))
+      .then(d => {
+        if (!cancelled) setReports(Array.isArray(d) ? (d as ImagingReport[]) : [])
+      })
+      .catch(() => {
+        if (!cancelled) setReports([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [patientId])
 
   // 没患者上下文 / 无影像报告 → 不渲染（避免空卡片占面积）

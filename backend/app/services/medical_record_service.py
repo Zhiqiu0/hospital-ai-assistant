@@ -183,9 +183,15 @@ class MedicalRecordService:
             raise HTTPException(status_code=403, detail="病历已签发，不可再编辑")
 
         # 乐观锁校验（只在传入预期值时启用——AI 生成那次首发不需要）
-        if expected_updated_at is not None and record is not None:
+        if expected_updated_at is not None and record is not None and record.updated_at:
+            # DB updated_at 是 naive；expected_updated_at 由 pydantic 解析客户端字符串，
+            # 一旦前端回传带 Z/时区偏移的 ISO 串就会变成 aware，naive>aware 直接抛
+            # TypeError → auto-save 500。这里把 aware 归一化成 naive 再比，杜绝该崩溃。
+            expected = expected_updated_at
+            if expected.tzinfo is not None:
+                expected = expected.replace(tzinfo=None)
             # 数据库 updated_at 可能比预期值更新（其他设备已写过）→ 拒绝
-            if record.updated_at and record.updated_at > expected_updated_at:
+            if record.updated_at > expected:
                 raise HTTPException(
                     status_code=409,
                     detail="病历已被其他设备修改，请刷新后重试",
@@ -339,13 +345,17 @@ class MedicalRecordService:
             签发后的 MedicalRecord ORM 对象（已 commit 并 refresh）。
         """
         # 加锁查找同接诊同类型的病历（防止并发重复签发）
+        # 注意：(encounter_id, record_type) 无唯一约束，历史上可能存在多行
+        # （create() 无条件新建、并发首存各插一条），故用 order_by+first() 取最新一条，
+        # 与 auto_save_draft 保持一致；不能用 scalar_one_or_none()——多行会抛
+        # MultipleResultsFound 导致病历永远签发不出去（500）。
         result = await self.db.execute(
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
                 MedicalRecord.record_type == record_type,
-            ).with_for_update()
+            ).order_by(MedicalRecord.updated_at.desc()).with_for_update()
         )
-        record = result.scalar_one_or_none()
+        record = result.scalars().first()
         if not record:
             # 首次签发，病历记录尚未创建（极少数情况：直接签发跳过了 AI 生成步骤）
             record = MedicalRecord(encounter_id=encounter_id, record_type=record_type)
