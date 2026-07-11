@@ -70,7 +70,10 @@ async def test_happy_path_returns_filtered_items(monkeypatch):
     # 模拟 _last_usage
     svc.llm_client._last_usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
 
-    result = await svc.run_quick_supplement_batch(db=None, req=_mock_req())
+    # db 传 AsyncMock：service 在调 LLM 前会 await db.commit() 释放连接池连接，
+    # 需要一个可 await 的 commit（旧测试传 None 是因当时 db 仅被已 mock 的
+    # get_model_options 使用）。
+    result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
     assert "items" in result
     items = result["items"]
     assert len(items) == 2
@@ -90,7 +93,7 @@ async def test_llm_exception_returns_error_not_raises(monkeypatch):
         "temperature": 0.7, "max_tokens": 1000, "model_name": "test"
     }))
 
-    result = await svc.run_quick_supplement_batch(db=None, req=_mock_req())
+    result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
     assert result["items"] == []
     assert "error" in result
 
@@ -107,7 +110,7 @@ async def test_llm_returns_non_list_items_is_safe(monkeypatch):
     monkeypatch.setattr(svc, "log_ai_task", AsyncMock())
     svc.llm_client._last_usage = SimpleNamespace(prompt_tokens=0, completion_tokens=0)
 
-    result = await svc.run_quick_supplement_batch(db=None, req=_mock_req())
+    result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
     assert result == {"items": []}
 
 
@@ -126,7 +129,7 @@ async def test_value_empty_or_non_string_dropped(monkeypatch):
     monkeypatch.setattr(svc, "log_ai_task", AsyncMock())
     svc.llm_client._last_usage = SimpleNamespace(prompt_tokens=0, completion_tokens=0)
 
-    result = await svc.run_quick_supplement_batch(db=None, req=_mock_req())
+    result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
     assert result["items"] == []
 
 

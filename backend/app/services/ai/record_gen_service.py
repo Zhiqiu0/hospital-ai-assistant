@@ -89,6 +89,12 @@ class RecordGenService:
 
         try:
             opts = await get_model_options(self.db, "generate")
+            # 连接池护栏：模型配置已读完，下面是最长 270s 的 LLM 流式调用。
+            # 先 commit 结束只读事务、把 asyncpg 连接还回池——否则整个 LLM 期间
+            # 都占着一条连接，多个医生并发生成就把 30 连接的池占满。
+            # expire_on_commit=False，record 对象 commit 后仍可读写；LLM 完成后
+            # 写回版本快照时会短暂重新借一条连接，不影响。
+            await self.db.commit()
             result = await llm_client.chat_json_stream(
                 [{"role": "user", "content": prompt}],
                 temperature=opts["temperature"],
@@ -148,6 +154,9 @@ class RecordGenService:
         )
         try:
             opts = await get_model_options(self.db, "generate")
+            # 连接池护栏：模型配置已读完，先 commit 结束只读事务、把连接还回池，
+            # 再进入最长 270s 的 LLM 调用，避免长 await 期间白占一条池连接。
+            await self.db.commit()
             content = await llm_client.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=opts["temperature"],
@@ -178,6 +187,9 @@ class RecordGenService:
         prompt = POLISH_PROMPT.format(content=content_str)
         try:
             opts = await get_model_options(self.db, "polish")
+            # 连接池护栏：模型配置已读完，先 commit 结束只读事务、把连接还回池，
+            # 再进入最长 270s 的 LLM 调用，避免长 await 期间白占一条池连接。
+            await self.db.commit()
             result = await llm_client.chat_json_stream(
                 [{"role": "user", "content": prompt}],
                 temperature=opts["temperature"],

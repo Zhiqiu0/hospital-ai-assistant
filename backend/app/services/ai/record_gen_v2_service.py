@@ -159,6 +159,11 @@ async def _stream_json_pipeline(
     # 2. LLM 调用（带重试）
     try:
         opts = await get_model_options(db, "generate")
+        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
+        # 只读事务、把 asyncpg 连接还回池——否则 quick-generate/polish/supplement 的
+        # 整个流式期间都白占一条池连接，多医生并发就把 30 连接的池占满。
+        # 后续 _log_and_save_draft 的写走独立/重新借的连接，不受影响。
+        await db.commit()
         result = await _call_llm_json_with_retry(prompt, opts)
     except Exception as exc:
         logger.exception("%s: llm_failed record_type=%s err=%s", log_prefix, record_type, exc)

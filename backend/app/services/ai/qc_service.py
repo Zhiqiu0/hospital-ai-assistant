@@ -96,19 +96,11 @@ class QCService:
         version = result.scalar_one_or_none()
         content = version.content if version else {}
 
-        # 创建 AI 任务记录，用于追踪本次扫描状态和 token 用量
-        task = AITask(
-            medical_record_id=record_id,
-            task_type="qc_scan",
-            status="running",
-            input_snapshot=content,  # 快照当前版本内容，便于事后审计
-        )
-        self.db.add(task)
-        await self.db.flush()  # 获取数据库生成的 task.id
+        all_issues: list[dict] = []   # 返回摘要用（规则 + LLM 全量 issue dict）
+        rule_issues: list[dict] = []  # 规则引擎问题，推迟到 LLM 之后统一落库
+        llm_issues: list[dict] = []   # LLM 问题，同上
 
-        all_issues = []
-
-        # ── 第一步：Rubric 评分（治本路线，浙江省 PDF 1:1 映射） ──────────────
+        # ── 第一步：Rubric 评分（纯计算，不碰 DB） ────────────────────────────
         # 后台 qc_scan 也走与工作台 SSE 同一引擎，保证扫描结果与实时质控一致
         ctx = build_context(str(content), record_type=record.record_type or "outpatient")
         report = run_rubric_score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
@@ -124,30 +116,29 @@ class QCService:
                 # issue_type 是 qc_issues 表的 NOT NULL 字段（admin 统计按它分组）。
                 # 新引擎走 Rubric 评分，本质都是"病历该写没写/写得不规范"的完整性问题，
                 # 统一归类为 "completeness"，与旧版 check_completeness 同语义。
-                # 旧引擎在 completeness_rules.py 里手填 "completeness"，新引擎重写时
-                # 漏了，导致 INSERT 时 issue_type=NULL 触发 NotNullViolationError →
-                # PendingRollbackError，整个 qc_scan 接口 500。
                 "issue_type": "completeness",
                 "risk_level": level,
                 "field_name": ded.item_name,
                 "issue_description": ded.description,
                 "suggestion": ded.description,
             }
-            issue = QCIssue(
-                ai_task_id=task.id,
-                medical_record_id=record_id,
-                record_version_no=record.current_version,
-                source="rule",   # 明确标注来源为规则引擎
-                **issue_data,
-            )
-            self.db.add(issue)
+            rule_issues.append(issue_data)
             all_issues.append(issue_data)
 
-        # ── 第二步：LLM 规范性和逻辑一致性检查 ──────────────────────────────
+        # 模型配置（最后一次 DB 读）
+        opts = await get_model_options(self.db, "qc")
+
+        # 连接池护栏：进入最长 270s 的 LLM 之前先 commit，把 asyncpg 连接还回池。
+        # 关键：AITask/QCIssue 全部推迟到 LLM 之后一次性原子落库，所以此处 commit
+        # 不落任何业务写——既释放了连接，又不会在崩溃时留下孤儿 running 任务，原子性完好。
+        await self.db.commit()
+
+        # ── 第二步：LLM 规范性和逻辑一致性检查（此时不持有 DB 连接） ──────────
+        llm_ok = True
+        llm_error: str | None = None
         try:
             content_str = json.dumps(content, ensure_ascii=False)
             prompt = QC_LOGIC_PROMPT.format(content=content_str)
-            opts = await get_model_options(self.db, "qc")
             llm_result = await llm_client.chat_json_stream(
                 [{"role": "user", "content": prompt}],
                 temperature=opts["temperature"],
@@ -155,21 +146,33 @@ class QCService:
                 model_name=opts["model_name"],
             )
             for issue_data in llm_result.get("issues", []):
-                issue = QCIssue(
-                    ai_task_id=task.id,
-                    medical_record_id=record_id,
-                    record_version_no=record.current_version,
-                    source="llm",   # 明确标注来源为大模型
-                    **issue_data,
-                )
-                self.db.add(issue)
+                llm_issues.append(issue_data)
                 all_issues.append(issue_data)
-            task.status = "success"
         except Exception as e:
-            # LLM 失败不回滚已保存的规则引擎结果，只记录错误信息
-            task.error_message = str(e)
-            task.status = "failed"
+            # LLM 失败不影响已算出的规则引擎结果，只记录错误信息
+            llm_ok = False
+            llm_error = str(e)
 
+        # ── 落库：AITask + 全部 QCIssue + 病历状态，LLM 之后一次原子提交 ──────
+        task = AITask(
+            medical_record_id=record_id,
+            task_type="qc_scan",
+            status="success" if llm_ok else "failed",
+            error_message=llm_error,
+            input_snapshot=content,  # 快照当前版本内容，便于事后审计
+        )
+        self.db.add(task)
+        await self.db.flush()  # 获取数据库生成的 task.id
+        for issue_data in rule_issues:
+            self.db.add(QCIssue(
+                ai_task_id=task.id, medical_record_id=record_id,
+                record_version_no=record.current_version, source="rule", **issue_data,
+            ))
+        for issue_data in llm_issues:
+            self.db.add(QCIssue(
+                ai_task_id=task.id, medical_record_id=record_id,
+                record_version_no=record.current_version, source="llm", **issue_data,
+            ))
         # 病历状态更新为"已质控"，前端可据此显示质控徽标
         record.status = "qc_done"
         await self.db.commit()

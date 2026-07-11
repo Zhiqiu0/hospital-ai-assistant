@@ -107,6 +107,12 @@ async def run_quick_qc_stream(
 
     must_fix_count = len(rule_issues) + len(insurance_tagged)
 
+    # 连接池护栏：本 session 的两处只读（get_model_options + check_insurance_risk 读
+    # qc_rules）已取完，下面 `await llm_task` 会等最长 270s 的 LLM 质量建议。
+    # 先 commit 结束只读事务、把 asyncpg 连接还回池——否则整个 LLM 期间白占一条
+    # 池连接。后续 log_ai_task / save_qc_issues 用独立会话，不受影响。
+    await db.commit()
+
     yield {
         "type": "rule_issues",
         "issues": rule_issues + insurance_tagged,
