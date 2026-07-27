@@ -1,0 +1,160 @@
+"""HIS WebSocket 通道路由（接口规范 v1.1 第 7 章，方案 B）：/api/v1/his/ws
+
+职责：握手验签 → 接入连接管理器 → 消息循环（分发 ping/ack/接诊推送）→ 心跳与空闲超时。
+上行消息我方强制验签；下行（回写/刷新）由 writeback_sender 经 ws_manager 发出。
+不挂 require_his_enabled 依赖（那是 HTTP 语义的 503），保险丝在握手处手动检查。
+"""
+import asyncio
+import logging
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+
+from app.config import settings
+from app.his_adapter import ws_protocol as wp
+from app.his_adapter.models import AdmitPushRequest
+from app.his_adapter.ws_manager import his_ws_manager
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/his", tags=["HIS对接"])
+
+
+@router.websocket("/ws")
+async def his_ws_endpoint(websocket: WebSocket) -> None:
+    """HIS 长连接入口：握手验签不过直接拒绝，验签通过后进入消息循环。"""
+    # 保险丝：HIS 对接开关关闭时拒绝握手（accept 之前 close = 拒绝升级）
+    if not settings.his_adapter_enabled:
+        await websocket.close(code=4403)
+        return
+    q = websocket.query_params
+    err = wp.verify_handshake(
+        q.get("app_id", ""), q.get("timestamp", ""), q.get("nonce", ""),
+        q.get("sign", ""), settings.his_inbound_app_id,
+        settings.his_inbound_app_secret, settings.his_sign_clock_skew_seconds,
+    )
+    if err is not None:
+        logger.warning("his_ws.handshake_rejected: %s client=%s", err, websocket.client)
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    his_ws_manager.register(websocket)  # 一家机构一条连接，新连接顶替旧引用
+    logger.info("his_ws.connected: client=%s", websocket.client)
+    ping_task = asyncio.create_task(_ping_loop(websocket))
+    try:
+        while True:
+            # 空闲超时（规范 7.4）：90s 未收到任何消息判定连接失效
+            raw = await asyncio.wait_for(
+                websocket.receive_text(), timeout=wp.IDLE_TIMEOUT
+            )
+            await _handle_message(websocket, raw)
+    except asyncio.TimeoutError:
+        logger.warning("his_ws.idle_timeout: 90s 无消息，关闭连接")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+    except WebSocketDisconnect:
+        logger.info("his_ws.disconnected: client=%s", websocket.client)
+    except Exception as exc:  # 连接层意外错误：记日志后走统一清理
+        logger.warning("his_ws.connection_error: %s", exc)
+    finally:
+        ping_task.cancel()
+        his_ws_manager.unregister(websocket)
+
+
+async def _ping_loop(websocket: WebSocket) -> None:
+    """心跳任务（规范 7.4）：每 30s 发一次 ping；发送失败即退出（连接已死）。"""
+    aid, secret = settings.his_inbound_app_id, settings.his_inbound_app_secret
+    try:
+        while True:
+            await asyncio.sleep(wp.HEARTBEAT_INTERVAL)
+            await websocket.send_text(
+                wp.build_signed_message(wp.MSG_PING, {}, aid, secret)
+            )
+    except (asyncio.CancelledError, Exception):
+        return
+
+
+async def _handle_message(websocket: WebSocket, raw: str) -> None:
+    """单条上行消息分发：ping/pong 免验签，ack 与业务消息强制验签。"""
+    aid, secret = settings.his_inbound_app_id, settings.his_inbound_app_secret
+    try:
+        env = wp.WsEnvelope.model_validate_json(raw)
+    except ValidationError:
+        logger.warning("his_ws.bad_envelope: 信封不合法，丢弃")  # 无 msg_id 可回 ack
+        return
+
+    if env.type == wp.MSG_PING:  # 厂商侧心跳 → 立即回 pong
+        await websocket.send_text(
+            wp.build_signed_message(wp.MSG_PONG, {}, aid, secret)
+        )
+        return
+    if env.type == wp.MSG_PONG:  # 我方 ping 的回应，收到即已刷新空闲计时
+        return
+
+    payload_raw = wp.extract_payload_raw(raw, env.payload)
+    code = wp.verify_message(
+        env, payload_raw, aid, secret, settings.his_sign_clock_skew_seconds
+    )
+
+    if env.type == wp.MSG_ACK:
+        # 厂商对我方下行消息的应答：验签通过才转给 manager，不通过丢弃（不回 ack 的 ack）
+        if code is None:
+            matched = his_ws_manager.resolve_ack(
+                str(env.payload.get("ack_msg_id", "")), env.payload
+            )
+            if not matched:
+                logger.warning("his_ws.orphan_ack: ack_msg_id=%s 无等待方",
+                               env.payload.get("ack_msg_id"))
+        else:
+            logger.warning("his_ws.ack_verify_failed: code=%s 丢弃", code)
+        return
+
+    if code is not None:  # 业务消息验签失败 → 按 2.4 错误码回 ack
+        await websocket.send_text(
+            wp.build_ack(env.msg_id, code, wp.ERROR_TEXT[code], aid, secret)
+        )
+        return
+
+    if env.type == wp.MSG_ADMIT:
+        await _handle_admit(websocket, env, aid, secret)
+    else:
+        await websocket.send_text(
+            wp.build_ack(env.msg_id, 40004, "未知消息类型", aid, secret)
+        )
+
+
+async def _handle_admit(
+    websocket: WebSocket, env: wp.WsEnvelope, aid: str, secret: str
+) -> None:
+    """接诊推送处理：msg_id 幂等去重 + 载荷校验 + ack（业务与 HTTP 版 admit 一致）。
+
+    注：本期与 HTTP 版相同，仅校验载荷并回声 visit_id；
+    「推送→自动建档→工作台弹出」联动属后续设计（见 his.py 同注释）。
+    """
+    from app.services.redis_cache import redis_cache
+
+    # 重发去重（规范 7.4）：厂商超时重发用同 msg_id，已处理过则幂等地再回成功 ack
+    first_time = await redis_cache.claim_nonce(
+        "his_ws_msg", env.msg_id, ttl=600
+    )
+    if not first_time:
+        await websocket.send_text(
+            wp.build_ack(env.msg_id, 0, "重复消息，此前已处理", aid, secret,
+                         data={"visit_id": env.payload.get("visit_id", "")})
+        )
+        return
+    try:
+        payload = AdmitPushRequest.model_validate(env.payload)
+    except ValidationError:
+        await websocket.send_text(
+            wp.build_ack(env.msg_id, 40004, wp.ERROR_TEXT[40004], aid, secret)
+        )
+        return
+    logger.info("his_ws.admit: visit_id=%s patient=%s",
+                payload.visit_id, payload.patient_name)
+    await websocket.send_text(
+        wp.build_ack(env.msg_id, 0, "success", aid, secret,
+                     data={"visit_id": payload.visit_id})
+    )

@@ -1,4 +1,7 @@
-"""病历回写发送：组装 payload → 签名 → POST 写入 → POST 刷新，带超时与重试。
+"""病历回写发送：组装 payload → 按通道下发（写入 + 刷新），带超时与重试。
+
+通道选择（规范第 7 章）：HIS WebSocket 长连接在线时优先走方案 B（消息下行 + ack）；
+离线时回落方案 A（HTTP POST 签名调用）；两者均不可用返回 skipped 安全空跑。
 
 依赖配置（待厂商确认后填，见 config.py）：
   his_writeback_url / his_writeback_refresh_url / his_writeback_app_id /
@@ -20,8 +23,10 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.his_adapter import ws_protocol as wp
 from app.his_adapter.signing import compute_sign
 from app.his_adapter.writeback_builder import build_writeback_payload
+from app.his_adapter.ws_manager import his_ws_manager
 
 
 @dataclass
@@ -102,10 +107,13 @@ async def send_writeback(
     Returns:
         WritebackResult
     """
-    if not settings.his_writeback_url:
-        return WritebackResult(ok=False, status="skipped", message="回写地址未配置")
-
     payload = await build_writeback_payload(db, encounter_id, app_version=app_version)
+
+    # 通道选择：WS 长连接在线 → 方案 B；否则有 HTTP 地址 → 方案 A；都没有 → 空跑
+    if his_ws_manager.has_connection():
+        return await _send_via_ws(payload)
+    if not settings.his_writeback_url:
+        return WritebackResult(ok=False, status="skipped", message="回写地址未配置且 WS 未连接")
     body_raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     max_retries = settings.his_writeback_max_retries
 
@@ -157,3 +165,45 @@ async def send_writeback(
     finally:
         if own_client:
             await client.aclose()
+
+
+async def _send_via_ws(payload: dict) -> WritebackResult:
+    """方案 B：经 HIS 长连接下发回写（写入 + 刷新），以 ack 的 code 判定成败。
+
+    ack 超时重发由 ws_manager 负责（10s×3，规范 7.4）；耗尽或断线抛 ConnectionError。
+    方案 B 凭证只有一套：双向均用 his_inbound_app_id/secret 签名。
+    """
+    aid, secret = settings.his_inbound_app_id, settings.his_inbound_app_secret
+
+    # 1. 写入
+    try:
+        ack = await his_ws_manager.send_with_ack(wp.MSG_WRITEBACK, payload, aid, secret)
+    except ConnectionError as exc:
+        return WritebackResult(ok=False, status="write_failed", message=f"WS 发送失败：{exc}")
+    code = ack.get("code", -1)
+    if code != 0:
+        return WritebackResult(
+            ok=False, status="write_failed",
+            message=f"HIS 返回 code={code} {ack.get('message', '')}",
+        )
+    data = ack.get("data") or {}
+    his_doc_id = data.get("record_id") or data.get("doc_id") or data.get("id")
+
+    # 2. 刷新（与 HTTP 通道语义一致：写入成功后必须刷新，失败标记 refresh_failed）
+    refresh_payload = {
+        "visit_id": payload["visit_id"],
+        "target": f"{payload['record_type']}_record",
+    }
+    try:
+        rack = await his_ws_manager.send_with_ack(wp.MSG_REFRESH, refresh_payload, aid, secret)
+    except ConnectionError as exc:
+        return WritebackResult(
+            ok=False, status="refresh_failed",
+            message=f"刷新 WS 发送失败：{exc}", his_doc_id=his_doc_id,
+        )
+    if rack.get("code", -1) != 0:
+        return WritebackResult(
+            ok=False, status="refresh_failed",
+            message=f"刷新 HIS 返回 code={rack.get('code')}", his_doc_id=his_doc_id,
+        )
+    return WritebackResult(ok=True, status="success", his_doc_id=his_doc_id)
