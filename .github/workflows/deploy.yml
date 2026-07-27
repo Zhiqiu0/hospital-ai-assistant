@@ -49,6 +49,23 @@ jobs:
           environment: production
           version: ${{ steps.vars.outputs.sha }}
 
+      # 把 CI 通过的这份代码从 Actions 侧直接 rsync 推到服务器。
+      # 替代原先"服务器上 git fetch"——阿里云→GitHub 出站不稳定，曾导致
+      # deploy 连挂两次（2026-07-27）；Actions 机器在海外拉 GitHub 天然稳，
+      # 推送走的又是本来就通的 SSH 通道，服务器从此完全无需访问 GitHub。
+      # --delete 保证与仓库强一致（等价原 reset --hard 的"单一真相源"语义），
+      # 但排除服务器侧运行时产物：.env（生产密钥）、logs/（运行日志）、.git。
+      - name: Push code to server via rsync
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          rsync -az --delete \
+            --exclude='.git' --exclude='.env' --exclude='logs' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/app/"
+
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
         # SENTRY_RELEASE 通过 envs 字段穿透到 ssh 脚本里，
@@ -63,13 +80,8 @@ jobs:
           script: |
             set -e
             cd /app
-            # 用 fetch + reset --hard 替代 git pull：
-            # 1) 强一致——服务器是 production checkout，不应该有任何手动改动；
-            #    git pull 遇到 working tree dirty 会拒绝，整个 deploy 卡死
-            # 2) 任何被人手工改的文件都被强制覆盖回 origin/main 版本，单一真相源
-            # 3) untracked files 不动（不会误删 logs/ 等运行时产物）
-            git fetch origin main
-            git reset --hard origin/main
+            # 代码已由上一步 rsync 从 Actions 推送到位（服务器不再访问 GitHub，
+            # 原 git fetch + reset --hard 流程已废除；强一致由 rsync --delete 保证）
             export SENTRY_RELEASE
 
             # 清理之前 deploy 中断留下的僵尸 container（名字前缀带随机 hash 的）
