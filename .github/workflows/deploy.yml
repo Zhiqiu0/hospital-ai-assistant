@@ -25,10 +25,14 @@ jobs:
       # 拿不到完整 git 历史，无法关联 release 与 commits
       # ref 显式指向触发本次 deploy 的那个 commit（CI 通过的 SHA），
       # 避免 workflow_run 上下文里 GITHUB_SHA 默认指 main HEAD 的歧义
+      # persist-credentials: false —— 不把 GITHUB_TOKEN 写进 .git/config。
+      # .git 会随 rsync 同步到服务器（让服务器 git status/log 与部署版本一致），
+      # 绝不能把凭证一起带过去；本流程 checkout 后只读不推，关掉无副作用。
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       # 计算本次部署的 release 标识：用 git short SHA（如 a7873b2），
       # 同一份代码的 release 名字在 Sentry 里全局唯一，不会重复创建
@@ -54,7 +58,9 @@ jobs:
       # deploy 连挂两次（2026-07-27）；Actions 机器在海外拉 GitHub 天然稳，
       # 推送走的又是本来就通的 SSH 通道，服务器从此完全无需访问 GitHub。
       # --delete 保证与仓库强一致（等价原 reset --hard 的"单一真相源"语义），
-      # 但排除服务器侧运行时产物：.env（生产密钥）、logs/（运行日志）、.git。
+      # 但排除服务器侧运行时产物：.env（生产密钥）、logs/（运行日志）。
+      # .git 一并同步：服务器 git status 保持干净、git log 可查当前部署版本
+      # （凭证不落 .git，见上方 persist-credentials: false）。
       - name: Push code to server via rsync
         run: |
           mkdir -p ~/.ssh
@@ -62,7 +68,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
           rsync -az --delete \
-            --exclude='.git' --exclude='.env' --exclude='logs' \
+            --exclude='.env' --exclude='logs' \
             -e "ssh -i ~/.ssh/deploy_key" \
             ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/app/"
 
