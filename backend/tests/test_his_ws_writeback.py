@@ -49,8 +49,10 @@ def ws_creds(monkeypatch):
         return dict(FAKE_PAYLOAD)
     monkeypatch.setattr(sender_module, "build_writeback_payload", fake_build)
     yield
-    his_ws_manager._ws = None  # 清理全局单例，避免污染其他用例
+    # 清理全局单例，避免污染其他用例
+    his_ws_manager._conns.clear()
     his_ws_manager._pending.clear()
+    his_ws_manager._visit_conn.clear()
 
 
 @pytest.mark.asyncio
@@ -66,6 +68,34 @@ async def test_writeback_prefers_ws_channel(ws_creds):
     # 刷新消息按规范带 visit_id + target
     refresh_payload = fake.sent[1]["payload"]
     assert refresh_payload == {"visit_id": "V1", "target": "outpatient_record"}
+
+
+@pytest.mark.asyncio
+async def test_writeback_routes_to_visit_origin_connection(ws_creds):
+    """多诊室并存时：回写优先发回该就诊的接诊来源连接（那台诊室才需要刷新界面）。"""
+    other = AckingWS(his_ws_manager)   # 别的诊室
+    origin = AckingWS(his_ws_manager)  # 本次就诊的接诊来源诊室
+    his_ws_manager.register(other)
+    his_ws_manager.register(origin)
+    his_ws_manager.bind_visit("V1", origin)  # 模拟 V1 的接诊推送来自 origin
+    result = await send_writeback(db=None, encounter_id="E1")
+    assert result.ok
+    assert [m["type"] for m in origin.sent] == [wp.MSG_WRITEBACK, wp.MSG_REFRESH]
+    assert other.sent == []  # 别的诊室一条都不该收到
+
+
+@pytest.mark.asyncio
+async def test_writeback_falls_back_when_origin_gone(ws_creds):
+    """来源诊室断线后：回写退回任一在线连接，落库不丢（刷新由医生重开兜底）。"""
+    origin = AckingWS(his_ws_manager)
+    backup = AckingWS(his_ws_manager)
+    his_ws_manager.register(origin)
+    his_ws_manager.register(backup)
+    his_ws_manager.bind_visit("V1", origin)
+    his_ws_manager.unregister(origin)  # 来源诊室下线
+    result = await send_writeback(db=None, encounter_id="E1")
+    assert result.ok
+    assert [m["type"] for m in backup.sent] == [wp.MSG_WRITEBACK, wp.MSG_REFRESH]
 
 
 @pytest.mark.asyncio
