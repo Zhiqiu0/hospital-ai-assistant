@@ -8,6 +8,11 @@
   ④ 心跳：收到 ping 回 pong
 
 换成贵方实际语言开发时，本文件可当伪代码逐行对照。
+
+部署形态（已双方确认）：本逻辑写进全科客户端，**每台诊室电脑的客户端启动时
+各自建一条连接**，全院共用同一套 appId/appSecret，无需按机器做任何配置或登记；
+病历回写会由我方云端自动发回接诊的那台诊室，贵方不用做任何区分处理。
+
 运行示例（凭证换成我方分配的正式 appId/appSecret）：
   python his_ws_vendor_reference.py --app-id xxx --secret xxx
 """
