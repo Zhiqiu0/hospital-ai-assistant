@@ -38,7 +38,7 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    his_ws_manager.register(websocket)  # 一家机构一条连接，新连接顶替旧引用
+    his_ws_manager.register(websocket)  # 每台诊室客户端各一条连接，多条并存
     logger.info("his_ws.connected: client=%s", websocket.client)
     ping_task = asyncio.create_task(_ping_loop(websocket))
     try:
@@ -152,6 +152,8 @@ async def _handle_admit(
             wp.build_ack(env.msg_id, 40004, wp.ERROR_TEXT[40004], aid, secret)
         )
         return
+    # 记录该就诊的来源连接：回写/刷新优先路由回这台诊室（它的界面才需要刷新）
+    his_ws_manager.bind_visit(payload.visit_id, websocket)
     logger.info("his_ws.admit: visit_id=%s patient=%s",
                 payload.visit_id, payload.patient_name)
     await websocket.send_text(

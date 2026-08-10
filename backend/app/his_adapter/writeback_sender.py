@@ -175,9 +175,10 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
     """
     aid, secret = settings.his_inbound_app_id, settings.his_inbound_app_secret
 
-    # 1. 写入
+    # 1. 写入（prefer_visit：优先发回该就诊的接诊来源诊室，见 ws_manager 路由规则）
     try:
-        ack = await his_ws_manager.send_with_ack(wp.MSG_WRITEBACK, payload, aid, secret)
+        ack = await his_ws_manager.send_with_ack(
+            wp.MSG_WRITEBACK, payload, aid, secret, prefer_visit=payload["visit_id"])
     except ConnectionError as exc:
         return WritebackResult(ok=False, status="write_failed", message=f"WS 发送失败：{exc}")
     code = ack.get("code", -1)
@@ -195,7 +196,8 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
         "target": f"{payload['record_type']}_record",
     }
     try:
-        rack = await his_ws_manager.send_with_ack(wp.MSG_REFRESH, refresh_payload, aid, secret)
+        rack = await his_ws_manager.send_with_ack(
+            wp.MSG_REFRESH, refresh_payload, aid, secret, prefer_visit=payload["visit_id"])
     except ConnectionError as exc:
         return WritebackResult(
             ok=False, status="refresh_failed",
