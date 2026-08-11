@@ -45,6 +45,11 @@ class HisWsManager:
         """回写发送方据此选通道：任一诊室在线即走 WS。"""
         return bool(self._conns)
 
+    def has_visit(self, visit_id: str) -> bool:
+        """该就诊的来源连接是否在本进程且在线（回写派发的 worker 优先级判断用）。"""
+        ws = self._visit_conn.get(visit_id)
+        return ws is not None and ws in self._conns
+
     def bind_visit(self, visit_id: str, websocket) -> None:
         """接诊推送到达时记录来源连接，回写时优先路由回同一台诊室。"""
         self._visit_conn.pop(visit_id, None)  # 重复推送以最新来源为准

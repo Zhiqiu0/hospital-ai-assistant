@@ -1,0 +1,170 @@
+/**
+ * HIS 叫号队列 Hook（hooks/useHisQueue.ts）
+ *
+ * 数据两条腿（2026-08-11 业务联动）：
+ *   1. 开页/重连时拉 GET /his/queue/today（DB 权威数据，推送丢了也不丢病人）
+ *   2. POST /his/queue/stream SSE 长连接实时收事件（admit 叫号 / writeback_result）
+ *
+ * 连接管理：
+ *   - 后端保险丝关闭（503）→ enabled=false，工作台完全隐藏叫号入口
+ *   - SSE 断线指数退避重连（2s 起步、30s 封顶），重连成功后重拉队列
+ *   - 全程用原生 fetch（不走 axios 拦截器），503/断线不弹全局错误 toast
+ */
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAuthStore } from '@/store/authStore'
+import { streamSSE } from '@/services/streamSSE'
+
+/** 今日队列条目（GET /his/queue/today 的 items 元素 / admit 事件字段子集） */
+export interface HisQueueItem {
+  encounter_id: string
+  visit_no?: string | null
+  patient_name: string
+  gender?: string | null
+  birth_date?: string | null
+  dept_name?: string | null
+  status: string // in_progress / completed
+  is_first_visit?: boolean | null
+  visited_at?: string | null
+}
+
+/** SSE 事件（admit / writeback_result / connected） */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type HisQueueEvent = { type: string; [key: string]: any }
+
+interface UseHisQueueOptions {
+  /** 收到新患者叫号事件（去重后的增量），由组件决定提示音/横幅/自动接诊 */
+  onAdmit?: (item: HisQueueItem) => void
+  /** 收到回写结果事件 */
+  onWritebackResult?: (ev: HisQueueEvent) => void
+}
+
+/** 重连退避：起步 2s，翻倍封顶 30s */
+const RECONNECT_BASE_MS = 2000
+const RECONNECT_MAX_MS = 30000
+
+export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions = {}) {
+  const token = useAuthStore(s => s.token)
+  // enabled: null=探测中 false=保险丝关(隐藏入口) true=启用
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [items, setItems] = useState<HisQueueItem[]>([])
+  // 回调经 ref 转发：SSE 循环只建一次，不因调用方每次渲染换回调而重连
+  // （赋值放 effect 而非渲染期，符合 react ref 使用规则）
+  const handlersRef = useRef({ onAdmit, onWritebackResult })
+  useEffect(() => {
+    handlersRef.current = { onAdmit, onWritebackResult }
+  }, [onAdmit, onWritebackResult])
+
+  /** 拉今日队列（开页 + 每次重连成功后调用）。返回是否可用（503 → false）。 */
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (!token) return false
+    try {
+      const res = await fetch('/api/v1/his/queue/today', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.status === 503) {
+        setEnabled(false)
+        return false
+      }
+      if (!res.ok) return true // 瞬时错误：保持现状，等下次重连再拉
+      const data = (await res.json()) as { items: HisQueueItem[] }
+      setItems(data.items || [])
+      setEnabled(true)
+      return true
+    } catch {
+      return true // 网络抖动不改变 enabled 判定
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
+    let stopped = false
+    let ctrl: AbortController | null = null
+
+    const run = async () => {
+      // 先探测保险丝：503 直接收工，不建 SSE
+      const ok = await refresh()
+      if (stopped || !ok) return
+
+      let delay = RECONNECT_BASE_MS
+      while (!stopped) {
+        ctrl = new AbortController()
+        try {
+          await streamSSE(
+            '/api/v1/his/queue/stream',
+            {},
+            token,
+            {
+              onEvent: ev => {
+                delay = RECONNECT_BASE_MS // 收到任何事件说明链路健康，重置退避
+                if (ev.type === 'connected') {
+                  setConnected(true)
+                  return
+                }
+                if (ev.type === 'admit') {
+                  const item: HisQueueItem = {
+                    encounter_id: ev.encounter_id,
+                    visit_no: ev.visit_no,
+                    patient_name: ev.patient_name,
+                    gender: ev.gender,
+                    birth_date: ev.birth_date,
+                    dept_name: ev.dept_name,
+                    status: 'in_progress',
+                    is_first_visit: ev.is_first_visit,
+                    visited_at: new Date().toISOString(),
+                  }
+                  // 队列去重插入（重复推送 reused 时刷新条目位置即可）
+                  setItems(prev => [
+                    item,
+                    ...prev.filter(x => x.encounter_id !== item.encounter_id),
+                  ])
+                  // 重复推送（医生在 HIS 反复打开）不再横幅打扰
+                  if (!ev.reused) handlersRef.current.onAdmit?.(item)
+                  return
+                }
+                if (ev.type === 'writeback_result') {
+                  handlersRef.current.onWritebackResult?.(ev)
+                  // 回写完成 → 该接诊已签发，同步队列条目状态
+                  if (ev.ok) {
+                    setItems(prev =>
+                      prev.map(x =>
+                        x.encounter_id === ev.encounter_id ? { ...x, status: 'completed' } : x
+                      )
+                    )
+                  }
+                }
+              },
+            },
+            { signal: ctrl.signal }
+          )
+        } catch (e) {
+          if ((e as Error)?.name === 'AbortError') break
+          // 断线/HTTP 错误：走退避重连
+        }
+        setConnected(false)
+        if (stopped) break
+        await new Promise(r => setTimeout(r, delay))
+        delay = Math.min(delay * 2, RECONNECT_MAX_MS)
+        // 重连前重拉队列：断线期间的推送事件可能已丢，DB 是权威
+        const stillOk = await refresh()
+        if (!stillOk) break
+      }
+    }
+
+    void run()
+    return () => {
+      stopped = true
+      ctrl?.abort()
+    }
+    // refresh 依赖 token；token 变化（重登）时整个循环重建
+  }, [token, refresh])
+
+  /** 手动把某接诊标记为已完成（签发后本地即时反馈，不等 SSE） */
+  const markCompleted = useCallback((encounterId: string) => {
+    setItems(prev =>
+      prev.map(x => (x.encounter_id === encounterId ? { ...x, status: 'completed' } : x))
+    )
+  }, [])
+
+  return { enabled: enabled === true, connected, items, refresh, markCompleted }
+}

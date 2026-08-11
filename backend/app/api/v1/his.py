@@ -21,10 +21,10 @@ router = APIRouter(
 
 @router.post("/encounter/admit", response_model=ApiEnvelope)
 async def admit_push(request: Request) -> ApiEnvelope:
-    """接诊推送接收（HIS→我方）：验签 + 校验载荷 + ACK。
+    """接诊推送接收（HIS→我方，方案 A HTTP 通道）：验签 + 业务落地 + ACK。
 
-    注：本期仅建立签名通道并校验载荷；患者/接诊的建立仍由 /embed/start 负责
-    （接诊推送与 embed/start 的联动属待定设计）。
+    业务落地与 WS 通道共用 admit_service.handle_admit：
+    患者自动建档 + 按工号派医生 + visit_id 幂等建接诊 + 发工作台叫号事件。
     """
     body_raw = (await request.body()).decode("utf-8")
     app_id = request.headers.get("X-App-Id", "")
@@ -50,8 +50,17 @@ async def admit_push(request: Request) -> ApiEnvelope:
     except ValidationError:
         return err(40004, "参数缺失或格式错误")
 
-    # 本期：仅确认收到（回声 visit_id）。后续按设计补患者/接诊联动。
-    return ok({"visit_id": payload.visit_id})
+    from app.his_adapter import admit_service
+    try:
+        result = await admit_service.handle_admit(payload)
+    except admit_service.AdmitError as exc:
+        return err(exc.code, exc.message)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "his_admit.http_error: visit_id=%s", payload.visit_id)
+        return err(50000, "服务内部错误")
+    return ok({"visit_id": payload.visit_id, "encounter_id": result.encounter_id})
 
 
 @router.post("/encounter/{encounter_id}/writeback", response_model=ApiEnvelope)

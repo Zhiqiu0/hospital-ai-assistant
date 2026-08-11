@@ -32,6 +32,17 @@ def ws_env(monkeypatch):
         return True
 
     monkeypatch.setattr(rc_module.redis_cache, "claim_nonce", fake_claim_nonce)
+
+    # 业务落地（建档/派医生）由 test_his_admit_service.py 专测；这里打桩隔离 DB
+    from app.his_adapter import admit_service
+
+    async def fake_handle_admit(payload):
+        return admit_service.AdmitResult(
+            encounter_id="enc-test", patient_id="p-test",
+            patient_name=payload.patient_name, doctor_id="d-test", reused=False,
+        )
+
+    monkeypatch.setattr(admit_service, "handle_admit", fake_handle_admit)
     return TestClient(app)
 
 
@@ -108,6 +119,22 @@ def test_ws_duplicate_msg_id_idempotent(ws_env):
         second = wp.WsEnvelope.model_validate_json(ws.receive_text())
         assert second.payload["code"] == 0  # 不报错、不重复处理
         assert second.payload["ack_msg_id"] == fixed
+
+
+def test_ws_admit_business_error_gets_40007(ws_env, monkeypatch):
+    """业务拒收（医生工号未注册）→ ack code=40007，message 带具体原因。"""
+    from app.his_adapter import admit_service
+
+    async def rejecting_handle_admit(payload):
+        raise admit_service.AdmitError(40007, "医生工号 D404 未在 MediScribe 注册或已停用")
+
+    monkeypatch.setattr(admit_service, "handle_admit", rejecting_handle_admit)
+    with ws_env.websocket_connect(_handshake_url()) as ws:
+        ws.send_text(_admit_text(visit_id="V404"))
+        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        assert env.type == wp.MSG_ACK
+        assert env.payload["code"] == 40007
+        assert "D404" in env.payload["message"]
 
 
 def test_ws_unknown_type_gets_40004(ws_env):

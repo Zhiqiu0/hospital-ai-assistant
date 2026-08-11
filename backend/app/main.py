@@ -50,7 +50,17 @@ init_sentry(
 async def lifespan(_app: FastAPI):
     logger.info("app.startup: ok")
     await apply_schema_compatibility()
+    # HIS 回写指令消费任务（2026-08-11 业务联动）：多 worker 部署下，签发请求
+    # 与厂商 WS 连接可能不在同一进程，回写指令经 Redis 总线广播、由持有连接的
+    # worker 抢占执行。保险丝关闭时不起任务，生产 SaaS 零影响。
+    his_wb_consumer = None
+    if settings.his_adapter_enabled:
+        import asyncio
+        from app.his_adapter.writeback_dispatch import consumer_loop
+        his_wb_consumer = asyncio.create_task(consumer_loop())
     yield
+    if his_wb_consumer is not None:
+        his_wb_consumer.cancel()
 
 
 # ── FastAPI 实例 ──────────────────────────────────────────────────────────────

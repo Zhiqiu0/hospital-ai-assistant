@@ -23,6 +23,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 引 app 包
 from app.his_adapter.signing import compute_sign  # noqa: E402
 
+# 注意（2026-08-11 业务联动后）：接诊推送会真实建档并派给 doctor_code 对应的
+# 医生账号（User.employee_no 或用户名=工号），工号未注册会收到 ack code=40007。
+# 本地彩排默认用测试医生 zz；visit_id 默认按时间生成，避免撞上幂等复用旧接诊。
 ADMIT_SAMPLE = {
     "visit_id": "20260727000101", "hospital_code": "H32050701121",
     "patient_name": "彩排患者", "gender": "female", "birth_date": "1968-05-20",
@@ -88,7 +91,13 @@ if __name__ == "__main__":
     parser.add_argument("--url", default="ws://127.0.0.1:8010/api/v1/his/ws")
     parser.add_argument("--app-id", default="appHIS")
     parser.add_argument("--secret", default="secret-key")
+    parser.add_argument("--doctor-code", default="zz",
+                        help="接诊推送的医生工号（须为已注册账号的 employee_no 或用户名）")
+    parser.add_argument("--visit-id", default=time.strftime("%Y%m%d%H%M%S"),
+                        help="就诊流水号（默认按当前时间生成，避免幂等复用旧接诊）")
     args = parser.parse_args()
+    ADMIT_SAMPLE["visit_id"] = args.visit_id
+    ADMIT_SAMPLE["doctor_code"] = args.doctor_code
     try:
         asyncio.run(run(args.url, args.app_id, args.secret))
     except KeyboardInterrupt:
