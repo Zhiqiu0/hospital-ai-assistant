@@ -83,8 +83,11 @@ class DepartmentService:
     async def create(self, data: DepartmentCreate) -> Department:
         """新建科室。
 
-        code 字段在数据库层有 UNIQUE 约束，重复写入时会抛出数据库异常，
-        调用方（路由层）应捕获 IntegrityError 并返回友好错误信息。
+        code 唯一（DB 有 UNIQUE 约束）。为返回友好错误且不污染会话，先显式查重
+        （2026-08-11 审计修复）：原实现靠 IntegrityError + rollback，但 rollback 会
+        把同会话里的 current_user 等 ORM 对象过期，导致 audit_admin_action 依赖随后
+        读 current_user.id 触发 MissingGreenlet → 仍是 500。改为插入前查重直接 400。
+        IntegrityError 仅作并发 race 兜底。
 
         Args:
             data: 科室创建入参（name、code、parent_id）。
@@ -92,13 +95,17 @@ class DepartmentService:
         Returns:
             新创建的 Department ORM 对象。
         """
+        dup = await self.db.execute(select(Department.id).where(Department.code == data.code))
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"科室编码已存在：{data.code}")
+
         dept = Department(name=data.name, code=data.code, parent_id=data.parent_id)
         self.db.add(dept)
         try:
             await self.db.commit()
         except IntegrityError:
-            # code 唯一约束冲突（2026-08-11 审计修复）：原先未捕获直接 500，
-            # 改为回滚 + 400 友好提示，与患者身份证查重的处理口径一致。
+            # 并发 race 兜底：两请求同时通过查重后其一撞唯一约束。此处 rollback 会过期
+            # 会话对象，但属极罕见路径；审计依赖若因此再抛由全局处理器兜底成 500 亦可接受。
             await self.db.rollback()
             raise HTTPException(status_code=400, detail=f"科室编码已存在：{data.code}")
         await self.db.refresh(dept)
