@@ -67,11 +67,20 @@ def _admit_text(visit_id="V1", msg_id=None, secret=SECRET) -> str:
             % (msg_id, AID, ts, nonce, sign, payload_raw))
 
 
+def _recv_skip_heartbeat(ws) -> wp.WsEnvelope:
+    """读一条非心跳消息：CI 跑器卡顿超过 30s 时，服务端心跳 ping 可能插到
+    业务应答之前，直接读一条会偶发拿到 ping 帧（CI 偶发红）。跳过即可。"""
+    while True:
+        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        if env.type != wp.MSG_PING:
+            return env
+
+
 def test_ws_admit_roundtrip(ws_env):
     """握手成功 → 发接诊推送 → 收到 code=0 的 ack（回声 visit_id）。"""
     with ws_env.websocket_connect(_handshake_url()) as ws:
         ws.send_text(_admit_text(visit_id="V123"))
-        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        env = _recv_skip_heartbeat(ws)
         assert env.type == wp.MSG_ACK
         assert env.payload["code"] == 0
         assert env.payload["data"]["visit_id"] == "V123"
@@ -96,7 +105,7 @@ def test_ws_bad_message_sign_gets_40001(ws_env):
     """消息签名错误（用错密钥）→ ack code=40001。"""
     with ws_env.websocket_connect(_handshake_url()) as ws:
         ws.send_text(_admit_text(secret="wrong-secret"))
-        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        env = _recv_skip_heartbeat(ws)
         assert env.type == wp.MSG_ACK and env.payload["code"] == 40001
 
 
@@ -104,7 +113,7 @@ def test_ws_ping_gets_pong(ws_env):
     """厂商 ping → 我方回 pong（心跳免验签）。"""
     with ws_env.websocket_connect(_handshake_url()) as ws:
         ws.send_text(json.dumps({"type": "ping", "msg_id": "p1"}))
-        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        env = _recv_skip_heartbeat(ws)
         assert env.type == wp.MSG_PONG
 
 
@@ -113,10 +122,10 @@ def test_ws_duplicate_msg_id_idempotent(ws_env):
     with ws_env.websocket_connect(_handshake_url()) as ws:
         fixed = "his-dup-001"
         ws.send_text(_admit_text(visit_id="V9", msg_id=fixed))
-        first = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        first = _recv_skip_heartbeat(ws)
         assert first.payload["code"] == 0
         ws.send_text(_admit_text(visit_id="V9", msg_id=fixed))
-        second = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        second = _recv_skip_heartbeat(ws)
         assert second.payload["code"] == 0  # 不报错、不重复处理
         assert second.payload["ack_msg_id"] == fixed
 
@@ -131,7 +140,7 @@ def test_ws_admit_business_error_gets_40007(ws_env, monkeypatch):
     monkeypatch.setattr(admit_service, "handle_admit", rejecting_handle_admit)
     with ws_env.websocket_connect(_handshake_url()) as ws:
         ws.send_text(_admit_text(visit_id="V404"))
-        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        env = _recv_skip_heartbeat(ws)
         assert env.type == wp.MSG_ACK
         assert env.payload["code"] == 40007
         assert "D404" in env.payload["message"]
@@ -148,5 +157,5 @@ def test_ws_unknown_type_gets_40004(ws_env):
             % (AID, ts, nonce, sign, payload_raw))
     with ws_env.websocket_connect(_handshake_url()) as ws:
         ws.send_text(text)
-        env = wp.WsEnvelope.model_validate_json(ws.receive_text())
+        env = _recv_skip_heartbeat(ws)
         assert env.payload["code"] == 40004

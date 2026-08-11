@@ -117,7 +117,7 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
     [notification]
   )
 
-  const { enabled, connected, items } = useHisQueue({
+  const { enabled, connected, items, refresh } = useHisQueue({
     onAdmit: handleAdmit,
     onWritebackResult: handleWritebackResult,
   })
@@ -134,7 +134,12 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
         icon={<BellOutlined />}
         tooltip="HIS 今日接诊队列"
         style={{ insetInlineStart: 24, insetBlockEnd: 48 }}
-        onClick={() => setDrawerOpen(true)}
+        onClick={() => {
+          setDrawerOpen(true)
+          // 开抽屉时重拉队列：接诊在本页被取消/签发后，SSE 不推该类变更，
+          // 以 DB 为准修正角标与列表（如取消后角标残留）
+          void refresh()
+        }}
       />
       <Drawer
         title={
