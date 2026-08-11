@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, his, his_ws
+from app.api.v1 import auth, patients, encounters, medical_records, qc, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, his, his_queue, his_ws
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -35,3 +35,5 @@ router.include_router(embed.router, tags=["HIS嵌入"])
 router.include_router(his.router, tags=["HIS对接"])
 # HIS WebSocket 长连接通道（规范第 7 章方案 B：接诊上行 + 回写下行走同一条 wss）
 router.include_router(his_ws.router, tags=["HIS对接"])
+# 工作台叫号队列（今日队列拉取 + SSE 实时事件，医生登录态鉴权）
+router.include_router(his_queue.router, tags=["HIS对接"])

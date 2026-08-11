@@ -49,6 +49,9 @@ function admitSample() {
     hospital_code: "H33052300001",       // 医疗机构代码（示例值，联调时换贵方实际代码）
     patient_name: "测试患者", gender: "female", birth_date: "1968-05-20",
     dept_code: "1230024", dept_name: "全科", // 本次接诊科室：科室表「本地ID」+名称
+    // doctor_code=医生工号：我方按它把患者派到对应医生的工作台。
+    // 工号未在我方注册时 ack 返回 code=40007（message 带具体工号），
+    // 属正常业务提示——把该医生工号加入我方账号名单后重推即可。
     doctor_code: "001", doctor_name: "张医生",
     visit_type: "outpatient", is_first_visit: true,
     vitals: { height: "158", weight: "62", bp_systolic: "162", bp_diastolic: "96" },

@@ -14,10 +14,22 @@ from app.main import app
 
 @pytest_asyncio.fixture
 async def his_client(monkeypatch):
-    """开启保险丝 + 注入测试验签凭证。"""
+    """开启保险丝 + 注入测试验签凭证 + 打桩业务落地（本文件只测签名通道层）。"""
     monkeypatch.setattr(settings, "his_adapter_enabled", True)
     monkeypatch.setattr(settings, "his_inbound_app_id", "appHIS")
     monkeypatch.setattr(settings, "his_inbound_app_secret", "secret-key")
+
+    # 业务落地（建档/派医生）由 test_his_admit_service.py 专测；
+    # 这里打桩隔离 DB，让通道层用例聚焦验签/重放/载荷校验
+    from app.his_adapter import admit_service
+
+    async def fake_handle_admit(payload):
+        return admit_service.AdmitResult(
+            encounter_id="enc-test", patient_id="p-test",
+            patient_name=payload.patient_name, doctor_id="d-test", reused=False,
+        )
+
+    monkeypatch.setattr(admit_service, "handle_admit", fake_handle_admit)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

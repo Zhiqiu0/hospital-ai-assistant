@@ -49,6 +49,7 @@ import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
 import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
 import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
+import HisQueueDock from '@/components/workbench/HisQueueDock'
 
 const { Header, Content } = Layout
 
@@ -109,6 +110,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     viewRecord,
     setViewRecord,
     handleLogout,
+    handleResume,
     cancelOpen,
     openCancel,
     closeCancel,
@@ -358,6 +360,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
         onClose={closeCancel}
         onConfirm={handleCancelEncounter}
       />
+
+      {/* HIS 叫号队列（保险丝关闭时组件自隐藏，纯 SaaS 零感知） */}
+      <HisQueueDock onOpen={handleResume} />
 
       {/* 底部状态栏：接诊状态 + 保存时间 */}
       <div

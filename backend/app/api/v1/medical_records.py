@@ -94,7 +94,21 @@ async def quick_save_record(
         resource_id=record.id,
         detail=f"签发病历，类型：{data.record_type}，接诊ID：{data.encounter_id}",
     )
-    return {"ok": True, "record_id": record.id}
+    # HIS 联动（2026-08-11）：HIS 推送来源的接诊，签发即自动触发回写（后台派发，
+    # 不阻塞签发响应；结果经 SSE 推回工作台弹提示）。普通 SaaS 接诊不受影响。
+    his_writeback = None
+    from app.config import settings as app_settings
+    if app_settings.his_adapter_enabled:
+        from app.models.encounter import Encounter
+        enc = await db.get(Encounter, data.encounter_id)
+        if enc is not None and enc.his_external_ref:
+            import asyncio
+            from app.his_adapter.writeback_dispatch import dispatch_writeback
+            asyncio.create_task(dispatch_writeback(
+                enc.id, current_user.id, enc.visit_no or ""
+            ))
+            his_writeback = "dispatched"
+    return {"ok": True, "record_id": record.id, "his_writeback": his_writeback}
 
 
 @router.get("/by-patient/{patient_id}")

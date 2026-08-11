@@ -100,7 +100,9 @@ class Encounter(Base, TimestampMixin):
     #   {"his_brand": "jinsuanpan", "hospital_code": "H33052300957",
     #    "his_patient_no": "Y1232605260025", "his_visit_no": "20260526000200"}
     # 加 GIN 索引（his_patient_no 路径），方便医生从 HIS 切回查上次接诊。
-    his_external_ref: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # none_as_null=True：Python None 存 SQL NULL（而非 JSON null），否则
+    # 「his_external_ref IS NOT NULL」这类过滤（叫号队列只看 HIS 接诊）会失效。
+    his_external_ref: Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True))
 
     # 关联患者信息
     patient: Mapped["Patient"] = relationship(back_populates="encounters")
