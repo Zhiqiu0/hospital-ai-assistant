@@ -82,6 +82,8 @@ export async function startVoiceStream(
 
   // 3. 注册后端消息回调
   let finishedResolver: (() => void) | null = null
+  let stopping = false // stop() 主动关闭时置真，用于区分正常关闭与异常断开
+  let finished = false // 收到 finished 或已 stop，onclose 不再报错
   ws.onmessage = event => {
     try {
       // 后端 voice-stream 协议消息形状（与 ai/voice_stream_routes.py 一致）：
@@ -106,6 +108,7 @@ export async function startVoiceStream(
           callbacks.onError?.(msg.message || '识别出错')
           break
         case 'finished':
+          finished = true
           callbacks.onFinished?.()
           finishedResolver?.()
           break
@@ -115,19 +118,45 @@ export async function startVoiceStream(
     }
   }
   ws.onerror = () => callbacks.onError?.('WebSocket 通信异常')
+  // onclose 兜底（2026-08-11 审计延期项）：连接建立后若服务端主动关闭（ASR 会话
+  // 超时/后端异常），原实现无任何回调，录音静默失效、UI 无感知。这里非主动 stop
+  // 且未正常 finished 时上报错误，让上层能提示医生并走兜底（如切文本粘贴）。
+  ws.onclose = () => {
+    if (!stopping && !finished) {
+      callbacks.onError?.('语音识别连接已断开，请重试或改用文本录入')
+    }
+    finishedResolver?.()
+  }
 
-  // 4. 打开麦克风 + 创建 16kHz AudioContext
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  // Safari < 14 用 webkitAudioContext 前缀；TS lib.dom 默认不含此别名，
-  // 用结构化类型而非 any 取自 window，避免 ESLint @typescript-eslint/no-explicit-any
-  const AudioCtx =
-    window.AudioContext ||
-    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-  if (!AudioCtx) throw new Error('AudioContext 不可用')
-  // sampleRate 选项在部分浏览器可能被忽略，后续用 actualRate 做重采样兜底
-  const ctx: AudioContext = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE })
-  const actualRate = ctx.sampleRate
-  const source = ctx.createMediaStreamSource(stream)
+  // 4. 打开麦克风 + 创建 16kHz AudioContext。
+  // 关键（2026-08-11 审计延期项）：此时 WS 已打开，若麦克风授权被拒 / Worklet 加载
+  // 失败而直接抛出，会漏关 WS、泄漏后端 ASR 会话。用 try/catch 兜住：任何失败先关
+  // WS 再重抛，由调用方走兜底。
+  let stream: MediaStream
+  let ctx: AudioContext
+  let source: MediaStreamAudioSourceNode
+  let actualRate: number
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // Safari < 14 用 webkitAudioContext 前缀；TS lib.dom 默认不含此别名，
+    // 用结构化类型而非 any 取自 window，避免 ESLint @typescript-eslint/no-explicit-any
+    const AudioCtx =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) throw new Error('AudioContext 不可用')
+    // sampleRate 选项在部分浏览器可能被忽略，后续用 actualRate 做重采样兜底
+    ctx = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE })
+    actualRate = ctx.sampleRate
+    source = ctx.createMediaStreamSource(stream)
+  } catch (err) {
+    stopping = true // 阻止 onclose 再报错
+    try {
+      ws.close()
+    } catch {
+      // 关闭异常忽略
+    }
+    throw err
+  }
 
   // PCM16 编码 + WebSocket 上送（AudioWorklet 和 ScriptProcessor 共用此回调）
   const sendPcmFromFloat32 = (input: Float32Array) => {
@@ -179,6 +208,7 @@ export async function startVoiceStream(
 
   // 6. 返回停止句柄：停止麦克风 → 通知后端 finish → 等 finished 或超时
   const stop = async () => {
+    stopping = true // 主动关闭，onclose 不再当异常上报
     try {
       cleanup()
       source.disconnect()

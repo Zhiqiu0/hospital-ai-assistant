@@ -131,7 +131,6 @@ services:
       # 存量 UTC 数据由 scripts/fix_legacy_utc_times.py 一次性 +8h 校正（已执行）。
       TZ: Asia/Shanghai
       APP_ENV: production
-      APP_DEBUG: "false"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://mediscribe.cn,http://localhost}
       # Sentry 错误监控：DSN/环境/性能采样率从 .env 读，留空时自动跳过初始化
       SENTRY_DSN: ${SENTRY_DSN:-}

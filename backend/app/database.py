@@ -39,7 +39,7 @@ async_db_url = settings.database_url.replace(
 # ── 异步引擎 ──────────────────────────────────────────────────────────────────
 # echo: 默认关闭 SQL 打印！每条 SQL stdout 输出会阻塞 asyncio event loop，
 #       PACS 单端点叠加 4 个表查询时实测延迟 5s+ 都来自这里。需要 SQL 调试时
-#       设环境变量 DB_ECHO=true 临时打开（仅排障用，平时 app_debug=True 不再触发）
+#       设环境变量 DB_ECHO=true 临时打开（仅排障用）
 _db_echo = _os.environ.get("DB_ECHO", "").lower() in {"1", "true", "yes"}
 
 # pool_size/max_overflow 仅 PostgreSQL/MySQL 等支持连接池的驱动适用；

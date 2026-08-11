@@ -46,9 +46,9 @@ def ws_env(monkeypatch):
     return TestClient(app)
 
 
-def _handshake_url(app_id=AID, secret=SECRET, sign=None) -> str:
+def _handshake_url(app_id=AID, secret=SECRET, sign=None, nonce=None) -> str:
     ts = str(int(time.time() * 1000))
-    nonce = uuid.uuid4().hex
+    nonce = nonce or uuid.uuid4().hex
     sign = sign or compute_sign(app_id, ts, nonce, wp.HANDSHAKE_LITERAL, secret)
     return (f"/api/v1/his/ws?app_id={app_id}&timestamp={ts}"
             f"&nonce={nonce}&sign={sign}")
@@ -90,6 +90,25 @@ def test_ws_handshake_bad_sign_rejected(ws_env):
     """握手签名错误 → 连接被拒绝（无法建立会话）。"""
     with pytest.raises(Exception):
         with ws_env.websocket_connect(_handshake_url(sign="deadbeef")):
+            pass
+
+
+def test_ws_handshake_replay_rejected(ws_env):
+    """同一握手 nonce 重放（相同 URL 再建连）→ 被防重放拦截（2026-08-11 审计延期项）。
+
+    ws_env 的 fake_claim_nonce 用 seen 集模拟 Redis：首次 claim True、重放 False。
+    """
+    ts = str(int(time.time() * 1000))
+    fixed_nonce = "handshake-replay-fixed"
+    sign = compute_sign(AID, ts, fixed_nonce, wp.HANDSHAKE_LITERAL, SECRET)
+    url = (f"/api/v1/his/ws?app_id={AID}&timestamp={ts}"
+           f"&nonce={fixed_nonce}&sign={sign}")
+    # 首次建连成功
+    with ws_env.websocket_connect(url):
+        pass
+    # 同 nonce 重放 → 拒绝
+    with pytest.raises(Exception):
+        with ws_env.websocket_connect(url):
             pass
 
 
