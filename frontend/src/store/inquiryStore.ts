@@ -73,6 +73,27 @@ export const useInquiryStore = create<InquiryState>()(
         inquiry: state.inquiry,
         inquirySavedAt: state.inquirySavedAt,
       }),
+      // 版本 + migrate（2026-08-11 审计延期项）：inquiry 是扁平多字段对象，早期
+      // localStorage 里的旧结构缺少后加的字段（如中医四诊/急诊留观），rehydrate 后
+      // 这些字段为 undefined，组件里 .trim() / .length 会崩。用 defaultInquiry 兜底
+      // 补齐所有字段，保证任何历史版本恢复后形状完整。
+      version: 1,
+      migrate: (persisted: unknown) => {
+        const p = persisted as { inquiry?: Partial<InquiryData>; inquirySavedAt?: number } | null
+        return {
+          inquiry: { ...defaultInquiry, ...(p?.inquiry ?? {}) },
+          inquirySavedAt: p?.inquirySavedAt ?? 0,
+        }
+      },
+      // 每次 rehydrate 也用默认值补齐（覆盖 version 未变但字段新增的情况）
+      merge: (persisted, current) => {
+        const p = persisted as { inquiry?: Partial<InquiryData>; inquirySavedAt?: number } | null
+        return {
+          ...current,
+          inquiry: { ...defaultInquiry, ...(p?.inquiry ?? {}) },
+          inquirySavedAt: p?.inquirySavedAt ?? 0,
+        }
+      },
     }
   )
 )

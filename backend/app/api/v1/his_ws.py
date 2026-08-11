@@ -37,6 +37,20 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=4401)
         return
 
+    # 握手防重放（2026-08-11 审计延期项）：验签通过后一次性 claim 握手 nonce，
+    # 拦截时间窗内重放同一握手 URL 建连（截收病历回写）。TTL=时钟偏差窗口+60s 缓冲，
+    # 超窗后 timestamp_fresh 已会拒。Redis 不可用时 claim_nonce fail-open，退化为仅
+    # 靠时间戳窗口兜底（与上行消息 nonce 同哲学）。
+    from app.services.redis_cache import redis_cache
+    if not await redis_cache.claim_nonce(
+        "his_ws_handshake", q.get("nonce", ""),
+        ttl=settings.his_sign_clock_skew_seconds + 60,
+    ):
+        logger.warning("his_ws.handshake_replay: nonce 重复，拒绝建连 client=%s",
+                       websocket.client)
+        await websocket.close(code=4401)
+        return
+
     await websocket.accept()
     his_ws_manager.register(websocket)  # 每台诊室客户端各一条连接，多条并存
     logger.info("his_ws.connected: client=%s", websocket.client)

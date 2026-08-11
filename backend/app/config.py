@@ -74,7 +74,9 @@ class Settings(BaseSettings):
 
     # ── 应用运行环境 ──────────────────────────────────────────────────────────
     app_env: str = "development"             # "development" / "production"
-    app_debug: bool = True                   # True 时 SQLAlchemy 打印 SQL 语句
+    # 注：原 app_debug（控制 SQL 打印）已废弃删除——SQL 打印改由 DB_ECHO 环境变量
+    # 控制（见 database.py），app_debug 全仓零读取。compose 里残留的 APP_DEBUG 环境
+    # 变量会被 pydantic 忽略（未设 extra=forbid），无副作用。
     # 允许跨域访问的前端域名，多个域名用逗号分隔
     # 示例："http://localhost:5174,https://mediscribe.cn"
     allowed_origins: str = "http://localhost:5174"

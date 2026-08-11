@@ -13,12 +13,12 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | React 18 + Ant Design 5 + TypeScript |
-| 后端 | Python 3.13 + FastAPI |
+| 前端 | React 19 + Ant Design 5 + TypeScript |
+| 后端 | Python 3.11 + FastAPI |
 | 数据库 | PostgreSQL 16 |
-| 缓存 | Redis 7（当前版本仅保留配置，核心流程未强依赖） |
-| AI模型 | DeepSeek API |
-| 容器 | 可选：外部 Docker 启动 PostgreSQL / Redis |
+| 缓存 | Redis 7（PACS 缩略图缓存 + HIS 联动跨进程事件总线，多 worker 部署下核心依赖） |
+| AI模型 | DeepSeek + 阿里云通义（语音/影像） |
+| 容器 | docker compose（PostgreSQL / Redis / Orthanc / 前后端），见 docker-compose.yml |
 
 ## 项目结构
 
@@ -74,9 +74,10 @@ npm run dev
 
 ## 当前状态说明
 
-- 仓库当前未内置 `docker-compose.yml`、`Dockerfile`、`alembic/` 迁移目录
-- 如果你本地已通过 Docker 启动 PostgreSQL / Redis，可以直接复用现有容器
-- Redis 配置已预留，但当前 MVP 主流程主要依赖 PostgreSQL 与 DeepSeek API
+- 仓库已内置 `docker-compose.yml`、`backend/Dockerfile`、`backend/alembic/` 迁移目录
+- 生产走 docker compose（前端 + 后端 + PostgreSQL + Redis + Orthanc + uptime-kuma）
+- 数据库变更走 `alembic` 迁移 + `migrate.py` 双通道（禁止直接 SQL 改 schema）
+- Redis 已是核心依赖：PACS 缩略图缓存 + HIS 联动的跨 worker 事件总线（多 worker 部署必需）
 
 ## 环境变量
 

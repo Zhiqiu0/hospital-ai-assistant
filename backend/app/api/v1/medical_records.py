@@ -107,11 +107,12 @@ async def quick_save_record(
         from app.models.encounter import Encounter
         enc = await db.get(Encounter, data.encounter_id)
         if enc is not None and enc.his_external_ref:
-            import asyncio
+            # 用 bg_tasks.spawn 持有引用（2026-08-11 审计延期项）：裸 create_task
+            # 只被弱引用，签发响应返回后本地无引用，任务可能被 GC 中途取消致回写丢失。
+            from app.his_adapter.bg_tasks import spawn
             from app.his_adapter.writeback_dispatch import dispatch_writeback
-            asyncio.create_task(dispatch_writeback(
-                enc.id, current_user.id, enc.visit_no or ""
-            ))
+            spawn(dispatch_writeback(enc.id, current_user.id, enc.visit_no or ""),
+                  name=f"writeback:{enc.id}")
             his_writeback = "dispatched"
     return {"ok": True, "record_id": record.id, "his_writeback": his_writeback}
 

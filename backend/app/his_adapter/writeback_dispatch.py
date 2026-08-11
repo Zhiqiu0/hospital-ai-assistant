@@ -78,8 +78,10 @@ async def consumer_loop() -> None:
                     if cmd.get("type") == PUMP_DEAD_SENTINEL:
                         logger.warning("his_wb.consumer: 事件泵终止，5s 后重建订阅")
                         break
-                    # 每条指令独立任务处理，慢回写不阻塞后续指令
-                    asyncio.create_task(_maybe_execute(cmd))
+                    # 每条指令独立任务处理，慢回写不阻塞后续指令。
+                    # 用 bg_tasks.spawn 持引用防 GC 中途取消（2026-08-11 审计延期项）。
+                    from app.his_adapter.bg_tasks import spawn
+                    spawn(_maybe_execute(cmd), name=f"wb_exec:{cmd.get('req_id', '')}")
             await asyncio.sleep(5)  # break 出来后先退避再重建，避免 Redis 未恢复时空转
         except asyncio.CancelledError:
             raise
