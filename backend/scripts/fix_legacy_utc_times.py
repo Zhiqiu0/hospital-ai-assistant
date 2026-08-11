@@ -100,9 +100,10 @@ async def main(dry_run: bool) -> None:
                 continue  # 切换后签发的新快照已是北京时间
             shifted = (parsed + timedelta(hours=SHIFT_HOURS)).isoformat()
             if not dry_run:
+                # cast(:v AS text) 而非 :v::text——"::"与 SQLAlchemy 具名参数解析冲突
                 await db.execute(text(
                     "UPDATE medical_records SET patient_snapshot = "
-                    "jsonb_set(patient_snapshot, '{visit_time}', to_jsonb(:v::text)) "
+                    "jsonb_set(patient_snapshot, '{visit_time}', to_jsonb(cast(:v AS text))) "
                     "WHERE id = :id"
                 ), {"v": shifted, "id": record_id})
             snap_fixed += 1
