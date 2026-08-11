@@ -113,3 +113,36 @@ async def test_writeback_retries_on_5xx(async_db, monkeypatch):
 
     assert result.ok is True and result.status == "success"
     assert attempts["n"] == 2  # 第一次 503，重试第二次 200
+
+
+@pytest.mark.asyncio
+async def test_writeback_status_persisted_to_his_ref(async_db, monkeypatch):
+    """回写结果落库：his_external_ref.writeback 记录 status/ok/his_doc_id。"""
+    monkeypatch.setattr(settings, "his_writeback_url", "http://his/write")
+    monkeypatch.setattr(settings, "his_writeback_refresh_url", "")
+    monkeypatch.setattr(settings, "his_writeback_app_id", "appMe")
+    monkeypatch.setattr(settings, "his_writeback_app_secret", "sec")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": 0, "data": {"record_id": "R7"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    enc_id = await _make_encounter(async_db)
+    result = await send_writeback(async_db, enc_id, client=client)
+    await client.aclose()
+
+    assert result.ok is True
+    enc = await async_db.get(Encounter, enc_id)
+    wb = enc.his_external_ref["writeback"]
+    assert wb["status"] == "success" and wb["ok"] is True
+    assert wb["his_doc_id"] == "R7" and wb["at"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_skipped_also_persisted(async_db, monkeypatch):
+    """skipped（未配置地址且 WS 离线）也落库，队列能提示医生未回写。"""
+    monkeypatch.setattr(settings, "his_writeback_url", "")
+    enc_id = await _make_encounter(async_db)
+    await send_writeback(async_db, enc_id)
+    enc = await async_db.get(Encounter, enc_id)
+    assert enc.his_external_ref["writeback"]["status"] == "skipped"

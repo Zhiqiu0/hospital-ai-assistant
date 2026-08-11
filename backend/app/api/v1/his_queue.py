@@ -72,6 +72,9 @@ async def today_queue(
             "status": enc.status,  # in_progress / completed
             "is_first_visit": enc.is_first_visit,
             "visited_at": enc.visited_at.isoformat() if enc.visited_at else None,
+            # 回写状态（send_writeback 落进 his_external_ref.writeback）：
+            # success / skipped / write_failed / refresh_failed / None(未触发)
+            "writeback_status": (his_ref.get("writeback") or {}).get("status"),
         })
     return {"items": items}
 

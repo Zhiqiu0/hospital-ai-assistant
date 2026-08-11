@@ -12,7 +12,7 @@
   - delete_note(db, encounter_id, note_id)
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -44,7 +44,10 @@ def parse_iso_naive(s: Optional[str]) -> Optional[datetime]:
     except ValueError:
         return None
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        # 带时区的输入换算到服务器本地时间后剥离 tzinfo（2026-08-11 时区统一：
+        # 全项目 naive 时间=服务器本地时间，生产 TZ=Asia/Shanghai，原先换算到
+        # UTC 会与其余落库时间差 8 小时）
+        dt = dt.astimezone().replace(tzinfo=None)
     return dt
 
 

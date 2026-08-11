@@ -113,7 +113,9 @@ async def logout(
                 # 必须返回 200 而非 500——logout 是"使 token 失效"的命令，再次执行不该报错。
                 db.add(RevokedToken(
                     jti=jti,
-                    expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
+                    # 全项目约定：naive 时间=服务器本地时间（生产 TZ=Asia/Shanghai），
+                    # fromtimestamp 不带 tz 即按本地换算，与其余落库时间口径一致
+                    expires_at=datetime.fromtimestamp(exp),
                 ))
                 try:
                     await db.commit()
