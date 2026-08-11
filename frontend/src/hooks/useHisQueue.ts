@@ -49,8 +49,11 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
   const [connected, setConnected] = useState(false)
   const [items, setItems] = useState<HisQueueItem[]>([])
   // 回调经 ref 转发：SSE 循环只建一次，不因调用方每次渲染换回调而重连
+  // （赋值放 effect 而非渲染期，符合 react ref 使用规则）
   const handlersRef = useRef({ onAdmit, onWritebackResult })
-  handlersRef.current = { onAdmit, onWritebackResult }
+  useEffect(() => {
+    handlersRef.current = { onAdmit, onWritebackResult }
+  }, [onAdmit, onWritebackResult])
 
   /** 拉今日队列（开页 + 每次重连成功后调用）。返回是否可用（503 → false）。 */
   const refresh = useCallback(async (): Promise<boolean> => {
