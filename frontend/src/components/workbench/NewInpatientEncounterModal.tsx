@@ -17,6 +17,7 @@ import { Button, Form, Modal, Space } from 'antd'
 import type { Dayjs } from 'dayjs'
 import { UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 import type { Patient } from '@/domain/medical'
 import { applyQuickStartResult } from '@/store/encounterIntake'
 import SearchStep from './newInpatient/SearchStep'
@@ -155,9 +156,10 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
       try {
         res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
       } catch (err) {
-        // 网络瞬断（无 response）时延后 3s 重试一次，与门诊 modal 一致
-        const e = err as { response?: unknown }
-        if (!e?.response) {
+        // 仅"网络瞬断"才延后 3s 重试一次，HTTP 错误直接抛（2026-08-11 审计修复，
+        // 与门诊 modal 一致）：拦截器对 HTTP 错误 reject 带 status 的对象，网络错误无。
+        const e = err as { status?: number }
+        if (e?.status == null) {
           await new Promise(r => setTimeout(r, 3000))
           res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
         } else throw err
@@ -167,6 +169,11 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
       applyQuickStartResult(res as Parameters<typeof applyQuickStartResult>[0])
       onSuccess(res)
       handleClose()
+    } catch (err) {
+      // 业务错误提示（2026-08-11 审计修复）：原先只有 finally 无 catch，400/409 等
+      // 会静默失败并逃逸为 unhandled rejection。提取后端 detail 提示，弹窗保持打开供重试。
+      const detail = (err as { detail?: unknown })?.detail
+      if (typeof detail === 'string') message.error(`办理入院失败：${detail}`)
     } finally {
       setLoading(false)
     }

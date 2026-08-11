@@ -18,12 +18,12 @@ import { useAuthStore } from '@/store/authStore'
 import { startVoiceStream, type VoiceStreamHandle } from '@/services/voiceStream'
 import { uploadVoiceAudio } from '@/services/voiceTranscriptApi'
 
-// ── 测试期开关：录音文件是否上传到后端归档 ─────────────────────────────────────
-// 测试阶段医生反复录长音频会快速吃满测试服务器磁盘（uploads/voice_records/
-// 永久存盘且暂无清理机制），暂关闭文件上传，只留 ASR 转写文字走 AI 整理路径——
-// 病历生成、问诊填表、AI 整理这些主流程不受影响；唯一损失是"播放原始录音"
-// 功能（无 voice_record_id）。
-// 上线前切回 true，并配合后端加 uploads 目录的归档/清理策略。
+// ── 录音文件归档开关 ────────────────────────────────────────────────────────
+// 关闭时不把录音归档到后端（省测试服务器磁盘，损失"播放原始录音"功能）。
+// 注意（2026-08-11 审计修复）：即便关闭归档，当实时 ASR 失败（transcriptText 为空）
+// 时仍必须上传音频走 Qwen-Audio 云端兜底转写——否则医生口述内容会静默全丢，而 UI
+// 明确承诺"停止后自动云端转写"。故真正的跳过条件见 uploadAudioBlob：关归档 且
+// 已有转写文字 才跳过；无转写文字（兜底场景，低频）无视本开关必须上传。
 const ENABLE_AUDIO_UPLOAD = false
 
 interface SessionProps {
@@ -132,9 +132,9 @@ export function useVoiceDialogueSession({
    */
   const uploadAudioBlob = async (blob: Blob, transcriptText: string) => {
     if (!blob.size) return
-    // 测试期跳过音频归档：保留 transcript 文本走 AI 整理；不调后端 upload，
-    // 不占测试服务器磁盘；不弹"已保存" toast 避免误导。详见 ENABLE_AUDIO_UPLOAD 注释。
-    if (!ENABLE_AUDIO_UPLOAD) return
+    // 归档关闭 且 已有实时转写文字 → 跳过上传（省磁盘，AI 整理用现有文本即可）。
+    // 但若无转写文字（实时 ASR 失败），必须上传走云端兜底，绝不静默丢医生口述内容。
+    if (!ENABLE_AUDIO_UPLOAD && transcriptText.trim()) return
     setUploadingAudio(true)
     try {
       const data = await uploadVoiceAudio(blob, transcriptText, {

@@ -3,10 +3,11 @@
 
 提供用户的增删改查，仅管理员可访问。
 
-安全守卫（2026-05-03 加）：
+安全守卫：
   - 不能停用自己的账号——避免管理员误点把自己锁出系统
-  - 不能停用唯一的超级管理员——避免全院失去最高权限账号（最小可行版本只拦
-    "停用自己"，最后一个 super_admin 守卫属于 P2 后续加）
+  - 分级操作（2026-08-11 审计修复）：低级管理员不能操作等级 ≥ 自己的账号、
+    不能授予/自提到高于自己的角色、不能停用或降级唯一在用的超级管理员。
+    分级逻辑集中在 _user_authz.py，各写端点在进 UserService 前调用。
 """
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
@@ -14,6 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.api.v1.admin._user_authz import (
+    assert_can_manage_target,
+    assert_can_set_role,
+    assert_not_last_super_admin,
+)
 from app.core.security import require_admin
 from app.database import get_db
 from app.schemas.user import (
@@ -45,6 +51,8 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
+    # 分级守卫：不得创建高于/等于自己权限的账号（防非超管造超管自我提权）
+    assert_can_set_role(current_user, data.role)
     service = UserService(db)
     return await service.create(data)
 
@@ -57,6 +65,20 @@ async def update_user(
     current_user=Depends(require_admin),
 ):
     service = UserService(db)
+    target = await service.get_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    # 不能改自己的角色（防自提权）
+    if user_id == current_user.id and data.role is not None and data.role != current_user.role:
+        raise HTTPException(status_code=403, detail="不能修改自己的角色")
+    # 分级守卫：不能操作等级 ≥ 自己的目标；设新角色不得越级
+    await assert_can_manage_target(db, current_user, target)
+    if data.role is not None:
+        assert_can_set_role(current_user, data.role)
+    # 降级唯一在用超管前的存活性守卫
+    await assert_not_last_super_admin(
+        db, target, will_deactivate=(data.is_active is False), new_role=data.role
+    )
     return await service.update(user_id, data)
 
 
@@ -70,6 +92,11 @@ async def deactivate_user(
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="不能停用自己的账号，请由其他管理员操作")
     service = UserService(db)
+    target = await service.get_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    await assert_can_manage_target(db, current_user, target)
+    await assert_not_last_super_admin(db, target, will_deactivate=True, new_role=None)
     await service.deactivate(user_id)
 
 
@@ -81,6 +108,11 @@ async def activate_user(
 ):
     """重新启用已停用的用户账号（is_active=True）。"""
     service = UserService(db)
+    target = await service.get_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    # 启用等级 ≥ 自己的账号同样需足够权限（防低级管理员启用超管做跳板）
+    await assert_can_manage_target(db, current_user, target)
     await service.activate(user_id)
 
 
@@ -93,5 +125,10 @@ async def reset_user_password(
 ):
     """管理员重置用户密码。前端展示新密码一次后用户登录改回。"""
     service = UserService(db)
+    target = await service.get_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    # 分级守卫：不能给等级 ≥ 自己的账号改密（防夺取超管账号）
+    await assert_can_manage_target(db, current_user, target)
     await service.reset_password(user_id, data.new_password)
     return {"ok": True}

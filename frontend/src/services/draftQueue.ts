@@ -103,6 +103,19 @@ async function removeDraft(id: string): Promise<void> {
 }
 
 /**
+ * 按 (encounter_id, record_type) 删除队列副本（2026-08-11 审计修复）。
+ * auto-save 遇 409 乐观锁冲突时调用：该草稿基线已过时，留在队列里每次 flush 都会
+ * 再次 409、无限重试并反复弹冲突提示，必须删掉。失败静默（IDB 不可用不阻断主流程）。
+ */
+export async function removeDraftByKey(encounterId: string, recordType: string): Promise<void> {
+  try {
+    await removeDraft(makeKey(encounterId, recordType))
+  } catch {
+    // IDB 不可用降级——忽略
+  }
+}
+
+/**
  * 把队列里的所有草稿尝试补发一次。
  * sender 由调用方注入（hook 内部的 performSave）；返回 true 表示发送成功，
  * 此时从队列里删除该条；失败则保留，下次 flush 再试。

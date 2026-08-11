@@ -31,6 +31,25 @@ logger = logging.getLogger(__name__)
 # 绝不无限堆积拖垮进程内存
 QUEUE_MAX = 100
 
+# 泵死亡哨兵（2026-08-11 审计修复）：Redis pubsub 泵异常退出时投进订阅队列，
+# 消费方（SSE gen / 回写 consumer_loop）收到即触发各自的重建/重连，避免永久失聪。
+PUMP_DEAD_SENTINEL = "__bus_pump_dead__"
+
+
+def _put_pump_dead_sentinel(q: "asyncio.Queue") -> None:
+    """保证哨兵必达：队列满时先腾一个位再投（泵已死，无并发写入竞争）。"""
+    try:
+        q.put_nowait({"type": PUMP_DEAD_SENTINEL})
+    except asyncio.QueueFull:
+        try:
+            q.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            q.put_nowait({"type": PUMP_DEAD_SENTINEL})
+        except asyncio.QueueFull:
+            pass  # 极端并发下放弃，消费方 SSE 心跳/退避仍是最后兜底
+
 
 class HisEventBus:
     """Redis 发布/订阅总线（Redis 不可用时退化为进程内直投）。"""
@@ -140,9 +159,13 @@ class HisEventBus:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            # 泵挂了（Redis 断连）：订阅方队列不再有新事件，靠 SSE 心跳超时
-            # 让前端重连重拉，这里只记日志
-            logger.warning("his_bus.pump: 泵终止 channel=%s err=%s", channel, exc)
+            # 泵挂了（Redis 断连，redis-py 默认不自动重订阅）：不能只记日志——
+            # 否则订阅方队列永远为空、SSE 端点仍每 25s 发心跳假活、回写消费循环永久
+            # 失聪，且都不自愈（2026-08-11 审计修复）。这里向队列投哨兵，让消费方
+            # 感知泵死并走各自的重建/重连逻辑（SSE 端结束流触发前端重连重拉，
+            # 回写消费循环 raise 后走 5s 退避重建订阅）。
+            logger.warning("his_bus.pump: 泵终止 channel=%s err=%s，投哨兵通知消费方", channel, exc)
+            _put_pump_dead_sentinel(q)
 
     async def try_claim(self, key: str, ttl: int) -> bool:
         """跨 worker 抢占标记（SET NX EX）：谁抢到谁执行，防止重复回写。

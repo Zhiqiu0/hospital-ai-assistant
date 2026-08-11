@@ -35,7 +35,9 @@ class TimestampMixin:
             id: Mapped[str] = mapped_column(...)
     """
 
-    # 创建时间：INSERT 时由数据库 now() 填充，之后不再变更
+    # 创建时间：INSERT 时由数据库 func.now() 填充，之后不再变更。
+    # func.now() 返回的时区口径由连接的 timezone 设置决定——生产已在 database.py
+    # 给每条连接设 timezone=Asia/Shanghai，故落库为北京时间，与全项目 naive 口径一致。
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     # 更新时间：INSERT 时设为 now()，每次 UPDATE 时自动更新为当前时间
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

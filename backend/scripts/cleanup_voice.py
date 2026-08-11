@@ -74,9 +74,10 @@ async def cleanup(days: int, dry_run: bool) -> int:
     Returns:
         本次处理的记录数（dry-run 下也返回匹配数）
     """
-    # cutoff 用 naive UTC：TimestampMixin.created_at 是 TIMESTAMP WITHOUT TIME ZONE
-    # （由数据库 func.now() 填充，容器时区为 UTC），所以本端传 naive datetime 才能比较
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    # cutoff 用服务器本地时间（2026-08-11 时区统一后修正）：TimestampMixin.created_at
+    # 由数据库 func.now() 填充，连接已设 timezone=Asia/Shanghai，落库即北京时间；
+    # 本端 datetime.now() 同为北京时间（容器 TZ=Asia/Shanghai），两者口径一致才能正确比较。
+    cutoff = datetime.now() - timedelta(days=days)
     logger.info("cleanup.start: cutoff=%s dry_run=%s", cutoff.isoformat(), dry_run)
 
     processed = 0

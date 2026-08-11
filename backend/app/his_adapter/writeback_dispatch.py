@@ -51,8 +51,10 @@ async def dispatch_writeback(encounter_id: str, doctor_id: str, visit_no: str) -
             "visit_no": visit_no,
         })
         await asyncio.sleep(CLAIM_WAIT_SECONDS)
-        if not await his_event_bus.is_claimed(f"his:wb:claim:{req_id}"):
-            # 没有任何 worker 持有 WS 连接：本地兜底（HTTP 回落或 skipped）
+        # 本地兜底也用原子抢占（2026-08-11 审计修复）：原先用 is_claimed 只读判断，
+        # 与"慢 worker 刚 try_claim 成功但还没执行完"之间存在双执行窗口，HIS 会收到
+        # 两次写入。改为 try_claim——抢到才兜底执行，与消费方统一以 SET NX 为唯一门槛。
+        if await his_event_bus.try_claim(f"his:wb:claim:{req_id}", CLAIM_TTL):
             logger.warning("his_wb.dispatch: 无 worker 抢占，本地兜底 encounter=%s",
                            encounter_id)
             await _execute_and_report(encounter_id, doctor_id)
@@ -63,13 +65,22 @@ async def dispatch_writeback(encounter_id: str, doctor_id: str, visit_no: str) -
 
 async def consumer_loop() -> None:
     """回写指令消费循环（每个 worker 一个常驻任务，main.py lifespan 启动）。"""
+    from app.his_adapter.event_bus import PUMP_DEAD_SENTINEL
+
     while True:
         try:
             async with his_event_bus.subscription(WB_CMD_CHANNEL) as q:
                 while True:
                     cmd = await q.get()
+                    # 泵死哨兵（2026-08-11 审计修复）：Redis 断连使泵退出、指令永久停投，
+                    # 消费循环会永久失聪。收到哨兵即跳出内层重建订阅（Redis 恢复后重订成功），
+                    # 让回写指令重新可达。
+                    if cmd.get("type") == PUMP_DEAD_SENTINEL:
+                        logger.warning("his_wb.consumer: 事件泵终止，5s 后重建订阅")
+                        break
                     # 每条指令独立任务处理，慢回写不阻塞后续指令
                     asyncio.create_task(_maybe_execute(cmd))
+            await asyncio.sleep(5)  # break 出来后先退避再重建，避免 Redis 未恢复时空转
         except asyncio.CancelledError:
             raise
         except Exception:

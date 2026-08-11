@@ -154,6 +154,12 @@ async def _send_writeback_inner(
 ) -> WritebackResult:
     """回写主流程（通道选择 + 写入 + 刷新），结果由外层 send_writeback 落库。"""
     payload = await build_writeback_payload(db, encounter_id, app_version=app_version)
+    # 连接池护栏（2026-08-11 审计修复）：payload 已读完，后面等 WS ack 最长可达 ~80s
+    # （10s×3 重发 ×2 条消息），这期间不该占着 asyncpg 连接。提交只读事务把连接还池，
+    # 与 qc_stream_service 的既有护栏一致；外层 _persist_writeback_status 会另起短事务落库。
+    # （db 为 None 仅出现在 WS 通道单测里 mock 掉 payload 构建的场景，生产恒为真实会话）
+    if db is not None:
+        await db.commit()
 
     # 通道选择：WS 长连接在线 → 方案 B；否则有 HTTP 地址 → 方案 A；都没有 → 空跑
     if his_ws_manager.has_connection():

@@ -155,9 +155,12 @@ export default function NewEncounterModal({
       try {
         res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
       } catch (err) {
-        // 网络瞬断（无 response）时延后 3s 重试一次，其他错误直接抛
-        const e = err as { response?: unknown }
-        if (!e?.response) {
+        // 仅"网络瞬断"才延后 3s 重试一次，HTTP 错误直接抛（2026-08-11 审计修复）：
+        // 拦截器对 HTTP 错误 reject 的对象带 status 字段，网络错误 reject 的原始 error
+        // 无 status。原判据 `!e?.response` 永远为真（拦截器从不返回 .response），会把
+        // 400/409 等业务错误也误判为断网而重发 POST，可能重复建接诊。
+        const e = err as { status?: number }
+        if (e?.status == null) {
           await new Promise(r => setTimeout(r, 3000))
           res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
         } else throw err

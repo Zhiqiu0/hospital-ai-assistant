@@ -146,12 +146,18 @@ async def _handle_admit(
                          data={"visit_id": env.payload.get("visit_id", "")})
         )
         return
+    # 失败释放 msg_id 去重占位（2026-08-11 审计修复）：claim_nonce 是「先占后处理」，
+    # 若处理失败仍占着 key，厂商按规范 7.4 超时重发同 msg_id 会命中上面的重复分支拿到
+    # 假成功 ack（患者其实没落库）。故所有失败分支在回错误 ack 前显式释放占位，
+    # 让重发能真正重新处理（handle_admit 本身按 visit_id 幂等，重入也不会建重）。
+    async def _release_and_ack(code: int, message: str) -> None:
+        await redis_cache.delete(f"nonce:his_ws_msg:{env.msg_id}")
+        await websocket.send_text(wp.build_ack(env.msg_id, code, message, aid, secret))
+
     try:
         payload = AdmitPushRequest.model_validate(env.payload)
     except ValidationError:
-        await websocket.send_text(
-            wp.build_ack(env.msg_id, 40004, wp.ERROR_TEXT[40004], aid, secret)
-        )
+        await _release_and_ack(40004, wp.ERROR_TEXT[40004])
         return
     # 记录该就诊的来源连接：回写/刷新优先路由回这台诊室（它的界面才需要刷新）
     his_ws_manager.bind_visit(payload.visit_id, websocket)
@@ -161,15 +167,11 @@ async def _handle_admit(
         # 业务拒收（如医生工号未注册）：错误码回 ack，厂商日志可见、便于排查
         logger.warning("his_ws.admit_rejected: visit_id=%s %s",
                        payload.visit_id, exc.message)
-        await websocket.send_text(
-            wp.build_ack(env.msg_id, exc.code, exc.message, aid, secret)
-        )
+        await _release_and_ack(exc.code, exc.message)
         return
     except Exception:
         logger.exception("his_ws.admit_error: visit_id=%s", payload.visit_id)
-        await websocket.send_text(
-            wp.build_ack(env.msg_id, 50000, "服务内部错误", aid, secret)
-        )
+        await _release_and_ack(50000, "服务内部错误")
         return
     logger.info("his_ws.admit: visit_id=%s patient=%s encounter=%s reused=%s",
                 payload.visit_id, payload.patient_name,

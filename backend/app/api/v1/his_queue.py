@@ -93,6 +93,8 @@ async def queue_stream(
     """
     channel = f"his:doctor:{current_user.id}"
 
+    from app.his_adapter.event_bus import PUMP_DEAD_SENTINEL
+
     async def gen():
         # 先发一条连接确认，前端据此点亮"实时连接"状态
         yield 'data: {"type": "connected"}\n\n'
@@ -103,6 +105,12 @@ async def queue_stream(
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"  # SSE 注释行，仅保活
                     continue
+                # 泵死哨兵（2026-08-11 审计修复）：Redis 断连使泵退出、事件永久停投，
+                # 若继续发心跳会造成"假活"连接、叫号/回写事件静默全丢。收到哨兵即结束
+                # 本 SSE 流，让前端既有的断线重连 + 重拉今日队列逻辑接管，不丢病人。
+                if event.get("type") == PUMP_DEAD_SENTINEL:
+                    logger.warning("his_queue.stream: 事件泵终止，结束 SSE 流触发前端重连 channel=%s", channel)
+                    return
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

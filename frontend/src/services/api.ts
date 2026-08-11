@@ -86,7 +86,7 @@ api.interceptors.response.use(
       // Token 失效或未登录 → 清除登录态并跳转，不弹 toast（页面即将刷新）
       useAuthStore.getState().clearAuth()
       window.location.href = '/login'
-      return Promise.reject(error.response?.data || error)
+      return Promise.reject(error.response?.data ?? error)
     }
 
     if (status === 403) {
@@ -122,7 +122,15 @@ api.interceptors.response.use(
       captureAxiosError(error)
     }
 
-    return Promise.reject(error.response?.data || error)
+    // 附加式保留 HTTP 状态码（2026-08-11 审计修复）：原先 reject error.response?.data
+    // 会丢掉 status，调用方（如 useAutoSaveDraft 的 409 乐观锁冲突分支）永远读不到
+    // status，冲突检测形同虚设。这里在 data 是对象时附加 status（不覆盖 data 已有的
+    // 同名字段），对只读 detail 的旧调用方零破坏。
+    const data = error.response?.data
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return Promise.reject({ status, ...data })
+    }
+    return Promise.reject(data ?? error)
   }
 )
 

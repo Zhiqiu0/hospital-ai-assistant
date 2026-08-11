@@ -94,12 +94,14 @@ export default function EmbedWorkbenchPage() {
         })
         setReady(true)
       })
-      .catch((e: { response?: { status?: number } }) => {
-        if (e.response?.status === 503) {
+      .catch((e: { status?: number }) => {
+        // 拦截器把 HTTP 状态码平铺到 e.status（2026-08-11 审计修复）：原读
+        // e.response.status 恒为 undefined，503/404/401 专属提示全部落到通用文案。
+        if (e.status === 503) {
           setError('HIS 嵌入模式当前已关闭，请联系管理员开启')
-        } else if (e.response?.status === 404) {
+        } else if (e.status === 404) {
           setError('嵌入会话不存在或已过期')
-        } else if (e.response?.status === 401) {
+        } else if (e.status === 401) {
           setError('Token 无效或已过期，请重新从 HIS 触发 AI 助手')
         } else {
           setError('加载嵌入会话失败')

@@ -79,12 +79,17 @@ async def quick_save_record(
     # 归属校验：只能签发自己的接诊，防止越权在他人接诊上签发/篡改病历
     await assert_encounter_access(db, data.encounter_id, current_user)
     service = MedicalRecordService(db)
-    record = await service.quick_save(
-        encounter_id=data.encounter_id,
-        record_type=data.record_type,
-        content=data.content,
-        doctor_id=current_user.id,
-    )
+    try:
+        record = await service.quick_save(
+            encounter_id=data.encounter_id,
+            record_type=data.record_type,
+            content=data.content,
+            doctor_id=current_user.id,
+        )
+    except ValueError as exc:
+        # 状态守卫拒签（接诊已取消/不存在）→ 409，与前端约定一致
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await log_action(
         action="sign_record",
         user_id=current_user.id,

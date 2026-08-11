@@ -61,7 +61,24 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       systemType: 'outpatient',
       setAuth: (token, user) => set({ token, user }),
-      clearAuth: () => set({ token: null, user: null, systemType: 'outpatient' }),
+      clearAuth: () => {
+        // 登出/401 时清空跨患者敏感缓存（2026-08-11 审计修复）：patientCache 存着
+        // 患者档案、voiceTranscript 存着语音转写，若不清，下一个登录本机的医生会
+        // 看到上一个医生的患者数据（医疗隐私事故）。收口在 clearAuth 而非
+        // resetAllWorkbench——后者还被急诊切换/取消接诊等非登出路径调用，在那里清
+        // 语音草稿会丢医生未上传的内容，违背 voiceTranscriptStore「切患者不丢草稿」设计。
+        // 动态 import 避免 store 顶层循环依赖。
+        void import('@/store/voiceTranscriptStore').then(m =>
+          m.useVoiceTranscriptStore.getState().clearAll()
+        )
+        void import('@/store/patientCacheStore').then(m =>
+          m.usePatientCacheStore.getState().clear()
+        )
+        void import('@/store/aiWrittenFieldsStore').then(m =>
+          m.useAiWrittenFieldsStore.getState().clear()
+        )
+        set({ token: null, user: null, systemType: 'outpatient' })
+      },
       setSystemType: type => set({ systemType: type }),
     }),
     {

@@ -45,6 +45,18 @@ class MedicalRecordSignMixin:
         # （create() 无条件新建、并发首存各插一条），故用 order_by+first() 取最新一条，
         # 与 auto_save_draft 保持一致；不能用 scalar_one_or_none()——多行会抛
         # MultipleResultsFound 导致病历永远签发不出去（500）。
+        # 接诊状态守卫（2026-08-11 审计修复）：先加行锁取接诊，防止对已取消/不存在
+        # 的接诊签发——原实现无守卫，已取消接诊会被签发"复活"成 completed。
+        # 住院多份病历签发期间 encounter 保持 in_progress，不受影响。
+        enc_guard = await self.db.execute(
+            select(Encounter).where(Encounter.id == encounter_id).with_for_update()
+        )
+        enc_locked = enc_guard.scalar_one_or_none()
+        if enc_locked is None:
+            raise ValueError("接诊不存在，无法签发")
+        if enc_locked.status == "cancelled":
+            raise ValueError("接诊已取消，无法签发病历")
+
         result = await self.db.execute(
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
@@ -52,6 +64,13 @@ class MedicalRecordSignMixin:
             ).order_by(MedicalRecord.updated_at.desc()).with_for_update()
         )
         record = result.scalars().first()
+        # 已签发病历幂等守卫：门诊/急诊一次接诊一份病历，已 submitted 则不重复改写
+        # （前端双击/重试会重复调）；直接返回现有记录，天然幂等。
+        if record is not None and record.status == "submitted" \
+                and enc_locked.visit_type != "inpatient":
+            logger.info("record.sign: 幂等跳过已签发 record_id=%s encounter_id=%s",
+                        record.id, encounter_id)
+            return record
         if not record:
             # 首次签发，病历记录尚未创建（极少数情况：直接签发跳过了 AI 生成步骤）
             record = MedicalRecord(encounter_id=encounter_id, record_type=record_type)
@@ -77,10 +96,8 @@ class MedicalRecordSignMixin:
         #   - 住院：一次住院会有多份病历（入院记录/病程/查房/出院小结...），
         #     签发一份不代表出院，接诊状态保持 in_progress；将来由
         #     专门的"办理出院"动作关闭接诊。
-        enc_result = await self.db.execute(
-            select(Encounter).where(Encounter.id == encounter_id)
-        )
-        encounter = enc_result.scalar_one_or_none()
+        # 复用上面已加锁取到的接诊行，不再重复查询
+        encounter = enc_locked
         encounter_closed = False
         if encounter and encounter.visit_type != "inpatient":
             encounter.status = "completed"
