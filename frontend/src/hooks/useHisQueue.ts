@@ -25,6 +25,8 @@ export interface HisQueueItem {
   status: string // in_progress / completed
   is_first_visit?: boolean | null
   visited_at?: string | null
+  /** 回写状态：success / skipped / write_failed / refresh_failed / error / null(未触发) */
+  writeback_status?: string | null
 }
 
 /** SSE 事件（admit / writeback_result / connected） */
@@ -124,14 +126,19 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
                 }
                 if (ev.type === 'writeback_result') {
                   handlersRef.current.onWritebackResult?.(ev)
-                  // 回写完成 → 该接诊已签发，同步队列条目状态
-                  if (ev.ok) {
-                    setItems(prev =>
-                      prev.map(x =>
-                        x.encounter_id === ev.encounter_id ? { ...x, status: 'completed' } : x
-                      )
+                  // 同步队列条目：成功则标记已签发；无论成败都记录回写状态
+                  // （失败的条目在抽屉里显示红色标签 + 重试入口）
+                  setItems(prev =>
+                    prev.map(x =>
+                      x.encounter_id === ev.encounter_id
+                        ? {
+                            ...x,
+                            status: ev.ok ? 'completed' : x.status,
+                            writeback_status: ev.status,
+                          }
+                        : x
                     )
-                  }
+                  )
                 }
               },
             },

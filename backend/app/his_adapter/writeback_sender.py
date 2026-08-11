@@ -96,7 +96,11 @@ async def send_writeback(
     app_version: str = "1.0.0",
     client: Optional[httpx.AsyncClient] = None,
 ) -> WritebackResult:
-    """把一次接诊的病历回写到 HIS（写入 + 刷新）。
+    """把一次接诊的病历回写到 HIS（写入 + 刷新），并把结果落库。
+
+    结果持久化（2026-08-11 技术债清偿）：写进 encounter.his_external_ref 的
+    writeback 键（JSONB 免加列），叫号队列据此展示"已回写/回写失败"，
+    失败的可从队列一键重试（手动端点与自动派发都经过本函数，单点落库）。
 
     Args:
         db:           异步会话
@@ -107,6 +111,48 @@ async def send_writeback(
     Returns:
         WritebackResult
     """
+    result = await _send_writeback_inner(db, encounter_id, app_version, client)
+    await _persist_writeback_status(db, encounter_id, result)
+    return result
+
+
+async def _persist_writeback_status(
+    db: AsyncSession, encounter_id: str, result: WritebackResult
+) -> None:
+    """把回写结果写进 encounter.his_external_ref.writeback（失败只记日志不影响返回）。"""
+    import logging
+    from datetime import datetime
+
+    from app.models.encounter import Encounter
+
+    try:
+        encounter = await db.get(Encounter, encounter_id)
+        if encounter is None or not encounter.his_external_ref:
+            return
+        # JSONB 整体重赋值才会被 SQLAlchemy 侦测为脏（未挂 MutableDict）
+        encounter.his_external_ref = {
+            **encounter.his_external_ref,
+            "writeback": {
+                "status": result.status,
+                "ok": result.ok,
+                "message": result.message,
+                "his_doc_id": result.his_doc_id,
+                "at": datetime.now().isoformat(timespec="seconds"),
+            },
+        }
+        await db.commit()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "his_wb.persist: 回写状态落库失败 encounter=%s", encounter_id)
+
+
+async def _send_writeback_inner(
+    db: AsyncSession,
+    encounter_id: str,
+    app_version: str = "1.0.0",
+    client: Optional[httpx.AsyncClient] = None,
+) -> WritebackResult:
+    """回写主流程（通道选择 + 写入 + 刷新），结果由外层 send_writeback 落库。"""
     payload = await build_writeback_payload(db, encounter_id, app_version=app_version)
 
     # 通道选择：WS 长连接在线 → 方案 B；否则有 HTTP 地址 → 方案 A；都没有 → 空跑

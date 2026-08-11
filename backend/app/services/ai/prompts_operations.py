@@ -37,3 +37,27 @@ CONTINUE_PROMPT = """你是临床病历书写助手。医生已经写了部分�
 请分析已有内容，找出缺失的部分，只输出需要补充的内容（不要重复已有内容）。
 输出格式：直接输出补充的病历段落，格式与已有内容保持一致。
 禁止编造未提及的症状或信息。"""
+
+
+def build_continue_prompt(req, record_type_label: str, composed_physical_exam: str) -> str:
+    """组装病历续写 prompt（从 api/v1/ai_generation.py 拆入，2026-08-11）。
+
+    Args:
+        req:                    ContinueRequest（字段可缺省，缺省填"未提供"）
+        record_type_label:      病历类型中文名（如"门诊病历"）
+        composed_physical_exam: 已合并生命体征的体格检查文本
+    """
+    return CONTINUE_PROMPT.format(
+        record_type=record_type_label,
+        patient_name=req.patient_name or "未知",
+        patient_gender=req.patient_gender or "未知",
+        patient_age=req.patient_age or "未知",
+        chief_complaint=req.chief_complaint or "未提供",
+        history_present_illness=req.history_present_illness or "未提供",
+        past_history=req.past_history or "未提供",
+        allergy_history=req.allergy_history or "未提供",
+        personal_history=req.personal_history or "未提供",
+        physical_exam=composed_physical_exam or "未提供",
+        initial_impression=req.initial_impression or "未提供",
+        current_content=req.current_content or "（暂无内容）",
+    )

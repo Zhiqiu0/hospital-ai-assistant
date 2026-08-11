@@ -10,9 +10,7 @@ AI 病历生成路由（/api/v1/ai/quick-generate 等）
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
-import json
 import logging
-import re
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,12 +33,10 @@ from app.services.ai.ai_utils import (
     stream_text,
     stream_with_lock,
 )
-from app.services.ai.llm_client import llm_client
+from app.services.ai.field_normalize_service import run_normalize_fields
 from app.services.ai.model_options import get_model_options
-from app.services.ai.prompts import (
-    CONTINUE_PROMPT,
-    RECORD_TYPE_LABELS,
-)
+from app.services.ai.prompts import RECORD_TYPE_LABELS
+from app.services.ai.prompts_operations import build_continue_prompt
 from app.services.ai.record_gen_v2_service import (
     stream_polish_v2,
     stream_record_v2,
@@ -68,19 +64,6 @@ async def _acquire_ai_gen_lock(user_id: str, scope: str) -> tuple[str, str]:
 
 
 router = APIRouter()
-
-# 字段英文名 → 中文标签映射（用于 normalize-fields prompt 构建）
-_FIELD_LABELS: dict[str, str] = {
-    "chief_complaint": "主诉",
-    "history_present_illness": "现病史",
-    "past_history": "既往史",
-    "allergy_history": "过敏史",
-    "personal_history": "个人史",
-    "menstrual_history": "月经史",
-    "physical_exam": "体格检查",
-    "auxiliary_exam": "辅助检查",
-    "initial_impression": "初步诊断",
-}
 
 
 @router.post("/quick-generate")
@@ -139,7 +122,6 @@ async def quick_continue(
         resource_type="medical_record",
         detail=f"record_type={req.record_type or 'outpatient'}",
     )
-    record_type = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
     composed_physical_exam = compose_physical_exam(
         physical_exam=req.physical_exam,
         temperature=req.temperature,
@@ -151,19 +133,10 @@ async def quick_continue(
         height=req.height,
         weight=req.weight,
     )
-    prompt = CONTINUE_PROMPT.format(
-        record_type=record_type,
-        patient_name=req.patient_name or "未知",
-        patient_gender=req.patient_gender or "未知",
-        patient_age=req.patient_age or "未知",
-        chief_complaint=req.chief_complaint or "未提供",
-        history_present_illness=req.history_present_illness or "未提供",
-        past_history=req.past_history or "未提供",
-        allergy_history=req.allergy_history or "未提供",
-        personal_history=req.personal_history or "未提供",
-        physical_exam=composed_physical_exam or "未提供",
-        initial_impression=req.initial_impression or "未提供",
-        current_content=req.current_content or "（暂无内容）",
+    prompt = build_continue_prompt(
+        req,
+        record_type_label=RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历"),
+        composed_physical_exam=composed_physical_exam,
     )
     model_options = await get_model_options(db, "generate")
     # 连接池护栏：下面 stream_text 全程只调 LLM、不碰 db，但本请求的 db session 会
@@ -267,39 +240,5 @@ async def normalize_fields(
     """将修改的问诊字段规范化（口语→书面，去重，格式统一），返回整理后的字段值。"""
     if not req.fields:
         return {"fields": {}}
-
-    field_lines = "\n".join(
-        f"{_FIELD_LABELS.get(k, k)}：{v}"
-        for k, v in req.fields.items()
-        if v
-    )
-    prompt = (
-        "你是临床病历规范化助手。请对以下问诊字段进行整理，要求：\n"
-        "1. 口语转书面医学语言\n"
-        "2. 去除重复信息（如同一数值在结构化行和自由文本中重复出现）\n"
-        "3. 格式规范，符合医疗文书标准\n"
-        "4. 不添加任何未提及的内容，不编造信息\n"
-        "5. 每个字段独立整理，保持原有信息量\n\n"
-        f"需整理的字段：\n{field_lines}\n\n"
-        "请只输出JSON对象，key为字段名（英文），value为整理后的文本：\n"
-        '{"chief_complaint": "...", "physical_exam": "...", ...}\n'
-        "只输出本次传入的字段，不要输出未传入的字段。"
-    )
-
-    try:
-        model_options = await get_model_options(db, "generate")
-        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
-        # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
-        await db.commit()
-        content = await llm_client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            **(model_options or {}),
-        )
-        match = re.search(r"\{[\s\S]*\}", content)
-        if not match:
-            return {"fields": req.fields}
-        result = json.loads(match.group())
-        return {"fields": {k: result[k] for k in req.fields if k in result and result[k]}}
-    except Exception as exc:
-        logger.exception("ai.normalize: failed err=%s", exc)
-        return {"fields": req.fields}  # 失败时原样返回，不阻塞保存
+    # prompt 组装 + LLM 调用 + 解析全在 service（失败时原样返回，不阻塞保存）
+    return await run_normalize_fields(db, req.fields)

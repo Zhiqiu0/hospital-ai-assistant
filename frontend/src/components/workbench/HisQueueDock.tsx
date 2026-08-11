@@ -13,6 +13,7 @@ import { useCallback, useState } from 'react'
 import { App, Badge, Drawer, FloatButton, List, Tag } from 'antd'
 import { BellOutlined, CheckCircleOutlined, SoundOutlined } from '@ant-design/icons'
 import { message } from '@/services/messageBridge'
+import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useHisQueue, type HisQueueEvent, type HisQueueItem } from '@/hooks/useHisQueue'
 
@@ -122,6 +123,25 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
     onWritebackResult: handleWritebackResult,
   })
 
+  /** 失败重试：走既有手动回写端点，结果即时刷新队列（信封 code=0 才算成功） */
+  const retryWriteback = async (item: HisQueueItem) => {
+    try {
+      const res = (await api.post(`/his/encounter/${item.encounter_id}/writeback`)) as {
+        code: number
+        message?: string
+        data?: { status?: string }
+      }
+      if (res.code === 0 && res.data?.status === 'success') {
+        message.success(`「${item.patient_name}」病历已回写 HIS`)
+      } else {
+        message.error(`回写仍失败：${res.message || res.data?.status || '未知原因'}`)
+      }
+    } catch {
+      message.error('回写请求失败，请稍后重试')
+    }
+    void refresh()
+  }
+
   if (!enabled) return null // 保险丝关闭：纯 SaaS 模式不渲染任何入口
 
   const waiting = items.filter(x => x.status === 'in_progress')
@@ -199,6 +219,26 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
                         })}`
                       : ''}
                     {item.status === 'completed' ? ' · 已签发' : ' · 待接诊'}
+                    {item.writeback_status === 'success' && (
+                      <Tag color="green" style={{ marginLeft: 6 }}>
+                        已回写HIS
+                      </Tag>
+                    )}
+                    {item.writeback_status && item.writeback_status !== 'success' && (
+                      <>
+                        <Tag color="red" style={{ marginLeft: 6 }}>
+                          {item.writeback_status === 'skipped' ? '未回写' : '回写失败'}
+                        </Tag>
+                        <a
+                          onClick={e => {
+                            e.stopPropagation() // 别触发整行的"打开接诊"
+                            void retryWriteback(item)
+                          }}
+                        >
+                          重试
+                        </a>
+                      </>
+                    )}
                   </span>
                 }
               />

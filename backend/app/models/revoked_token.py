@@ -18,7 +18,7 @@
   所以过期后的黑名单记录可以安全删除。
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,9 +26,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
-def _utcnow() -> datetime:
-    """返回当前 UTC 时间（不带时区信息，与数据库 TIMESTAMP WITHOUT TIME ZONE 兼容）。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _now_naive() -> datetime:
+    """返回当前服务器本地时间（naive，与数据库 TIMESTAMP WITHOUT TIME ZONE 兼容）。
+
+    全项目约定（2026-08-11 时区统一）：naive 时间 = 服务器本地时间，
+    生产容器 TZ=Asia/Shanghai，与 TimestampMixin 的 datetime.now 口径一致。
+    """
+    return datetime.now()
 
 
 class RevokedToken(Base):
@@ -44,4 +48,4 @@ class RevokedToken(Base):
     # 原始 token 的过期时间，用于定期清理过期黑名单记录
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     # token 被吊销（登出）的时间
-    revoked_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime, default=_now_naive)

@@ -78,7 +78,8 @@ async def save_report(
     response: dict = {"ok": True}
     if body.publish:
         report.is_published = True
-        report.published_at = datetime.utcnow()
+        # naive 时间=服务器本地时间（2026-08-11 时区统一，utcnow 与全局口径差 8h）
+        report.published_at = datetime.now()
         # 关键：只写 published_by，绝不覆盖 radiologist_id（保留分析人审计）
         report.published_by = current_user.id
 

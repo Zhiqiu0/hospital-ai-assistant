@@ -25,17 +25,27 @@ from app.services import progress_notes_service as pn
 # ── parse_iso_naive：时区处理（纯函数，无需 DB）────────────────────────────────
 
 
-def test_parse_iso_z_suffix_converts_to_utc_naive():
-    """'Z' 后缀（UTC 时间）应解析为 naive UTC datetime，tzinfo 被剥离。"""
+def _expected_local_naive(iso_aware: str) -> datetime:
+    """带时区字符串按「系统本地时间」换算出的 naive 期望值。
+
+    2026-08-11 时区统一后 parse_iso_naive 的归一目标是服务器本地时间；
+    测试机时区不定（本地=北京 / CI=UTC），期望值用标准库同口径换算，
+    验证的重点是「瞬时点正确 + tzinfo 被剥离」。
+    """
+    return datetime.fromtimestamp(datetime.fromisoformat(iso_aware).timestamp())
+
+
+def test_parse_iso_z_suffix_converts_to_local_naive():
+    """'Z' 后缀（UTC 时间）应换算到本地时间并剥离 tzinfo。"""
     dt = pn.parse_iso_naive("2026-06-01T08:00:00Z")
-    assert dt == datetime(2026, 6, 1, 8, 0, 0)
+    assert dt == _expected_local_naive("2026-06-01T08:00:00+00:00")
     assert dt.tzinfo is None
 
 
-def test_parse_iso_offset_converts_to_utc():
-    """带 +08:00 偏移的时间应换算到 UTC（16:00+08:00 → 08:00 naive）。"""
+def test_parse_iso_offset_converts_to_local():
+    """带 +08:00 偏移的时间应换算到本地时间（瞬时点不变），并剥离 tzinfo。"""
     dt = pn.parse_iso_naive("2026-06-01T16:00:00+08:00")
-    assert dt == datetime(2026, 6, 1, 8, 0, 0)
+    assert dt == _expected_local_naive("2026-06-01T16:00:00+08:00")
     assert dt.tzinfo is None
 
 
@@ -94,9 +104,9 @@ async def test_create_note_defaults(async_db):
 
 @pytest.mark.asyncio
 async def test_create_note_with_tz_recorded_at(async_db):
-    """带 +08:00 时区的 recorded_at 入库前换算为 UTC naive 存储。"""
+    """带 +08:00 时区的 recorded_at 入库前换算为本地 naive 存储（时区统一口径）。"""
     note = await _mk_note(async_db, recorded_at_raw="2026-06-01T16:00:00+08:00")
-    assert note.recorded_at == datetime(2026, 6, 1, 8, 0, 0)
+    assert note.recorded_at == _expected_local_naive("2026-06-01T16:00:00+08:00")
 
 
 @pytest.mark.asyncio
@@ -149,7 +159,7 @@ async def test_update_draft_fields(async_db):
     )
     assert updated.title == "新标题"
     assert updated.content == "新正文"
-    assert updated.recorded_at == datetime(2026, 6, 3, 0, 0, 0)
+    assert updated.recorded_at == _expected_local_naive("2026-06-03T00:00:00+00:00")
     assert updated.status == "draft"  # 未传 status 保持草稿
 
 

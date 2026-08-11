@@ -9,18 +9,21 @@ import logging
 from datetime import date, datetime, timedelta
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.config import settings
 from app.core.security import require_admin
 from app.database import get_db
 from app.models.encounter import Encounter
 from app.models.medical_record import AITask, QCIssue
 from app.models.user import Department
+from app.services.admin_stats_service import (
+    get_aliyun_status,
+    get_deepseek_balance,
+    get_token_usage_totals,
+)
 from app.services.redis_cache import redis_cache
 
 # 模块级 logger：admin 后台请求量低，异常都值得上 Sentry
@@ -161,122 +164,8 @@ async def token_usage(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    # 1. 从 DeepSeek 官方 API 获取实时余额
-    balance_info = None
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://api.deepseek.com/user/balance",
-                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                infos = data.get("balance_infos", [])
-                if infos:
-                    balance_info = infos[0]
-    except Exception as exc:
-        # 余额查询挂了不阻断后台首屏，但要写日志（之前 pass 导致 0 线索）
-        # 用 warning 级别——这是外部依赖问题，不是代码 bug，避免 Sentry 误告警
-        logger.warning("admin.deepseek_balance: failed err=%s", exc)
-
-    # 1b. 阿里云：连接检测 + AccessKey 余额查询
-    aliyun_status = {"connected": False, "model": settings.aliyun_model, "error": None, "balance": None}
-    if settings.aliyun_api_key:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    f"{settings.aliyun_base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.aliyun_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.aliyun_model,
-                        "messages": [{"role": "user", "content": "hi"}],
-                        "max_tokens": 1,
-                    },
-                )
-                if resp.status_code == 200:
-                    aliyun_status["connected"] = True
-                else:
-                    aliyun_status["error"] = f"HTTP {resp.status_code}"
-        except Exception as exc:
-            # 错误透传给前端展示外，同时写日志（之前只透传 → Sentry 看不到聚合）
-            aliyun_status["error"] = str(exc)
-            logger.warning("admin.aliyun_check: failed err=%s", exc)
-    else:
-        aliyun_status["error"] = "未配置 ALIYUN_API_KEY"
-
-    # 阿里云账户余额（需要 AccessKey）
-    if settings.alibaba_access_key_id and settings.alibaba_access_key_secret:
-        try:
-            import asyncio
-            from alibabacloud_bssopenapi20171214 import client as bss_client
-            from alibabacloud_tea_openapi import models as open_api_models
-            bss_config = open_api_models.Config(
-                access_key_id=settings.alibaba_access_key_id,
-                access_key_secret=settings.alibaba_access_key_secret,
-                endpoint="business.aliyuncs.com",
-            )
-            bss = bss_client.Client(bss_config)
-            bal_resp = await asyncio.get_event_loop().run_in_executor(
-                None, bss.query_account_balance
-            )
-            d = bal_resp.body.data
-            aliyun_status["balance"] = {
-                "available_amount": d.available_amount,
-                "available_cash_amount": d.available_cash_amount,
-                "credit_amount": d.credit_amount,
-                "currency": d.currency,
-            }
-        except Exception as exc:
-            aliyun_status["balance_error"] = str(exc)
-            logger.warning("admin.aliyun_balance: failed err=%s", exc)
-
-    # 2. 从本地 ai_tasks 表统计 token 消耗
-    total_input = await db.execute(select(func.coalesce(func.sum(AITask.token_input), 0)))
-    total_output = await db.execute(select(func.coalesce(func.sum(AITask.token_output), 0)))
-    total_calls = await db.execute(select(func.count()).select_from(AITask))
-
-    # 今日消耗
-    today = date.today()
-    today_input = await db.execute(
-        select(func.coalesce(func.sum(AITask.token_input), 0)).where(
-            cast(AITask.created_at, Date) == today
-        )
-    )
-    today_output = await db.execute(
-        select(func.coalesce(func.sum(AITask.token_output), 0)).where(
-            cast(AITask.created_at, Date) == today
-        )
-    )
-
-    # 按任务类型统计
-    type_stats_result = await db.execute(
-        select(
-            AITask.task_type,
-            func.count().label("calls"),
-            func.coalesce(func.sum(AITask.token_input), 0).label("input_tokens"),
-            func.coalesce(func.sum(AITask.token_output), 0).label("output_tokens"),
-        ).group_by(AITask.task_type)
-    )
-    type_stats = [
-        {
-            "task_type": row.task_type,
-            "calls": row.calls,
-            "input_tokens": row.input_tokens,
-            "output_tokens": row.output_tokens,
-        }
-        for row in type_stats_result
-    ]
-
-    return {
-        "balance": balance_info,
-        "aliyun_status": aliyun_status,
-        "total_input_tokens": total_input.scalar(),
-        "total_output_tokens": total_output.scalar(),
-        "total_calls": total_calls.scalar(),
-        "today_input_tokens": today_input.scalar(),
-        "today_output_tokens": today_output.scalar(),
-        "by_task_type": type_stats,
-    }
+    """AI token 用量 + 双厂商余额（外部查询逻辑在 admin_stats_service）。"""
+    balance_info = await get_deepseek_balance()
+    aliyun_status = await get_aliyun_status()
+    totals = await get_token_usage_totals(db)
+    return {"balance": balance_info, "aliyun_status": aliyun_status, **totals}
