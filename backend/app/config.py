@@ -29,8 +29,10 @@ class Settings(BaseSettings):
     # ── JWT 认证 ──────────────────────────────────────────────────────────────
     # 签名密钥，生产环境必须设置为随机长字符串（至少 32 位）
     secret_key: str
-    # 访问令牌有效期（分钟），默认 1440 分钟 = 24 小时
-    access_token_expire_minutes: int = 1440
+    # 访问令牌有效期（分钟），默认 43200 分钟 = 30 天
+    # （2026-08-11 从 24h 放宽：诊室固定电脑场景，医生不该频繁重登；
+    #   保密级别经用户评估可接受，登出仍走 jti 黑名单即时失效）
+    access_token_expire_minutes: int = 43200
 
     # ── AI 模型：DeepSeek（病历生成、质控、润色等核心功能）────────────────────
     deepseek_api_key: str = ""                              # DeepSeek API Key
