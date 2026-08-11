@@ -108,7 +108,9 @@ async def build_writeback_payload(
         "meta": {
             "source": "mediscribe_ai",
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "doctor_code": his_ref.get("his_doctor_no") or "",
+            # 兼容两种来源格式：接诊推送落的 doctor_code（2026-08-11 联动后主路径）
+            # 与旧 embed 会话落的 his_doctor_no
+            "doctor_code": his_ref.get("doctor_code") or his_ref.get("his_doctor_no") or "",
             "app_version": app_version,
         },
     }
