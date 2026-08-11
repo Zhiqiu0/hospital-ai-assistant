@@ -63,9 +63,9 @@ def signed_message(msg_type: str, payload: dict, app_id: str, secret: str) -> st
 def admit_sample() -> dict:
     return {
         "visit_id": "20260728000101",          # 就诊流水号：整个来回的关联主键
-        "hospital_code": "H32050701121",
+        "hospital_code": "H33052300001",       # 医疗机构代码（示例值，联调时换贵方实际代码）
         "patient_name": "测试患者", "gender": "female", "birth_date": "1968-05-20",
-        "dept_code": "0101", "dept_name": "全科",   # dept_code = 本次接诊科室的业务编码
+        "dept_code": "1230024", "dept_name": "全科",  # 本次接诊科室的编码+名称（示例取自贵方科室表）
         "doctor_code": "001", "doctor_name": "张医生",
         "visit_type": "outpatient", "is_first_visit": True,
         # 体征选填：接诊界面已录的实测值有则一并推（字段见 3.1 表 vitals.*）
