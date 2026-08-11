@@ -68,6 +68,9 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
         setEnabled(false)
         return false
       }
+      // 401：token 已过期/失效，停止 SSE 重连循环（2026-08-11 审计修复）：
+      // 否则会无限重连绕过全局登出。返回 false 让上层循环退出。
+      if (res.status === 401) return false
       if (!res.ok) return true // 瞬时错误：保持现状，等下次重连再拉
       const data = (await res.json()) as { items: HisQueueItem[] }
       setItems(data.items || [])

@@ -3,7 +3,7 @@
 
 覆盖范围：
   - create / get_by_id 主路径 + 不存在返回 None
-  - create 重名 code 触发数据库 UNIQUE 约束（IntegrityError 由路由层兜底）
+  - create 重名 code：service 捕获 UNIQUE 约束并转 400 友好提示
   - list_all 默认只返回启用科室；include_inactive=True 返回全部
   - list_all 缓存命中路径（get_json 命中时直接返回缓存，不查库）
   - update：改名、显式置 parent_id=None"提升为顶级"、未传 parent_id 时保持原值、404
@@ -17,7 +17,6 @@
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.services.department_service import DepartmentService
@@ -83,12 +82,12 @@ async def test_get_by_id_found_and_missing(svc):
 
 @pytest.mark.asyncio
 async def test_create_duplicate_code_raises(svc, async_db):
-    """code 重复触发数据库 UNIQUE 约束 → IntegrityError（路由层负责转友好提示）。"""
+    """code 重复 → service 捕获 UNIQUE 约束并转 400 友好提示（2026-08-11 审计修复）。"""
     await svc.create(DepartmentCreate(name="儿科", code="pediatrics"))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(HTTPException) as exc_info:
         await svc.create(DepartmentCreate(name="儿科二病区", code="pediatrics"))
-    # 清理失败事务，避免影响 fixture 收尾
-    await async_db.rollback()
+    assert exc_info.value.status_code == 400
+    assert "已存在" in exc_info.value.detail
 
 
 # ── list_all ──────────────────────────────────────────────────────────────────

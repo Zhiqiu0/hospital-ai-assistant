@@ -64,12 +64,17 @@ async def lifespan(_app: FastAPI):
 
 
 # ── FastAPI 实例 ──────────────────────────────────────────────────────────────
+# API 文档仅非生产环境暴露（2026-08-11 审计修复）：生产开放 /docs /redoc /openapi.json
+# 等于把全部端点结构、参数、schema 公开给公网扫描器，与原注释"仅开发环境开放"矛盾。
+# 生产（app_env=production）一律关闭，其余环境保留便于联调。
+_docs_enabled = settings.app_env != "production"
 app = FastAPI(
     title="MediScribe 临床接诊智能助手",
     description="医院临床接诊智能助手系统 API",
     version="1.0.0",
-    docs_url="/docs",      # Swagger UI，仅开发环境开放
-    redoc_url="/redoc",    # ReDoc 文档
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
     lifespan=lifespan,
 )
 

@@ -65,6 +65,10 @@ async def discharge_encounter(
     if encounter.visit_type != "inpatient":
         raise HTTPException(status_code=400, detail="仅住院接诊可办理出院")
 
+    # 状态守卫（2026-08-11 审计修复）：已取消接诊不能被出院"复活"成 completed，
+    # 与 quick_save 签发守卫同一状态机口径。
+    if encounter.status == "cancelled":
+        raise HTTPException(status_code=400, detail="接诊已取消，无法办理出院")
     if encounter.status == "completed":
         return {"ok": True, "already_discharged": True, "encounter_id": encounter_id}
 
@@ -128,5 +132,8 @@ async def get_encounter_workspace(
     current_user=Depends(get_current_user),
 ):
     """恢复工作台：返回患者、问诊、最近病历及语音记录的完整快照。"""
+    # 归属 + embed 作用域校验（2026-08-11 审计修复）：与 get_encounter 一致，
+    # 防 embed 票越过其绑定接诊拉取该医生其它接诊的完整 PHI 快照
+    await assert_encounter_access(db, encounter_id, current_user)
     service = EncounterService(db)
     return await service.get_workspace_snapshot(encounter_id, current_user.id)

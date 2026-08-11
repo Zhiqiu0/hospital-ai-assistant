@@ -71,10 +71,18 @@ async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
 # ── 生命体征 ──────────────────────────────────────────────────────────────────
 
 def _parse_recorded_at(raw: Optional[str]) -> datetime:
-    """解析前端传的 ISO 时间，失败回退当前时间。"""
+    """解析前端传的 ISO 时间，失败回退当前时间。
+
+    时区归一（2026-08-11 审计修复）：带时区的输入先 astimezone() 换算到服务器本地
+    时间（生产 TZ=Asia/Shanghai）再剥 tzinfo，与 parse_iso_naive 口径一致；
+    原实现直接 replace(tzinfo=None) 会把 UTC 值当北京值存，落库差 8 小时。
+    """
     if raw:
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone().replace(tzinfo=None)
+            return dt
         except ValueError:
             pass
     return datetime.now()

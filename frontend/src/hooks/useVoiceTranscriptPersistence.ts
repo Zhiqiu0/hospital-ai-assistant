@@ -58,6 +58,10 @@ export function useVoiceTranscriptPersistence(
 
   // 1) 切换 encounter 或刷新页面时的恢复策略：本地 store → 后端权威
   useEffect(() => {
+    // 取消标志（2026-08-11 审计修复）：快速切换接诊时，旧接诊的 workspace 请求
+    // 可能在切换后才返回，其 setter 会把旧患者的转写写进新患者界面并被持久化
+    // （跨患者污染 + 隐私问题）。effect 清理时置 cancelled，await 返回后先判断再写。
+    let cancelled = false
     const restore = async () => {
       if (!currentEncounterId) {
         setTranscript('')
@@ -82,9 +86,7 @@ export function useVoiceTranscriptPersistence(
       try {
         // 这里仅消费 snapshot.latest_voice_record；其他字段不关心，
         // 用最小化内联接口替代 any（与 SnapshotResult 不耦合，避免循环依赖）
-        const snapshot = (await api.get(
-          `/encounters/${currentEncounterId}/workspace`
-        )) as {
+        const snapshot = (await api.get(`/encounters/${currentEncounterId}/workspace`)) as {
           latest_voice_record?: {
             id?: string
             raw_transcript?: string
@@ -92,6 +94,8 @@ export function useVoiceTranscriptPersistence(
             speaker_dialogue?: DialogueItem[]
           } | null
         } | null
+        // 已切到别的接诊：丢弃这个迟到的响应，绝不写进当前界面
+        if (cancelled) return
         const latest = snapshot?.latest_voice_record
         if (latest) {
           if (latest.raw_transcript) setTranscript(latest.raw_transcript)
@@ -106,6 +110,9 @@ export function useVoiceTranscriptPersistence(
       }
     }
     restore()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEncounterId])
 

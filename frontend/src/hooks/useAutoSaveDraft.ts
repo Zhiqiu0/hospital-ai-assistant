@@ -27,7 +27,12 @@ import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import { useRecordStore } from '@/store/recordStore'
 import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
-import { enqueueDraft, flushDraftQueue, type DraftPayload } from '@/services/draftQueue'
+import {
+  enqueueDraft,
+  flushDraftQueue,
+  removeDraftByKey,
+  type DraftPayload,
+} from '@/services/draftQueue'
 
 const DEBOUNCE_MS = 5000
 
@@ -77,13 +82,19 @@ export function useAutoSaveDraft({
         content: payload.content,
         expected_updated_at: payload.expected_updated_at,
       })) as { updated_at?: string } | null
-      lastSavedContentRef.current = payload.content
-      lastUpdatedAtRef.current = res?.updated_at ?? null
-      const now = Date.now()
-      setSavedAt(now)
-      setSavingState('saved')
-      // 同步到 recordStore，让 WorkbenchStatusBar / 其他组件能感知"已保存"状态
-      useRecordStore.getState().setRecordSavedAt(now)
+      // 基线守卫（2026-08-11 审计修复）：flush 补发的可能是「上一个接诊」的旧草稿，
+      // 若无条件更新乐观锁基线，会把旧草稿的 updated_at 写进当前接诊，导致当前接诊
+      // 后续保存永久 409 假冲突。仅当补发的正是当前接诊时才更新 ref/状态；否则也
+      // 返回 true（让队列条目被 removeDraft 清掉），只跳过状态写入。
+      if (payload.encounter_id === lastEncounterRef.current) {
+        lastSavedContentRef.current = payload.content
+        lastUpdatedAtRef.current = res?.updated_at ?? null
+        const now = Date.now()
+        setSavedAt(now)
+        setSavingState('saved')
+        // 同步到 recordStore，让 WorkbenchStatusBar / 其他组件能感知"已保存"状态
+        useRecordStore.getState().setRecordSavedAt(now)
+      }
       return true
     } catch (err) {
       // axios 错误形状收敛到本地视图：拦截器虽 reject error.response?.data，
@@ -91,10 +102,15 @@ export function useAutoSaveDraft({
       // 这里直接用 inline 形状（status 通过 response 或 axios error 透出）
       const e = err as { response?: { status?: number }; status?: number }
       const status = e?.response?.status ?? e?.status
-      // 409：乐观锁冲突——其他设备/标签页已经写过更新版
+      // 409：乐观锁冲突——其他设备/标签页已经写过更新版。
+      // 删掉该 (encounter, record_type) 的队列副本：其基线已过时，留着每次 flush 都会
+      // 再 409、无限重试并反复弹提示。只对当前接诊弹冲突提示，避免补发旧草稿误导医生。
       if (status === 409) {
-        setSavingState('conflict')
-        message.warning('病历已被其他设备修改，请刷新后重试')
+        void removeDraftByKey(payload.encounter_id, payload.record_type)
+        if (payload.encounter_id === lastEncounterRef.current) {
+          setSavingState('conflict')
+          message.warning('病历已被其他设备修改，请刷新后重试')
+        }
         return false
       }
       // 其他错误（网络 / 5xx）→ 入失败队列，下次成功时补发

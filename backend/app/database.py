@@ -48,6 +48,12 @@ _engine_kwargs: dict = {"echo": _db_echo}
 if not async_db_url.startswith("sqlite"):
     _engine_kwargs["pool_size"] = 10        # 连接池核心大小
     _engine_kwargs["max_overflow"] = 20     # 超出 pool_size 时最多额外创建的连接数
+    # 数据库会话时区统一为北京时间（2026-08-11 审计修复）：容器 TZ 只影响 Python 侧
+    # datetime.now()，数据库侧的 func.now()/CURRENT_TIMESTAMP 仍按 PG 的 UTC 结算，
+    # 导致 TimestampMixin 用 server_default=func.now() 落库的 created_at/updated_at
+    # 与"全项目 naive=北京时间"约定差 8 小时。给每条连接设 timezone=Asia/Shanghai，
+    # 让 func.now() 返回北京时间，与 Python 侧口径一致。纯代码改动，对存量卷也生效。
+    _engine_kwargs["connect_args"] = {"server_settings": {"timezone": "Asia/Shanghai"}}
 engine = create_async_engine(async_db_url, **_engine_kwargs)
 
 # ── Session 工厂 ──────────────────────────────────────────────────────────────

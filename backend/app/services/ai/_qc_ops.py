@@ -22,6 +22,7 @@ from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric
 from app.services.ai.ai_utils import safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts import QC_FIX_PROMPT
 from app.services.ai.task_logger import log_ai_task
 from app.services.qc_engine.checker import build_context
@@ -58,7 +59,20 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> str:
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
         )
-        return content.strip()
+        # 数值真实性守卫（2026-08-11 审计修复）：与批量修复路径同款确定性后校验。
+        # source_text 只取医生录入字段（current_record + 主诉 + 现病史），排除
+        # issue_description/suggestion——它们可能含 LLM 生成内容，不能当出处。
+        # 编造的体征数值被剔除后若整段变空，前端"写入病历"按钮因 fix_text 空自动禁用。
+        source_text = "\n".join(
+            str(x) for x in (
+                req.current_record, req.chief_complaint, req.history_present_illness
+            ) if x
+        )
+        cleaned = strip_unsubstantiated_vitals(content.strip(), source_text)
+        if cleaned != content.strip():
+            logger.warning("ai.qc_fix.guard: stripped_fabricated_vitals field=%s",
+                           req.field_name)
+        return cleaned
     except Exception as exc:
         logger.exception("ai.qc_fix: failed err=%s", exc)
         return req.suggestion or ""

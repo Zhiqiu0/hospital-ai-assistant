@@ -26,20 +26,26 @@ class PatientQueryMixin:
         phone: str | None = None,
         name: str | None = None,
         birth_date: date | None = None,
+        allow_weak_match: bool = True,
     ) -> dict | None:
         """查找系统中已存在的患者档案，用于防止重复建档。
 
         查找顺序（找到即返回，不继续后续匹配）：
-          1. id_card 非空 → 按身份证号精确匹配
-          2. phone + name 非空 → 按手机号+姓名精确匹配
-          3. name + birth_date 非空 → 按姓名+出生日期精确匹配
+          1. id_card 非空 → 按身份证号精确匹配（强键）
+          2. phone + name 非空 → 按手机号+姓名精确匹配（强键）
+          3. name + birth_date 非空 → 按姓名+出生日期精确匹配（弱键，仅兜底）
+
+        allow_weak_match（2026-08-11 审计修复）：
+          第 3 级「姓名+生日」有同名同生日碰撞风险。手工建档有医生人眼确认，
+          默认放行；HIS 全自动链路必须传 False——宁可产生重复档案（可事后人工
+          合并），也绝不能把两个不同患者误合并成一份（会造成跨人病历污染）。
 
         Returns:
             找到则返回患者响应字典；未找到则返回 None。
         """
         patient = None
 
-        # 全部三种查重路径都要排除已软删患者：上次接诊取消时连档案一起清掉了，
+        # 全部查重路径都要排除已软删患者：上次接诊取消时连档案一起清掉了，
         # 这里再把人查出来等于把"已删"档案带回业务流，导致医生在新接诊里继续
         # 用一个底层已经标记删除的患者档案——不是预期。
 
@@ -64,16 +70,17 @@ class PatientQueryMixin:
             )
             patient = result.scalar_one_or_none()
 
-        # 最后用姓名+出生日期（精度较低，同名同日出生有碰撞风险，仅作兜底）
-        if not patient and name and birth_date:
+        # 最后用姓名+出生日期（弱键，同名同日出生有碰撞风险）：
+        # 用 first() 而非 scalar_one_or_none()，多行命中时不抛 MultipleResultsFound。
+        if not patient and allow_weak_match and name and birth_date:
             result = await self.db.execute(
                 select(Patient).where(
                     Patient.name == name,
                     Patient.birth_date == birth_date,
                     Patient.is_deleted.is_(False),
-                )
+                ).order_by(Patient.created_at.desc())
             )
-            patient = result.scalar_one_or_none()
+            patient = result.scalars().first()
 
         return self._to_response(patient) if patient else None
 

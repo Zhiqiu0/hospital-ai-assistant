@@ -66,16 +66,37 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     """
     doctor = await _map_doctor(db, payload.doctor_code)
 
-    # 幂等：同 visit_id 已有非取消接诊 → 复用（医生在 HIS 反复打开患者会重推）
-    existing = await db.execute(
+    # 幂等：同一机构同 visit_id 已有非取消接诊 → 复用（医生在 HIS 反复打开患者会重推）。
+    # 用 hospital_code + visit_id 双键（2026-08-11 审计修复）：visit_id 只在机构内唯一，
+    # 且限定 source=admit_push，与旧 embed 接诊的命名空间隔离，避免跨机构/跨链路撞号。
+    # JSONB 字段的 source/hospital_code 过滤放 Python 侧做（SQLite 测试库不支持 .astext，
+    # 生产 PG 用 GIN 索引命中 visit_no 后候选很少，内存过滤开销可忽略）。
+    candidates = (await db.execute(
         select(Encounter).where(
             Encounter.visit_no == payload.visit_id,
             Encounter.status != "cancelled",
             Encounter.his_external_ref.isnot(None),
-        ).order_by(Encounter.created_at.desc()).limit(1)
+        ).order_by(Encounter.created_at.desc())
+    )).scalars().all()
+    enc = next(
+        (e for e in candidates
+         if (e.his_external_ref or {}).get("source") == "admit_push"
+         and (e.his_external_ref or {}).get("hospital_code") == payload.hospital_code),
+        None,
     )
-    enc = existing.scalars().first()
     if enc is not None:
+        # 换医生接诊（2026-08-11 审计修复）：HIS 重推带了新 doctor_code（转接/交接）时，
+        # 把接诊改派给新医生并更新科室，否则新医生工作台永远收不到叫号。
+        if enc.doctor_id != doctor.id:
+            enc.doctor_id = doctor.id
+            enc.department_id = doctor.department_id
+            ref = dict(enc.his_external_ref or {})
+            ref["doctor_code"] = payload.doctor_code
+            enc.his_external_ref = ref
+            await db.commit()
+            await db.refresh(enc)
+            logger.info("his_admit.reassigned: visit_id=%s 改派医生 %s",
+                        payload.visit_id, doctor.username)
         patient = await db.get(Patient, enc.patient_id)
         return AdmitResult(
             encounter_id=enc.id, patient_id=enc.patient_id,
@@ -154,11 +175,15 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             pass  # 解析不了就留空，不阻塞建档
 
     service = PatientService(db)
+    # allow_weak_match=False：HIS 全自动链路禁用「姓名+生日」弱键匹配，
+    # 避免同名同生日的不同患者被误合并成一份档案（跨人病历污染是临床事故）。
+    # 只有身份证 / 手机号+姓名 强键命中才复用；否则一律新建（可事后人工合并）。
     found = await service.find_existing(
         id_card=payload.id_card or None,
         phone=payload.phone or None,
         name=payload.patient_name,
         birth_date=birth_date,
+        allow_weak_match=False,
     )
     if found:
         return found["id"]
@@ -215,4 +240,12 @@ async def handle_admit(payload: AdmitPushRequest) -> AdmitResult:
     async with AsyncSessionLocal() as db:
         result = await process_admit(db, payload)
     await publish_admit_event(result, payload)
+    # 失效该医生「进行中接诊」列表缓存（2026-08-11 审计修复）：新建/改派接诊后
+    # /encounters/my 有 30s 缓存，不失效则续接诊面板最多滞后 30 秒才见到新病人。
+    if not result.reused:
+        try:
+            from app.services.encounter_service import invalidate_my_encounters
+            await invalidate_my_encounters(result.doctor_id)
+        except Exception:
+            logger.warning("his_admit: 失效 my_encounters 缓存失败 doctor=%s", result.doctor_id)
     return result

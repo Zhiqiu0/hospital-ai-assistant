@@ -129,12 +129,17 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
       const res = (await api.post(`/his/encounter/${item.encounter_id}/writeback`)) as {
         code: number
         message?: string
-        data?: { status?: string }
+        data?: { status?: string; message?: string }
       }
-      if (res.code === 0 && res.data?.status === 'success') {
+      const st = res.data?.status
+      if (res.code === 0 && st === 'success') {
         message.success(`「${item.patient_name}」病历已回写 HIS`)
+      } else if (res.code === 0 && st === 'skipped') {
+        // skipped：HIS 连接不在线，属"未回写"而非"失败"——信封 message 恒为
+        // "success"，不能拿它当失败原因展示（2026-08-11 审计修复）
+        message.warning('HIS 连接不在线，暂未能回写，请稍后重试')
       } else {
-        message.error(`回写仍失败：${res.message || res.data?.status || '未知原因'}`)
+        message.error(`回写仍失败：${res.data?.message || res.message || st || '未知原因'}`)
       }
     } catch {
       message.error('回写请求失败，请稍后重试')

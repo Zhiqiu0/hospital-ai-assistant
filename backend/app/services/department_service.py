@@ -15,6 +15,7 @@
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Department
@@ -93,7 +94,13 @@ class DepartmentService:
         """
         dept = Department(name=data.name, code=data.code, parent_id=data.parent_id)
         self.db.add(dept)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # code 唯一约束冲突（2026-08-11 审计修复）：原先未捕获直接 500，
+            # 改为回滚 + 400 友好提示，与患者身份证查重的处理口径一致。
+            await self.db.rollback()
+            raise HTTPException(status_code=400, detail=f"科室编码已存在：{data.code}")
         await self.db.refresh(dept)
         await redis_cache.delete(_LIST_KEY)
         return dept
