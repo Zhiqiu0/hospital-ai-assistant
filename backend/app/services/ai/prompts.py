@@ -23,7 +23,6 @@ from app.services.ai.prompts_suggestions import (  # noqa: F401
     INQUIRY_SUGGESTIONS_PROMPT,
 )
 from app.services.ai.prompts_qc import (  # noqa: F401
-    GRADE_SCORE_PROMPT,
     QC_FIX_PROMPT,
     QC_PROMPT,
 )
