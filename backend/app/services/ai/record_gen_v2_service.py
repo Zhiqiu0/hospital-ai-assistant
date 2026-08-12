@@ -4,10 +4,8 @@
 L3 治本路线核心 service——把 quick-generate 主路径从"自由文本流"切到
 "结构化 JSON → 模板渲染 → 一次性 SSE 推回"。
 
-为什么独立成文件而不在 record_gen_service.py：
-  record_gen_service.py 服务于 /api/v1/medical-records/{id}/generate（持久化版本快照），
-  本模块服务于 /api/v1/ai/quick-generate（无持久化、纯流式生成草稿）。
-  两条路径职责不同，分开文件方便阶段 4 清理旧路径时不互相干扰。
+历史说明：旧范式 record_gen_service.py（/medical-records/{id}/generate 系列）
+已于 2026-08-12 清理删除，本模块是病历 AI 生成的唯一路径。
 
 入口：stream_record_v2(record_type, req, db) → AsyncGenerator[str, None]
 返回 SSE 字符串生成器，路由层直接 yield 给 StreamingResponse。

@@ -4,11 +4,12 @@
 包含：
   QuickSaveRequest      : 出具最终病历时快速保存的入参
   MedicalRecordCreate   : 创建病历记录的入参
-  RecordGenerateRequest : 通过问诊数据生成病历的入参
-  RecordContinueRequest : 续写病历的入参
-  RecordPolishRequest   : 润色病历的入参
   RecordContentUpdate   : 更新病历内容的入参
   MedicalRecordResponse : 病历记录查询响应
+
+历史说明（2026-08-12 清理）：旧范式 AI 路由的三个入参
+（RecordGenerateRequest/RecordContinueRequest/RecordPolishRequest）
+已随路由一起删除，AI 生成统一走 /ai/quick-* 系列（schemas 见 ai_generation 路由内联模型）。
 """
 
 from datetime import datetime
@@ -34,34 +35,6 @@ class MedicalRecordCreate(BaseModel):
 
     encounter_id: str
     record_type: str
-
-
-class RecordGenerateRequest(BaseModel):
-    """通过问诊数据生成病历草稿的入参。
-
-    inquiry_input 是包含所有问诊字段的字典，
-    格式与 InquiryInputUpdate 字段名一致。
-    """
-
-    inquiry_input: dict  # 问诊字段字典，key=字段名，value=内容文本
-
-
-class RecordContinueRequest(BaseModel):
-    """续写病历（在已有内容基础上继续生成）的入参。"""
-
-    current_content: dict  # 当前已有内容
-    target_field: str      # 要续写的目标字段名
-
-
-class RecordPolishRequest(BaseModel):
-    """润色病历内容的入参。
-
-    content 是包含病历各字段的字典。
-    target_fields 为空时全字段润色，指定时只润色选中字段。
-    """
-
-    content: dict
-    target_fields: Optional[list[str]] = None  # 要润色的字段列表（None=全部润色）
 
 
 class RecordContentUpdate(BaseModel):

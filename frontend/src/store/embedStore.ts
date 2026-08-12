@@ -1,8 +1,9 @@
 /**
  * 嵌入模式状态存储（store/embedStore.ts）
  *
- * 用来在 WorkbenchPage 等共享组件里判断"当前是不是嵌入模式 / HIS 引用"。
- * EmbedWorkbenchPage 加载时写入，WorkbenchPage 可读但不改。
+ * 用来判断"当前是不是嵌入模式 / HIS 引用"。
+ * EmbedWorkbenchPage 加载时写入；当前真实读者是 services/api.ts
+ * （401 时跳 /embed?expired=1 的嵌入态判断）。
  *
  * persist 用 sessionStorage：
  *   - 刷新页面 → 状态保留（医生 F5 工作台不丢嵌入态）

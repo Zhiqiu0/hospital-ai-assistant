@@ -30,10 +30,11 @@ _TIMELINESS_HOURS = {
 async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
     """病历质量与可靠性健康度（2026-08-11 病历质量闭环，评审/运营看板）。
 
-    聚合三项数据真实支撑的指标（近 N 天）：
+    聚合四项数据真实支撑的指标（近 N 天）：
       - 回写成功率：HIS 来源已签发接诊按 writeback.status 分布（第一版 HIS 命门可观测）
       - 反馈采纳率：AI 建议 useful/useless（医生真实认可度）
       - 病历时效达标率：住院系病历 接诊→签发 是否在法定时限内
+      - AI 采纳度：签发终稿 vs 最近一版 AI 草稿的编辑距离（2026-08-12 反馈闭环）
     注：AI 调用"成功率"不在此列——失败任务当前不落 ai_tasks，据此算会失真。
     """
     from app.models.ai_feedback import AISuggestionFeedback
@@ -109,8 +110,12 @@ async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
     for r in tl.values():
         r["rate"] = round(r["on_time"] / r["total"], 3) if r["total"] else None
 
+    # ── AI 采纳度（终稿 vs AI 草稿相似度，聚合逻辑在 _ai_adoption 模块）──
+    from app.services._ai_adoption import adoption_stats
+    ai_adoption = await adoption_stats(db, window_start)
+
     return {"window_days": days, "writeback": writeback, "feedback": feedback,
-            "timeliness": tl}
+            "timeliness": tl, "ai_adoption": ai_adoption}
 
 
 async def get_deepseek_balance() -> dict | None:

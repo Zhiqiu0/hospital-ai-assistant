@@ -23,7 +23,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -125,6 +125,15 @@ class RecordVersion(Base):
     # 校验失败（见 services/_record_signature.py）。不替代 CA/UKey 数字签名，是其前置基线。
     sign_hash: Mapped[Optional[str]] = mapped_column(String(64))
     prev_hash: Mapped[Optional[str]] = mapped_column(String(64))
+
+    # ── AI 采纳度量（2026-08-12 反馈闭环数据管道）────────────────────────────
+    # 仅签发版本(source='doctor_signed')且签发前存在 AI 版本时有值：
+    #   ai_similarity      : 签发终稿与最近一版 AI 草稿的文本相似度（0~1，
+    #                        difflib.SequenceMatcher.ratio，1=原样采纳）
+    #   ai_base_version_no : 对比基准的 AI 版本号（便于追溯是哪版草稿）
+    # 纯手写签发（无 AI 版本）两字段均为 NULL，看板聚合时天然排除。
+    ai_similarity: Mapped[Optional[float]] = mapped_column(Float)
+    ai_base_version_no: Mapped[Optional[int]] = mapped_column(Integer)
 
     # 关联病历主表
     record: Mapped[MedicalRecord] = relationship(back_populates="versions")

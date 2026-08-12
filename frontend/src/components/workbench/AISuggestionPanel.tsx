@@ -7,7 +7,7 @@
  *   3. 「诊断建议」(DiagnosisSuggestionTab)— 鉴别诊断列表及置信度
  *
  * 未读徽标：
- *   workbenchStore.suggestions 中每类建议有独立 seen 标记；
+ *   aiSuggestionStore 中每类建议有独立 seen 标记；
  *   收到新建议时对应标签显示红点，点进去后标记已读。
  *
  * 各 Tab 均通过 SSE stream 实时填充，用户无需手动刷新。

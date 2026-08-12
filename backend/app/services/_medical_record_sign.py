@@ -171,6 +171,12 @@ class MedicalRecordSignMixin:
             prev_hash=prev_hash,
         )
 
+        # ── AI 采纳度量（2026-08-12 反馈闭环）────────────────────────────────
+        # 终稿 vs 最近一版 AI 草稿的相似度，落在签发版本上供看板聚合。
+        # 度量列不进 sign_hash（是运营指标非病历内容）；计算失败不阻断签发。
+        from app.services._ai_adoption import annotate_sign_similarity
+        await annotate_sign_similarity(self.db, version, content)
+
         await self.db.commit()
         await self.db.refresh(record)
         # 失效缓存：snapshot 一定要失效（病历内容变了）；

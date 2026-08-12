@@ -363,6 +363,23 @@ async def migrate():
                 print(f"    {idx_name} - SKIP ({str(e)[:80]})")
         print()
 
+        # 13. record_versions AI 采纳度量列（2026-08-12 反馈闭环数据管道）：
+        # 签发时记录终稿与最近一版 AI 草稿的相似度，看板据此聚合真实采纳度。
+        # 与模型 RecordVersion.ai_similarity / ai_base_version_no 声明保持一致。
+        print("[13] record_versions AI 采纳度量列...")
+        for col, col_type in [
+            ("ai_similarity", "DOUBLE PRECISION"),
+            ("ai_base_version_no", "INTEGER"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE record_versions ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                ))
+                print(f"    record_versions.{col} - OK")
+            except Exception as e:
+                print(f"    record_versions.{col} - SKIP ({str(e)[:80]})")
+        print()
+
     print("=== 迁移完成 ===")
 
 

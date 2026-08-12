@@ -3,17 +3,14 @@
  *
  * 后端 `quick-start` 与 `workspace snapshot` 接口都返回 `patient` + `patient_profile`
  * 两段数据。前端有 4 处入口需要把这两段数据同步到 patientCacheStore：
- *   1. WorkbenchPage.handleEncounterCreated  （门诊/急诊新建/复诊）
- *   2. useInquiryPanel.handleAdmitToInpatient（急诊→住院转入）
- *   3. NewInpatientEncounterModal.handleSubmit（住院新建）
- *   4. useWorkbenchBase.handleResume         （从未完成接诊恢复）
+ *   1. WorkbenchPage（门诊/急诊新建/复诊）
+ *   2. hooks/inquiryPanel/useEmergencyFlow（急诊→住院转入）
+ *   3. NewInpatientEncounterModal（住院新建）
+ *   4. pages/inpatientWorkbench/encounterCreated（住院工作台建档回调）
  *
  * 把这段重复逻辑收口到本文件，调用方只需一行 `applyQuickStartResult(res)`，
  * 既避免了 4 处实现分叉，也方便后续扩展（如增加埋点 / 缓存预热）。
- *
- * 注意：本文件不操作 workbenchStore。activeEncounterStore 与 workbenchStore 的
- * 老指针字段（currentPatient / currentEncounterId）目前并存，前者由本工具写，
- * 后者仍由调用方各自显式调用 setCurrentEncounter，等 1.6 后续迁移完整再删旧字段。
+ * （历史：旧 workbenchStore 及其指针字段已在迁移完成后整体删除。）
  */
 
 import { usePatientCacheStore } from './patientCacheStore'
@@ -174,9 +171,7 @@ export function applySnapshotResult(res: SnapshotResult): void {
     // store 签名要 InquiryData（38 字段全集）。这里用 unknown 桥接而非 any，
     // 让类型转换是受控的：缺失字段保持 undefined，下游字段访问全部走 `?? ''`
     // 兜底（store 内部所有字段都是 string | undefined）。
-    useInquiryStore
-      .getState()
-      .updateInquiryFields(res.inquiry as unknown as InquiryData)
+    useInquiryStore.getState().updateInquiryFields(res.inquiry as unknown as InquiryData)
   }
 
   // record：当前活跃病历的内容
@@ -250,14 +245,17 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (aiSug.exam?.suggestions) {
       const existingByName = new Map(store.examSuggestions.map(s => [s.exam_name, s]))
       store.setExamSuggestions(
-        aiSug.exam.suggestions.map(s => ({
-          exam_name: s.exam_name ?? '',
-          category: s.category ?? 'basic',
-          reason: s.reason ?? '',
-          ...s,
-          // 保留医生标记的"已开单"状态，后端不存这个，前端独立维护
-          isOrdered: existingByName.get(s.exam_name ?? '')?.isOrdered ?? s.isOrdered,
-        } as ExamSuggestion))
+        aiSug.exam.suggestions.map(
+          s =>
+            ({
+              exam_name: s.exam_name ?? '',
+              category: s.category ?? 'basic',
+              reason: s.reason ?? '',
+              ...s,
+              // 保留医生标记的"已开单"状态，后端不存这个，前端独立维护
+              isOrdered: existingByName.get(s.exam_name ?? '')?.isOrdered ?? s.isOrdered,
+            }) as ExamSuggestion
+        )
       )
     }
 
