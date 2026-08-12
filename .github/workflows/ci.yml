@@ -86,6 +86,17 @@ jobs:
           echo "alembic heads count = $heads"
           test "$heads" -eq 1 || { echo "::error::检测到多个 alembic head，迁移链分叉，需先合并"; exit 1; }
 
+      - name: 前后端 API 契约检查
+        # 导出 FastAPI 真实 OpenAPI（方法+路径）清单，静态扫描 frontend/src 全部
+        # api.*/fetch 调用逐条比对——前端调了不存在的端点（404 被兜底静默吞掉、
+        # 功能悄悄失效那类事故）在 CI 直接红灯。脚本见 scripts/check_api_contract.py。
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+          ORTHANC_PASSWORD: "ci-test-not-for-production"
+        run: |
+          python ../scripts/check_api_contract.py
+
       - name: Run tests
         # Settings 在 import 时校验 DATABASE_URL/SECRET_KEY；CI 没有 .env，
         # 用假值让 Settings 初始化通过（实际测试用 conftest 内的 sqlite 内存库）
