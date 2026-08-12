@@ -144,7 +144,6 @@ services:
       # 故 HIS_* 必须在这里显式透传，否则生产环境 his_adapter_enabled 永远 False、
       # 验签密钥永远为空——到医院联调时改服务器 .env 也不会生效。默认值与 config.py 一致。
       HIS_ADAPTER_ENABLED: ${HIS_ADAPTER_ENABLED:-false}
-      HIS_EMBED_TOKEN_TTL_HOURS: ${HIS_EMBED_TOKEN_TTL_HOURS:-4}
       HIS_INBOUND_APP_ID: ${HIS_INBOUND_APP_ID:-}
       HIS_INBOUND_APP_SECRET: ${HIS_INBOUND_APP_SECRET:-}
       HIS_SIGN_CLOCK_SKEW_SECONDS: ${HIS_SIGN_CLOCK_SKEW_SECONDS:-300}

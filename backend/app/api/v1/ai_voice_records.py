@@ -31,20 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _assert_embed_scope(record: VoiceRecord, current_user) -> None:
-    """embed 作用域校验（2026-08-11 审计修复）。
-
-    embed 短期票只绑定一条接诊，但语音记录端点原本只按 doctor_id 过滤——
-    embed 用户的 doctor_id 就是该医生本人，于是能读到该医生「全部」接诊的语音，
-    突破了作用域。这里对 embed 用户额外要求 record 属于其绑定的接诊。
-    普通医生/管理员无 _embed_scoped 标记，行为不变。
-    """
-    if getattr(current_user, "_embed_scoped", False):
-        bound = str(getattr(current_user, "_embed_encounter_id", ""))
-        if str(record.encounter_id or "") != bound:
-            raise HTTPException(status_code=403, detail="嵌入会话只能访问其对应接诊的语音")
-
-
 @router.post("/voice-records/upload")
 async def upload_voice_record(
     file: UploadFile = File(...),
@@ -55,11 +41,6 @@ async def upload_voice_record(
     current_user=Depends(get_current_user),
 ):
     """上传语音文件，可选 ASR 转写（优先使用浏览器端转写，无则调 Qwen-Audio 兜底）。"""
-    # embed 票只能给其绑定接诊上传语音（防越权写入他人接诊）
-    if getattr(current_user, "_embed_scoped", False):
-        bound = str(getattr(current_user, "_embed_encounter_id", ""))
-        if str(encounter_id or "") != bound:
-            raise HTTPException(status_code=403, detail="嵌入会话只能给其对应接诊上传语音")
     uploads_root = Path(__file__).resolve().parents[3] / "uploads"
     rel_dir = Path("voice_records") / (encounter_id or "no_encounter")
     (uploads_root / rel_dir).mkdir(parents=True, exist_ok=True)
@@ -124,7 +105,6 @@ async def get_audio_token(
     record = result.scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="语音记录不存在")
-    _assert_embed_scope(record, current_user)  # embed 票限本接诊
 
     from app.core.security import create_audio_token
     audio_token = create_audio_token(
@@ -191,7 +171,6 @@ async def delete_voice_record(
     record = result.scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="语音记录不存在")
-    _assert_embed_scope(record, current_user)  # embed 票限本接诊
 
     if record.audio_file_path:
         audio_path = Path(__file__).resolve().parents[3] / "uploads" / record.audio_file_path

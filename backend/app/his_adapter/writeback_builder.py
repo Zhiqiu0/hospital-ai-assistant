@@ -108,9 +108,9 @@ async def build_writeback_payload(
         "meta": {
             "source": "mediscribe_ai",
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            # 兼容两种来源格式：接诊推送落的 doctor_code（2026-08-11 联动后主路径）
-            # 与旧 embed 会话落的 his_doctor_no
-            "doctor_code": his_ref.get("doctor_code") or his_ref.get("his_doctor_no") or "",
+            # 接诊推送落的 doctor_code（2026-08-11 联动后唯一来源；
+            # 旧 embed 会话的 his_doctor_no 兜底已随 embed 下线删除，无存量数据）
+            "doctor_code": his_ref.get("doctor_code") or "",
             "app_version": app_version,
         },
     }

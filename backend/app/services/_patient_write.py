@@ -25,7 +25,7 @@ class PatientWriteMixin:
         commit 参数（2026-06-11 治本）：
           True（默认）——方法内部 commit，保持原有行为；
           False——只 flush 拿主键不提交，由调用方把"建患者 + 后续写入"包进
-          同一事务（embed/start 用，防止接诊创建失败时留下孤儿患者档案）。
+          同一事务（HIS 接诊推送建档用，防止接诊创建失败时留下孤儿患者档案）。
 
         使用 exclude_none=True 避免将 None 字段写入数据库，
         保留数据库字段的默认值（如 is_from_his=False）。

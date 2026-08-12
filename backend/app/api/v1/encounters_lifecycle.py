@@ -132,8 +132,8 @@ async def get_encounter_workspace(
     current_user=Depends(get_current_user),
 ):
     """恢复工作台：返回患者、问诊、最近病历及语音记录的完整快照。"""
-    # 归属 + embed 作用域校验（2026-08-11 审计修复）：与 get_encounter 一致，
-    # 防 embed 票越过其绑定接诊拉取该医生其它接诊的完整 PHI 快照
+    # 归属校验（2026-08-11 审计修复）：与 get_encounter 一致，防越权拉取
+    # 该医生以外接诊的完整 PHI 快照
     await assert_encounter_access(db, encounter_id, current_user)
     service = EncounterService(db)
     return await service.get_workspace_snapshot(encounter_id, current_user.id)

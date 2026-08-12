@@ -68,7 +68,7 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
 
     # 幂等：同一机构同 visit_id 已有非取消接诊 → 复用（医生在 HIS 反复打开患者会重推）。
     # 用 hospital_code + visit_id 双键（2026-08-11 审计修复）：visit_id 只在机构内唯一，
-    # 且限定 source=admit_push，与旧 embed 接诊的命名空间隔离，避免跨机构/跨链路撞号。
+    # 且限定 source=admit_push，与历史其它链路数据的命名空间隔离，避免跨机构/跨链路撞号。
     # JSONB 字段的 source/hospital_code 过滤放 Python 侧做（SQLite 测试库不支持 .astext，
     # 生产 PG 用 GIN 索引命中 visit_no 后候选很少，内存过滤开销可忽略）。
     candidates = (await db.execute(

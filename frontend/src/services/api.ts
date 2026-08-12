@@ -17,7 +17,6 @@
 import axios from 'axios'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
-import { useEmbedStore } from '@/store/embedStore'
 import { captureAxiosError } from '@/sentry'
 
 const api = axios.create({
@@ -74,15 +73,6 @@ api.interceptors.response.use(
     const isLoginRequest = requestUrl.includes('/auth/login')
 
     if (status === 401 && !isLoginRequest) {
-      // 嵌入模式（HIS 桌面 Agent 拉起）下 401 大概率是 4h embed_token 过期：
-      // 跳登录页只会让医生一头雾水（嵌入会话没有账号密码概念），
-      // 改为跳 /embed?expired=1 给出"请回 HIS 重新触发"的明确指引（2026-06-11 治本）
-      if (useEmbedStore.getState().isEmbed) {
-        useEmbedStore.getState().clearEmbed()
-        useAuthStore.getState().clearAuth()
-        window.location.href = '/embed?expired=1'
-        return Promise.reject(error.response?.data || error)
-      }
       // Token 失效或未登录 → 清除登录态并跳转，不弹 toast（页面即将刷新）
       useAuthStore.getState().clearAuth()
       window.location.href = '/login'
