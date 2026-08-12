@@ -127,6 +127,36 @@ class Settings(BaseSettings):
         """将逗号分隔的 allowed_origins 字符串转换为列表，供 CORS 中间件使用。"""
         return [o.strip() for o in self.allowed_origins.split(",")]
 
+    def validate_runtime(self) -> None:
+        """启动期一致性校验（2026-08-11 病历安全）：防"半配置"状态静默上线。
+
+        HIS 保险丝开着(his_adapter_enabled=True)但入站验签凭证没配全时，接诊推送会
+        因验签失败被全部拒收、病历回写通道也无从建立——这类"开关开了但没凭证"的半
+        配置，过去要等真网冒烟才发现。
+
+        生产环境(app_env=production)一律 fail-fast（把问题挡在部署阶段）；
+        开发/测试环境只告警不阻断（本地常把开关打开做联调彩排，凭证可后配）。
+        """
+        if not self.his_adapter_enabled:
+            return
+        missing = [
+            name for name, val in (
+                ("HIS_INBOUND_APP_ID", self.his_inbound_app_id),
+                ("HIS_INBOUND_APP_SECRET", self.his_inbound_app_secret),
+            )
+            if not (val or "").strip()
+        ]
+        if not missing:
+            return
+        msg = (
+            f"HIS_ADAPTER_ENABLED=true 但缺少入站验签凭证：{', '.join(missing)}。"
+            "请补齐凭证或把保险丝关回 false。"
+        )
+        if self.app_env == "production":
+            raise ValueError(msg)
+        import logging
+        logging.getLogger(__name__).warning("config.validate: %s（非生产环境仅告警）", msg)
+
     class Config:
         # 按顺序尝试加载 .env 文件（支持 Docker 挂载和本地开发两种路径）
         env_file = ("../.env", ".env")
@@ -135,3 +165,5 @@ class Settings(BaseSettings):
 
 # 模块级单例，全局使用 `from app.config import settings`
 settings = Settings()
+# 启动期一致性校验（配置错误即 fail-fast，挡在部署阶段而非等真网冒烟发现）
+settings.validate_runtime()

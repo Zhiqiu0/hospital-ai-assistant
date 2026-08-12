@@ -53,14 +53,18 @@ async def lifespan(_app: FastAPI):
     # HIS 回写指令消费任务（2026-08-11 业务联动）：多 worker 部署下，签发请求
     # 与厂商 WS 连接可能不在同一进程，回写指令经 Redis 总线广播、由持有连接的
     # worker 抢占执行。保险丝关闭时不起任务，生产 SaaS 零影响。
-    his_wb_consumer = None
+    # 回写对账任务（2026-08-11 病历安全）：周期扫"已签发但回写未成功"的 HIS 接诊
+    # 自动重投，耗尽报 Sentry。多 worker 靠 Redis 锁防重。同受保险丝保护。
+    bg_tasks = []
     if settings.his_adapter_enabled:
         import asyncio
         from app.his_adapter.writeback_dispatch import consumer_loop
-        his_wb_consumer = asyncio.create_task(consumer_loop())
+        from app.his_adapter.writeback_reconcile import reconcile_loop
+        bg_tasks.append(asyncio.create_task(consumer_loop()))
+        bg_tasks.append(asyncio.create_task(reconcile_loop()))
     yield
-    if his_wb_consumer is not None:
-        his_wb_consumer.cancel()
+    for t in bg_tasks:
+        t.cancel()
 
 
 # ── FastAPI 实例 ──────────────────────────────────────────────────────────────
@@ -150,3 +154,46 @@ async def health_check():
 
     status = "ok" if db_status == "ok" else "degraded"
     return {"status": status, "db": db_status, "version": "1.0.0"}
+
+
+@app.get("/health/deep")
+async def health_check_deep():
+    """深度健康检查（2026-08-11 病历安全）：除 DB 外并发探活 Redis。
+
+    为什么单独一个端点：容器 liveness 用 /api/v1/health（只看 DB，避免 Redis 抖动
+    误触发容器重启）；本端点给 uptime-kuma 监控用——Redis 是多 worker 下 HIS 病历
+    回写的事件总线，它挂了主 /health 照样绿、回写却静默停摆。任一关键依赖不可用返
+    503，让外部监控立即告警，不再"看着健康实则半瘫"。
+    """
+    from fastapi.responses import JSONResponse
+
+    deps: dict[str, str] = {}
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        deps["db"] = "ok"
+    except Exception as exc:
+        logger.error("health.deep.db: failed err=%s", exc)
+        deps["db"] = "error"
+
+    # Redis：HIS 回写总线 + 缓存。用 redis_cache 单例的底层 client ping。
+    try:
+        from app.services.redis_cache import redis_cache
+        client = redis_cache._get_client()  # 未配置返回 None
+        if client is None:
+            deps["redis"] = "unconfigured"
+        else:
+            await client.ping()
+            deps["redis"] = "ok"
+    except Exception as exc:
+        logger.error("health.deep.redis: failed err=%s", exc)
+        deps["redis"] = "error"
+
+    critical_down = deps.get("db") == "error" or deps.get("redis") == "error"
+    body = {
+        "status": "degraded" if critical_down else "ok",
+        "deps": deps,
+        "version": "1.0.0",
+    }
+    # 关键依赖挂 → 503 让 uptime-kuma 告警；否则 200
+    return JSONResponse(status_code=503 if critical_down else 200, content=body)
