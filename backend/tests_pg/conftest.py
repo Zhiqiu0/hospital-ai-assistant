@@ -223,4 +223,7 @@ async def alembic_pg(empty_pg):
     assert result.returncode == 0, (
         f"alembic upgrade head 失败:\n{result.stdout}\n{result.stderr}"
     )
+    # 建库后先清一次连接池：上一个用例（另一个 event loop）可能遗留池化连接，
+    # 被本用例捞到会报 asyncpg "attached to a different loop"（CI 踩过）。
+    await empty_pg.dispose()
     yield empty_pg
