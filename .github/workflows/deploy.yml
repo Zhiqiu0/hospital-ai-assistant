@@ -157,6 +157,19 @@ jobs:
             # 维护到这里的标志）→ stamp c2d3e4f5a6b7 表示"现状已到这"，跳过老迁移
             # 只跑新加的 d3e4f5a6b7c8 / e4f5a6b7c8d9。
             # 全新数据库（gender_scope 不存在）→ 不 stamp，alembic 从头跑建表。
+            # 迁移前自动备份（2026-08-11 病历安全）：跑 alembic/migrate.py 改 schema 前
+            # 先 pg_dump 一份到服务器 /app/backups，万一迁移损坏数据可回滚。失败仅告警
+            # 不阻断（迁移多为 IF NOT EXISTS 幂等，低风险）；只保留最近 10 份防塞满盘。
+            mkdir -p /app/backups
+            BK="/app/backups/pre_migrate_$(date +%Y%m%d_%H%M%S).sql"
+            if docker compose exec -T db pg_dump -U medassist medassist > "$BK" 2>/dev/null; then
+              echo "[deploy] 迁移前备份 OK: $BK ($(du -h "$BK" | cut -f1))"
+            else
+              echo "[deploy] WARN: 迁移前 pg_dump 失败，继续部署（迁移幂等，风险可控）"
+              rm -f "$BK"
+            fi
+            ls -t /app/backups/pre_migrate_*.sql 2>/dev/null | tail -n +11 | xargs -r rm -f
+
             STAMP_BASELINE="c2d3e4f5a6b7"
             ALEMBIC_EMPTY=$(docker compose exec -T db psql -U medassist -d medassist -tA \
               -c "SELECT count(*) FROM alembic_version" 2>/dev/null || echo "0")

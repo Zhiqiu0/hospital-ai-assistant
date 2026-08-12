@@ -41,6 +41,8 @@ import app.models.medical_record  # noqa
 import app.models.revoked_token   # noqa
 import app.models.inpatient       # noqa  # 含 VitalSign / ProblemItem
 import app.models.imaging         # noqa  # 含 ImagingStudy / ImagingReport
+import app.models.ai_feedback     # noqa  # AISuggestionFeedback（质量健康度看板用）
+import app.models.voice_record    # noqa  # VoiceRecord
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 

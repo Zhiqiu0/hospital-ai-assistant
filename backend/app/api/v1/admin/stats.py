@@ -22,6 +22,7 @@ from app.models.user import Department
 from app.services.admin_stats_service import (
     get_aliyun_status,
     get_deepseek_balance,
+    get_quality_health,
     get_token_usage_totals,
 )
 from app.services.redis_cache import redis_cache
@@ -169,3 +170,12 @@ async def token_usage(
     aliyun_status = await get_aliyun_status()
     totals = await get_token_usage_totals(db)
     return {"balance": balance_info, "aliyun_status": aliyun_status, **totals}
+
+
+@router.get("/quality-health")
+async def quality_health(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """病历质量与可靠性健康度：回写成功率 + AI建议采纳率 + 病历时效达标率（近30天）。"""
+    return await get_quality_health(db)

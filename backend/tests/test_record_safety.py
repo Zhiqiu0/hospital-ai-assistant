@@ -199,3 +199,19 @@ async def _mk_sign_encounter(db):
     await db.commit()
     await db.refresh(enc)
     return enc.id, doc.id
+
+
+# ── B批 质量健康度看板 ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_quality_health_aggregates(async_db):
+    """回写成功率/时效达标率聚合正确。"""
+    from app.services.admin_stats_service import get_quality_health
+    # 造 2 条 HIS 接诊：一条回写 success，一条 write_failed
+    await _mk_his_encounter(async_db, writeback_status="success")
+    await _mk_his_encounter(async_db, writeback_status="write_failed")
+    health = await get_quality_health(async_db)
+    wb = health["writeback"]
+    assert wb["total"] == 2 and wb["success"] == 1
+    assert wb["success_rate"] == 0.5
+    assert "feedback" in health and "timeliness" in health

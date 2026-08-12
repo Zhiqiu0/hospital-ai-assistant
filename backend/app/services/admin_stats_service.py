@@ -6,7 +6,7 @@ DeepSeek 余额 / 阿里云连通性与余额 三个外部依赖查询 + 本地 
 """
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import httpx
 from sqlalchemy import Date, cast, func, select
@@ -16,6 +16,101 @@ from app.config import settings
 from app.models.medical_record import AITask
 
 logger = logging.getLogger(__name__)
+
+# 病历时效达标阈值（小时，法定要求）：从接诊到签发的时限。
+# 门诊/急诊无强制法定时限（不纳入达标率，只统计中位耗时另议）。
+_TIMELINESS_HOURS = {
+    "admission_note": 24,        # 入院记录 24h
+    "first_course_record": 8,    # 首次病程 8h
+    "discharge_record": 24,      # 出院记录 24h
+    "op_record": 24,             # 手术记录 24h
+}
+
+
+async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
+    """病历质量与可靠性健康度（2026-08-11 病历质量闭环，评审/运营看板）。
+
+    聚合三项数据真实支撑的指标（近 N 天）：
+      - 回写成功率：HIS 来源已签发接诊按 writeback.status 分布（第一版 HIS 命门可观测）
+      - 反馈采纳率：AI 建议 useful/useless（医生真实认可度）
+      - 病历时效达标率：住院系病历 接诊→签发 是否在法定时限内
+    注：AI 调用"成功率"不在此列——失败任务当前不落 ai_tasks，据此算会失真。
+    """
+    from app.models.ai_feedback import AISuggestionFeedback
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+
+    window_start = datetime.now() - timedelta(days=days)
+
+    # ── 回写成功率（HIS 来源、近窗口、已有回写状态的接诊）──
+    enc_rows = (await db.execute(
+        select(Encounter.his_external_ref).where(
+            Encounter.his_external_ref.isnot(None),
+            Encounter.visited_at >= window_start,
+        )
+    )).scalars().all()
+    wb_by_status: dict[str, int] = {}
+    for ref in enc_rows:
+        if (ref or {}).get("source") != "admit_push":
+            continue
+        wb = (ref or {}).get("writeback") or {}
+        st = wb.get("status")
+        if st is None:
+            continue  # 尚未触发回写（未签发）不计入
+        wb_by_status[st] = wb_by_status.get(st, 0) + 1
+    wb_total = sum(wb_by_status.values())
+    writeback = {
+        "total": wb_total,
+        "success": wb_by_status.get("success", 0),
+        "success_rate": round(wb_by_status.get("success", 0) / wb_total, 3) if wb_total else None,
+        "by_status": wb_by_status,
+    }
+
+    # ── AI 建议采纳率（近窗口 useful/useless 分类计）──
+    fb_rows = (await db.execute(
+        select(AISuggestionFeedback.suggestion_category, AISuggestionFeedback.verdict)
+        .where(AISuggestionFeedback.recorded_at >= window_start)
+    )).all()
+    fb_useful = sum(1 for _, v in fb_rows if v == "useful")
+    fb_total = len(fb_rows)
+    by_cat: dict[str, dict] = {}
+    for cat, v in fb_rows:
+        c = by_cat.setdefault(cat, {"useful": 0, "total": 0})
+        c["total"] += 1
+        if v == "useful":
+            c["useful"] += 1
+    feedback = {
+        "total": fb_total,
+        "useful": fb_useful,
+        "useful_rate": round(fb_useful / fb_total, 3) if fb_total else None,
+        "by_category": by_cat,
+    }
+
+    # ── 病历时效达标率（住院系已签发病历 接诊→签发 时限）──
+    rec_rows = (await db.execute(
+        select(MedicalRecord.record_type, Encounter.visited_at, MedicalRecord.submitted_at)
+        .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+        .where(
+            MedicalRecord.status == "submitted",
+            MedicalRecord.submitted_at.isnot(None),
+            MedicalRecord.submitted_at >= window_start,
+            MedicalRecord.record_type.in_(list(_TIMELINESS_HOURS.keys())),
+        )
+    )).all()
+    tl: dict[str, dict] = {}
+    for rtype, visited_at, submitted_at in rec_rows:
+        limit_h = _TIMELINESS_HOURS[rtype]
+        t = tl.setdefault(rtype, {"total": 0, "on_time": 0, "limit_hours": limit_h})
+        t["total"] += 1
+        if visited_at and submitted_at:
+            hours = (submitted_at - visited_at).total_seconds() / 3600
+            if hours <= limit_h:
+                t["on_time"] += 1
+    for r in tl.values():
+        r["rate"] = round(r["on_time"] / r["total"], 3) if r["total"] else None
+
+    return {"window_days": days, "writeback": writeback, "feedback": feedback,
+            "timeliness": tl}
 
 
 async def get_deepseek_balance() -> dict | None:
