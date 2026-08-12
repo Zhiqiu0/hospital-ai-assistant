@@ -84,10 +84,18 @@ async def run_quick_qc_stream(
         inquiry=extract_inquiry_dict(req),
     )
 
-    # 并行启动 LLM 质量建议（用旧 QC_PROMPT，输出 issues[] 列表；不参与总分）
+    # 并行启动 LLM 质量建议（输出 issues[] 列表；不参与总分）。
+    # 标准段从当前 record_type 对应的法定评分表运行时生成（2026-08-12 双真相源
+    # 收口）——LLM 建议口径与规则引擎实际扣分口径永远同源。
+    from app.services.ai._qc_prompt_gen import build_qc_standard_block
     model_options = await get_model_options(db, "qc")
     record_type_label = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
-    llm_prompt = safe_format(QC_PROMPT, record_type=record_type_label, content=req.content)
+    llm_prompt = safe_format(
+        QC_PROMPT,
+        record_type=record_type_label,
+        content=req.content,
+        standard_block=build_qc_standard_block(rubric),
+    )
     # token 用量跨任务读取修复（2026-08-11 审计修复）：llm_client._last_usage 是
     # ContextVar，create_task 会复制当前上下文快照给子任务，子任务里写的 usage 不会
     # 回流到父任务——原实现在父任务读 _last_usage 恒为 None，token 用量统计恒为 0。
