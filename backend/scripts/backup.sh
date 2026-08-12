@@ -17,8 +17,13 @@
 #
 # 恢复方式（详见脚本末尾注释）。
 #
-# ⚠️ 这是基础版本。生产建议：
-#   - 备份完成后用 rclone / aws s3 sync 推到对象存储（异地容灾）
+# 异地容灾（2026-08-12 已启用）：
+#   备份完成后自动推到阿里云 OSS（华北2-北京，与服务器上海异地）：
+#   oss://mediscribe-backup/daily/<TIMESTAMP>/，OSS 侧生命周期 180 天自动清理。
+#   前置（一次性，生产已配）：~/bin/ossutil64 二进制 + ~/.ossutilconfig
+#   （RAM 子账号凭证，仅 OSS 权限）。上传失败不阻断本地备份。
+#
+# ⚠️ 后续可选增强：
 #   - 大库建议加 wal-g / pgbackrest 做增量 WAL 归档（RPO < 1 分钟）
 #   - 加 Healthchecks.io / Sentry Cron Monitor 监控备份是否按时跑
 
@@ -84,7 +89,22 @@ else
     echo "    FAIL（backend 容器未运行？保留 0 字节占位文件供排查）"
 fi
 
-# ── 5. 清理过期备份（保留最近 N 天）──────────────────────────────────────────
+# ── 5. 异地容灾：本次备份推阿里云 OSS（北京，与服务器上海异地）────────────────
+# 上传失败不阻断（本地备份已完整落盘），只记 WARN 供日志/告警排查。
+OSSUTIL="${OSSUTIL:-$HOME/bin/ossutil64}"
+OSS_BUCKET="${OSS_BUCKET:-mediscribe-backup}"
+if [ -x "${OSSUTIL}" ] && [ -f "$HOME/.ossutilconfig" ]; then
+    echo "[5/5] 上传 OSS oss://${OSS_BUCKET}/daily/${TIMESTAMP}/ ..."
+    if "${OSSUTIL}" cp -r "${DEST}" "oss://${OSS_BUCKET}/daily/${TIMESTAMP}/" -u >/dev/null 2>&1; then
+        echo "    OK（异地副本已落北京，OSS 生命周期 180 天自动清理）"
+    else
+        echo "    WARN: OSS 上传失败——本地备份不受影响，请查网络/凭证（~/.ossutilconfig）"
+    fi
+else
+    echo "[5/5] SKIP：未配置 ossutil，异地上传未启用（见脚本头部前置说明）"
+fi
+
+# ── 6. 清理过期本地备份（保留最近 N 天；异地 OSS 侧保留 180 天）───────────────
 echo "[cleanup] 删除超过 ${RETENTION_DAYS} 天的旧备份..."
 find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime "+${RETENTION_DAYS}" \
     -exec echo "  removing {}" \; -exec rm -rf {} \;
@@ -113,3 +133,11 @@ du -sh "${DEST}"
 # 恢复 uploads：
 #   docker compose exec -T backend tar xzf - -C /app/uploads \
 #     < /var/backups/mediscribe/<TIMESTAMP>/uploads.tar.gz
+#
+# 本地备份没了（服务器级灾难）→ 先从 OSS 拉回再按上面恢复：
+#   ~/bin/ossutil64 ls oss://mediscribe-backup/daily/            # 看有哪些时间点
+#   ~/bin/ossutil64 cp -r oss://mediscribe-backup/daily/<TIMESTAMP>/ \
+#     /var/backups/mediscribe/<TIMESTAMP>/
+#
+# ⚠️ 恢复«2026-08-12 迁移压缩重置»之前的老备份时，alembic_guard 会因缺列
+#   FATAL 拒绝启动（预期保护），须先人工补齐 schema 或改用重置后的备份。
