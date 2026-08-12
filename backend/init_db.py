@@ -1,6 +1,9 @@
 """
-数据库初始化脚本
-运行一次，创建所有表并插入默认数据
+默认种子数据脚本（init_db.py）
+
+2026-08-12 迁移收口后职责收窄：**只播种子，不再建表**——表结构（含索引/
+约束/触发器）统一由 alembic 负责（基线 b20260812squash 起），本脚本在
+entrypoint 里排在 `alembic upgrade head` 之后执行，表必然已就绪。
 """
 import asyncio
 import sys
@@ -8,23 +11,14 @@ import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.database import engine, Base
-from app.models import user, patient, encounter, medical_record, config, audit_log  # noqa
-from app.models.voice_record import VoiceRecord  # noqa  – voice_records 表
-# config.py 已包含 ModelConfig（model_configs 表）和 QCRule、PromptTemplate
+from app.database import engine
 from app.core.security import hash_password
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 
 async def init():
-    print("正在创建数据库表（已存在的表会跳过）...")
-    async with engine.begin() as conn:
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
-        await conn.run_sync(Base.metadata.create_all)
-    print("[OK] 数据库表创建完成")
-
-    # 插入默认数据
+    # 插入默认数据（表结构由 alembic 建好，这里直接播种）
     async with AsyncSession(engine) as session:
         # 检查是否已有数据
         result = await session.execute(text("SELECT COUNT(*) FROM users"))
@@ -34,7 +28,6 @@ async def init():
             return
 
         # 创建默认科室
-        now = "NOW()"
         await session.execute(text("""
             INSERT INTO departments (id, name, code, is_active, created_at, updated_at) VALUES
             (gen_random_uuid(), '内科', 'NEIKE', true, NOW(), NOW()),

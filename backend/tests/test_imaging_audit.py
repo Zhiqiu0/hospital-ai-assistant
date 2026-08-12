@@ -6,7 +6,7 @@
   - published_by 由 publish 阶段写入，可以与 radiologist_id 不同（A 分析 + B 签发）
 
 注：完整的端点级集成测试待 backlog M5 补上 PACS 集成测试时统一做，
-本用例从 ORM 层验证字段可独立写入，确保 schema_compat 已加列、字段未被
+本用例从 ORM 层验证字段可独立写入，确保建库已含该列、字段未被
 误标 unique 等约束。
 """
 from datetime import datetime

@@ -56,7 +56,7 @@ class Encounter(Base, TimestampMixin):
             postgresql_using="gin",
         ),
         # 热路径索引（2026-08-11 病历安全）："我的接诊"/叫号队列都按
-        # doctor_id + visited_at 过滤排序，原先无索引全表扫描。生产由 migrate.py 兜底建。
+        # doctor_id + visited_at 过滤排序，原先无索引全表扫描。索引随 alembic 基线建出。
         Index("idx_encounters_doctor_visited", "doctor_id", "visited_at"),
     )
 
@@ -134,7 +134,7 @@ class InquiryInput(Base, TimestampMixin):
     __tablename__ = "inquiry_inputs"
 
     # 热路径索引（2026-08-11 病历安全）：取最新问诊版本(WHERE encounter_id ORDER BY
-    # version DESC)是 AI 生成/工作台恢复的高频前置查询，原先全表扫描。migrate.py 兜底建。
+    # version DESC)是 AI 生成/工作台恢复的高频前置查询，原先全表扫描。索引随 alembic 基线建出。
     __table_args__ = (
         Index("idx_inquiry_inputs_enc_ver", "encounter_id", "version"),
     )

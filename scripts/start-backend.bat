@@ -8,7 +8,9 @@ docker compose up -d db
 
 echo [2/3] Running migrations...
 cd /d "%~dp0..\backend"
-venv\Scripts\python migrate.py
+REM 迁移单通道（2026-08-12 收口）：alembic 是唯一 schema 真源
+venv\Scripts\python alembic_guard.py
+venv\Scripts\python -m alembic upgrade head
 if errorlevel 1 (
     echo ERROR: Migration failed. Please run setup.bat first.
     pause & exit /b 1

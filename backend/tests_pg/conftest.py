@@ -13,9 +13,10 @@
   1. 只连本地 postgres，建一个「一次性测试库」medassist_pgtest：
      先连默认 postgres 维护库，DROP DATABASE IF EXISTS 再 CREATE，测完 DROP。
      全程绝不碰开发/生产库 medassist 里的任何数据。
-  2. 劫持 app.database.engine → 指向测试库。被测的三个脚本
-     （init_db / migrate / schema_compat）都是 `from app.database import engine`，
+  2. 劫持 app.database.engine → 指向测试库。被测脚本（init_db / alembic_guard）
+     都是 `from app.database import engine`，
      只要在它们被 import 之前把 app.database.engine 换掉，它们操作的就是测试库。
+     alembic 本体走子进程 + DATABASE_URL 环境变量（见 run_alembic_subprocess）。
      真实开发库 engine 是惰性创建（create_async_engine 不会立即连接），
      被换掉后从不发起任何查询，开发库零影响。
   3. PG 连不上（别人机器没起 postgres / asyncpg 没装）→ 整体 skip，
@@ -101,7 +102,7 @@ except Exception as e:  # noqa: BLE001 - 连不上就整体 skip，不细分异�
     _SKIP_REASON = f"本地 PostgreSQL 不可用，跳过真 PG 测试：{type(e).__name__}: {e}"
 
 # ── 劫持 app.database.engine → 测试库 ─────────────────────────────────────────
-# 必须在 init_db / migrate / schema_compat 被 import 之前完成。
+# 必须在 init_db / alembic_guard 被 import 之前完成。
 # create_async_engine 惰性，不会立刻连库；即使 PG 不可用也能安全构建对象。
 import app.database as _db  # noqa: E402
 
@@ -157,7 +158,7 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
 async def empty_pg():
     """空测试库：每个用例前把 public schema 清空重建，得到全新空库。
 
-    面向 init_db / migrate / schema_compat 这类「自己负责建表」的脚本测试。
+    面向「从零建库」类测试（alembic 基线 / 守卫）。
     DROP SCHEMA CASCADE + CREATE SCHEMA 是 PG 里最干净的整库重置手段。
     """
     if _SKIP_REASON is not None:
@@ -182,3 +183,44 @@ async def pg_with_tables(empty_pg):
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
         await conn.run_sync(Base.metadata.create_all)
     yield _test_engine
+
+
+# ── alembic 子进程工具（2026-08-12 迁移单通道收口）───────────────────────────
+# alembic/env.py 用 asyncio.run 跑迁移，在 pytest-asyncio 的 event loop 里
+# 直接调 alembic.command 会撞"loop already running"——统一走子进程，
+# 用 DATABASE_URL 环境变量把子进程指向一次性测试库（settings 读 env 优先）。
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+# 子进程用同步风格 URL（env.py 会自己换 asyncpg 驱动）
+TEST_SYNC_URL = _test_url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+
+def run_alembic_subprocess(*args: str) -> subprocess.CompletedProcess:
+    """在 backend 目录下以子进程跑 `python -m alembic <args>`，指向测试库。"""
+    env = {**_os.environ, "DATABASE_URL": TEST_SYNC_URL}
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
+        cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=180,
+    )
+
+
+def run_guard_subprocess() -> subprocess.CompletedProcess:
+    """子进程跑 alembic_guard.py（stamp 守卫），指向测试库。"""
+    env = {**_os.environ, "DATABASE_URL": TEST_SYNC_URL}
+    return subprocess.run(
+        [sys.executable, "alembic_guard.py"],
+        cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=120,
+    )
+
+
+@pytest_asyncio.fixture
+async def alembic_pg(empty_pg):
+    """空库 + `alembic upgrade head` 建好全部表——迁移单通道的正规建库路径。"""
+    result = run_alembic_subprocess("upgrade", "head")
+    assert result.returncode == 0, (
+        f"alembic upgrade head 失败:\n{result.stdout}\n{result.stderr}"
+    )
+    yield empty_pg

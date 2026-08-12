@@ -40,12 +40,20 @@ timeout /t 8 /nobreak >nul
 echo.
 echo [5/5] Initializing database tables and default data...
 cd backend
-..\backend\venv\Scripts\python init_db.py
+REM 表结构统一走 alembic（2026-08-12 迁移收口）：guard 只打标记，upgrade 建/改表
+venv\Scripts\python alembic_guard.py
+venv\Scripts\python -m alembic upgrade head
 if errorlevel 1 (
-    echo ERROR: Database init failed. Check if database is running.
+    echo ERROR: Database migration failed. Check if database is running.
     pause & exit /b 1
 )
-..\backend\venv\Scripts\python seed_config.py
+REM init_db 现在只播种子（admin/doctor01/科室/Prompt 模板）
+venv\Scripts\python init_db.py
+if errorlevel 1 (
+    echo ERROR: Database seed failed.
+    pause & exit /b 1
+)
+venv\Scripts\python seed_config.py
 cd ..
 
 echo.

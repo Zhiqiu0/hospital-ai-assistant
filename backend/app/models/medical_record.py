@@ -47,7 +47,7 @@ class MedicalRecord(Base, TimestampMixin):
 
     # 热路径索引（2026-08-11 病历安全）：quick_save/auto_save/草稿查询/病案首页 都是
     # WHERE encounter_id=? [AND record_type=?] 的高频操作，PG 不给 FK 自动建索引，
-    # 原先全表扫描随病历量线性劣化。生产由 migrate.py 兜底 CREATE INDEX IF NOT EXISTS 建。
+    # 原先全表扫描随病历量线性劣化。索引随 alembic 基线建出。
     __table_args__ = (
         Index("idx_medical_records_enc_type", "encounter_id", "record_type"),
     )
@@ -96,7 +96,7 @@ class RecordVersion(Base):
     __tablename__ = "record_versions"
 
     # 热路径索引（2026-08-11 病历安全）：按 (medical_record_id, version_no) 取当前/历史
-    # 版本是签发、草稿、版本列表的高频操作，原先全表扫描。生产由 migrate.py 兜底建。
+    # 版本是签发、草稿、版本列表的高频操作，原先全表扫描。索引随 alembic 基线建出。
     __table_args__ = (
         Index("idx_record_versions_rec_ver", "medical_record_id", "version_no"),
     )

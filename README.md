@@ -35,8 +35,8 @@ medassist/
 │   │   │   └── rule_engine/# 医保风险规则
 │   │   ├── his_adapter/    # HIS 对接（接诊推送/回写/对账）
 │   │   └── core/           # 鉴权、中间件
-│   ├── init_db.py          # 初始化数据库与默认数据
-│   ├── migrate.py          # 命令式迁移兜底（与 alembic 双通道）
+│   ├── init_db.py          # 默认种子数据（表结构归 alembic）
+│   ├── alembic_guard.py    # 迁移守卫（存量库 stamp 到基线，零 DDL）
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   └── src/
@@ -58,7 +58,9 @@ medassist/
 # 2. 启动后端
 cd backend
 pip install -r requirements.txt
-python init_db.py
+python alembic_guard.py          # 迁移守卫（老库打标记，零 DDL）
+python -m alembic upgrade head   # 建表/改表（唯一 schema 通道）
+python init_db.py                # 播种子（admin/doctor01/科室/模板）
 uvicorn app.main:app --reload --port 8010
 
 # 3. 启动前端
@@ -77,7 +79,9 @@ npm run dev
 
 - 仓库已内置 `docker-compose.yml`、`backend/Dockerfile`、`backend/alembic/` 迁移目录
 - 生产走 docker compose（前端 + 后端 + PostgreSQL + Redis + Orthanc + uptime-kuma）
-- 数据库变更走 `alembic` 迁移 + `migrate.py` 双通道（禁止直接 SQL 改 schema）
+- 数据库变更走 `alembic` 单通道（2026-08-12 收口；禁止直接 SQL 改 schema）：
+  改 model 后写一条**幂等** revision（inspector 判断已存在再加，基线是 create_all
+  语义，非幂等迁移会在全新库上撞车），CI 的空库门禁会拦截违规迁移
 - Redis 已是核心依赖：PACS 缩略图缓存 + HIS 联动的跨 worker 事件总线（多 worker 部署必需）
 
 ## 环境变量

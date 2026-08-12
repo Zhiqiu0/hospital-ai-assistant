@@ -39,7 +39,7 @@ class AISuggestionFeedback(Base, TimestampMixin):
     # 真实 DB 里 prompt_version 上有两个 btree 索引并存：
     #   1) ix_ai_suggestion_feedback_prompt_version —— 由列级 index=True 经
     #      create_all 生成（SQLAlchemy 默认命名）
-    #   2) ix_ai_feedback_prompt_version —— 由 migrate.py 用短名手动 CREATE INDEX
+    #   2) ix_ai_feedback_prompt_version —— 历史上由 migrate.py 用短名手动 CREATE INDEX（现随 alembic 基线建）
     # 原 model 只声明了 index=True（对象 1），DB 里多出的对象 2 会被 autogenerate
     # 判为「需删除的索引」。这里补声明对象 2，让 model 与 DB 完全一致（两索引都保留）。
     __table_args__ = (
