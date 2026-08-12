@@ -6,12 +6,11 @@
 设计：
   - 把 ORM 序列化为 dict 写 Redis
   - 读取时还原成 SimpleNamespace，让规则引擎用属性访问保持无感知
-  - admin 写 qc_rules（创建/更新/切换/删除）后调 invalidate_qc_rules() 主动失效
+  - 缓存靠 TTL 自然过期（admin 在线编辑规则的端点已下线，无主动失效需求）
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,13 +80,6 @@ async def get_active_qc_rules(db: AsyncSession, rule_type: str) -> list[SimpleNa
     return [_deserialize(item) for item in serialized]
 
 
-async def invalidate_qc_rules(rule_type: Optional[str] = None) -> None:
-    """admin 写 qc_rules 后调，让所有进程立即看到新规则。
-
-    Args:
-        rule_type: 指定类型失效；传 None 失效所有类型。
-    """
-    if rule_type:
-        await redis_cache.delete(_KEY.format(rule_type=rule_type))
-    else:
-        await redis_cache.delete_prefix("qc:rules:")
+# 注：原 invalidate_qc_rules（admin 写规则后失效缓存）已删（2026-08-12 复检清理）——
+# admin 在线编辑 qc_rules 的端点早已下线（评分标准走代码常量），该函数零调用方；
+# 医保规则如需变更走 DB 修改 + 缓存 TTL 自然过期（_TTL）。

@@ -55,9 +55,13 @@ def build_qc_standard_block(rubric: Rubric) -> str:
         if item.description:
             lines.append(f"检查要求：{item.description}")
         for veto in item.veto_rules:
+            # 与引擎实际扣分对齐（2026-08-12 复检修复）：scorer 对 veto 的实际
+            # 扣分是 min(10, 大项分值)——如"首次病程录"仅 6 分，触发只扣 6 分。
+            # 原来统一渲染"扣 10 分"会让 AI 建议口径与真实扣分打架。
+            effective = min(VETO_DEDUCT_POINTS, item.max_points)
             lines.append(
                 f"- 【单项否决】{veto.description}"
-                f"（扣 {_format_points(VETO_DEDUCT_POINTS)} 分，该大项不再累积扣分）"
+                f"（扣 {_format_points(effective)} 分，该大项不再累积扣分）"
             )
         for rule in item.deduction_rules:
             lines.append(

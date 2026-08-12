@@ -40,16 +40,30 @@ async def test_upgrade_head_builds_full_schema(alembic_pg):
     ]
     assert not missing, f"alembic 建库缺表/缺列：{missing}"
 
-    # alembic_version 已写入基线
+    # alembic_version 已推进到链头（基线 + 后续常规迁移）
     async with alembic_pg.connect() as conn:
         ver = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
-    assert ver == "b20260812squash"
+    assert ver == "c20260812adoptidx"
 
 
 async def test_upgrade_head_is_idempotent(alembic_pg):
     """已在 head 的库再跑一次 upgrade：不报错、版本不变。"""
     result = run_alembic_subprocess("upgrade", "head")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+async def test_alembic_check_no_model_drift(alembic_pg):
+    """`alembic check` 空 diff——**"改模型必须写迁移"的真门禁**。
+
+    基线是冻结 DDL 快照（不随模型演进），所以本检查有判别力：
+    谁改了 model 却没写配套 revision，这里立刻红灯——否则 CI 全绿、
+    生产库（已在 head，upgrade 无事可做）静默缺列，线上随机 500。
+    """
+    result = run_alembic_subprocess("check")
+    assert result.returncode == 0, (
+        "模型与迁移链建出的库存在漂移——你改了 model 但没写配套 revision：\n"
+        + result.stdout + result.stderr
+    )
 
 
 async def test_baseline_extras_effective(alembic_pg):
@@ -106,10 +120,33 @@ async def test_guard_stamps_legacy_db_without_ddl(pg_with_tables):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+async def test_guard_refuses_stamp_when_columns_missing(pg_with_tables):
+    """恢复旧备份场景：库缺模型列时 guard 必须 FATAL 拒绝 stamp（防带病打标记）。
+
+    带病 stamp 的后果：upgrade 无事可做、所有工具声称在 head、
+    运行期随机 500 且排障无线索——宁可启动失败也不能静默掩盖。
+    """
+    engine = pg_with_tables
+    # 模拟"压缩重置前的旧备份"：砍掉一个后来加的列
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE record_versions DROP COLUMN ai_similarity"))
+
+    result = run_guard_subprocess()
+    assert result.returncode != 0, "缺列的库居然通过了 guard 校验"
+    assert "拒绝 stamp" in (result.stdout + result.stderr)
+
+    # 确认没有偷偷写入版本标记
+    async with engine.connect() as conn:
+        has_av = (await conn.execute(
+            text("SELECT to_regclass('public.alembic_version')")
+        )).scalar()
+    assert has_av is None
+
+
 async def test_guard_noop_on_fresh_and_current_db(alembic_pg):
     """已在新链上的库：guard 什么都不做（不报错、版本不变）。"""
     result = run_guard_subprocess()
     assert result.returncode == 0, result.stdout + result.stderr
     async with alembic_pg.connect() as conn:
         ver = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
-    assert ver == "b20260812squash"
+    assert ver == "c20260812adoptidx"

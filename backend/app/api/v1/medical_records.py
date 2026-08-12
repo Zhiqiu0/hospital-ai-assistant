@@ -2,8 +2,9 @@
 病历路由（/api/v1/medical-records/*）
 
 端点列表：
+  POST   /auto-save-draft         编辑器 5 秒防抖自动保存草稿
   POST   /quick-save              签发并快速保存病历
-  GET    /my                      查询当前医生的历史签发病历
+  GET    /by-patient/{patient_id} 查询某患者的全部已签发病历
   POST   /                        标准创建病历记录
   GET    /{record_id}             查询单条病历
   PUT    /{record_id}/content     保存病历内容

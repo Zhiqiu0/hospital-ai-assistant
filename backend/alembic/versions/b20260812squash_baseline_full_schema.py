@@ -9,27 +9,29 @@ Create Date: 2026-08-12
   ALTER、schema_compat.py 启动期 DDL、alembic 增量链。旧 alembic 链里没有
   任何建表语句（空库跑 upgrade 必挂），单一真源无从谈起。
 
-本基线 = 压缩重置（squash）：
+本基线 = 压缩重置（squash）+ **冻结快照**：
   - 旧 12 条 revision 已删除，本文件是新链唯一起点
-  - 建表以 **模型元数据（Base.metadata）为唯一真源**：create_all 建出全部表、
-    列、以及模型 __table_args__ 声明的全部索引/唯一约束（含 patients 部分
-    唯一索引、encounters GIN 索引、病历热路径索引等）
-  - 模型声明不了的三样手写补齐：pgcrypto 扩展、4 个身份字段 CHECK 约束、
-    audit_logs 只追加触发器
+  - 全部表/索引 DDL 冻结在同目录 b20260812squash_schema.sql（2026-08-12 由
+    当时的模型元数据按 PostgreSQL 方言编译生成，**此后不随模型演进**——
+    模型再改必须写新 revision，CI 的 `alembic check` 门禁会对比模型与
+    迁移链建出的库，漂移即红）
+  - 快照之外手写补三样（模型声明不了）：pgcrypto 扩展、4 个身份字段
+    CHECK 约束、audit_logs 只追加触发器
   - 历史上的一次性数据迁移（拼音回填 / profile JSONB 搬迁 / 脏数据清理）
     不进基线——生产早已执行完毕，全新库无数据可迁
 
-存量库如何过渡：
-  生产/旧库不执行本基线（表已存在）——由 alembic_guard.py 检测到
-  alembic_version 缺失或指向已删除的旧 revision 时，stamp 到本基线。
+为什么冻结而不用 create_all（2026-08-12 复检修复）：
+  create_all 读的是"当前代码里最新的模型"，是随模型演进的活基线——全新库
+  永远和模型一致，任何"模型 vs 库"的校验都变成同义反复，"改模型忘写迁移"
+  会在 CI 全绿的情况下让存量生产库静默缺列。冻结后基线是历史事实，
+  校验才有判别力。
 
-⚠️ 后续 revision 的铁律（写新迁移必读）：
-  基线用 create_all，对全新库建出的是"当时最新模型"的表结构——这意味着
-  后续每条 revision 都必须**幂等**（inspector 判断列/索引是否已存在再加），
-  否则全新库上"基线已建出新列 + revision 再 add_column"会撞车。
-  CI 的 tests_pg/test_alembic_single_source.py 空库门禁会拦住违规迁移。
+存量库如何过渡：
+  生产/旧库不执行本基线（表已存在）——由 alembic_guard.py 在列级校验通过后
+  stamp 到本基线；库若缺列（如恢复了旧备份）guard 直接 FATAL 拒绝带病 stamp。
 """
 
+from pathlib import Path
 from typing import Sequence, Union
 
 from alembic import op
@@ -51,28 +53,16 @@ _CHECK_CONSTRAINTS = (
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-
     # 1. pgcrypto：种子数据的 gen_random_uuid() 依赖
     op.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
 
-    # 2. 全量建表：显式导入全部模型模块（与 alembic/env.py 同一清单），
-    #    让 Base.metadata 完整后 create_all（checkfirst 幂等，存量库全跳过）
-    from app.database import Base
-    import app.models.user            # noqa: F401
-    import app.models.patient         # noqa: F401
-    import app.models.encounter       # noqa: F401
-    import app.models.medical_record  # noqa: F401
-    import app.models.audit_log       # noqa: F401
-    import app.models.config          # noqa: F401
-    import app.models.voice_record    # noqa: F401
-    import app.models.imaging         # noqa: F401
-    import app.models.lab_report      # noqa: F401
-    import app.models.revoked_token   # noqa: F401
-    import app.models.inpatient       # noqa: F401
-    import app.models.ai_feedback     # noqa: F401
-
-    Base.metadata.create_all(bind=bind, checkfirst=True)
+    # 2. 全量建表：执行冻结 DDL 快照（本基线只在空库上真正执行——存量库
+    #    走 guard stamp——故无需 IF NOT EXISTS）
+    sql_path = Path(__file__).with_name("b20260812squash_schema.sql")
+    for statement in sql_path.read_text(encoding="utf-8").split(";\n\n"):
+        statement = statement.strip().rstrip(";")
+        if statement:
+            op.execute(statement)
 
     # 3. 身份字段 CHECK 约束（幂等：查 pg_constraint 再加）
     for table, name, expr in _CHECK_CONSTRAINTS:

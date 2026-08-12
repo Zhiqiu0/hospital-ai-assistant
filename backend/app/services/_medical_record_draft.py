@@ -1,7 +1,8 @@
 """病历草稿保存 mixin（services/_medical_record_draft.py）
 
 从 medical_record_service 拆出（Round 5: 超标文件拆分）。含两类"不签发"的保存：
-  - auto_save_draft : 医生编辑器高频 auto-save，UPDATE 当前版本 content，不新增版本
+  - auto_save_draft : 医生编辑器高频 auto-save，原地 UPDATE 当前 doctor_edited
+                      版本；当前版本若是 AI 产物则先新开一版（AI 原文不可变）
   - save_ai_draft   : AI 生成完毕的批次保存，upsert record 并追加新版本
 由 MedicalRecordService 组合，依赖宿主类提供 self.db。
 """
@@ -71,7 +72,10 @@ class MedicalRecordDraftMixin:
                 )
 
         if record is None:
-            # 首次 auto-save：建 record + 第一个 version
+            # 首次 auto-save：建 record + 第一个 version。
+            # source 修正（2026-08-12 复检）：走到这里说明没有任何 AI 生成在先
+            # （AI 生成走 save_ai_draft 会先建 record），是纯手写起点——原来
+            # 统一标 'ai_generated' 会让纯手写病历被误计入 AI 采纳统计。
             record = MedicalRecord(
                 encounter_id=encounter_id,
                 record_type=record_type,
@@ -84,12 +88,18 @@ class MedicalRecordDraftMixin:
                 medical_record_id=record.id,
                 version_no=1,
                 content={"text": content},
-                source="ai_generated",  # auto-save 起点常常是 AI 生成的，统一标这个
+                source="doctor_edited",
                 triggered_by=user_id,
             )
             self.db.add(version)
         else:
-            # 已有 record：UPDATE 当前 version 的 content（关键：不增加 version_no）
+            # 已有 record：UPDATE 当前 version 的 content（不增加 version_no）——
+            # 但 **AI 生成的版本不可覆写**（2026-08-12 复检修复）：原实现把医生
+            # 编辑直接覆写进 ai_generated 版本行，AI 原始草稿被逐步冲掉，签发时
+            # 的采纳度对比基线（最近一版 AI 草稿）变成医生 5 秒前自己的文本，
+            # ai_similarity 恒≈1、整条指标失真。现改为：当前版本是 AI 产物时
+            # 先新开一版 doctor_edited 再覆写，AI 原文成为不可变历史；后续高频
+            # auto-save 覆写的都是这版 doctor_edited，版本数只 +1 不爆炸。
             ver_result = await self.db.execute(
                 select(RecordVersion)
                 .where(
@@ -105,10 +115,21 @@ class MedicalRecordDraftMixin:
                     medical_record_id=record.id,
                     version_no=record.current_version,
                     content={"text": content},
-                    source="ai_generated",
+                    source="doctor_edited",
                     triggered_by=user_id,
                 )
                 self.db.add(current_version)
+            elif current_version.source.startswith("ai_"):
+                # AI 版本冻结：另起一版承接医生编辑
+                new_no = record.current_version + 1
+                self.db.add(RecordVersion(
+                    medical_record_id=record.id,
+                    version_no=new_no,
+                    content={"text": content},
+                    source="doctor_edited",
+                    triggered_by=user_id,
+                ))
+                record.current_version = new_no
             else:
                 current_version.content = {"text": content}
             record.status = "editing"
