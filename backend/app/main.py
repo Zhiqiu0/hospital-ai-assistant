@@ -157,6 +157,7 @@ async def health_check():
 
 
 @app.get("/health/deep")
+@app.get("/api/v1/health/deep")
 async def health_check_deep():
     """深度健康检查（2026-08-11 病历安全）：除 DB 外并发探活 Redis。
 
