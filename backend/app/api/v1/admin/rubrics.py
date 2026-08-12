@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.security import require_admin
 from app.services.qc_engine.rubric import Rubric
+from app.services.qc_engine.rubrics.zj_inpatient_2021 import ZJ_INPATIENT_V2021
 from app.services.qc_engine.rubrics.zj_outpatient_emergency_2023 import (
     ZJ_OUTPATIENT_EMERGENCY_V2023,
 )
@@ -18,10 +19,12 @@ from app.services.qc_engine.rubrics.zj_outpatient_emergency_2023 import (
 router = APIRouter()
 
 
-# 评分表注册中心：所有法定 Rubric 在此登记，前端按 key 取
+# 评分表注册中心：所有法定 Rubric 在此登记，前端按 key 取。
+# 与打分路由（services/ai/_qc_rubric._select_rubric）使用同一批常量，
+# 管理员在后台看到的即实际扣分依据。
 _RUBRIC_REGISTRY: dict[str, Rubric] = {
     "zj_outpatient_emergency_2023": ZJ_OUTPATIENT_EMERGENCY_V2023,
-    # 下一期：zj_inpatient_2021
+    "zj_inpatient_2021": ZJ_INPATIENT_V2021,
 }
 
 
