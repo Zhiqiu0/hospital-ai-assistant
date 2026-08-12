@@ -23,7 +23,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -99,6 +99,16 @@ class RecordVersion(Base):
     # 版本是签发、草稿、版本列表的高频操作，原先全表扫描。索引随 alembic 基线建出。
     __table_args__ = (
         Index("idx_record_versions_rec_ver", "medical_record_id", "version_no"),
+        # AI 采纳看板聚合索引（2026-08-12 复检修复）：adoption_stats 按
+        # source='doctor_signed' AND ai_similarity IS NOT NULL AND created_at>=X
+        # 聚合，无索引会随版本表增长退化为全表扫描。部分索引只覆盖带指标的
+        # 签发版本，极小且精准。迁移见 c20260812adoptidx。
+        Index(
+            "idx_record_versions_adoption",
+            "created_at",
+            postgresql_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
+            sqlite_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)

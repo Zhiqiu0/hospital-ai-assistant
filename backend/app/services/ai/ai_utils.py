@@ -93,17 +93,20 @@ def compose_physical_exam(
 
 
 def safe_format(template: str, **kwargs) -> str:
-    """安全格式化 prompt 模板，转义值中的花括号以防 KeyError。
+    """格式化 prompt 模板（值统一转字符串）。
+
+    2026-08-12 复检修复：删掉原来对值里花括号的 {{ }} 转义——str.format 只解析
+    模板本身、不会二次解析替换进去的值，转义防不了任何 KeyError，反而让医生
+    正文里的 {"WBC":9.8} 在发给 LLM 的 prompt 中变成 {{"WBC":9.8}}（文本失真）。
 
     Args:
-        template: 含 {placeholder} 的 prompt 字符串。
+        template: 含 {placeholder} 的 prompt 字符串（模板内字面花括号写 {{}}）。
         **kwargs: 填充占位符的键值对。
 
     Returns:
         格式化后的字符串。
     """
-    safe_kwargs = {k: str(v).replace("{", "{{").replace("}", "}}") for k, v in kwargs.items()}
-    return template.format(**safe_kwargs)
+    return template.format(**{k: str(v) for k, v in kwargs.items()})
 
 
 async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:

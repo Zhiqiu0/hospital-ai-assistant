@@ -41,6 +41,24 @@ def test_inpatient_block_contains_veto_rules():
     assert "不再累积扣分" in block
 
 
+def test_veto_points_capped_by_item_max():
+    """veto 渲染扣分按大项分值封顶（2026-08-12 复检修复）。
+
+    引擎实际扣 min(10, 大项分值)——"首次病程录"仅 6 分，提示词若写扣 10 分，
+    AI 建议口径就与真实扣分打架（PR#99 要消灭的正是这类不一致）。
+    """
+    block = build_qc_standard_block(ZJ_INPATIENT_V2021)
+    capped_items = [
+        i for i in ZJ_INPATIENT_V2021.items if i.veto_rules and i.max_points < 10
+    ]
+    assert capped_items, "住院表应存在分值<10且带veto的大项（首次病程录6分）"
+    for item in capped_items:
+        # 该大项的 veto 行应按其分值渲染（如"扣 6 分"），不得出现"扣 10 分"
+        section = block.split(f"、{item.name}（")[1].split("\n\n")[0]
+        assert f"扣 {item.max_points:g} 分，该大项不再累积扣分" in section
+        assert "扣 10 分，该大项不再累积扣分" not in section
+
+
 def test_block_contains_deduction_descriptions():
     """扣分细则描述逐条进入文本（抽查第一个有细则的大项）。"""
     rubric = ZJ_OUTPATIENT_EMERGENCY_V2023

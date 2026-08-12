@@ -67,16 +67,23 @@ async def latest_ai_version(
 async def annotate_sign_similarity(
     db: AsyncSession, version: RecordVersion, final_text: str
 ) -> None:
-    """签发钩子：给签发版本回填 AI 相似度。非致命——任何异常只记日志不阻断签发。"""
+    """签发钩子：给签发版本回填 AI 相似度。非致命——任何异常只记日志不阻断签发。
+
+    用 SAVEPOINT（begin_nested）包住指标读写（2026-08-12 复检修复）：指标查询
+    若在 DB 层出错，会把整个签发事务标记为 aborted，光靠 except 兜不住——
+    后续 commit 照样抛 PendingRollbackError 让签发失败。回滚到 SAVEPOINT
+    只丢弃指标操作，签发主事务不受污染。
+    """
     try:
-        base = await latest_ai_version(db, version.medical_record_id)
-        if base is None:
-            return  # 纯手写签发，无 AI 草稿可比
-        base_text = content_text_of(base.content)
-        if not base_text:
-            return
-        version.ai_similarity = text_similarity(base_text, final_text)
-        version.ai_base_version_no = base.version_no
+        async with db.begin_nested():
+            base = await latest_ai_version(db, version.medical_record_id)
+            if base is None:
+                return  # 纯手写签发，无 AI 草稿可比
+            base_text = content_text_of(base.content)
+            if not base_text:
+                return
+            version.ai_similarity = text_similarity(base_text, final_text)
+            version.ai_base_version_no = base.version_no
     except Exception as exc:
         # 指标计算失败不能影响签发主路径，记 warning 供事后排查
         logger.warning(

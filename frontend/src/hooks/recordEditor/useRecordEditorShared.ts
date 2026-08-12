@@ -123,20 +123,20 @@ export function useRecordEditorShared(): RecordEditorShared {
     }
   }
 
-  // 病程类病历生成前，从后端拉取最新病历作为参考（pull-forward 机制）
+  // 病程类病历生成前，从后端拉取最新病历作为参考（pull-forward 机制）。
+  // 2026-08-12 复检修复：原实现调 GET /medical-records?encounter_id= 集合端点，
+  // 该端点从不存在（404 被 !res.ok 静默吞掉），兜底形同虚设——刷新后 store
+  // 为空时病程生成永远拿不到上一份病历。改用真实存在的 workspace 快照端点。
   const fetchLatestRecord = async (): Promise<string | undefined> => {
     const currentEncounterId = useActiveEncounterStore.getState().encounterId
     if (!currentEncounterId) return undefined
     try {
-      const res = await fetch(
-        `/api/v1/medical-records?encounter_id=${currentEncounterId}&limit=1`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
+      const res = await fetch(`/api/v1/encounters/${currentEncounterId}/workspace`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
       if (!res.ok) return undefined
       const data = await res.json()
-      const items = data.items || data
-      if (!Array.isArray(items) || items.length === 0) return undefined
-      return items[0]?.content || undefined
+      return data?.active_record?.content || undefined
     } catch {
       return undefined
     }

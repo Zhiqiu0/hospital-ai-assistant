@@ -174,6 +174,78 @@ async def test_similarity_failure_does_not_block_sign(async_db, monkeypatch):
     assert record.status == "submitted"
 
 
+# ── 端到端回归（2026-08-12 复检修复）：auto-save 不得摧毁 AI 对比基线 ────────
+
+
+@pytest.mark.asyncio
+async def test_autosave_preserves_ai_original_for_similarity(async_db):
+    """真实工作流：AI 生成 → 医生编辑器大改（auto-save 高频覆写）→ 签发。
+
+    修复前 auto-save 原地覆写 ai_generated 版本，签发时的对比基线是医生
+    5 秒前自己的文本，ai_similarity 恒≈1（指标系统性虚高）。
+    修复后 AI 原文冻结为不可变版本，相似度反映医生真实修改量。
+    """
+    enc = await _make_encounter(async_db, encounter_id="enc-adopt-e2e")
+    svc = MedicalRecordService(async_db)
+
+    ai_text = "主诉：发热3天。现病史：3天前受凉后发热，最高38.5℃，伴咳嗽咳痰。"
+    await svc.save_ai_draft(
+        encounter_id=enc.id, record_type="outpatient",
+        content=ai_text, user_id="doc-adopt-1",
+    )
+    # 医生在编辑器里大改，auto-save 触发多次
+    doctor_text = "主诉：腹痛2小时。现病史：2小时前进食后突发上腹绞痛，无发热。"
+    for _ in range(2):
+        await svc.auto_save_draft(
+            encounter_id=enc.id, record_type="outpatient",
+            content=doctor_text, user_id="doc-adopt-1",
+        )
+    record = await svc.quick_save(
+        encounter_id=enc.id, record_type="outpatient",
+        content=doctor_text, doctor_id="doc-adopt-1",
+    )
+
+    # AI 原文版本未被覆写（v1 仍是 AI 原文）
+    from sqlalchemy import select
+    v1 = (await async_db.execute(
+        select(RecordVersion).where(
+            RecordVersion.medical_record_id == record.id,
+            RecordVersion.version_no == 1,
+        )
+    )).scalar_one()
+    assert v1.source == "ai_generated"
+    assert v1.content == {"text": ai_text}
+
+    # 签发版本的对比基线是 AI 原文：大改后相似度必须明显低于 1
+    ver = await _signed_version(async_db, record)
+    assert ver.ai_base_version_no == 1
+    assert ver.ai_similarity is not None and ver.ai_similarity < 0.8
+
+
+@pytest.mark.asyncio
+async def test_pure_manual_autosave_not_counted_as_ai(async_db):
+    """纯手写工作流：没有 AI 生成、只有 auto-save → 签发不计入 AI 采纳统计。
+
+    修复前 auto-save 首版统一标 'ai_generated'，纯手写病历会被误算成
+    "AI 草稿被原样采纳"（相似度≈1），污染看板。
+    """
+    enc = await _make_encounter(async_db, encounter_id="enc-adopt-manual")
+    svc = MedicalRecordService(async_db)
+
+    await svc.auto_save_draft(
+        encounter_id=enc.id, record_type="outpatient",
+        content="纯手写病历正文", user_id="doc-adopt-1",
+    )
+    record = await svc.quick_save(
+        encounter_id=enc.id, record_type="outpatient",
+        content="纯手写病历正文", doctor_id="doc-adopt-1",
+    )
+
+    ver = await _signed_version(async_db, record)
+    assert ver.ai_similarity is None
+    assert ver.ai_base_version_no is None
+
+
 # ── 看板聚合 ─────────────────────────────────────────────────────────────────
 
 

@@ -69,8 +69,14 @@ def _deductions_to_issues(report: ScoreReport) -> list[dict]:
       - issue_description / suggestion / score_impact
       - source: "rule"（必修复，参与等级判定）/ "llm"（旁路建议）
     """
+    # 单条扣分展示值按大项分值封顶（2026-08-12 复检修复）：Deduction.points 是
+    # 未封顶的规则原值（score_report 明细表按设计保留原值+上限说明），但 issue
+    # 的 score_impact 是给医生看的"这条实际扣多少"——veto 在 6 分大项上实际只
+    # 扣 6 分，显示 -10 分会与总分对不上。
+    item_max = {it.name: it.max_points for it in report.item_scores}
     issues: list[dict] = []
     for d in report.deductions:
+        effective_points = min(d.points, item_max.get(d.item_name, d.points))
         # 扣分值 → 风险等级（用于前端按红/黄/灰分组显示）
         if d.is_veto or d.points >= 5:
             level = "high"
@@ -93,7 +99,7 @@ def _deductions_to_issues(report: ScoreReport) -> list[dict]:
             "rule_code": d.rule_code,
             "issue_description": d.description,
             "suggestion": d.description,  # PDF 扣分说明本身即为修复指引
-            "score_impact": f"-{d.points}分",
+            "score_impact": f"-{effective_points:g}分",
             "is_veto": d.is_veto,
             "source": "rule",
         })
