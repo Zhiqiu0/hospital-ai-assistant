@@ -58,6 +58,10 @@ async def test_init_is_idempotent(alembic_pg):
     """再跑一次 init() 不重复插种子、不报错（users 已存在则跳过播种）。"""
     engine = alembic_pg
     await init_db.init()
+    # 两次调用之间 dispose：真实场景里两次 init 是两次独立进程启动，各自新建
+    # 连接池；不 dispose 会让第二次 init 捞到上一次 event loop 的池化连接，
+    # asyncpg 报 "attached to a different loop"（CI 踩过）。
+    await engine.dispose()
     await init_db.init()  # 第二次应 no-op（内部 count>0 跳过）
 
     # 科室/用户数量不翻倍
