@@ -12,7 +12,7 @@
 所有端点均需登录认证（get_current_user）。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.authz import assert_patient_access
