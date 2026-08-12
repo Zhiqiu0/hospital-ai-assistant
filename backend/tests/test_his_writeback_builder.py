@@ -34,7 +34,7 @@ async def test_build_writeback_payload(async_db):
         visit_no="V20260518001", status="in_progress",
         his_external_ref={"his_brand": "jinsuanpan", "hospital_code": "H1",
                           "his_patient_no": "PNO1", "his_visit_no": "V20260518001",
-                          "his_doctor_no": "D001"},
+                          "doctor_code": "D001"},
     )
     async_db.add(enc)
     await async_db.commit()

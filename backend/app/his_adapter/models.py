@@ -4,18 +4,17 @@
 仅扩展一个 his_external_ref JSONB 字段记录 HIS 标识）。
 
 本文件定义：
-  - HISExternalRef    : 嵌入会话关联的 HIS 患者/就诊标识（存进 encounter.his_external_ref）
-  - StartEmbedRequest : 桌面 Agent → 后端 /embed/start 入参
-  - StartEmbedResponse: 后端返回给 Agent 的会话 token + URL
+  - HISExternalRef    : HIS 患者/就诊标识（存进 encounter.his_external_ref 的 JSONB 结构文档）
   - ApiEnvelope / AdmitPushRequest : HIS 外部接口（接诊推送/回写）用的信封与入参
 
-注：控件模式的 Fill* / DesktopHeartbeat DTO 已随 UI 自动化方案退休删除。
+注：控件模式的 Fill* / DesktopHeartbeat DTO 已随 UI 自动化方案退休删除；
+    旧 embed 会话的 StartEmbedRequest/StartEmbedResponse 已随 /embed 入口下线删除
+    （2026-08-12，接入统一走接诊推送 + 叫号工作台）。
 
 设计原则：
   - 强类型 + Pydantic 校验，前后端契约清晰
 """
 
-from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -40,37 +39,6 @@ class HISExternalRef(BaseModel):
     his_patient_no: str = Field(..., description="HIS 患者编号，跨就诊稳定")
     his_visit_no: Optional[str] = Field(None, description="HIS 就诊号，单次就诊维度")
     his_doctor_no: Optional[str] = Field(None, description="HIS 医生工号（可选）")
-
-
-class StartEmbedRequest(BaseModel):
-    """桌面 Agent 启动嵌入会话的请求体。
-
-    Agent 在医生触发 AI 助手时从 HIS 当前界面读取以下信息，POST 给后端，
-    后端创建会话 + 签发 token 给浏览器嵌入页用。
-    """
-
-    his_ref: HISExternalRef = Field(..., description="HIS 患者标识")
-    # 患者基础信息（用于 AI 上下文，不持久化到 patients 表，只放 encounter）
-    patient_name: str
-    patient_gender: Optional[Literal["male", "female", "unknown"]] = "unknown"
-    patient_birth_date: Optional[str] = Field(None, description="ISO 日期 YYYY-MM-DD")
-    # Agent 自身信息（审计用）
-    agent_device_id: str = Field(..., description="桌面 Agent 设备 ID")
-    agent_version: str = Field(..., description="桌面 Agent 版本号")
-
-
-class StartEmbedResponse(BaseModel):
-    """后端响应给 Agent 的会话结果。"""
-
-    encounter_id: str
-    embed_token: str = Field(..., description="JWT，4h 有效，浏览器嵌入页跳过登录用")
-    embed_url: str = Field(..., description="带 token 和 patient context 的完整 URL")
-    expires_at: datetime
-
-
-# 注：桌面 Agent「控件模式」的 FillField / FillRequest / FillResult /
-# FillFieldResult / DesktopHeartbeat 已随 UI 自动化方案退休删除。
-# 回写改走接口模式（his.py 的 writeback）；将来内网薄中转的上报模型另行设计。
 
 
 class ApiEnvelope(BaseModel):

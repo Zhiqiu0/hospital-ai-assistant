@@ -100,14 +100,12 @@ class Settings(BaseSettings):
     # 本地开发不需要传，留空表示不带 release tag
     sentry_release: str = ""
 
-    # ── HIS 对接（金算盘等院内 HIS 嵌入模式）──────────────────────────────────
-    # 全局保险丝：false 时所有 /embed/* 和 /desktop/* 路由直接 503，
+    # ── HIS 对接（金算盘等院内 HIS 接口模式）──────────────────────────────────
+    # 全局保险丝：false 时所有 HIS 对接路由（/his/* 推送、回写、WS、叫号）直接 503，
     # 完全不影响现有 SaaS（mediscribe.cn 普通医生登录使用）。
-    # 上线初期保持 false，确认稳定后再开 true。任何嵌入相关 bug 都可以
-    # 通过把这个改回 false + 重启后端 5 秒内全院切回纯 SaaS。
+    # 任何对接 bug 都可以通过把这个改回 false + 重启后端 5 秒内全院切回纯 SaaS。
+    # （旧 /embed/* 桌面 Agent 入口已于 2026-08-12 整体下线删除。）
     his_adapter_enabled: bool = False
-    # 嵌入会话 token 有效期（小时），默认 4h（够医生写完一份病历）
-    his_embed_token_ttl_hours: int = 4
     # ── HIS 接诊推送验签（HIS→我方）──────────────────────────────
     # 我方分配给 HIS 的一对凭证，用于验证 HIS 接诊推送的 HMAC 签名
     his_inbound_app_id: str = ""

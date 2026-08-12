@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, embed, his, his_queue, his_ws
+from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, his, his_queue, his_ws
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -27,12 +27,9 @@ router.include_router(sentry_tunnel.router, prefix="", tags=["可观测性"])
 # 后台管理：单一聚合 router，自带 audit_admin_action 依赖（修复"管理员操作零审计"硬伤）
 router.include_router(admin_router, prefix="/admin")
 
-# HIS 嵌入模式（HIS_ADAPTER_ENABLED=false 时统一 503）
-# 跟 SaaS 严格隔离的"另一种入口"，共享所有 service 层代码。
-# 注：旧的桌面 Agent「控件模式」(UI 自动化填表 + 字段映射) 已退休删除，
-# 改用接口模式回写（见 his.py 的 writeback）；将来的内网薄中转另行设计。
-router.include_router(embed.router, tags=["HIS嵌入"])
-# HIS 外部接口（接诊推送接收 + 病历回写，HMAC 验签）
+# 注：旧的桌面 Agent「控件模式」和「/embed 嵌入模式」两代旧接入范式均已退休删除
+# （2026-08-12 embed 下线），HIS 接入统一走下面的接口模式：推送建档 + 叫号 + 回写。
+# HIS 外部接口（接诊推送接收 + 病历回写，HMAC 验签，HIS_ADAPTER_ENABLED=false 时统一 503）
 router.include_router(his.router, tags=["HIS对接"])
 # HIS WebSocket 长连接通道（规范第 7 章方案 B：接诊上行 + 回写下行走同一条 wss）
 router.include_router(his_ws.router, tags=["HIS对接"])

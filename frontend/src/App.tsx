@@ -27,7 +27,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Spin } from 'antd'
 import LoginPage from '@/pages/LoginPage'
 import WorkbenchPage from '@/pages/WorkbenchPage'
-import EmbedWorkbenchPage from '@/pages/EmbedWorkbenchPage'
 
 // 路由级懒加载（2026-06-11 性能治本）：
 //   PACS 页带着整套 cornerstone3D（DICOM 渲染引擎，约占原首包一半体积），
@@ -122,11 +121,6 @@ export default function App() {
       <Suspense fallback={lazyFallback}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          {/*
-           * HIS 嵌入模式入口（无需登录，URL token 自代理）。
-           * 桌面 Agent 触发 → /embed?token=...&encounter_id=... → setup 完跳 /workbench
-           */}
-          <Route path="/embed" element={<EmbedWorkbenchPage />} />
           <Route
             path="/workbench"
             element={

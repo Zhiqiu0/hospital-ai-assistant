@@ -74,7 +74,7 @@ async def trigger_writeback(
     回写地址未配置时返回 skipped（联调前安全空跑）。
     """
     # 归属校验（2026-08-11 审计修复）：只能回写自己的接诊，防越权回写他人病历。
-    # 管理员天然放行；embed 票被限制在其绑定接诊内，正是本端点的预期语义。
+    # 管理员天然放行。
     from app.core.authz import assert_encounter_access
     await assert_encounter_access(db, encounter_id, current_user)
     try:
