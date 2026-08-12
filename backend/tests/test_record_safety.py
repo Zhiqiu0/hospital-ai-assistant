@@ -73,9 +73,14 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
     from app.models.medical_record import MedicalRecord
     from app.models.patient import Patient
     from app.models.user import User
+    # 唯一后缀用 uuid 而非 id(p)（2026-08-12 修 CI 间歇性失败）：id() 是内存地址，
+    # 上一次调用的对象被回收后，下一次分配可能复用同一地址 → 同名用户撞
+    # UNIQUE 约束，是否触发取决于分配器行为，表现为随机红。
+    from uuid import uuid4
+    suffix = uuid4().hex[:8]
     p = Patient(name="对账患者")
     db.add(p)
-    doc = User(username=f"d{id(p)%10000}", password_hash="x", real_name="医生", role="doctor")
+    doc = User(username=f"d{suffix}", password_hash="x", real_name="医生", role="doctor")
     db.add(doc)
     await db.flush()
     wb = None
@@ -85,7 +90,7 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
             wb["reconcile_exhausted"] = True
     enc = Encounter(
         patient_id=p.id, doctor_id=doc.id, visit_type="outpatient",
-        visit_no=f"V{id(p)%100000}", status="in_progress",
+        visit_no=f"V{suffix}", status="in_progress",
         visited_at=visited or datetime.now(),
         his_external_ref={"source": "admit_push", "hospital_code": "H1",
                           **({"writeback": wb} if wb else {})},
@@ -187,9 +192,11 @@ async def _mk_sign_encounter(db):
     from app.models.encounter import Encounter
     from app.models.patient import Patient
     from app.models.user import User
+    # 同 _mk_his_encounter：唯一后缀用 uuid，杜绝 id() 内存地址复用撞唯一约束
+    from uuid import uuid4
     p = Patient(name="签名患者")
     db.add(p)
-    doc = User(username=f"sd{id(p)%10000}", password_hash="x", real_name="签名医生",
+    doc = User(username=f"sd{uuid4().hex[:8]}", password_hash="x", real_name="签名医生",
                role="doctor")
     db.add(doc)
     await db.flush()
