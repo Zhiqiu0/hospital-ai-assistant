@@ -121,9 +121,22 @@ jobs:
               "SELECT 1 FROM pg_database WHERE datname='orthanc'" | grep -q 1 \
               || docker compose exec -T db createdb -U medassist orthanc
 
+            # 迁移前自动备份（2026-08-11 病历安全；2026-08-12 收口时移到容器启动前——
+            # 新 entrypoint 在容器启动时就跑 alembic，备份必须发生在任何迁移之前才有意义）。
+            # 失败仅告警不阻断；只保留最近 10 份防塞满盘。
+            mkdir -p /app/backups
+            BK="/app/backups/pre_migrate_$(date +%Y%m%d_%H%M%S).sql"
+            if docker compose exec -T db pg_dump -U medassist medassist > "$BK" 2>/dev/null; then
+              echo "[deploy] 迁移前备份 OK: $BK ($(du -h "$BK" | cut -f1))"
+            else
+              echo "[deploy] WARN: 迁移前 pg_dump 失败，继续部署（迁移幂等，风险可控）"
+              rm -f "$BK"
+            fi
+            ls -t /app/backups/pre_migrate_*.sql 2>/dev/null | tail -n +11 | xargs -r rm -f
+
             # 现在 db + orthanc 库都就绪，正常 up 全部 service
-            # 不用 --wait（避免 orthanc 健康问题阻塞主流程 alembic / migrate）
-            # 改成显式 up + 自己轮询 backend / frontend 关键服务 healthy
+            # （backend entrypoint 会执行 alembic_guard + alembic upgrade head + 种子）
+            # 不用 --wait，改成显式 up + 自己轮询 backend / frontend 关键服务 healthy
             docker compose up -d
             for i in $(seq 1 30); do
               backend_h=$(docker inspect --format='{{.State.Health.Status}}' app-backend-1 2>/dev/null || echo "starting")
@@ -145,45 +158,14 @@ jobs:
               echo "[deploy] WARNING: orthanc=$orthanc_h（PACS 影像功能可能不可用）"
               docker compose logs --tail=40 orthanc 2>&1 | tail -40 || true
             fi
-            # alembic 主迁移（迁移脚本在 alembic/versions 下）
-            #
-            # 历史背景：早期 schema 全靠 migrate.py 增量 ALTER 维护，alembic
-            # 后期才接入。生产 DB 的 alembic_version 表可能空（从未跑过 alembic）
-            # 但 schema 已经被 migrate.py 改到 c2d3e4f5a6b7（add_gender_scope）
-            # 之后的水平。直接 alembic upgrade head 会从 ad93f93fec62 重跑
-            # 老迁移 → ADD COLUMN rule_code 等已存在的列 → DuplicateColumnError。
-            #
-            # 修法：alembic_version 空且 qc_rules.gender_scope 已存在（migrate.py
-            # 维护到这里的标志）→ stamp c2d3e4f5a6b7 表示"现状已到这"，跳过老迁移
-            # 只跑新加的 d3e4f5a6b7c8 / e4f5a6b7c8d9。
-            # 全新数据库（gender_scope 不存在）→ 不 stamp，alembic 从头跑建表。
-            # 迁移前自动备份（2026-08-11 病历安全）：跑 alembic/migrate.py 改 schema 前
-            # 先 pg_dump 一份到服务器 /app/backups，万一迁移损坏数据可回滚。失败仅告警
-            # 不阻断（迁移多为 IF NOT EXISTS 幂等，低风险）；只保留最近 10 份防塞满盘。
-            mkdir -p /app/backups
-            BK="/app/backups/pre_migrate_$(date +%Y%m%d_%H%M%S).sql"
-            if docker compose exec -T db pg_dump -U medassist medassist > "$BK" 2>/dev/null; then
-              echo "[deploy] 迁移前备份 OK: $BK ($(du -h "$BK" | cut -f1))"
-            else
-              echo "[deploy] WARN: 迁移前 pg_dump 失败，继续部署（迁移幂等，风险可控）"
-              rm -f "$BK"
-            fi
-            ls -t /app/backups/pre_migrate_*.sql 2>/dev/null | tail -n +11 | xargs -r rm -f
-
-            STAMP_BASELINE="c2d3e4f5a6b7"
-            ALEMBIC_EMPTY=$(docker compose exec -T db psql -U medassist -d medassist -tA \
-              -c "SELECT count(*) FROM alembic_version" 2>/dev/null || echo "0")
-            HAS_GENDER_SCOPE=$(docker compose exec -T db psql -U medassist -d medassist -tA \
-              -c "SELECT count(*) FROM information_schema.columns WHERE table_name='qc_rules' AND column_name='gender_scope'" \
-              2>/dev/null || echo "0")
-            if [ "$ALEMBIC_EMPTY" = "0" ] && [ "$HAS_GENDER_SCOPE" = "1" ]; then
-              echo "[deploy] alembic_version 空 + schema 已到 $STAMP_BASELINE，stamp 后只跑新迁移"
-              docker compose exec -T backend alembic stamp "$STAMP_BASELINE"
-            fi
+            # ── 迁移单通道（2026-08-12 收口）────────────────────────────────
+            # alembic 是唯一 schema 真源（migrate.py / schema_compat / init_db
+            # 的 create_all 均已删除）。entrypoint 启动时已跑过 guard + upgrade，
+            # 这里再显式执行一遍：幂等、且把迁移状态打进 deploy 日志便于复盘。
+            # alembic_guard 只在存量库版本缺失/指向旧链时 stamp 到基线（零 DDL）。
+            docker compose exec -T backend python alembic_guard.py
+            docker compose exec -T backend alembic current
             docker compose exec -T backend alembic upgrade head
-            # 兜底：migrate.py 增量补字段 / 回填（schema_compat 已在启动时跑，
-            # 这里再显式调一次保证一定执行 + 把 deploy 日志里能看到结果）
-            docker compose exec -T backend python migrate.py
             # seed_config 维护质控规则与 Prompt 模板（重复执行幂等）
             docker compose exec -T backend python seed_config.py
 

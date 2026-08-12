@@ -27,7 +27,6 @@ from app.core.request_context import RequestIDMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.sentry_init import init_sentry
 from app.database import AsyncSessionLocal
-from app.schema_compat import apply_schema_compatibility
 
 # 初始化日志：级别从 settings 读取（默认 INFO），格式由 setup_logging 统一配置
 setup_logging(log_level=getattr(settings, "log_level", "INFO"))
@@ -44,12 +43,12 @@ init_sentry(
 )
 
 # ── 生命周期（lifespan）──────────────────────────────────────────────────────
-# 2026-06-11：替换弃用的 @app.on_event("startup")，行为不变：
-# 启动时打日志 + 执行 schema 兼容性检查（自动为旧版 DB 补缺失字段）
+# 注：原启动期 schema 兼容检查（schema_compat）已随迁移收口删除（2026-08-12）——
+# 表结构统一由 alembic 在 entrypoint 阶段维护，应用启动不再执行任何 DDL
+# （顺带消除了 2 worker 并发跑 create_all 的竞态）。
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("app.startup: ok")
-    await apply_schema_compatibility()
     # HIS 回写指令消费任务（2026-08-11 业务联动）：多 worker 部署下，签发请求
     # 与厂商 WS 连接可能不在同一进程，回写指令经 Redis 总线广播、由持有连接的
     # worker 抢占执行。保险丝关闭时不起任务，生产 SaaS 零影响。

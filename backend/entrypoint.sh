@@ -1,11 +1,17 @@
 #!/bin/sh
 set -e
 
-echo "[entrypoint] 初始化数据库..."
-python init_db.py
+# 迁移单通道（2026-08-12 收口）：alembic 是唯一 schema 真源。
+# guard 只打标记不执行 DDL（存量库版本缺失/指向旧链时 stamp 到基线），
+# upgrade 负责全部建表/改表（全新库从基线一步建成）。
+echo "[entrypoint] alembic 迁移守卫..."
+python alembic_guard.py
 
-echo "[entrypoint] 执行增量迁移..."
-python migrate.py
+echo "[entrypoint] alembic 迁移..."
+alembic upgrade head
+
+echo "[entrypoint] 种子数据（表结构已由 alembic 建好）..."
+python init_db.py
 
 echo "[entrypoint] 补充默认配置数据..."
 python seed_config.py
