@@ -80,8 +80,9 @@ npm run dev
 - 仓库已内置 `docker-compose.yml`、`backend/Dockerfile`、`backend/alembic/` 迁移目录
 - 生产走 docker compose（前端 + 后端 + PostgreSQL + Redis + Orthanc + uptime-kuma）
 - 数据库变更走 `alembic` 单通道（2026-08-12 收口；禁止直接 SQL 改 schema）：
-  改 model 后写一条**幂等** revision（inspector 判断已存在再加，基线是 create_all
-  语义，非幂等迁移会在全新库上撞车），CI 的空库门禁会拦截违规迁移
+  基线是**冻结 DDL 快照**（不随模型演进），改 model 必须配套写一条 revision
+  （推荐幂等写法），否则 CI 的 `alembic check` 门禁红灯；空库门禁同时保证
+  全新库一步建成完整 schema
 - Redis 已是核心依赖：PACS 缩略图缓存 + HIS 联动的跨 worker 事件总线（多 worker 部署必需）
 
 ## 环境变量
