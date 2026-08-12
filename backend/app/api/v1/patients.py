@@ -80,6 +80,17 @@ async def get_patient(
     """按 UUID 查询单个患者详情。"""
     # 归属校验：非管理员只能查自己接诊过的患者，防止越权读身份证号/住址等 PHI（IDOR）
     await assert_patient_access(db, patient_id, current_user)
+    # PHI 访问留痕（2026-08-11 分级评审）：本端点返回身份证/住址等敏感字段，
+    # 每次查阅写审计（谁在何时看了哪位患者的档案），供事后追溯。
+    from app.services.audit_service import log_action
+    await log_action(
+        action="view_patient",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient", resource_id=patient_id,
+        detail="查阅患者档案详情（含身份证/住址等 PHI）",
+    )
     service = PatientService(db)
     return await service.get_by_id(patient_id)
 
@@ -94,6 +105,16 @@ async def update_patient(
     """更新患者信息（只更新传入的非 None 字段）。"""
     # 归属校验：只能改自己接诊过的患者，防止越权篡改他人档案
     await assert_patient_access(db, patient_id, current_user)
+    # 档案修改留痕（2026-08-11 分级评审）：改了哪些字段名进审计（不含值，避免 PHI 入日志）
+    from app.services.audit_service import log_action
+    await log_action(
+        action="update_patient",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient", resource_id=patient_id,
+        detail=f"修改患者档案字段：{', '.join(data.model_dump(exclude_none=True).keys())}",
+    )
     service = PatientService(db)
     return await service.update(patient_id, data)
 

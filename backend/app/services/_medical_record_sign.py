@@ -153,6 +153,24 @@ class MedicalRecordSignMixin:
                     "department_name": dept_name,
                 }
 
+        # ── 电子签名防篡改哈希（2026-08-11 病历可信）─────────────────────────
+        # 在快照冻结之后、commit 之前算：sign_hash 覆盖正文+快照+医生+签发时间+链上
+        # 前一环。任何库内回改已签发正文/快照都会让 verify 失败。
+        from app.services._record_signature import (
+            compute_sign_hash,
+            content_text_of,
+            latest_chain_hash,
+        )
+        prev_hash = await latest_chain_hash(self.db)
+        version.prev_hash = prev_hash
+        version.sign_hash = compute_sign_hash(
+            content_text=content_text_of(version.content),
+            patient_snapshot=record.patient_snapshot,
+            doctor_id=doctor_id,
+            submitted_at_iso=record.submitted_at.isoformat() if record.submitted_at else "",
+            prev_hash=prev_hash,
+        )
+
         await self.db.commit()
         await self.db.refresh(record)
         # 失效缓存：snapshot 一定要失效（病历内容变了）；

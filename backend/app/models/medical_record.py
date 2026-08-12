@@ -118,6 +118,14 @@ class RecordVersion(Base):
     # 版本创建时间
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
+    # ── 电子签名防篡改哈希链（2026-08-11 病历可信，分级评审电子签名项基线）──────
+    # 仅签发版本(source='doctor_signed')有值：sign_hash = SHA-256(正文+患者快照+
+    # 医生+签发时间+prev_hash)，prev_hash 指向上一份签发病历的 sign_hash，串成只追加
+    # 的哈希链。任何对已签发病历正文/快照的库内回改、或删除一份签发记录，都会让链
+    # 校验失败（见 services/_record_signature.py）。不替代 CA/UKey 数字签名，是其前置基线。
+    sign_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    prev_hash: Mapped[Optional[str]] = mapped_column(String(64))
+
     # 关联病历主表
     record: Mapped[MedicalRecord] = relationship(back_populates="versions")
 

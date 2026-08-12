@@ -61,3 +61,39 @@ async def revise_record(
     """管理员修订已签发病历：创建新 RecordVersion，旧版本保留供审计。"""
     service = AdminRecordService(db)
     return await service.revise_record(record_id, data.content, data.revise_reason, current_user)
+
+
+@router.get("/signature-integrity")
+async def verify_signature_integrity(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """校验全部已签发病历的电子签名哈希链完整性（2026-08-11 病历可信）。
+
+    逐条复算 sign_hash 与库中值比对——任一份已签发病历的正文/患者快照被库内回改，
+    这里就会报出 tampered。供分级评审现场演示"病历改动可发现"。
+
+    返回：{"total": 校验总数, "verified": 通过数, "tampered": [异常明细]}
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import RecordVersion
+    from app.services._record_signature import verify_version
+
+    versions = (await db.execute(
+        select(RecordVersion).where(RecordVersion.sign_hash.isnot(None))
+    )).scalars().all()
+
+    tampered = []
+    for v in versions:
+        if not await verify_version(db, v):
+            tampered.append({
+                "medical_record_id": v.medical_record_id,
+                "version_no": v.version_no,
+            })
+    return {
+        "total": len(versions),
+        "verified": len(versions) - len(tampered),
+        "tampered": tampered,
+        "ok": len(tampered) == 0,
+    }

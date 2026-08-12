@@ -305,6 +305,45 @@ async def migrate():
             print(f"    medical_records.patient_snapshot - SKIP ({str(e)[:80]})")
         print()
 
+        # 11a. audit_logs 只追加防篡改（2026-08-11 分级评审：审计不可被删改）
+        # 原先 audit_logs 是普通表，有库权限者可静默 UPDATE/DELETE 抹除操作痕迹。
+        # 加触发器在 UPDATE/DELETE 时抛异常，DB 级强制只追加（INSERT 不受影响）。
+        # 幂等：CREATE OR REPLACE FUNCTION + DROP/CREATE TRIGGER。
+        print("[11a] audit_logs 只追加防篡改触发器...")
+        try:
+            await conn.execute(text("""
+                CREATE OR REPLACE FUNCTION audit_logs_append_only()
+                RETURNS trigger AS $$
+                BEGIN
+                    RAISE EXCEPTION 'audit_logs 只追加，禁止 UPDATE/DELETE（分级评审合规）';
+                END;
+                $$ LANGUAGE plpgsql;
+            """))
+            await conn.execute(text(
+                "DROP TRIGGER IF EXISTS trg_audit_logs_append_only ON audit_logs"
+            ))
+            await conn.execute(text("""
+                CREATE TRIGGER trg_audit_logs_append_only
+                BEFORE UPDATE OR DELETE ON audit_logs
+                FOR EACH ROW EXECUTE FUNCTION audit_logs_append_only();
+            """))
+            print("    audit_logs 只追加触发器 - OK")
+        except Exception as e:
+            print(f"    audit_logs 只追加触发器 - SKIP ({str(e)[:80]})")
+        print()
+
+        # 11b. record_versions 电子签名哈希列（2026-08-11 病历可信）
+        print("[11b] record_versions 电子签名哈希列...")
+        for col in ("sign_hash", "prev_hash"):
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE record_versions ADD COLUMN IF NOT EXISTS {col} VARCHAR(64)"
+                ))
+                print(f"    record_versions.{col} - OK")
+            except Exception as e:
+                print(f"    record_versions.{col} - SKIP ({str(e)[:80]})")
+        print()
+
         # 12. 病历热路径索引（2026-08-11 病历安全）：PG 不给 FK 自动建索引，
         # 工作台/签发/草稿/叫号队列这些高频操作原先全表扫描，随病历量线性劣化。
         # CREATE INDEX IF NOT EXISTS 幂等，与模型 __table_args__ 声明的索引名一致。
