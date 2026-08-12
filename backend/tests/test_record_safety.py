@@ -139,3 +139,63 @@ async def test_reconcile_skips_old_window(async_db):
     await _mk_his_encounter(async_db, writeback_status="write_failed",
                             visited=datetime.now() - timedelta(days=5))
     assert await _find_candidates(async_db) == []
+
+
+# ── A批 电子签名防篡改哈希链 ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_sign_hash_computed_and_verifies(async_db):
+    """签发后版本带 sign_hash，且 verify_version 判定未篡改。"""
+    from app.models.medical_record import RecordVersion
+    from app.services._record_signature import verify_version
+    from app.services.medical_record_service import MedicalRecordService
+    from sqlalchemy import select
+
+    eid, doc_id = await _mk_sign_encounter(async_db)
+    svc = MedicalRecordService(async_db)
+    rec = await svc.quick_save(eid, "outpatient", "主诉：签名测试。", doc_id)
+    ver = (await async_db.execute(
+        select(RecordVersion).where(RecordVersion.medical_record_id == rec.id,
+                                    RecordVersion.version_no == rec.current_version)
+    )).scalar_one()
+    assert ver.sign_hash and len(ver.sign_hash) == 64
+    assert await verify_version(async_db, ver) is True
+
+
+@pytest.mark.asyncio
+async def test_tampered_content_detected(async_db):
+    """库内直接改已签发版本正文 → verify 报篡改。"""
+    from app.models.medical_record import RecordVersion
+    from app.services._record_signature import verify_version
+    from app.services.medical_record_service import MedicalRecordService
+    from sqlalchemy import select
+
+    eid, doc_id = await _mk_sign_encounter(async_db)
+    svc = MedicalRecordService(async_db)
+    rec = await svc.quick_save(eid, "outpatient", "主诉：原始内容。", doc_id)
+    ver = (await async_db.execute(
+        select(RecordVersion).where(RecordVersion.medical_record_id == rec.id,
+                                    RecordVersion.version_no == rec.current_version)
+    )).scalar_one()
+    # 模拟库内篡改：绕过签发直接改正文
+    ver.content = {"text": "主诉：被偷偷改过的内容。"}
+    await async_db.commit()
+    assert await verify_version(async_db, ver) is False
+
+
+async def _mk_sign_encounter(db):
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    from app.models.user import User
+    p = Patient(name="签名患者")
+    db.add(p)
+    doc = User(username=f"sd{id(p)%10000}", password_hash="x", real_name="签名医生",
+               role="doctor")
+    db.add(doc)
+    await db.flush()
+    enc = Encounter(patient_id=p.id, doctor_id=doc.id, visit_type="outpatient",
+                    status="in_progress")
+    db.add(enc)
+    await db.commit()
+    await db.refresh(enc)
+    return enc.id, doc.id
