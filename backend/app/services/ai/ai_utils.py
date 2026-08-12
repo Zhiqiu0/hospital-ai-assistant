@@ -34,7 +34,7 @@ def sse_event(event_type: str, **fields) -> str:
     """SSE 事件序列化：'data: {"type":"...","..."}\\n\\n'。
 
     项目里多处需要把 LLM 流 / 业务事件包成 SSE 格式推回前端
-    （quick-generate / quick-qc / record_gen_v2 / inquiry / record_gen_service 等），
+    （quick-generate / quick-qc / record_gen_v2 / inquiry 等），
     本 helper 是单一入口，避免每处独立拼字符串导致格式偏差（漏 \\n\\n、
     漏 ensure_ascii=False、type key 拼错等）。
 

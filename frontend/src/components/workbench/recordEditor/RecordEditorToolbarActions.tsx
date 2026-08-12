@@ -3,8 +3,8 @@
  * （components/workbench/recordEditor/RecordEditorToolbarActions.tsx）
  *
  * 2026-06-11 Round 5 拆分：从 RecordEditorToolbar.tsx 抽出（原文件 471 行超 300 行规范）。
- * 按钮渲染逻辑原样搬家，未做任何改动；
- * 嵌入模式（embedStore）/ 问诊数据（inquiryStore）/ 医生信息（authStore）订阅随按钮一起搬入。
+ * 按钮渲染逻辑原样搬家，未做任何改动；医生信息（authStore）订阅随按钮一起搬入
+ * （嵌入模式 AutoFill 按钮已随桌面 Agent 模式退休删除，embedStore 订阅不复存在）。
  */
 import { App, Button, Space } from 'antd'
 import {

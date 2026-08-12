@@ -12,7 +12,7 @@ L3 治本架构：按浙江省卫健委评分标准 1:1 映射 + 三层架构。
     └── zj_inpatient_2021.py（下一期）
 
 为什么独立成 qc_engine 而不放 rule_engine：
-  - rule_engine/completeness_rules.py 是旧实现，多个阶段散落判定占位符 → bug
-  - 新架构治本：所有判定收编到 Section.is_filled() 一处
-  - 老 rule_engine 在新引擎稳定后整体删除（参考 record_gen_v2 取代旧 stream_text 的节奏）
+  - 旧实现 rule_engine/completeness_rules.py 多个阶段散落判定占位符 → bug，
+    已删除；新架构治本：所有判定收编到 Section.is_filled() 一处
+  - rule_engine/ 现仅剩 insurance_rules.py（医保风险，仍是主路径依赖，不删）
 """

@@ -31,21 +31,22 @@ medassist/
 │   │   ├── schemas/        # 请求/响应结构
 │   │   ├── services/       # 业务逻辑
 │   │   │   ├── ai/         # AI调用服务
-│   │   │   └── rule_engine/# 规则引擎
+│   │   │   ├── qc_engine/  # 病历质控评分引擎（浙江省标准 rubric）
+│   │   │   └── rule_engine/# 医保风险规则
+│   │   ├── his_adapter/    # HIS 对接（接诊推送/回写/对账）
 │   │   └── core/           # 鉴权、中间件
 │   ├── init_db.py          # 初始化数据库与默认数据
+│   ├── migrate.py          # 命令式迁移兜底（与 alembic 双通道）
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   └── src/
 │       ├── pages/          # 页面
 │       ├── components/     # 组件
+│       ├── hooks/          # 业务 hooks
+│       ├── domain/         # 领域类型
 │       ├── services/       # API调用
-│       └── store/          # 状态管理
-├── docs/                   # 文档
-│   ├── database_design.md  # 数据库设计
-│   └── api_definition.md   # 接口定义
-├── 启动指南.md             # 本地启动说明
-└── test_api.py             # 简单联调脚本
+│       └── store/          # 状态管理（zustand 子 store）
+└── docs/                   # 评审/对接材料
 ```
 
 ## 快速启动

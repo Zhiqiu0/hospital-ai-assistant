@@ -2,8 +2,8 @@
  * 接诊上下文水合 Hook（hooks/useEnsureSnapshotHydrated.ts）
  *
  * 解决问题：
- *   workbenchStore + activeEncounterStore 都持久化了 currentEncounterId，
- *   刷新页面后这些"指针"会被还原。但 patientCacheStore 故意不持久化
+ *   activeEncounterStore 持久化了 currentEncounterId，
+ *   刷新页面后这个"指针"会被还原。但 patientCacheStore 故意不持久化
  *   （档案是后端权威，避免脏数据），导致刷新后 PatientProfileCard 拿不到
  *   patient + profile 数据，渲染成空白。
  *

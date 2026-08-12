@@ -56,8 +56,8 @@ export default function ExamSuggestionTab() {
   const { examSuggestions, isExamLoading, setExamSuggestions, setExamLoading } =
     useAISuggestionStore()
 
-  // 切换接诊时清空逻辑已移至 workbenchStore.setCurrentEncounter，
-  // 在 store 层判断 encounterId 是否真正变化，避免 React StrictMode 双次 effect 误清空。
+  // 切换接诊时清空逻辑在 store 层（activeEncounterStore.setCurrentEncounter）
+  // 判断 encounterId 是否真正变化后统一清空，避免 React StrictMode 双次 effect 误清空。
 
   /** 调用 AI 获取检查建议列表 */
   const handleLoad = useCallback(async () => {

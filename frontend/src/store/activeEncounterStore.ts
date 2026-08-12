@@ -6,13 +6,10 @@
  *   encounter_id / visit_type 等指针字段，不存患者档案数据本身。
  *   患者档案存放在 patientCacheStore，本 store 与之解耦。
  *
- * 为什么不直接复用 workbenchStore：
- *   workbenchStore 既存了"指针"（currentPatient/currentEncounterId）又
- *   存了"接诊内态"（inquiry/recordContent/QC 结果等几十个字段），导致
- *   切换患者时为了清理内态要重置整个 store，无法在内存里同时保留多个
- *   患者的档案视图。Round 1.5 把指针单独抽出来，1.6 起新组件直接读
- *   activeEncounterStore + patientCacheStore，老组件继续用 workbenchStore，
- *   等迁移完了再把 workbenchStore 里冗余的指针字段删掉。
+ * 历史沿革：
+ *   旧 workbenchStore 既存"指针"又存"接诊内态"（几十个字段），切换患者
+ *   要重置整个 store，无法同时保留多个患者的档案视图。Round 1.5 把指针
+ *   单独抽出成本 store，迁移已完成，workbenchStore 已整体删除。
  *
  * 持久化：
  *   挂 persist 中间件，刷新页面后能恢复到上一个接诊。患者档案与病历

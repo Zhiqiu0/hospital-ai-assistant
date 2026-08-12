@@ -1,14 +1,16 @@
 /**
  * 工作台 store 共享类型 + 默认值（store/types.ts）
  *
- * Audit Round 4 M1 拆分：
- *   原来 workbenchStore.ts 集所有类型 + 状态 + actions 于一身（415 行上帝对象）。
- *   本文件抽出 5 个子 store 都要用的"纯数据形状"——类型定义 + 默认值常量。
+ * 历史沿革（Audit Round 4 M1 拆分）：
+ *   原 workbenchStore.ts 集所有类型 + 状态 + actions 于一身（415 行上帝对象），
+ *   已拆散删除。本文件是各子 store（aiSuggestion/inquiry/qc/encounterIntake 等）
+ *   与众多组件/hook 共用的"纯数据形状"——类型定义 + 默认值常量。
  *   每个子 store 各自负责自己领域的 actions 和 persist 配置。
  *
  * 类型分组：
  *   - InquiryData          : 问诊面板字段（门诊/住院/中医/急诊都填这一张表）
  *   - QCIssue / GradeScore : 质控结果
+ *   - ScoreReport 系列     : 甲级评分报告（ScoreReportItem/ScoreReportDeduction）
  *   - ExamSuggestion       : AI 检查建议
  *   - InquirySuggestion    : AI 追问建议
  *   - DiagnosisItem        : AI 诊断建议
@@ -187,7 +189,7 @@ export interface PatientInfo {
  * 问诊数据默认值（所有字段空字符串/空值）
  *
  * 单独抽出为常量，便于 inquiryStore.reset 和外部 hook 引用，
- * 避免每处都重复写一遍 38 个字段名。
+ * 避免每处都重复写一遍 43 个字段名。
  */
 export const defaultInquiry: InquiryData = {
   chief_complaint: '',
