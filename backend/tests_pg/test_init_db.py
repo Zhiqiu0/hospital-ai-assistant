@@ -2,14 +2,31 @@
 init_db.py 真 PG 测试
 
 2026-08-12 迁移收口后 init_db 只播种子（建表归 alembic 基线）——
-本测试改用 alembic_pg 夹具（空库 + alembic upgrade head）复刻 entrypoint
+本测试用 alembic_pg 夹具（空库 + alembic upgrade head）复刻 entrypoint
 的真实顺序：alembic 建表 → init_db 播种子，验证种子全部落库 + 幂等。
+
+工程注意（CI 踩坑）：conftest 的共享 engine 在多用例间会残留上一个
+event loop 的池化连接，第二个用例拿到就报 asyncpg
+"attached to a different loop"。这里给每个用例造一台**独立 engine**
+并 monkeypatch 进 init_db，全程只活在当前 loop，机制上免疫。
 """
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 import init_db  # noqa: E402  # conftest 已把 app.database.engine 换成一次性测试库
-from sqlalchemy import text
+from tests_pg.conftest import _test_url
+
+
+@pytest_asyncio.fixture
+async def init_engine(alembic_pg, monkeypatch):
+    """本用例独占的异步 engine：注入 init_db，测完 dispose。"""
+    eng = create_async_engine(_test_url.render_as_string(hide_password=False))
+    monkeypatch.setattr(init_db, "engine", eng)
+    yield eng
+    await eng.dispose()
 
 
 async def _table_exists(engine, table_name: str) -> bool:
@@ -31,9 +48,9 @@ async def _scalar(engine, sql: str, params: dict | None = None):
         return result.scalar()
 
 
-async def test_init_creates_tables_and_seeds(alembic_pg):
+async def test_init_creates_tables_and_seeds(init_engine):
     """alembic 建好表后 init() 应把种子全部落库（4 科室 + admin + doctor01）。"""
-    engine = alembic_pg
+    engine = init_engine
     await init_db.init()
 
     # 业务表由 alembic 基线建出（init_db 不再负责建表）
@@ -54,14 +71,10 @@ async def test_init_creates_tables_and_seeds(alembic_pg):
     assert doctor_dept == "NEIKE"
 
 
-async def test_init_is_idempotent(alembic_pg):
+async def test_init_is_idempotent(init_engine):
     """再跑一次 init() 不重复插种子、不报错（users 已存在则跳过播种）。"""
-    engine = alembic_pg
+    engine = init_engine
     await init_db.init()
-    # 两次调用之间 dispose：真实场景里两次 init 是两次独立进程启动，各自新建
-    # 连接池；不 dispose 会让第二次 init 捞到上一次 event loop 的池化连接，
-    # asyncpg 报 "attached to a different loop"（CI 踩过）。
-    await engine.dispose()
     await init_db.init()  # 第二次应 no-op（内部 count>0 跳过）
 
     # 科室/用户数量不翻倍
