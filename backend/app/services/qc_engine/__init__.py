@@ -9,7 +9,7 @@ L3 治本架构：按浙江省卫健委评分标准 1:1 映射 + 三层架构。
   - scorer.py       : 评分器（大项上限保护 + 单项否决短路 + PDF 等级判定）
   - rubrics/        : 法定评分表代码常量（PR review 才能改，admin 不可改）
     └── zj_outpatient_emergency_2023.py
-    └── zj_inpatient_2021.py（下一期）
+    └── zj_inpatient_2021.py（已上线，_select_rubric 按 record_type 路由）
 
 为什么独立成 qc_engine 而不放 rule_engine：
   - 旧实现 rule_engine/completeness_rules.py 多个阶段散落判定占位符 → bug，

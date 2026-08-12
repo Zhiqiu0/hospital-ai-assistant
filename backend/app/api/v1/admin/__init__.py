@@ -17,7 +17,6 @@ from app.api.v1.admin import (
     departments,
     model_configs,
     prompts,
-    qc_rules,
     records,
     rubrics,
     stats,
@@ -31,7 +30,8 @@ router = APIRouter(dependencies=[Depends(audit_admin_action)])
 
 router.include_router(users.router, prefix="/users", tags=["管理-用户"])
 router.include_router(departments.router, prefix="/departments", tags=["管理-科室"])
-router.include_router(qc_rules.router, prefix="/qc-rules", tags=["管理-质控规则（已只读）"])
+# 注：/qc-rules 旧只读端点已删（2026-08-12）——前端 QCRulesPage 早已切到 /rubrics，
+# 该端点零调用；qc_rules 表仍被医保规则引擎使用（rule_engine/insurance_rules），表不删。
 router.include_router(rubrics.router, prefix="/rubrics", tags=["管理-法定评分标准"])
 router.include_router(prompts.router, prefix="/prompts", tags=["管理-Prompt"])
 router.include_router(stats.router, prefix="/stats", tags=["管理-统计"])

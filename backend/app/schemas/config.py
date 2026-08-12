@@ -2,71 +2,19 @@
 配置类 Schema（app/schemas/config.py）
 
 包含：
-  QCRule         — 质控规则（Create / Update / Response）
   PromptTemplate — 自定义 Prompt 模板（Create / Update / Response）
+
+历史说明（2026-08-12 清理）：QCRule 三个 schema 已随 /admin/qc-rules 旧只读端点
+删除——评分标准由 qc_engine.rubrics 代码常量驱动（/admin/rubrics 展示），
+qc_rules 表仅剩医保规则引擎在读（不走本 schema）。
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from pydantic import BaseModel
-
-
-class QCRuleCreate(BaseModel):
-    rule_code: str
-    name: str
-    description: Optional[str] = None
-    rule_type: str  # completeness / insurance
-    scope: Optional[str] = "all"  # all / inpatient / revisit / tcm
-    field_name: Optional[str] = None
-    keywords: Optional[List[str]] = None
-    indication_keywords: Optional[List[str]] = None
-    risk_level: Optional[str] = "medium"
-    issue_description: Optional[str] = None
-    suggestion: Optional[str] = None
-    score_impact: Optional[str] = None
-
-
-class QCRuleUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    rule_type: Optional[str] = None
-    scope: Optional[str] = None
-    field_name: Optional[str] = None
-    keywords: Optional[List[str]] = None
-    indication_keywords: Optional[List[str]] = None
-    risk_level: Optional[str] = None
-    issue_description: Optional[str] = None
-    suggestion: Optional[str] = None
-    score_impact: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class QCRuleResponse(BaseModel):
-    # 兜底：早期版本数据库里可能有 rule_code/scope 为 NULL 的脏记录（早期 NOT NULL
-    # 约束加之前的遗留），如果这里要求 str，list 接口会因脏数据被 pydantic 抛
-    # ValidationError 500。用 Optional 容忍，让管理员能在 UI 看见并手动补全/删除。
-    id: str
-    rule_code: Optional[str] = None
-    name: str
-    description: Optional[str] = None
-    rule_type: str
-    scope: Optional[str] = None
-    field_name: Optional[str] = None
-    keywords: Optional[List[str]] = None
-    indication_keywords: Optional[List[str]] = None
-    risk_level: str
-    issue_description: Optional[str] = None
-    suggestion: Optional[str] = None
-    score_impact: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class PromptTemplateCreate(BaseModel):
