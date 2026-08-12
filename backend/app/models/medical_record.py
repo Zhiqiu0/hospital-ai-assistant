@@ -23,7 +23,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,6 +44,13 @@ class MedicalRecord(Base, TimestampMixin):
     """
 
     __tablename__ = "medical_records"
+
+    # 热路径索引（2026-08-11 病历安全）：quick_save/auto_save/草稿查询/病案首页 都是
+    # WHERE encounter_id=? [AND record_type=?] 的高频操作，PG 不给 FK 自动建索引，
+    # 原先全表扫描随病历量线性劣化。生产由 migrate.py 兜底 CREATE INDEX IF NOT EXISTS 建。
+    __table_args__ = (
+        Index("idx_medical_records_enc_type", "encounter_id", "record_type"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 关联接诊（必填）
@@ -87,6 +94,12 @@ class RecordVersion(Base):
     """
 
     __tablename__ = "record_versions"
+
+    # 热路径索引（2026-08-11 病历安全）：按 (medical_record_id, version_no) 取当前/历史
+    # 版本是签发、草稿、版本列表的高频操作，原先全表扫描。生产由 migrate.py 兜底建。
+    __table_args__ = (
+        Index("idx_record_versions_rec_ver", "medical_record_id", "version_no"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     medical_record_id: Mapped[str] = mapped_column(

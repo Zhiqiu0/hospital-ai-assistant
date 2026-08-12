@@ -28,10 +28,40 @@ from app.services.ai.record_prompts import (
     build_polish_prompt,
     build_record_prompt,
 )
+from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.record_renderer import render_record
 from app.services.ai.task_logger import log_ai_task
 
 logger = logging.getLogger(__name__)
+
+# 会被数值守卫检查的字段：生命体征行 + 阳性体征描述（AI 可能在这两处编造数值）。
+# 诊断/治则等临床判断字段不查——它们允许基于上下文合理推断，无客观数值。
+_VITALS_GUARDED_FIELDS = ("physical_exam_vitals", "physical_exam_text")
+
+
+def _guard_vitals_in_result(result: Any, req: Any) -> None:
+    """主生成路径数值真实性守卫（2026-08-11 病历安全）：就地剔除 result 里数值无出处
+    的生命体征 token。原先该确定性守卫只在质控修复链生效，产量最大的"首次生成"出口
+    反而没装——AI 编造 T/P/R/BP 而医生没测就签发是数值真实性最高危敞口。
+
+    source_text 只取医生录入的原始体征/病史字段，AI 生成的其它字段不算出处。
+    """
+    if not isinstance(result, dict):
+        return
+    # 医生录入的真实体征数值 + 体检/主诉/现病史文字——凡在这里出现过的数字才算"有出处"
+    source_text = "\n".join(
+        str(getattr(req, f, "") or "")
+        for f in ("temperature", "pulse", "respiration", "bp_systolic", "bp_diastolic",
+                  "spo2", "height", "weight", "physical_exam",
+                  "chief_complaint", "history_present_illness")
+    )
+    for field in _VITALS_GUARDED_FIELDS:
+        val = result.get(field)
+        if isinstance(val, str) and val:
+            cleaned = strip_unsubstantiated_vitals(val, source_text)
+            if cleaned != val:
+                logger.warning("record_gen.guard: stripped_fabricated_vitals field=%s", field)
+                result[field] = cleaned
 
 
 async def _call_llm_json_with_retry(
@@ -169,6 +199,9 @@ async def _stream_json_pipeline(
         logger.exception("%s: llm_failed record_type=%s err=%s", log_prefix, record_type, exc)
         yield sse_event("error", message=f"AI 调用失败：{type(exc).__name__}")
         return
+
+    # 2.5 数值真实性守卫：剔除 AI 编造、医生录入里查无出处的生命体征数值（病历安全红线）
+    _guard_vitals_in_result(result, req)
 
     # 3+5. 渲染 + 分片 SSE（需要先拿到 record_text 用于审计；这里复制 render 逻辑而非调 helper）
     meta = _meta_from_req(req)

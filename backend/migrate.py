@@ -305,6 +305,25 @@ async def migrate():
             print(f"    medical_records.patient_snapshot - SKIP ({str(e)[:80]})")
         print()
 
+        # 12. 病历热路径索引（2026-08-11 病历安全）：PG 不给 FK 自动建索引，
+        # 工作台/签发/草稿/叫号队列这些高频操作原先全表扫描，随病历量线性劣化。
+        # CREATE INDEX IF NOT EXISTS 幂等，与模型 __table_args__ 声明的索引名一致。
+        print("[12] 病历热路径索引...")
+        for idx_name, table, cols in [
+            ("idx_medical_records_enc_type", "medical_records", "encounter_id, record_type"),
+            ("idx_record_versions_rec_ver", "record_versions", "medical_record_id, version_no"),
+            ("idx_inquiry_inputs_enc_ver", "inquiry_inputs", "encounter_id, version"),
+            ("idx_encounters_doctor_visited", "encounters", "doctor_id, visited_at"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({cols})"
+                ))
+                print(f"    {idx_name} - OK")
+            except Exception as e:
+                print(f"    {idx_name} - SKIP ({str(e)[:80]})")
+        print()
+
     print("=== 迁移完成 ===")
 
 
