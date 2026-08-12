@@ -116,8 +116,7 @@ function normalizeVisitType(raw?: string | null): VisitType {
 
 /**
  * 处理 quick-start 响应：写患者缓存 + 设置 activeEncounterStore。
- * 调用方在此之后仍可继续操作 workbenchStore（reset/setCurrentEncounter 等），
- * 本函数不与之耦合。
+ * 只负责"接入"两个 store，不与调用方的其他清理/跳转逻辑耦合。
  */
 export function applyQuickStartResult(res: QuickStartResult): void {
   syncPatientToCache(res)
@@ -168,7 +167,7 @@ export function applySnapshotResult(res: SnapshotResult): void {
     // （未保存状态由用户编辑触发，不由恢复触发）
     //
     // 后端 snapshot 返回的 inquiry 只含已填字段，是 Partial<InquiryData>；
-    // store 签名要 InquiryData（38 字段全集）。这里用 unknown 桥接而非 any，
+    // store 签名要 InquiryData（43 字段全集）。这里用 unknown 桥接而非 any，
     // 让类型转换是受控的：缺失字段保持 undefined，下游字段访问全部走 `?? ''`
     // 兜底（store 内部所有字段都是 string | undefined）。
     useInquiryStore.getState().updateInquiryFields(res.inquiry as unknown as InquiryData)
