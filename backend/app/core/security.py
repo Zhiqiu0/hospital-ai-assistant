@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -168,6 +168,7 @@ def verify_token_str(token: str) -> str:
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
@@ -227,7 +228,26 @@ async def get_current_user(
     # 后续日志自动带 [uid=xxx]，Sentry event 自动带 user 字段
     from app.core.request_context import bind_user_context
     bind_user_context(user.id, user.username)
+
+    # 首登强改密硬拦（2026-08-13 批量开户）：批量建号用统一初始密码便于分发，
+    # 但工号规律性强（尾号全 9、按科室分段）且名单在院内流传，可枚举——
+    # 若未改密就放行业务，等于"知道工号即可冒用他人身份签发病历"。
+    # 这里在**服务端**拦：未改密的账号除改密/登出外一律 403，前端藏不藏无所谓。
+    if getattr(user, "must_change_password", False) and not _is_password_change_path(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="首次登录必须修改初始密码",
+            headers={"X-Must-Change-Password": "1"},
+        )
     return user
+
+
+def _is_password_change_path(request: Optional[Request]) -> bool:
+    """是否为「未改密账号」仍允许访问的白名单路径（改密码 / 登出 / 查自己）。"""
+    if request is None:
+        return False
+    path = request.url.path
+    return path.endswith(("/auth/change-password", "/auth/logout", "/auth/me"))
 
 
 async def require_admin(current_user=Depends(get_current_user)):

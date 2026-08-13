@@ -23,12 +23,15 @@ from app.api.v1.admin._user_authz import (
 from app.core.security import require_admin
 from app.database import get_db
 from app.schemas.user import (
+    BulkImportRequest,
+    BulkImportResponse,
     ResetPasswordRequest,
     UserCreate,
     UserListResponse,
     UserResponse,
     UserUpdate,
 )
+from app.services.user_bulk_import import bulk_import_doctors as bulk_import_doctors_service
 from app.services.user_service import UserService
 
 router = APIRouter()
@@ -132,3 +135,13 @@ async def reset_user_password(
     await assert_can_manage_target(db, current_user, target)
     await service.reset_password(user_id, data.new_password)
     return {"ok": True}
+
+
+@router.post("/bulk-import", response_model=BulkImportResponse)
+async def bulk_import_doctors(
+    data: BulkImportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """批量开户：按医院人员名单一次性建医生账号（详见 user_bulk_import 服务）。"""
+    return await bulk_import_doctors_service(db, data, current_user)

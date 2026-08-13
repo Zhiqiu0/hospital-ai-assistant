@@ -80,7 +80,14 @@ api.interceptors.response.use(
     }
 
     if (status === 403) {
-      message.error('权限不足，无法执行此操作')
+      // 首登强改密（2026-08-13）：后端对未改密账号一律 403 并带此头。
+      // 这里置位让全局弹窗弹出，而不是弹"权限不足"——那会让医生以为账号没开通。
+      // 兼顾老会话：localStorage 里的登录态可能还没有 must_change_password 字段。
+      if (error.response?.headers?.['x-must-change-password'] === '1') {
+        useAuthStore.getState().setMustChangePassword(true)
+      } else {
+        message.error('权限不足，无法执行此操作')
+      }
     } else if (status === 404) {
       // 404 由调用方决定是否提示（有些 404 是正常业务流程），这里只记录
       console.warn(`[api] 404 Not Found: ${requestUrl}`)

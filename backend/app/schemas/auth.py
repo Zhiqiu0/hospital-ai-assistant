@@ -42,6 +42,16 @@ class UserInfo(BaseModel):
     role: str            # 角色：doctor / dept_admin / hospital_admin / super_admin
     department_id: Optional[str] = None   # 所属科室 ID
     department_name: Optional[str] = None # 所属科室名称（冗余字段，减少前端二次查询）
+    # 是否必须先改初始密码（2026-08-13 批量开户）：为 true 时前端强制跳改密页；
+    # 服务端同样硬拦（get_current_user 只放行改密/登出），前端只是体验层
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码入参（首登强改与日常改密共用）。"""
+
+    old_password: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):

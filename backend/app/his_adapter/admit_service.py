@@ -253,16 +253,34 @@ async def _prefill_from_push(
 
 
 async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
-    """HIS 工号 → 系统医生账号（employee_no 优先，username 兜底）。"""
+    """HIS 工号 → 系统医生账号。
+
+    匹配顺序（2026-08-13 改为多工号）：
+      1. doctor_codes 表——一位医生名下可挂多个工号（本人门诊/本人住院/助理），
+         这是主通道。医院名单证实同一医生有 2~3 个工号，HIS 推任一个都要认得。
+      2. users.employee_no——存量主工号（迁移已回填进 doctor_codes，这里兜底）
+      3. users.username——批量开户约定「用户名=工号」时的兜底
+
+    **助理工号命中的也是本人账号**，因此签发病历署名恒为本人（医院硬要求：
+    病历上不能出现助理名字）。
+    """
+    from app.models.user import DoctorCode
+
     code = (doctor_code or "").strip()
     if not code:
         raise AdmitError(40007, "接诊推送缺少医生工号（doctor_code）")
-    result = await db.execute(
-        select(User).where(User.employee_no == code, User.is_active.is_(True))
-    )
-    doctor = result.scalars().first()
+
+    doctor = (await db.execute(
+        select(User)
+        .join(DoctorCode, DoctorCode.user_id == User.id)
+        .where(DoctorCode.code == code, User.is_active.is_(True))
+    )).scalars().first()
     if doctor is None:
-        # 批量开户约定「用户名=HIS 工号」，employee_no 未回填时兜底匹配用户名
+        result = await db.execute(
+            select(User).where(User.employee_no == code, User.is_active.is_(True))
+        )
+        doctor = result.scalars().first()
+    if doctor is None:
         result = await db.execute(
             select(User).where(User.username == code, User.is_active.is_(True))
         )

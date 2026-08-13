@@ -27,10 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
 from app.core.client_ip import get_client_ip
+from app.core.security import get_current_user
 from app.core.rate_limit import login_limiter, username_check_limiter
 from app.database import get_db
 from app.models.revoked_token import RevokedToken
-from app.schemas.auth import LoginRequest, TokenResponse
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse
 from app.services.audit_service import log_action
 from app.services.auth_service import AuthService
 
@@ -87,6 +88,43 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
     user_id = result.get("user", {}).get("id") if isinstance(result, dict) else None
     logger.info("auth.login: success user=%s user_id=%s", request.username, user_id)
     return result
+
+
+@router.post("/change-password")
+async def change_password(
+    data: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """修改密码（首登强改与日常改密共用）。
+
+    未改初始密码的账号只能访问本端点（get_current_user 硬拦），改完即解锁全部功能。
+    成功后清除 must_change_password 标记。旧密码校验失败返回 400。
+    """
+    from app.core.security import hash_password_async, verify_password_async
+
+    if not await verify_password_async(data.old_password, current_user.password_hash):
+        await log_action(
+            action="change_password", user_id=current_user.id,
+            user_name=current_user.username, user_role=current_user.role,
+            detail="修改密码失败：原密码不正确", status="error",
+        )
+        raise HTTPException(status_code=400, detail="原密码不正确")
+    if len(data.new_password or "") < 6:
+        raise HTTPException(status_code=400, detail="新密码至少 6 位")
+    if data.new_password == data.old_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+
+    current_user.password_hash = await hash_password_async(data.new_password)
+    current_user.must_change_password = False
+    await db.commit()
+    await log_action(
+        action="change_password", user_id=current_user.id,
+        user_name=current_user.username, user_role=current_user.role,
+        detail="修改密码成功",
+    )
+    logger.info("auth.change_password: ok user_id=%s", current_user.id)
+    return {"ok": True}
 
 
 @router.post("/logout")

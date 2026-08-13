@@ -14,34 +14,58 @@ alembic_version 可能是空的（历史上只跑 migrate.py）或指向已被�
 """
 import asyncio
 import sys
+from pathlib import Path
 
 from sqlalchemy import text
 
 # 基线 revision ID，与 alembic/versions/b20260812squash_*.py 保持一致
 BASELINE = "b20260812squash"
 
+# 基线 DDL 快照，列级校验的比对基准（见 _baseline_columns 说明）
+BASELINE_SQL = Path(__file__).parent / "alembic" / "versions" / "b20260812squash_schema.sql"
+
+# 基线 DDL 里表示"这一行不是列定义"的关键字（约束/键行）
+_NON_COLUMN_TOKENS = {"PRIMARY", "FOREIGN", "UNIQUE", "CONSTRAINT", "CHECK", "EXCLUDE"}
+
+
+def _baseline_columns() -> set[tuple[str, str]]:
+    """从冻结的基线 DDL 解析出 {(表名, 列名)}。
+
+    为什么不用 Base.metadata（2026-08-13 修正）：
+      stamp 的语义是"这个库的 schema 等于**基线**"，之后由 upgrade 把基线之后的
+      迁移逐条补上。原先拿当前模型元数据去比对，等于要求存量库预先具备后续迁移
+      才会加的列——只要有人加一条加列迁移（本次 doctor_codes / must_change_password
+      就是），真正的存量库就必然"缺列"而被拒绝 stamp，守卫从此永远误报。
+      改为对齐冻结的基线快照后，判断口径与 stamp 的语义一致。
+    """
+    text_sql = BASELINE_SQL.read_text(encoding="utf-8")
+    columns: set[tuple[str, str]] = set()
+    table: str | None = None
+    for raw in text_sql.splitlines():
+        line = raw.strip().rstrip(",").strip()
+        if line.upper().startswith("CREATE TABLE"):
+            table = line.split()[2].strip("(").strip()
+            continue
+        if table is None or not line:
+            continue
+        if line.startswith(")") or line == ");":
+            table = None
+            continue
+        first = line.split()[0].upper()
+        if first in _NON_COLUMN_TOKENS:
+            continue
+        columns.add((table, line.split()[0]))
+    return columns
+
 
 async def _inspect() -> tuple[str | None, bool, list[str]]:
     """读库状态：(alembic_version 当前值或 None, 是否已有业务表, 缺失列清单)。
 
-    缺失列清单（2026-08-12 复检修复）：对模型元数据逐表逐列查 information_schema。
+    缺失列清单（2026-08-12 复检修复）：拿基线 DDL 的表/列清单查 information_schema。
     stamp 只该发生在"schema 与基线一致的存量库"上——若库是从旧备份恢复的
-    （停在旧链中段、缺后来加的列），带病 stamp 会让缺口永远补不上且无人知晓。
+    （停在旧链中段、缺基线里就该有的列），带病 stamp 会让缺口永远补不上且无人知晓。
     """
-    from app.database import Base, engine
-    # 与 alembic/env.py 同一清单：导全模型让 Base.metadata 完整
-    import app.models.user            # noqa: F401
-    import app.models.patient         # noqa: F401
-    import app.models.encounter      # noqa: F401
-    import app.models.medical_record  # noqa: F401
-    import app.models.audit_log       # noqa: F401
-    import app.models.config          # noqa: F401
-    import app.models.voice_record    # noqa: F401
-    import app.models.imaging         # noqa: F401
-    import app.models.lab_report      # noqa: F401
-    import app.models.revoked_token   # noqa: F401
-    import app.models.inpatient       # noqa: F401
-    import app.models.ai_feedback     # noqa: F401
+    from app.database import engine
 
     async with engine.connect() as conn:
         has_users = (
@@ -63,12 +87,11 @@ async def _inspect() -> tuple[str | None, bool, list[str]]:
                 "WHERE table_schema = 'public'"
             ))
             existing = {(t, c) for t, c in rows}
-            missing = [
-                f"{table.name}.{col.name}"
-                for table in Base.metadata.sorted_tables
-                for col in table.columns
-                if (table.name, col.name) not in existing
-            ]
+            missing = sorted(
+                f"{tbl}.{col}"
+                for tbl, col in _baseline_columns()
+                if (tbl, col) not in existing
+            )
     await engine.dispose()
     return current, has_users is not None, missing
 
