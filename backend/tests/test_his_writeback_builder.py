@@ -78,3 +78,55 @@ async def test_build_writeback_payload_emergency(async_db):
     await async_db.commit()
     payload = await build_writeback_payload(async_db, enc.id)
     assert payload["record_type"] == "emergency"
+
+
+# ── 第五轮审计修复的回归锁（2026-08-13）────────────────────────────────────
+@pytest.mark.asyncio
+async def test_inpatient_writeback_uses_real_record_type(async_db):
+    """住院回写用病历自己的类型，且取已签发那份而非最近更新的草稿。
+
+    原先 record_type 只按接诊 visit_type 三分，住院落进 else 被当成 outpatient
+    推给 HIS，而规范里住院有 admission_note/course_record/discharge_record 等
+    专属类型，推错 HIS 侧会归档到错误的文书栏目。
+    取病历也只按 updated_at 倒序，医生刚签发出院小结、随后碰了下病程草稿，
+    回写就会把草稿推过去——回写的必须是刚签发的正式文书。
+    """
+    from datetime import datetime
+
+    from app.models.medical_record import MedicalRecord, RecordVersion
+
+    p = Patient(name="住院患者", birth_date=date(1980, 1, 1))
+    async_db.add(p)
+    await async_db.commit()
+    enc = Encounter(
+        patient_id=p.id, doctor_id="doc-1", visit_type="inpatient",
+        visit_no="V20260813IN", status="in_progress",
+        his_external_ref={"his_visit_no": "V20260813IN", "doctor_code": "D001"},
+    )
+    async_db.add(enc)
+    await async_db.commit()
+
+    # 已签发的出院小结（早一点更新）
+    signed = MedicalRecord(encounter_id=enc.id, record_type="discharge_record",
+                           status="submitted", current_version=1,
+                           submitted_at=datetime(2026, 8, 13, 10, 0, 0))
+    async_db.add(signed)
+    await async_db.flush()
+    async_db.add(RecordVersion(medical_record_id=signed.id, version_no=1,
+                               content={"text": "出院小结正文"}, source="doctor_signed"))
+
+    # 之后又被碰过的病程草稿（updated_at 更晚）
+    draft = MedicalRecord(encounter_id=enc.id, record_type="course_record",
+                          status="draft", current_version=1)
+    async_db.add(draft)
+    await async_db.flush()
+    async_db.add(RecordVersion(medical_record_id=draft.id, version_no=1,
+                               content={"text": "病程草稿"}, source="doctor_edited"))
+    await async_db.commit()
+
+    payload = await build_writeback_payload(async_db, enc.id, app_version="1.0.0")
+
+    assert payload["record_type"] == "discharge_record", (
+        f"住院回写类型错了：{payload['record_type']}（原缺陷会是 outpatient）"
+    )
+    assert "出院小结正文" in (payload.get("full_text") or ""), "回写取到了草稿而不是已签发文书"

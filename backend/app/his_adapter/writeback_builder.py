@@ -71,21 +71,39 @@ async def build_writeback_payload(
     )).scalar_one_or_none()
 
     # 最新病历版本全文
-    row = (await db.execute(
-        select(RecordVersion)
+    picked = (await db.execute(
+        select(RecordVersion, MedicalRecord)
         .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
         .where(
             MedicalRecord.encounter_id == encounter_id,
             RecordVersion.version_no == MedicalRecord.current_version,
         )
-        .order_by(desc(MedicalRecord.updated_at))
+        # 优先取「已签发」的那份（2026-08-13 第五轮审计修复）：
+        # 原先只按 updated_at 倒序取最近更新的一份。住院一次接诊有入院记录/病程/
+        # 出院小结等多份病历，医生刚签发出院小结、随后又碰了一下病程草稿，
+        # 回写就会把那份草稿推给 HIS——回写的必须是刚签发的正式文书。
+        .order_by(
+            (MedicalRecord.status == "submitted").desc(),
+            desc(MedicalRecord.submitted_at),
+            desc(MedicalRecord.updated_at),
+        )
         .limit(1)
-    )).scalar_one_or_none()
+    )).first()
+    row, record_row = (picked[0], picked[1]) if picked else (None, None)
     full_text = _parse_record_text(row.content) if row else ""
 
     his_ref = encounter.his_external_ref or {}
     visit_id = his_ref.get("his_visit_no") or encounter.visit_no or ""
-    record_type = "emergency" if encounter.visit_type == "emergency" else "outpatient"
+    # 回写的 record_type 取**病历自己的类型**（2026-08-13 第五轮审计修复）：
+    # 原先只按接诊 visit_type 三分，住院会落进 else 被当成 outpatient 推给 HIS——
+    # 而规范里住院有 admission_note / course_record / discharge_record / op_record
+    # 等专属类型，推错类型 HIS 侧会归档到错误的文书栏目。
+    # 病历表上就存着真实类型，直接用它；查不到再按接诊类型兜底。
+    record_type = (
+        record_row.record_type
+        if record_row is not None and record_row.record_type
+        else ("emergency" if encounter.visit_type == "emergency" else "outpatient")
+    )
 
     record = {f: getattr(inq, f) for f in _RECORD_FIELDS if inq and getattr(inq, f, None)}
     vitals = {f: getattr(inq, f) for f in _VITALS_FIELDS if inq and getattr(inq, f, None)}
