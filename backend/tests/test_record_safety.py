@@ -239,7 +239,7 @@ async def test_tampered_content_detected(async_db):
     assert await verify_version(async_db, ver) is False
 
 
-async def _mk_sign_encounter(db):
+async def _mk_sign_encounter(db, visit_type: str = "outpatient"):
     from app.models.encounter import Encounter
     from app.models.patient import Patient
     from app.models.user import User
@@ -251,7 +251,7 @@ async def _mk_sign_encounter(db):
                role="doctor")
     db.add(doc)
     await db.flush()
-    enc = Encounter(patient_id=p.id, doctor_id=doc.id, visit_type="outpatient",
+    enc = Encounter(patient_id=p.id, doctor_id=doc.id, visit_type=visit_type,
                     status="in_progress")
     db.add(enc)
     await db.commit()
@@ -273,3 +273,107 @@ async def test_quality_health_aggregates(async_db):
     assert wb["total"] == 2 and wb["success"] == 1
     assert wb["success_rate"] == 0.5
     assert "feedback" in health and "timeliness" in health
+
+
+# ── 第五轮审计修复的回归锁：链接校验（2026-08-13）──────────────────────────
+@pytest.mark.asyncio
+async def test_deleted_middle_version_detected(async_db):
+    """删掉链中一环能被检出——模块注释一直这么承诺，但此前做不到。
+
+    原实现的 verify_version 只做单行自校验：把该行自己存的 prev_hash 当哈希输入
+    重算，从不查这个 prev_hash 是否真对应链上某一环。于是删中间版本零痕迹。
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import RecordVersion
+    from app.services._record_signature import verify_chain
+    from app.services.medical_record_service import MedicalRecordService
+
+    svc = MedicalRecordService(async_db)
+    # 连签三份病历，构成一条三环的链
+    for i in range(3):
+        eid, doc_id = await _mk_sign_encounter(async_db)
+        await svc.quick_save(eid, "outpatient", f"主诉：链条测试{i}。", doc_id)
+
+    assert await verify_chain(async_db) == [], "刚签发的链本应完好"
+
+    # 删掉中间那一环（模拟有库权限的人抹掉一份病历）
+    signed = (await async_db.execute(
+        select(RecordVersion).where(RecordVersion.sign_hash.isnot(None))
+        .order_by(RecordVersion.created_at)
+    )).scalars().all()
+    assert len(signed) >= 3
+    await async_db.delete(signed[1])
+    await async_db.commit()
+
+    issues = await verify_chain(async_db)
+    assert issues, "删掉链中一环没有被检出——链接校验又失效了"
+    assert any("链断裂" in i["issue"] for i in issues)
+
+
+@pytest.mark.asyncio
+async def test_recomputed_hash_after_edit_detected(async_db):
+    """改正文后按同一 prev_hash 重算 sign_hash 也能被检出。
+
+    哈希算法无密钥且就在仓库里，攻击者完全可以改完正文自行重算——单行自校验
+    会通过，只有链接校验能发现后继环的 prev_hash 已经悬空。
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import RecordVersion
+    from app.services._record_signature import compute_sign_hash, verify_chain
+    from app.services.medical_record_service import MedicalRecordService
+
+    svc = MedicalRecordService(async_db)
+    recs = []
+    for i in range(2):
+        eid, doc_id = await _mk_sign_encounter(async_db)
+        recs.append(await svc.quick_save(eid, "outpatient", f"主诉：重算测试{i}。", doc_id))
+
+    signed = (await async_db.execute(
+        select(RecordVersion).where(RecordVersion.sign_hash.isnot(None))
+        .order_by(RecordVersion.created_at)
+    )).scalars().all()
+    victim = signed[0]          # 被改的那一环，后面还有一环引用它
+
+    # 攻击者：改正文 + 用同一 prev_hash 重算哈希，让单行自校验通过
+    from app.models.medical_record import MedicalRecord
+    rec = await async_db.get(MedicalRecord, victim.medical_record_id)
+    victim.content = {"text": "主诉：伪造的正文。"}
+    victim.sign_hash = compute_sign_hash(
+        content_text="主诉：伪造的正文。",
+        patient_snapshot=rec.patient_snapshot,
+        doctor_id=victim.triggered_by or "",
+        submitted_at_iso=rec.submitted_at.isoformat() if rec.submitted_at else "",
+        prev_hash=victim.prev_hash or "0" * 64,
+    )
+    await async_db.commit()
+
+    issues = await verify_chain(async_db)
+    assert issues, "改正文后重算哈希没有被检出——这正是无密钥哈希的攻击方式"
+
+
+@pytest.mark.asyncio
+async def test_inpatient_resign_keeps_first_submitted_at(async_db):
+    """住院二次签发不覆盖首签时间与患者快照，历史版本的哈希继续成立。
+
+    sign_hash 是版本级的，但 submitted_at / patient_snapshot 是 record 级的。
+    原先每次签发都覆写，导致此前所有签发版本复算必然对不上，被永久误报为
+    「已篡改」，且第一份文书的法定签发时刻被抹掉无从追溯。
+    """
+    from app.models.medical_record import MedicalRecord
+    from app.services._record_signature import verify_chain
+    from app.services.medical_record_service import MedicalRecordService
+
+    eid, doc_id = await _mk_sign_encounter(async_db, visit_type="inpatient")
+    svc = MedicalRecordService(async_db)
+    rec = await svc.quick_save(eid, "admission_note", "入院记录：第一版。", doc_id)
+    first_submitted = (await async_db.get(MedicalRecord, rec.id)).submitted_at
+    assert first_submitted is not None
+
+    # 住院允许对同一 record_type 再次签发
+    await svc.quick_save(eid, "admission_note", "入院记录：第二版。", doc_id)
+
+    after = await async_db.get(MedicalRecord, rec.id)
+    assert after.submitted_at == first_submitted, "首次签发时间被覆盖了"
+    assert await verify_chain(async_db) == [], "二次签发把历史版本判成了篡改"

@@ -70,30 +70,30 @@ async def verify_signature_integrity(
 ):
     """校验全部已签发病历的电子签名哈希链完整性（2026-08-11 病历可信）。
 
-    逐条复算 sign_hash 与库中值比对——任一份已签发病历的正文/患者快照被库内回改，
-    这里就会报出 tampered。供分级评审现场演示"病历改动可发现"。
+    **补上链接校验**（2026-08-13 第五轮审计修复）：原先只是对每个版本做单行
+    自校验——把该行自己存的 prev_hash 当哈希输入重算一遍，从不比对它是否真等于
+    前一环的 sign_hash。那样"链"形同虚设：删掉中间版本、或改完正文按同一
+    prev_hash 重算 sign_hash（算法无密钥且就在仓库里），都能全身而退，
+    而端点照样返回"全部通过"——这正是评审现场最不能出的错。
+    现在 verify_chain 逐环比对链接 + 逐行自校验，两类篡改都能报出来。
 
     返回：{"total": 校验总数, "verified": 通过数, "tampered": [异常明细]}
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from app.models.medical_record import RecordVersion
-    from app.services._record_signature import verify_version
+    from app.services._record_signature import verify_chain
 
-    versions = (await db.execute(
-        select(RecordVersion).where(RecordVersion.sign_hash.isnot(None))
-    )).scalars().all()
+    total = (await db.execute(
+        select(func.count()).select_from(RecordVersion)
+        .where(RecordVersion.sign_hash.isnot(None))
+    )).scalar() or 0
 
-    tampered = []
-    for v in versions:
-        if not await verify_version(db, v):
-            tampered.append({
-                "medical_record_id": v.medical_record_id,
-                "version_no": v.version_no,
-            })
+    tampered = await verify_chain(db)
+    bad = {(t["medical_record_id"], t["version_no"]) for t in tampered}
     return {
-        "total": len(versions),
-        "verified": len(versions) - len(tampered),
+        "total": total,
+        "verified": total - len(bad),
         "tampered": tampered,
         "ok": len(tampered) == 0,
     }

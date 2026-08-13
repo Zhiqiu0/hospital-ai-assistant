@@ -88,3 +88,56 @@ async def verify_version(db: AsyncSession, version: RecordVersion) -> bool:
         prev_hash=version.prev_hash or GENESIS_HASH,
     )
     return recomputed == version.sign_hash
+
+
+async def verify_chain(db: AsyncSession) -> list[dict]:
+    """校验全局签名链的链接完整性，返回问题清单（空列表 = 链完好）。
+
+    为什么必须有这个函数（2026-08-13 第五轮审计修复）：
+      verify_version 只做**单行自校验**——它把该行自己存的 prev_hash 当作哈希
+      输入之一去重算，从不去查这个 prev_hash 是否真的对应链上某一环。
+      于是"链"退化成了"每行一个无密钥自校验和"，链接关系形同虚设：
+        · 删掉链中任一签发版本 → 后继版本的 prev_hash 指向一个已不存在的哈希，
+          没有任何代码会发现（而本模块头部注释明确宣称这能被检出）
+        · 改正文后按同一 prev_hash 重算 sign_hash（算法就在仓库里、无密钥）
+          → 单行自校验通过，同样零痕迹
+      补上链接校验后，这两类篡改都会暴露。
+
+    校验方式为"引用存在性"而非"严格线性"：latest_chain_hash 取的是**全局链尾**
+    （所有病历共用一条链），且它的文档说明并发签发会产生合法分叉。严格按
+    created_at 逐环比对会把分叉误报成断裂，所以改为——每一环的 prev_hash 必须
+    是 GENESIS，或者确实等于链上某一环的 sign_hash。分叉时两环引用同一个前驱，
+    判定通过；而删除/重算会让引用悬空，判定失败。
+
+    已知边界：链尾版本被改后重算哈希，因为没有后继引用它，链接校验查不出来
+    （任何哈希链都需要外部锚点才能防尾部篡改）。单行自校验同样查不出重算。
+    这是当前方案的固有上限，要根治得引入 CA/UKey 数字签名或外部时间戳。
+
+    返回的每项形如 {"medical_record_id": str, "version_no": int, "issue": "..."}。
+    """
+    rows = (await db.execute(
+        select(RecordVersion)
+        .where(RecordVersion.sign_hash.isnot(None))
+        .order_by(RecordVersion.created_at)
+    )).scalars().all()
+
+    known_hashes = {v.sign_hash for v in rows}
+    issues: list[dict] = []
+    for v in rows:
+        prev = v.prev_hash or GENESIS_HASH
+        # ① 链接校验：prev_hash 必须指向链上真实存在的一环
+        if prev != GENESIS_HASH and prev not in known_hashes:
+            issues.append({
+                "medical_record_id": v.medical_record_id,
+                "version_no": v.version_no,
+                "issue": "链断裂：prev_hash 指向的上一环不存在"
+                         "（中间版本被删除，或其哈希被重算）",
+            })
+        # ② 单行自校验：正文/快照/医生/签发时间有没有被回改
+        if not await verify_version(db, v):
+            issues.append({
+                "medical_record_id": v.medical_record_id,
+                "version_no": v.version_no,
+                "issue": "内容被篡改：正文或患者快照与签发时的哈希对不上",
+            })
+    return issues
