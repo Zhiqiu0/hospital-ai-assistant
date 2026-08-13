@@ -13,7 +13,9 @@
  */
 
 import { useState } from 'react'
-import { Modal, Form, Input, Alert, message } from 'antd'
+import { Modal, Form, Input, Alert } from 'antd'
+// antd v5 静态 message 不消费 React 上下文、提示不显示，全项目统一走消息桥
+import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
