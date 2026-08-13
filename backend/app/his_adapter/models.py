@@ -60,6 +60,24 @@ def err(code: int, message: str, trace_id: str = "") -> ApiEnvelope:
     return ApiEnvelope(code=code, message=message, trace_id=trace_id, data={})
 
 
+class AdmitVitals(BaseModel):
+    """接诊推送里的选填体征（规范 3.1 vitals.*，与 3.2 回写字段对称）。
+
+    这些是 HIS 侧护士/设备**实测**的真实值，不是 AI 推断——预填进工作台既省去
+    医生重复录入，也不违反"AI 不得编造数值"的红线（红线针对的是无出处的数值）。
+    全部按字符串收（厂商可能给 "36.5"/"36.5℃"/空串），落库前统一清洗。
+    """
+
+    temperature: Optional[str] = None    # 体温 ℃
+    pulse: Optional[str] = None          # 脉搏 次/分
+    respiration: Optional[str] = None    # 呼吸 次/分
+    bp_systolic: Optional[str] = None    # 收缩压 mmHg
+    bp_diastolic: Optional[str] = None   # 舒张压 mmHg
+    spo2: Optional[str] = None           # 血氧饱和度 %
+    height: Optional[str] = None         # 身高 cm
+    weight: Optional[str] = None         # 体重 kg
+
+
 class AdmitPushRequest(BaseModel):
     """接诊推送请求体（HIS→我方）。visit_id/hospital_code/patient_name 必填，其余容错可空。"""
 
@@ -78,3 +96,10 @@ class AdmitPushRequest(BaseModel):
     is_first_visit: Optional[bool] = None
     agent_device_ip: Optional[str] = None
     agent_device_mac: Optional[str] = None
+    # ── 选填档案/体征（规范 3.1，"有则推送"）──────────────────────────────
+    # 2026-08-13 补接：规范与发给厂商的参考实现都带这些字段，后端却没定义，
+    # pydantic 默认忽略未知字段 → 厂商推来的体温血压被**静默丢弃**，联调现场
+    # 会变成"我推了/我没收到"且日志无痕。
+    vitals: Optional[AdmitVitals] = None
+    allergy_history: Optional[str] = None   # 过敏史（纵向档案，跟随患者）
+    past_history: Optional[str] = None      # 既往史（同上）
