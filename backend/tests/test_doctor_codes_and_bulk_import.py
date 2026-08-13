@@ -240,3 +240,46 @@ async def test_admin_reset_password_reimposes_change_requirement(async_db):
     await UserService(async_db).reset_password(user.id, "TempPass@123")
     await async_db.refresh(user)
     assert user.must_change_password is True
+
+
+# ── 5. bcrypt 强度下调 + 存量哈希自动升级（2026-08-13 压测定档）────────────
+@pytest.mark.asyncio
+async def test_login_upgrades_legacy_bcrypt_hash(async_db):
+    """存量 rounds=12 的哈希在登录时被就地升到当前配置强度。
+
+    不做这件事的话，调低 rounds 只惠及新建账号，全院存量账号永远慢——
+    参数调了等于没调。
+    """
+    from passlib.context import CryptContext
+
+    from app.config import settings
+    from app.services.auth_service import AuthService
+
+    legacy_ctx = CryptContext(schemes=["bcrypt"], bcrypt__rounds=12)
+    legacy_hash = legacy_ctx.hash("MyPass@123")
+    assert legacy_hash.startswith("$2b$12$")
+
+    user = User(username="legacyhash", password_hash=legacy_hash,
+                real_name="存量医生", role="doctor", is_active=True)
+    async_db.add(user)
+    await async_db.commit()
+
+    res = await AuthService(async_db).login("legacyhash", "MyPass@123")
+    assert res is not None, "存量哈希应能正常登录"
+
+    await async_db.refresh(user)
+    assert user.password_hash.startswith(f"$2b${settings.bcrypt_rounds:02d}$"), (
+        f"登录后哈希未升级到 rounds={settings.bcrypt_rounds}：{user.password_hash[:7]}"
+    )
+    # 升级后仍能用同一密码登录（没把哈希写坏）
+    assert await AuthService(async_db).login("legacyhash", "MyPass@123") is not None
+
+
+@pytest.mark.asyncio
+async def test_new_password_uses_configured_rounds(async_db):
+    """新建/改密产生的哈希直接是配置强度。"""
+    from app.config import settings
+    from app.core.security import hash_password_async
+
+    h = await hash_password_async("Whatever@123")
+    assert h.startswith(f"$2b${settings.bcrypt_rounds:02d}$")
