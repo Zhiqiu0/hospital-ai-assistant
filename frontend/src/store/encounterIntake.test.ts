@@ -10,11 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import {
-  applyQuickStartResult,
-  applySnapshotResult,
-  type SnapshotResult,
-} from './encounterIntake'
+import { applyQuickStartResult, applySnapshotResult, type SnapshotResult } from './encounterIntake'
 import { usePatientCacheStore } from './patientCacheStore'
 import { useActiveEncounterStore } from './activeEncounterStore'
 
@@ -107,5 +103,45 @@ describe('applySnapshotResult', () => {
     } satisfies SnapshotResult)
     expect(usePatientCacheStore.getState().getProfile('p3')?.allergy_history).toBe('海鲜')
     expect(useActiveEncounterStore.getState().encounterId).toBeNull()
+  })
+})
+
+describe('水合不得静默回滚未保存的病历（2026-08-13 第五轮审计修复）', () => {
+  it('本地有未落库的编辑时，快照不覆盖医生正在写的内容', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    // 上次保存到"主诉：头痛。"，医生之后又打了一段还没触发 auto-save（5秒防抖）
+    useRecordStore.setState({
+      recordContent: '主诉：头痛。现病史：三天前受凉后起病……',
+      lastSavedContent: '主诉：头痛。',
+    })
+
+    applySnapshotResult({
+      active_record: {
+        content: '主诉：头痛。',
+        status: 'draft',
+        updated_at: '2026-08-13T10:00:00',
+      },
+    } as never)
+
+    expect(useRecordStore.getState().recordContent).toBe('主诉：头痛。现病史：三天前受凉后起病……')
+  })
+
+  it('本地无未保存编辑时，快照正常回填（不能因为怕覆盖就永远不同步）', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    useRecordStore.setState({ recordContent: '旧内容', lastSavedContent: '旧内容' })
+
+    applySnapshotResult({
+      active_record: {
+        content: '服务端的新内容',
+        status: 'draft',
+        updated_at: '2026-08-13T10:00:00',
+      },
+    } as never)
+
+    expect(useRecordStore.getState().recordContent).toBe('服务端的新内容')
   })
 })

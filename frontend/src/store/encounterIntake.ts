@@ -179,13 +179,29 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (res.active_record.record_type) {
       recordStore.setRecordType(res.active_record.record_type)
     }
-    recordStore.setRecordContent(res.active_record.content || '')
+
+    // ⚠️ 不无条件覆盖本地正文（2026-08-13 第五轮审计修复）
+    // auto-save 是 5 秒防抖的，医生打完一段话立刻刷新页面（或断网重连触发水合）时，
+    // 最后那几秒的内容还没落库。原先这里直接 setRecordContent(服务端内容)，
+    // 等于把医生刚写的一段**静默回滚**成服务端旧版——医生不会收到任何提示，
+    // 只会发现自己写的东西没了，而病历正是本产品最不能丢的东西。
+    // 判据用**内容比对**而不是时间戳：医生打完话立刻刷新时，recordSavedAt 还是
+    // 上一次保存的时刻、不会晚于服务端，靠时间戳判断会漏掉正要保护的那个场景。
+    // current !== lastSaved 才准确表示"有未落库的本地编辑"。
+    // （下面 qc 那段早就是"只在前端为空时才灌入"的写法，这里是同一个道理。）
+    const localContent = recordStore.recordContent
+    const localIsDirty = !!localContent && localContent !== recordStore.lastSavedContent
+
+    if (!localIsDirty) {
+      recordStore.setRecordContent(res.active_record.content || '')
+    }
     recordStore.setFinal(res.active_record.status === 'submitted')
     // 把 DB 里的 updated_at 灌回 recordSavedAt——logout 重登 / 切设备时
-    // 状态条立即显示"病历 X 分钟前保存"，而不是误报"草稿未保存"
-    if (res.active_record.updated_at) {
+    // 状态条立即显示"病历 X 分钟前保存"，而不是误报"草稿未保存"。
+    // 本地有未保存编辑时不回灌，否则会把"本地更脏"这个事实抹掉，下次水合就覆盖了。
+    if (!localIsDirty && res.active_record.updated_at) {
       const ts = Date.parse(res.active_record.updated_at)
-      if (!isNaN(ts)) recordStore.setRecordSavedAt(ts)
+      if (!isNaN(ts)) recordStore.markSaved(res.active_record.content || '', ts)
     }
   }
 

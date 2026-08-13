@@ -57,6 +57,17 @@ interface RecordState {
    */
   ownerEncounterId: string | null
 
+  /**
+   * 上一次成功 auto-save 时的正文（2026-08-13 第五轮审计修复）。
+   *
+   * 用来精确判断「本地是否有未落库的编辑」：auto-save 是 5 秒防抖的，医生打完
+   * 一段话立刻刷新时最后几秒的内容还没落库，而水合会用服务端旧版覆盖它——
+   * 医生收不到任何提示，只会发现自己写的东西没了。
+   * 靠时间戳判断不行：那时 recordSavedAt 还是上一次保存的时刻，不会晚于服务端。
+   * 比对内容才准：current !== lastSaved 就说明有未保存的本地编辑。
+   */
+  lastSavedContent: string
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
   /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
@@ -69,6 +80,8 @@ interface RecordState {
   setPendingGenerate: (v: boolean) => void
   setFinal: (v: boolean) => void
   setRecordSavedAt: (ts: number) => void
+  /** auto-save 成功时记录「已落库的正文」，供水合判断本地是否更脏 */
+  markSaved: (content: string, ts: number) => void
   /** 在病历末尾追加一段（带空行分隔，AI 续写流式输出用） */
   appendToRecord: (text: string) => void
   /** 重置到初始状态（切换接诊 / 登出时调用） */
@@ -81,6 +94,7 @@ export const useRecordStore = create<RecordState>()(
       recordContent: '',
       recordType: 'outpatient',
       ownerEncounterId: null,
+      lastSavedContent: '',
 
       isGenerating: false,
       isPolishing: false,
@@ -108,6 +122,8 @@ export const useRecordStore = create<RecordState>()(
 
       setRecordSavedAt: ts => set({ recordSavedAt: ts }),
 
+      markSaved: (content, ts) => set({ lastSavedContent: content, recordSavedAt: ts }),
+
       appendToRecord: text =>
         set(state => ({
           recordContent: state.recordContent ? state.recordContent + '\n\n' + text : text,
@@ -120,7 +136,13 @@ export const useRecordStore = create<RecordState>()(
         // 归属为空 = 本次改动之前留下的旧数据，无从判断归谁，一律丢弃更安全
         if (!encounterId || owner !== encounterId) {
           if (get().recordContent) {
-            set({ recordContent: '', isFinal: false, finalizedAt: null, recordSavedAt: 0 })
+            set({
+              recordContent: '',
+              lastSavedContent: '',
+              isFinal: false,
+              finalizedAt: null,
+              recordSavedAt: 0,
+            })
           }
           set({ ownerEncounterId: encounterId })
           return false
@@ -133,6 +155,7 @@ export const useRecordStore = create<RecordState>()(
           recordContent: '',
           recordType: 'outpatient',
           ownerEncounterId: null,
+          lastSavedContent: '',
           isGenerating: false,
           isPolishing: false,
           pendingGenerate: false,
@@ -148,6 +171,7 @@ export const useRecordStore = create<RecordState>()(
         recordContent: state.recordContent,
         recordType: state.recordType,
         ownerEncounterId: state.ownerEncounterId,
+        lastSavedContent: state.lastSavedContent,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,

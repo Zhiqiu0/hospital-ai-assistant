@@ -93,7 +93,8 @@ export function useAutoSaveDraft({
         setSavedAt(now)
         setSavingState('saved')
         // 同步到 recordStore，让 WorkbenchStatusBar / 其他组件能感知"已保存"状态
-        useRecordStore.getState().setRecordSavedAt(now)
+        // 同时记下「已落库的正文」，水合时据此判断本地是否有未保存编辑
+        useRecordStore.getState().markSaved(payload.content, now)
       }
       return true
     } catch (err) {
