@@ -25,8 +25,17 @@ for name in app error; do
     # 文件不存在或为空则跳过（服务刚起、当天无 error 都属正常）
     [ -s "${src}" ] || continue
     dest="${LOGS_DIR}/${name}-${STAMP}.log"
+    # 同日二次执行必须追加而不是覆盖（2026-08-13 第五轮审计修复）：
+    # 原先只判 ${dest}（.log）是否存在，但第一轮结束时它已经被 gzip 成 .log.gz、
+    # .log 不复存在——第二轮判定不成立，走 mv 新建再 `gzip -f`，-f 直接覆盖当天
+    # 已有归档，前一段日志静默消失。查 bug 全靠这些日志，丢了就没法追溯。
+    # gzip 流可以合法拼接（gunzip 会按多个成员依次解开），故直接追加压缩流。
+    if [ -e "${dest}.gz" ]; then
+        gzip -c "${src}" >> "${dest}.gz" && : > "${src}"
+        echo "[rotate_logs] ${name}.log -> 追加到 $(basename "${dest}").gz"
+        continue
+    fi
     if [ -e "${dest}" ]; then
-        # 同一天重复执行：追加而不是覆盖，避免丢掉先前那段
         cat "${src}" >> "${dest}" && : > "${src}"
     else
         mv "${src}" "${dest}"
