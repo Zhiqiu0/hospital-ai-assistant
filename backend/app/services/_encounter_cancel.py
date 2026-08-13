@@ -158,4 +158,14 @@ class EncounterCancelMixin:
         patient.is_deleted = True
         patient.deleted_at = _dt.now()
         patient.deleted_by = operator_doctor_id
+        # 软删患者留痕（2026-08-13 第二轮审计修复）：取消接诊会联动软删刚建的
+        # 孤儿患者档案，原先零审计——档案从列表消失后无从追溯是谁、何时、
+        # 因哪次取消而删。等保 2.0 要求 PHI 生命周期可追溯。
+        from app.services.audit_service import log_action
+        await log_action(
+            action="soft_delete_patient",
+            user_id=operator_doctor_id,
+            resource_type="patient", resource_id=patient_id,
+            detail="取消接诊联动软删孤儿患者档案（该患者仅此一次接诊且非 HIS 来源）",
+        )
         return True

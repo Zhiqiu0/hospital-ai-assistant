@@ -163,6 +163,18 @@ async def update_patient_profile(
     """
     # 归属校验：只能改自己接诊过的患者档案
     await assert_patient_access(db, patient_id, current_user)
+    # 档案写入留痕（2026-08-13 第二轮审计修复）：过敏史/既往史等纵向 PHI 被改动
+    # 原先零审计，且档案是原地覆盖无历史版本——出事后既查不到谁改的、也回不去。
+    # 与 update_patient 的既有审计口径一致，只记字段名不记内容（避免 PHI 进日志）。
+    from app.services.audit_service import log_action
+    await log_action(
+        action="update_patient_profile",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient_profile", resource_id=patient_id,
+        detail=f"修改患者档案字段：{', '.join(data.model_dump(exclude_none=True).keys())}",
+    )
     service = PatientService(db)
     return await service.update_profile(patient_id, data, doctor_id=current_user.id)
 

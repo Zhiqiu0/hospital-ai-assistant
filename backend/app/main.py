@@ -189,7 +189,17 @@ async def health_check_deep():
         logger.error("health.deep.redis: failed err=%s", exc)
         deps["redis"] = "error"
 
-    critical_down = deps.get("db") == "error" or deps.get("redis") == "error"
+    # AI 凭证（2026-08-13 第二轮审计修复）：DEEPSEEK_API_KEY 缺失时应用照常启动、
+    # 容器健康检查照常绿、部署报成功，但病历生成/质控/建议全部报错——"看着健康
+    # 实则核心功能全废"。凭证是启动即可判定的静态配置，纳入深度健康检查。
+    # 不做真实 LLM 调用（会拖慢监控探测并烧 token），只查凭证是否配齐。
+    deps["ai_credential"] = "ok" if settings.deepseek_api_key else "missing"
+
+    critical_down = (
+        deps.get("db") == "error"
+        or deps.get("redis") == "error"
+        or deps.get("ai_credential") == "missing"
+    )
     body = {
         "status": "degraded" if critical_down else "ok",
         "deps": deps,

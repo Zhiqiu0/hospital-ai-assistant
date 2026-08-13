@@ -44,6 +44,13 @@ interface UserInfo {
 interface AuthState {
   token: string | null
   user: UserInfo | null
+  /**
+   * 上一次登录过的用户 ID（登出/401 清理时留存，持久化）。
+   * 用途（2026-08-13 第二轮审计修复）：token 过期被踢回登录页后，同一医生
+   * 重新登录时不该清空他自己没保存完的问诊/病历草稿；换个医生登录才必须清。
+   * 只存 ID 不存任何 PHI。
+   */
+  lastUserId: string | null
   /** 当前系统模式：outpatient（门/急诊）或 inpatient（住院） */
   systemType: 'outpatient' | 'inpatient'
   /** 登录后设置 token 和用户信息 */
@@ -59,8 +66,9 @@ export const useAuthStore = create<AuthState>()(
     set => ({
       token: null,
       user: null,
+      lastUserId: null,
       systemType: 'outpatient',
-      setAuth: (token, user) => set({ token, user }),
+      setAuth: (token, user) => set({ token, user, lastUserId: user.id }),
       clearAuth: () => {
         // 登出/401 时清空跨患者敏感缓存（2026-08-11 审计修复）：patientCache 存着
         // 患者档案、voiceTranscript 存着语音转写，若不清，下一个登录本机的医生会
@@ -77,6 +85,7 @@ export const useAuthStore = create<AuthState>()(
         void import('@/store/aiWrittenFieldsStore').then(m =>
           m.useAiWrittenFieldsStore.getState().clear()
         )
+        // lastUserId 刻意保留：供登录页判断"是不是同一个医生回来了"
         set({ token: null, user: null, systemType: 'outpatient' })
       },
       setSystemType: type => set({ systemType: type }),
