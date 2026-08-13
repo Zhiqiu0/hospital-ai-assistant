@@ -101,7 +101,12 @@ export default function LoginPage() {
   const onFinish = async (values: { username: string; password: string }) => {
     try {
       const res = (await api.post('/auth/login', values)) as LoginResponse
-      resetWorkbench()
+      // 换人登录才清工作台（2026-08-13 第二轮审计修复）：原先无条件清，
+      // 导致「token 到期被踢回登录页 → 同一医生重登」时，他没保存完的问诊
+      // 表单/病历草稿被连带清掉，等于凭空丢失一段工作。换成别的医生登录时
+      // 仍然必须清（跨医生看到彼此患者数据是隐私事故）。
+      const lastUserId = useAuthStore.getState().lastUserId
+      if (lastUserId !== res.user.id) resetWorkbench()
       setAuth(res.access_token, res.user)
       setSystemType(selectedSystem)
       const adminRoles = ['super_admin', 'hospital_admin', 'dept_admin']

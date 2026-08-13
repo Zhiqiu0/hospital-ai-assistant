@@ -163,3 +163,39 @@ async def test_patient_list_excludes_sensitive_phi(client_doc_me):
         assert not leaked, f"患者列表泄露敏感字段：{leaked}"
     # 检索必需字段仍在（不能把功能砍废）
     assert {"id", "name"} <= set(items[0])
+
+
+@pytest_asyncio.fixture
+async def patched_audit_session(async_db, monkeypatch):
+    """audit_service 用模块级 AsyncSessionLocal 直连真实库——patch 成复用测试
+    session，让审计写入能被断言读到（与 test_admin_audit_dep 同款做法）。"""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _fake_session_factory():
+        yield async_db
+
+    monkeypatch.setattr(
+        "app.services.audit_service.AsyncSessionLocal", _fake_session_factory
+    )
+    yield
+
+
+@pytest.mark.asyncio
+async def test_profile_update_writes_audit(client_doc_me, async_db, patched_audit_session):
+    """修改患者档案（过敏史等纵向 PHI）必须留审计——原先零留痕。"""
+    from sqlalchemy import select
+    from app.models.audit_log import AuditLog
+
+    r = await client_doc_me.put(
+        "/api/v1/patients/pat-own/profile",
+        json={"allergy_history": "青霉素过敏"},
+    )
+    assert r.status_code == 200
+    rows = (await async_db.execute(
+        select(AuditLog).where(AuditLog.action == "update_patient_profile")
+    )).scalars().all()
+    assert rows, "档案修改未写审计日志"
+    assert rows[0].resource_id == "pat-own"
+    # 只记字段名不记内容（PHI 不进审计明细）
+    assert "青霉素" not in (rows[0].detail or "")
