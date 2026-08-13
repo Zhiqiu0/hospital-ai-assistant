@@ -39,6 +39,12 @@ interface UserInfo {
   role: string
   department_id?: string
   department_name?: string
+  /**
+   * 是否必须先修改初始密码（2026-08-13 批量开户）。
+   * 批量建号用全院统一初始密码便于分发，未改密的账号在后端被硬拦
+   * （除改密/登出/查自己外一律 403），前端据此弹不可关闭的改密框。
+   */
+  must_change_password?: boolean
 }
 
 interface AuthState {
@@ -59,6 +65,8 @@ interface AuthState {
   clearAuth: () => void
   /** 切换系统工作台类型（影响工作台页面路由和 AI prompt 选择） */
   setSystemType: (type: 'outpatient' | 'inpatient') => void
+  /** 标记「必须改密」——供 api.ts 收到后端 403 + X-Must-Change-Password 时兜底置位 */
+  setMustChangePassword: (v: boolean) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -89,6 +97,8 @@ export const useAuthStore = create<AuthState>()(
         set({ token: null, user: null, systemType: 'outpatient' })
       },
       setSystemType: type => set({ systemType: type }),
+      setMustChangePassword: v =>
+        set(state => (state.user ? { user: { ...state.user, must_change_password: v } } : {})),
     }),
     {
       name: 'mediscribe-auth',

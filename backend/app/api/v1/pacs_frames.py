@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
-from app.core.authz import assert_patient_access
 from app.database import get_db
 from app.models.imaging import ImagingStudy
 from app.services.orthanc_client import orthanc_client
@@ -48,8 +47,20 @@ async def get_frames(
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
-    # 跨患者权限校验：放射科/管理员直通；普通医生必须对该患者有过接诊
-    await assert_patient_access(db, study.patient_id, current_user)
+    # 权限设计（2026-08-13 放开读）：任意登录医生可查看影像，与已签发病历、患者
+    # 档案同一口径——病历里写着"胸片示右下肺斑片影"却打不开那张片子是荒谬的，
+    # 代班/会诊/复诊换医生都要看片。靠审计追责不靠拦截。
+    # 审计打在本端点（= 打开了这个检查）而不是逐帧渲染端点，避免一次阅片刷出
+    # 上百条日志把审计表淹掉。
+    from app.services.audit_service import log_action
+    await log_action(
+        action="view_imaging_study",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="imaging_study", resource_id=study_id,
+        detail=f"查看患者 {study.patient_id} 的影像检查 {study_id}",
+    )
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
 
@@ -81,7 +92,9 @@ async def _serve_frame_jpeg(
     """thumbnail / preview 两端点的共享编排（Round 6 合并，参数差异见 render_cache）。
 
     历史漏洞修复（保留说明）：曾完全无鉴权——任何人拿到 study_id+filename
-    即可下载缩略图（属于 PHI 泄露级漏洞）。已接入 assert_patient_access。
+    即可下载缩略图（属于 PHI 泄露级漏洞）。现仍要求登录（get_current_user），
+    2026-08-13 起不再额外要求接诊归属：影像与病历同口径对全院医生开放，
+    "谁打开了哪个检查"由 /frames 端点统一审计，帧级渲染不重复记日志。
     """
     # instance_uid 是 DICOM UID，只允许数字和点号，防注入
     if not all(c.isdigit() or c == "." for c in instance_uid):
@@ -91,7 +104,6 @@ async def _serve_frame_jpeg(
     study = await db.get(ImagingStudy, study_id)
     if not study:
         raise HTTPException(404, "检查不存在")
-    await assert_patient_access(db, study.patient_id, current_user)
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")
 
@@ -180,10 +192,6 @@ async def get_dicom_file(
     perf["db_get_study"] = _time.perf_counter() - t0
     if not study:
         raise HTTPException(404, "检查不存在")
-
-    t0 = _time.perf_counter()
-    await assert_patient_access(db, study.patient_id, current_user)
-    perf["assert_patient_access"] = _time.perf_counter() - t0
 
     if not study.study_instance_uid:
         raise HTTPException(410, "该检查为旧版本数据，已不支持查看")

@@ -95,6 +95,7 @@ export default function LoginPage() {
       role: string
       department_id?: string
       department_name?: string
+      must_change_password?: boolean
     }
   }
 

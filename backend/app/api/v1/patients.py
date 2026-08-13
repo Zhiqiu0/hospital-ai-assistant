@@ -52,7 +52,7 @@ async def list_patients(
 
     隐私边界（2026-08-13 第二轮审计修复）：返回 PatientListItem 精简项，
     **不含身份证/住址/紧急联系人等病案首页级 PHI**——那些只在
-    GET /patients/{id} 返回（带 assert_patient_access 归属校验 + view_patient 审计）。
+    GET /patients/{id} 返回（任意登录医生可读 + view_patient 审计留痕）。
     """
     # 空关键词=枚举全院患者，属"批量浏览"而非临床检索，留痕便于事后追溯
     # （按姓名检索是高频常规操作，逐次审计会淹没日志，故只审计枚举行为）
@@ -91,9 +91,14 @@ async def get_patient(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """按 UUID 查询单个患者详情。"""
-    # 归属校验：非管理员只能查自己接诊过的患者，防止越权读身份证号/住址等 PHI（IDOR）
-    await assert_patient_access(db, patient_id, current_user)
+    """按 UUID 查询单个患者详情。
+
+    权限设计（2026-08-13 放开读）：任意登录医生可读，与已签发病历、患者档案
+    同一口径。原先要求"接诊过该患者"，但医院内部诊疗数据本就全院共享，代班、
+    转诊、复诊换医生都是常态，拦读只会挡住正常诊疗。身份证/住址这类敏感字段
+    靠**每次查阅写审计**追责（admin 在操作日志页可追溯谁何时看了谁），不靠拦截。
+    写入（PUT）仍受归属保护。
+    """
     # PHI 访问留痕（2026-08-11 分级评审）：本端点返回身份证/住址等敏感字段，
     # 每次查阅写审计（谁在何时看了哪位患者的档案），供事后追溯。
     from app.services.audit_service import log_action
@@ -143,9 +148,25 @@ async def get_patient_profile(
 
     该档案跟随患者本身，不跟随单次接诊，符合 FHIR 标准。
     复诊/再次住院时前端自动加载，医生无需重复询问。
+
+    权限设计（2026-08-13 放开读）：与已签发病历同口径——任意登录医生可读，
+    每次查阅写审计。原先要求"接诊过该患者"，但同样的过敏史/既往史内容从
+    /medical-records/by-patient 那条路本就对全院开放，拦这里挡不住任何信息，
+    只换来一个临床安全缺口：结构化过敏史正是开药前工作台飘红警示的那个字段，
+    代班/复诊换医生时 403 会让最该看到的人看不到。责任靠留痕不靠拦截。
+    **写入仍受归属保护**（PUT / confirm / resolve-his 保留 assert_patient_access）：
+    真正知道患者新过敏史的是正在接诊的医生，他必然有归属；把写也放开只会让
+    过敏史变成谁都能改的公共字段，改错是会出事的。
     """
-    # 归属校验：只能读自己接诊过的患者档案，防止越权读过敏史/既往史等纵向 PHI
-    await assert_patient_access(db, patient_id, current_user)
+    from app.services.audit_service import log_action
+    await log_action(
+        action="view_patient_profile",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient_profile", resource_id=patient_id,
+        detail=f"查阅患者 {patient_id} 的纵向档案（过敏史/既往史等）",
+    )
     service = PatientService(db)
     return await service.get_profile(patient_id)
 

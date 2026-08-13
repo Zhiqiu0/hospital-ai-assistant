@@ -18,12 +18,13 @@ import { useEffect, useState } from 'react'
 import { Table, Button, Typography } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
-import { PlusOutlined } from '@ant-design/icons'
+import { PlusOutlined, UsergroupAddOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import type { UserRow, DeptOption, UserFormValues } from './users/types'
 import { buildUserColumns } from './users/userColumns'
 import UserFormModal from './users/UserFormModal'
 import ResetPasswordModal from './users/ResetPasswordModal'
+import BulkImportModal from './users/BulkImportModal'
 
 const { Title } = Typography
 
@@ -38,6 +39,7 @@ export default function UsersPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editUser, setEditUser] = useState<UserRow | null>(null)
   // 重置密码弹窗的目标用户（null = 关闭）；密码状态/API 调用在 ResetPasswordModal 内部
+  const [bulkOpen, setBulkOpen] = useState(false)
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
 
   const loadUsers = async (p = page) => {
@@ -130,9 +132,19 @@ export default function UsersPage() {
         <Title level={4} style={{ margin: 0 }}>
           用户管理
         </Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建用户
-        </Button>
+        <div>
+          {/* 批量开户：按医院人员名单一次性建号，支持一位医生多个 HIS 工号 */}
+          <Button
+            icon={<UsergroupAddOutlined />}
+            onClick={() => setBulkOpen(true)}
+            style={{ marginRight: 8 }}
+          >
+            批量开户
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建用户
+          </Button>
+        </div>
       </div>
       <Table
         columns={columns}
@@ -161,6 +173,13 @@ export default function UsersPage() {
 
       {/* 重置密码弹窗：密码原文不可"看"，只能"重置"——展示一次后由用户登录改回 */}
       <ResetPasswordModal user={resetUser} onClose={() => setResetUser(null)} />
+
+      {/* 批量开户弹窗：预检 → 确认导入，导入完刷新列表 */}
+      <BulkImportModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onDone={() => loadUsers(page)}
+      />
     </div>
   )
 }

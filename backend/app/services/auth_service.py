@@ -78,6 +78,7 @@ class AuthService:
                 "role": user.role,
                 "department_id": user.department_id,
                 "department_name": dept_name,
+                "must_change_password": bool(getattr(user, "must_change_password", False)),
             },
         }
 

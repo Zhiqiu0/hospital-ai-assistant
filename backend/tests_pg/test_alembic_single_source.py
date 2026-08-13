@@ -14,6 +14,22 @@ from sqlalchemy import text
 
 from tests_pg.conftest import run_alembic_subprocess, run_guard_subprocess
 
+
+def _script_head() -> str:
+    """迁移链当前 head。
+
+    不硬编码版本号（2026-08-13）：原先写死 revision id，每加一条迁移这两处
+    断言就红一次，红的还不是被测行为本身——真正要断言的是「upgrade 后库停在
+    链头」，链头是什么由迁移目录说了算。
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+    assert len(heads) == 1, f"迁移链出现多头，需先合并：{heads}"
+    return heads[0]
+
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -43,7 +59,7 @@ async def test_upgrade_head_builds_full_schema(alembic_pg):
     # alembic_version 已推进到链头（基线 + 后续常规迁移）
     async with alembic_pg.connect() as conn:
         ver = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
-    assert ver == "c20260812adoptidx"
+    assert ver == _script_head()
 
 
 async def test_upgrade_head_is_idempotent(alembic_pg):
@@ -149,4 +165,4 @@ async def test_guard_noop_on_fresh_and_current_db(alembic_pg):
     assert result.returncode == 0, result.stdout + result.stderr
     async with alembic_pg.connect() as conn:
         ver = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
-    assert ver == "c20260812adoptidx"
+    assert ver == _script_head()

@@ -26,6 +26,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Spin } from 'antd'
 import LoginPage from '@/pages/LoginPage'
+import ForcePasswordChangeModal from '@/components/ForcePasswordChangeModal'
 import WorkbenchPage from '@/pages/WorkbenchPage'
 
 // 路由级懒加载（2026-06-11 性能治本）：
@@ -117,6 +118,8 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      {/* 首登强改密：挂在路由之外，任何页面都盖在最上层，改完才放行（2026-08-13） */}
+      <ForcePasswordChangeModal />
       {/* Suspense 兜底懒加载路由的 chunk 拉取过程 */}
       <Suspense fallback={lazyFallback}>
         <Routes>

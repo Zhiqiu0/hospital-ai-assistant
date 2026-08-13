@@ -54,7 +54,7 @@ export default function ResetPasswordModal({ user, onClose }: ResetPasswordModal
       await api.post(`/admin/users/${user.id}/reset-password`, {
         new_password: newPassword,
       })
-      message.success('密码已重置，请将新密码告知用户')
+      message.success('密码已重置，请将新密码告知用户，他登录后需立即修改')
       // 不立即关弹窗，让管理员有机会复制；点"知道了"才关
     } catch (e: unknown) {
       const detail = (e as { detail?: string })?.detail
@@ -87,6 +87,11 @@ export default function ResetPasswordModal({ user, onClose }: ResetPasswordModal
     >
       <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 13 }}>
         为用户 <Tag>{user?.username}</Tag> 重置密码：
+      </div>
+      {/* 重置后强制改密（2026-08-13）：管理员知道这个临时密码，不改就等于
+          管理员长期持有能以该医生名义签发病历的凭据 */}
+      <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 12 }}>
+        该用户下次登录会被要求立即修改此密码，改完之前无法查看患者与病历。
       </div>
       <Input.Password
         value={newPassword}
