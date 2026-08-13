@@ -49,7 +49,13 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     """实时语音识别 WebSocket 代理端点。"""
     # 1. 鉴权：WebSocket 不能用 Authorization 头，token 走 query 参数
     try:
+        payload_iat = None
         user_id = verify_token_str(token)
+        # 取签发时刻用于密码水印比对（见下方）
+        from jose import jwt as _jwt
+
+        from app.config import settings as _st
+        payload_iat = _jwt.decode(token, _st.secret_key, algorithms=["HS256"]).get("iat")
     except Exception as exc:
         # FastAPI 要求 accept 之后才能 close；这里用 1008 表示策略违规
         await websocket.close(code=1008, reason=f"auth failed: {exc}")
@@ -66,6 +72,17 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     if user is None or not user.is_active or user.must_change_password:
         await websocket.close(code=1008, reason="account not ready")
         return
+
+    # 密码水印同样在这里比对（2026-08-13 第四轮审计修复）：本端点不走
+    # get_current_user 依赖，改密/重置后旧 token 在这条路上仍然有效。虽然它只
+    # 代理语音转写、不读写任何病历，但"改了密码就该踢掉旧会话"应当处处成立，
+    # 而上面已经查过一次库，补这一刀零额外开销。
+    changed_at = getattr(user, "password_changed_at", None)
+    if changed_at is not None:
+        from datetime import datetime as _dt
+        if payload_iat is None or _dt.fromtimestamp(payload_iat) < changed_at:
+            await websocket.close(code=1008, reason="token superseded")
+            return
 
     # 2. 未配置 API Key 时直接拒绝（前端应走上传兜底）
     if not settings.aliyun_api_key:

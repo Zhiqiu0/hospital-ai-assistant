@@ -95,9 +95,12 @@ class BulkImportDoctorItem(BaseModel):
       username  : 登录名，默认取 codes[0]（约定「用户名=主工号」）
     """
 
-    real_name: str
-    codes: list[str]                       # 至少一个工号
-    username: Optional[str] = None         # 缺省用 codes[0]
+    # 长度上限与数据库列宽对齐（2026-08-13 第四轮审计修复）：原先是裸 str，
+    # 名单里粘进备注列时 codes[0] 会是超长串且默认当用户名，落库抛 DataError
+    # 导致整批失败。在这里拦住，管理员能看到"哪一行有问题"而不是笼统的 500。
+    real_name: str = Field(min_length=1, max_length=50)
+    codes: list[str] = Field(min_length=1)        # 至少一个工号
+    username: Optional[str] = Field(default=None, max_length=50)   # 缺省用 codes[0]
     department_name: Optional[str] = None  # 科室名（按名匹配已有科室，匹配不上则留空）
     role: str = "doctor"
     phone: Phone = None
