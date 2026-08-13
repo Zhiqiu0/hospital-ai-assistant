@@ -109,7 +109,23 @@ export function useAutoSaveDraft({
         void removeDraftByKey(payload.encounter_id, payload.record_type)
         if (payload.encounter_id === lastEncounterRef.current) {
           setSavingState('conflict')
-          message.warning('病历已被其他设备修改，请刷新后重试')
+          // 基线重取（2026-08-13 第二轮审计修复）：原实现只提示不刷新基线，
+          // 于是每 5 秒都拿同一个过期 expected_updated_at 再撞 409——医生后续
+          // 输入永久不落库、提示反复弹，属"编辑静默丢失"级别的事故。
+          // 这里重取服务端最新 updated_at 作为新基线，让后续编辑能继续保存
+          // （后写覆盖，符合"医生正在写就该存下来"的预期），并明确告知医生。
+          void api
+            .get(`/encounters/${payload.encounter_id}/workspace`)
+            .then(snap => {
+              const s = snap as { active_record?: { updated_at?: string | null } } | null
+              // 期间可能已切接诊，只回填仍是当前接诊的基线
+              if (payload.encounter_id !== lastEncounterRef.current) return
+              lastUpdatedAtRef.current = s?.active_record?.updated_at ?? null
+              message.warning('病历已被其他设备修改；已同步最新版本，你的后续编辑将继续保存')
+            })
+            .catch(() => {
+              message.warning('病历已被其他设备修改，请刷新后重试')
+            })
         }
         return false
       }

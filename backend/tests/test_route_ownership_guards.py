@@ -116,3 +116,50 @@ async def test_auto_save_draft_cross_doctor_blocked(client_doc_me):
         json={"encounter_id": "enc-other", "record_type": "outpatient", "content": "x"},
     )
     assert r.status_code == 403
+
+
+# ── 2026-08-13 第二轮审计补的三条守卫 ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_create_record_cross_doctor_blocked(client_doc_me):
+    """医生在他人接诊下创建病历 → 403。
+
+    原先本端点零校验：任何登录医生都能在别人接诊下凭空建出 record，
+    后续版本写入以 record_id 为起点，归属判定的源头就被污染了。
+    """
+    r = await client_doc_me.post(
+        "/api/v1/medical-records",
+        json={"encounter_id": "enc-other", "record_type": "outpatient"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_record_own_encounter_allowed(client_doc_me):
+    """自己的接诊下建病历 → 201（不能误伤正常业务）。"""
+    r = await client_doc_me.post(
+        "/api/v1/medical-records",
+        json={"encounter_id": "enc-own", "record_type": "outpatient"},
+    )
+    assert r.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_patient_list_excludes_sensitive_phi(client_doc_me):
+    """患者列表不得返回身份证/住址/紧急联系人等病案首页级 PHI。
+
+    原先列表复用完整响应，任何登录医生翻页即可批量导出全院身份信息库；
+    这些字段现在只在带归属校验 + 审计的详情端点返回。
+    """
+    r = await client_doc_me.get("/api/v1/patients?page=1&page_size=50")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert items, "列表应返回患者（否则本用例失去判别力）"
+    forbidden = {"id_card", "address", "ethnicity", "marital_status", "occupation",
+                 "workplace", "contact_name", "contact_phone", "contact_relation",
+                 "blood_type"}
+    for item in items:
+        leaked = forbidden & set(item)
+        assert not leaked, f"患者列表泄露敏感字段：{leaked}"
+    # 检索必需字段仍在（不能把功能砍废）
+    assert {"id", "name"} <= set(items[0])
