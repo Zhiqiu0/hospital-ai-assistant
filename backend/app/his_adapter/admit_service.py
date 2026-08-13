@@ -17,7 +17,7 @@ from datetime import date
 from typing import Optional
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.his_adapter.event_bus import his_event_bus
@@ -65,6 +65,18 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         AdmitError: 医生工号缺失/未注册（code=40007），厂商 ack 可见
     """
     doctor = await _map_doctor(db, payload.doctor_code)
+
+    # 并发幂等护栏（2026-08-13 复检修复）：下面的「先查后插」在并发下不安全——
+    # 厂商超时重发（换新 nonce 绕过防重放）或 WS/HTTP 双通道同推一个 visit_id 时，
+    # 两个请求都查不到既有接诊，各自建一条，同一次就诊出现重复接诊+重复患者档案。
+    # 用事务级 advisory lock 把「同机构同就诊号」的处理串行化：同 key 的第二个请求
+    # 阻塞到第一个提交后再查，就能查到既有接诊走复用分支。锁随事务结束自动释放。
+    # 仅 PG 生效（SQLite 测试库无此函数，跳过——测试是单线程无并发）。
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+            {"k": f"his_admit:{payload.hospital_code}:{payload.visit_id}"},
+        )
 
     # 幂等：同一机构同 visit_id 已有非取消接诊 → 复用（医生在 HIS 反复打开患者会重推）。
     # 用 hospital_code + visit_id 双键（2026-08-11 审计修复）：visit_id 只在机构内唯一，

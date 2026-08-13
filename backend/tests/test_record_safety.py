@@ -146,6 +146,57 @@ async def test_reconcile_skips_old_window(async_db):
     assert await _find_candidates(async_db) == []
 
 
+@pytest.mark.asyncio
+async def test_reconcile_attempts_accumulate_across_rounds(async_db, monkeypatch):
+    """多轮对账的重投次数必须真实累加（2026-08-13 复检修复的回归锁）。
+
+    修复前每轮 send_writeback 会把 reconcile_attempts 抹零、_mark_reconcile 再 +1，
+    计数恒为 1 → MAX_RECONCILE_ATTEMPTS 上限永不成立 → 耗尽告警永不触发、
+    失败回写被无限静默重投。
+    """
+    import app.database as _db
+    from app.his_adapter import writeback_reconcile as wr
+
+    eid = await _mk_his_encounter(async_db, writeback_status="write_failed")
+
+    # 让每轮对账都走真实的 send_writeback（未配回写地址 → skipped，属可重试状态），
+    # 且各轮共用同一个测试会话，避免 SQLite 内存库跨 session 不可见。
+    # reconcile_once 内部是 `from app.database import AsyncSessionLocal`，故 patch 源模块。
+    monkeypatch.setattr(_db, "AsyncSessionLocal", lambda: _SessionCtx(async_db))
+
+    for expected in (1, 2, 3):
+        await wr.reconcile_once()
+        enc = await async_db.get(Encounter_model(), eid)
+        await async_db.refresh(enc)
+        wb = enc.his_external_ref["writeback"]
+        assert wb["reconcile_attempts"] == expected, (
+            f"第 {expected} 轮后计数应为 {expected}，实际 {wb.get('reconcile_attempts')}"
+            "——回写落库又把对账计数抹掉了")
+
+
+def Encounter_model():
+    """延迟取 Encounter 模型（本文件的 import 都在函数内，保持风格一致）。"""
+    from app.models.encounter import Encounter
+    return Encounter
+
+
+class _SessionCtx:
+    """把既有 async session 包成 `async with AsyncSessionLocal() as db` 的形状。
+
+    对账代码每步都新开会话（生产是真实连接池）；单测里 SQLite 内存库跨会话
+    不可见，故复用测试会话，退出时不关闭。
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 # ── A批 电子签名防篡改哈希链 ──────────────────────────────────────────
 
 @pytest.mark.asyncio

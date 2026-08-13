@@ -132,7 +132,11 @@ export default function HisQueueDock({ onOpen }: HisQueueDockProps) {
         data?: { status?: string; message?: string }
       }
       const st = res.data?.status
-      if (res.code === 0 && st === 'success') {
+      if (res.code === 0 && st === 'dispatched') {
+        // 2026-08-13：手动回写改走派发链路（多 worker 下由持有 WS 连接的进程
+        // 执行），真实结果经 SSE writeback_result 推回，这里只确认已发起
+        message.info(`已发起「${item.patient_name}」回写，结果稍后自动更新`)
+      } else if (res.code === 0 && st === 'success') {
         message.success(`「${item.patient_name}」病历已回写 HIS`)
       } else if (res.code === 0 && st === 'skipped') {
         // skipped：HIS 连接不在线，属"未回写"而非"失败"——信封 message 恒为
