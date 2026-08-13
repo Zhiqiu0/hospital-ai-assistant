@@ -125,6 +125,9 @@ async def change_password(
 
     current_user.password_hash = await hash_password_async(data.new_password)
     current_user.must_change_password = False
+    # 写密码水印：本次之前签发的 token 全部失效（含攻击者可能已拿到的会话）
+    from datetime import datetime as _dt
+    current_user.password_changed_at = _dt.now().replace(microsecond=0)
     await db.commit()
     await log_action(
         action="change_password", user_id=current_user.id,
@@ -132,7 +135,17 @@ async def change_password(
         detail="修改密码成功",
     )
     logger.info("auth.change_password: ok user_id=%s", current_user.id)
-    return {"ok": True}
+    # 换发新 token：密码水印会作废本次之前签发的全部 token——包括医生**自己**
+    # 正在用的这一个。不换发的话，他刚改完密码就被踢回登录页，还得再登一次。
+    # 攻击者的旧 token 依然作废，安全目标不受影响。
+    from datetime import timedelta
+
+    from app.core.security import create_access_token
+    new_token = create_access_token(
+        {"sub": current_user.id, "role": current_user.role},
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    return {"ok": True, "access_token": new_token, "token_type": "bearer"}
 
 
 @router.post("/logout")

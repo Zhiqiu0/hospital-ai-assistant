@@ -217,8 +217,32 @@ async def test_first_login_flow_blocked_then_unlocked(async_db, patched_audit_se
                                           "new_password": "MyOwn@2026"})
             assert changed.status_code == 200
 
-            unlocked = await ac.get("/api/v1/patients", headers=headers)
+            # 改密会写密码水印作废此前签发的所有 token（含医生自己手上这个），
+            # 所以端点换发了新 token，前端要替换掉旧的
+            new_token = changed.json()["access_token"]
+            assert new_token and new_token != token
+            new_headers = {"Authorization": f"Bearer {new_token}"}
+
+            unlocked = await ac.get("/api/v1/patients", headers=new_headers)
             assert unlocked.status_code == 200
+
+            # 安全性质：改密**之前**签发的会话失效——这正是「重置密码能踢掉
+            # 泄露会话」的依据。水印是秒级粒度（JWT 的 iat 只精确到秒），
+            # 所以用一个 60 秒前签发的 token 来验，对应现实中攻击者的会话；
+            # 与改密发生在同一秒的 token 会落在粒度内，属已知且可接受的取舍。
+            import time as _time
+
+            from jose import jwt as _jwt
+
+            from app.config import settings as _settings
+            stale_token = _jwt.encode(
+                {"sub": user.id, "role": user.role, "jti": "stale-test",
+                 "iat": int(_time.time()) - 60, "exp": int(_time.time()) + 3600},
+                _settings.secret_key, algorithm="HS256",
+            )
+            stale = await ac.get("/api/v1/patients",
+                                 headers={"Authorization": f"Bearer {stale_token}"})
+            assert stale.status_code == 401
     finally:
         app.dependency_overrides.clear()
 

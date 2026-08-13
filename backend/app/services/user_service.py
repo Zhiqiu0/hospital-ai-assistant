@@ -209,4 +209,9 @@ class UserService:
         # 重置后重新要求首登改密（2026-08-13）：管理员知道这个临时密码，
         # 不强制改就等于管理员长期持有能以该医生名义签发病历的凭据。
         user.must_change_password = True
+        # 写密码水印（2026-08-13 第三轮审计修复）：重置密码的典型场景就是「账号
+        # 疑似泄露」，必须把已签发的会话一并踢掉，否则攻击者手里的 token 还能
+        # 用满 30 天，重置等于白做。
+        from datetime import datetime as _dt
+        user.password_changed_at = _dt.now().replace(microsecond=0)
         await self.db.commit()
