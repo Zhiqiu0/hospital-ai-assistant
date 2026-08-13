@@ -11,7 +11,8 @@
 from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from sqlalchemy import JSON, Boolean, String, Text
+from sqlalchemy import Boolean, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
@@ -58,10 +59,12 @@ class QCRule(Base, TimestampMixin):
 
     field_name: Mapped[Optional[str]] = mapped_column(String(50))
 
-    # 关键词列表（JSON 数组）：任一关键词出现视为该字段已填写
-    keywords: Mapped[Optional[list]] = mapped_column(JSON)
-    # 适应症词列表（JSON 数组，仅 insurance 规则使用）：附近出现这些词则不报警
-    indication_keywords: Mapped[Optional[list]] = mapped_column(JSON)
+    # 关键词列表（JSONB 数组）：任一关键词出现视为该字段已填写
+    # 用 JSONB 而非 JSON（2026-08-13 漂移收口）：生产库这两列本来就是 jsonb，
+    # 模型却写成 JSON——是模型该迁就库，JSONB 支持索引与包含查询，本就是更优类型。
+    keywords: Mapped[Optional[list]] = mapped_column(JSONB)
+    # 适应症词列表（JSONB 数组，仅 insurance 规则使用）：附近出现这些词则不报警
+    indication_keywords: Mapped[Optional[list]] = mapped_column(JSONB)
 
     # 风险级别：low / medium / high。与真实 DB 对齐改为 nullable（早期建列未加
     # NOT NULL），保留应用层 default="medium"；补 NOT NULL 对存量数据有风险不做。
