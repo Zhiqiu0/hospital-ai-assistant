@@ -78,21 +78,7 @@ export const useAuthStore = create<AuthState>()(
       systemType: 'outpatient',
       setAuth: (token, user) => set({ token, user, lastUserId: user.id }),
       clearAuth: () => {
-        // 登出/401 时清空跨患者敏感缓存（2026-08-11 审计修复）：patientCache 存着
-        // 患者档案、voiceTranscript 存着语音转写，若不清，下一个登录本机的医生会
-        // 看到上一个医生的患者数据（医疗隐私事故）。收口在 clearAuth 而非
-        // resetAllWorkbench——后者还被急诊切换/取消接诊等非登出路径调用，在那里清
-        // 语音草稿会丢医生未上传的内容，违背 voiceTranscriptStore「切患者不丢草稿」设计。
-        // 动态 import 避免 store 顶层循环依赖。
-        void import('@/store/voiceTranscriptStore').then(m =>
-          m.useVoiceTranscriptStore.getState().clearAll()
-        )
-        void import('@/store/patientCacheStore').then(m =>
-          m.usePatientCacheStore.getState().clear()
-        )
-        void import('@/store/aiWrittenFieldsStore').then(m =>
-          m.useAiWrittenFieldsStore.getState().clear()
-        )
+        clearPatientScopedData()
         // lastUserId 刻意保留：供登录页判断"是不是同一个医生回来了"
         set({ token: null, user: null, systemType: 'outpatient' })
       },
@@ -111,3 +97,34 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 )
+
+/**
+ * 清空所有「跟着患者走」的本地敏感数据（2026-08-11 审计修复；2026-08-13 收口）。
+ *
+ * patientCache 存患者档案、voiceTranscript 存语音转写、profileEdit 存医生还没
+ * 保存的既往史/过敏史草稿——都是 PHI 且都持久化在本机。不清的话，下一个在这台
+ * 诊室电脑上登录的医生会看到上一个医生的患者数据，属医疗隐私事故。
+ *
+ * 为什么要收口成一个函数（2026-08-13 第五轮审计修复）：
+ * 原先这段逻辑只写在 clearAuth 里，而「医生 A 不登出、医生 B 直接在登录页登录」
+ * 走的是另一条路径（LoginPage 只调 resetAllWorkbench），根本不经过 clearAuth——
+ * 于是换人登录时这些 PHI 原样留着。诊室电脑多人共用是医院常态，这条路径比正常
+ * 登出更常见。收口后两条路径都调同一个函数，不会再漏。
+ *
+ * 注意别放进 resetAllWorkbench：后者还被急诊切换/取消接诊等非换人路径调用，
+ * 在那里清语音草稿会丢医生未上传的内容，违背 voiceTranscriptStore 的设计。
+ *
+ * 动态 import 避免 store 顶层循环依赖。
+ */
+export function clearPatientScopedData(): void {
+  void import('@/store/voiceTranscriptStore').then(m =>
+    m.useVoiceTranscriptStore.getState().clearAll()
+  )
+  void import('@/store/patientCacheStore').then(m => m.usePatientCacheStore.getState().clear())
+  void import('@/store/aiWrittenFieldsStore').then(m =>
+    m.useAiWrittenFieldsStore.getState().clear()
+  )
+  void import('@/store/patientProfileEditStore').then(m =>
+    m.usePatientProfileEditStore.getState().reset()
+  )
+}

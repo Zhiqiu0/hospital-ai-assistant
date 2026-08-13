@@ -130,6 +130,23 @@ export function useAutoSaveDraft({
         }
         return false
       }
+      // 永久性拒绝（2026-08-13 第五轮审计修复）：403=病历已签发/无权写，
+      // 404=接诊或病历已不存在。这些重试多少次都还是同样的结果，原先却和
+      // 网络错误一样入失败队列——队列条目永远补发不成功，后续所有草稿都堵在
+      // 它后面，医生的草稿保存链路被**永久毒化**且没有任何提示。
+      // 直接清掉该条目并明确告知医生，让他知道为什么草稿不再保存。
+      if (status === 403 || status === 404) {
+        void removeDraftByKey(payload.encounter_id, payload.record_type)
+        setSavingState('idle')
+        if (payload.encounter_id === lastEncounterRef.current) {
+          message.warning(
+            status === 403
+              ? '该病历已签发，草稿不再自动保存；如需更正请走病历修订'
+              : '接诊已不存在，草稿已停止自动保存'
+          )
+        }
+        return false
+      }
       // 其他错误（网络 / 5xx）→ 入失败队列，下次成功时补发
       try {
         await enqueueDraft(payload)

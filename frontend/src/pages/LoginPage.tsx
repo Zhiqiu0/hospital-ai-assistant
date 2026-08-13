@@ -19,7 +19,7 @@ import { message } from '@/services/messageBridge'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import * as Sentry from '@sentry/react'
-import { useAuthStore } from '@/store/authStore'
+import { useAuthStore, clearPatientScopedData } from '@/store/authStore'
 import { resetAllWorkbench } from '@/store/activeEncounterStore'
 import api from '@/services/api'
 import { scenes, neutral, radius, spacing, typography } from '@/theme/tokens'
@@ -107,7 +107,14 @@ export default function LoginPage() {
       // 表单/病历草稿被连带清掉，等于凭空丢失一段工作。换成别的医生登录时
       // 仍然必须清（跨医生看到彼此患者数据是隐私事故）。
       const lastUserId = useAuthStore.getState().lastUserId
-      if (lastUserId !== res.user.id) resetWorkbench()
+      if (lastUserId !== res.user.id) {
+        resetWorkbench()
+        // 换医生登录必须连跨患者 PHI 一起清（2026-08-13 第五轮审计修复）：
+        // 这条路径不经过 clearAuth，原先只清工作台 store，患者缓存/语音转写/
+        // 档案草稿里还留着上一位医生的患者数据。诊室电脑多人共用是医院常态，
+        // 不登出直接换人登录比正常登出更常见。
+        clearPatientScopedData()
+      }
       setAuth(res.access_token, res.user)
       setSystemType(selectedSystem)
       const adminRoles = ['super_admin', 'hospital_admin', 'dept_admin']
