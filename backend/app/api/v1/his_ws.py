@@ -6,6 +6,7 @@
 """
 import asyncio
 import logging
+from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -175,23 +176,38 @@ async def _handle_admit(
         return
     # 记录该就诊的来源连接：回写/刷新优先路由回这台诊室（它的界面才需要刷新）
     his_ws_manager.bind_visit(payload.visit_id, websocket)
+    # 中断兜底（2026-08-13 第二轮审计修复）：下面的 except 只覆盖 Exception，
+    # 进程重启/任务取消（CancelledError 属 BaseException）会让 msg_id 占位留着，
+    # 厂商按规范重发同 msg_id 时命中重复分支拿到**假成功 ack**——接诊静默丢失。
+    # 用 finally + 完成标记兜住：只要没真正处理完就释放占位，让重发能重新处理
+    # （handle_admit 按 visit_id 幂等，重入不会建重）。
+    completed = False
     try:
-        result = await admit_service.handle_admit(payload)
-    except admit_service.AdmitError as exc:
-        # 业务拒收（如医生工号未注册）：错误码回 ack，厂商日志可见、便于排查
-        logger.warning("his_ws.admit_rejected: visit_id=%s %s",
-                       payload.visit_id, exc.message)
-        await _release_and_ack(exc.code, exc.message)
-        return
-    except Exception:
-        logger.exception("his_ws.admit_error: visit_id=%s", payload.visit_id)
-        await _release_and_ack(50000, "服务内部错误")
-        return
-    logger.info("his_ws.admit: visit_id=%s patient=%s encounter=%s reused=%s",
-                payload.visit_id, payload.patient_name,
-                result.encounter_id, result.reused)
-    await websocket.send_text(
-        wp.build_ack(env.msg_id, 0, "success", aid, secret,
-                     data={"visit_id": payload.visit_id,
-                           "encounter_id": result.encounter_id})
-    )
+        try:
+            result = await admit_service.handle_admit(payload)
+        except admit_service.AdmitError as exc:
+            # 业务拒收（如医生工号未注册）：错误码回 ack，厂商日志可见、便于排查
+            logger.warning("his_ws.admit_rejected: visit_id=%s %s",
+                           payload.visit_id, exc.message)
+            await _release_and_ack(exc.code, exc.message)
+            completed = True  # 已如实回错误 ack 并释放占位，无需 finally 再释放
+            return
+        except Exception:
+            logger.exception("his_ws.admit_error: visit_id=%s", payload.visit_id)
+            await _release_and_ack(50000, "服务内部错误")
+            completed = True
+            return
+        # 日志不落患者姓名（PHI 不进日志文件），排障用 visit_id/encounter_id 关联
+        logger.info("his_ws.admit: visit_id=%s encounter=%s reused=%s",
+                    payload.visit_id, result.encounter_id, result.reused)
+        await websocket.send_text(
+            wp.build_ack(env.msg_id, 0, "success", aid, secret,
+                         data={"visit_id": payload.visit_id,
+                               "encounter_id": result.encounter_id})
+        )
+        completed = True
+    finally:
+        if not completed:
+            # 被取消/进程收摊：释放去重占位，避免下次重发拿到假成功
+            with suppress(Exception):
+                await redis_cache.delete(f"nonce:his_ws_msg:{env.msg_id}")

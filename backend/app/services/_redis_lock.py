@@ -17,22 +17,29 @@ class RedisLockMixin:
     """分布式锁 + 一次性 nonce（供 RedisCache 组合）。"""
 
     # ── 分布式锁（幂等 / 防重复触发）────────────────────────────────────────────
-    async def acquire_lock(self, key: str, *, ttl: int = 5) -> Optional[str]:
+    async def acquire_lock(
+        self, key: str, *, ttl: int = 5, fail_open: bool = True
+    ) -> Optional[str]:
         """SET NX EX 抢锁。
 
         Returns:
             抢到则返回随机 token（释放时校验所有权，避免误删别人的锁），
-            没抢到 / Redis 不可用返回 None。
+            没抢到返回 None。Redis 不可用时取决于 fail_open。
 
         Args:
             ttl: 锁自动过期秒数，必须 >0。设短一点（5~60s），
                  防止持锁方崩溃后锁一直占着。
+            fail_open: Redis 不可用时的取舍（2026-08-13 第二轮审计新增）。
+                True（默认，保持既有行为）——返回伪 token 让业务继续跑，
+                    适用于「锁只为省算力/防重复触发，重复执行无外部副作用」的场景
+                    （AI 生成去重等）：Redis 挂了也不该阻断医生用系统。
+                False——返回 None 让调用方跳过本轮，适用于「重复执行有对外副作用」
+                    的场景（回写 HIS 双写=病案里出现两份病历）：生产是 2 worker，
+                    fail-open 会让两个 worker 同时对账，宁可这轮不做也不能双写。
         """
         client = self._get_client()
         if client is None:
-            # Redis 不可用时返回伪 token "fallback"，让业务继续走（不锁）；
-            # 单容器场景没有 Redis 也不阻断，多副本场景应当确保 Redis 可用
-            return "fallback"
+            return "fallback" if fail_open else None
         try:
             token = uuid.uuid4().hex
             ok = await client.set(key, token, nx=True, ex=ttl)
@@ -40,7 +47,7 @@ class RedisLockMixin:
             return token if ok else None
         except Exception as e:
             self._on_failure("acquire_lock", key, e)
-            return "fallback"
+            return "fallback" if fail_open else None
 
     async def release_lock(self, key: str, token: str) -> bool:
         """释放锁。仅当 key 当前值等于 token 才删（防误删别人续上的锁）。

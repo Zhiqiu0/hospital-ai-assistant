@@ -30,6 +30,13 @@ RECONCILE_INTERVAL_SECONDS = 300   # 对账周期：每 5 分钟扫一次
 RECONCILE_WINDOW_DAYS = 3          # 只对账最近 3 天的接诊（更早的失败已人工介入）
 MAX_RECONCILE_ATTEMPTS = 5         # 自动重投上限，超过报警并停手
 SCAN_LIMIT = 200                   # 单轮最多处理条数，防一次扫太多
+LOCK_TTL_SECONDS = RECONCILE_INTERVAL_SECONDS - 30   # 270s：锁 TTL
+# 单轮处理截止余量（2026-08-13 第二轮审计修复）：单条回写最坏可达 180s
+# （HTTP 写入/刷新各 3 次 × 30s 超时），只要 2 条走满超时就会超过锁 TTL——
+# 锁中途过期后另一 worker 会对同一批候选并发重投，HIS 收到双份病历。
+# 现在给每轮设截止时间：剩余时间不足一条最坏耗时就收工，剩下的下轮再做，
+# 保证锁绝不会在处理途中过期。
+ROUND_DEADLINE_MARGIN_SECONDS = 60
 
 # 视为「回写未成功、需重投」的状态；success 是成功，skipped 是 WS/HTTP 都不在线
 # （连接恢复后应重投，故也纳入对账）。
@@ -85,8 +92,14 @@ async def _mark_reconcile(db: AsyncSession, encounter_id: str, *, exhausted: boo
     await db.commit()
 
 
-async def reconcile_once() -> int:
-    """跑一轮对账：重投未成功的回写，返回本轮处理的条数。"""
+async def reconcile_once(deadline: float | None = None) -> int:
+    """跑一轮对账：重投未成功的回写，返回本轮处理的条数。
+
+    Args:
+        deadline: asyncio 事件循环时刻（loop.time() 口径）。到点即收工，
+            剩余候选留给下一轮——用于保证持锁时长不超过锁 TTL（见
+            ROUND_DEADLINE_MARGIN_SECONDS 说明）。None=不限（单测用）。
+    """
     from app.database import AsyncSessionLocal
     from app.his_adapter.writeback_sender import send_writeback
 
@@ -95,6 +108,10 @@ async def reconcile_once() -> int:
 
     processed = 0
     for enc in candidates:
+        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+            logger.info("his_wb.reconcile: 触达本轮截止时间，剩余 %d 条留待下轮",
+                        len(candidates) - processed)
+            break
         wb = (enc.his_external_ref or {}).get("writeback") or {}
         attempts = int(wb.get("reconcile_attempts") or 0)
         if attempts >= MAX_RECONCILE_ATTEMPTS:
@@ -125,7 +142,14 @@ async def reconcile_loop() -> None:
     """回写对账常驻任务（main.py lifespan 启动，受 HIS 保险丝保护）。
 
     多 worker 防重：每轮先抢 Redis 锁，只让一个 worker 真正对账，避免两 worker
-    同时重投同一接诊造成 HIS 双写。Redis 不可用时锁恒成功（单进程无并发）。
+    同时重投同一接诊造成 HIS 双写。
+
+    2026-08-13 第二轮审计修复两处：
+      1. fail_open=False——生产是 2 worker（不是注释原先假设的单进程），
+         Redis 挂时若 fail-open 两个 worker 会同时对账，双写进 HIS 病案。
+         重复回写有对外副作用，宁可这轮不做。
+      2. 单轮设截止时间——锁 TTL 270s 而单条最坏 180s，原先跑满就会锁中途
+         过期、另一 worker 并发重投同一批。现在到点收工，锁绝不中途失效。
     """
     from app.services.redis_cache import redis_cache
 
@@ -134,12 +158,14 @@ async def reconcile_loop() -> None:
             await asyncio.sleep(RECONCILE_INTERVAL_SECONDS)
             # 锁 TTL 略短于周期，正常单轮跑完自然释放；worker 崩溃也能到期自愈
             token = await redis_cache.acquire_lock(
-                "his:wb:reconcile:lock", ttl=RECONCILE_INTERVAL_SECONDS - 30
+                "his:wb:reconcile:lock", ttl=LOCK_TTL_SECONDS, fail_open=False
             )
             if token is None:
-                continue  # 另一 worker 正在对账，本轮跳过
+                continue  # 另一 worker 正在对账 / Redis 不可用 → 本轮跳过
             try:
-                n = await reconcile_once()
+                deadline = (asyncio.get_running_loop().time()
+                            + LOCK_TTL_SECONDS - ROUND_DEADLINE_MARGIN_SECONDS)
+                n = await reconcile_once(deadline=deadline)
                 if n:
                     logger.info("his_wb.reconcile: 本轮重投 %d 条", n)
             finally:
