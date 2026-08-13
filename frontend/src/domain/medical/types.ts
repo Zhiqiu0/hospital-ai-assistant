@@ -81,6 +81,13 @@ export interface PatientSnapshot {
 export interface ProfileFieldMeta {
   updated_at?: string | null // ISO datetime
   updated_by?: string | null // doctor user id
+  /**
+   * HIS 接诊推送带来的、与本地不一致的值（2026-08-13）。
+   * 不覆盖本地值（HIS 可能是陈旧数据），也不丢弃（过敏史漏一项会出用药事故），
+   * 挂在这里由医生在档案卡上裁决「采纳 HIS / 保留本地」。无差异时为空。
+   */
+  his_pending_value?: string | null
+  his_pending_at?: string | null // ISO datetime，HIS 推送时间
 }
 
 export interface PatientProfile {

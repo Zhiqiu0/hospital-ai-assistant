@@ -23,6 +23,7 @@ from app.schemas.patient import (
     PatientListResponse,
     PatientProfile,
     PatientProfileFieldConfirm,
+    PatientProfileHisResolve,
     PatientProfileUpdate,
     PatientResponse,
     PatientUpdate,
@@ -177,6 +178,36 @@ async def update_patient_profile(
     )
     service = PatientService(db)
     return await service.update_profile(patient_id, data, doctor_id=current_user.id)
+
+
+@router.post("/{patient_id}/profile/resolve-his", response_model=PatientProfile)
+async def resolve_his_pending_profile(
+    patient_id: str,
+    data: PatientProfileHisResolve,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """裁决 HIS 推来的档案差异：采纳 HIS 值 或 保留我方值（2026-08-13）。
+
+    背景：复诊时 HIS 可能推来与我方不一致的过敏史/既往史。用 HIS 陈旧值覆盖
+    医生确认过的内容有风险，静默丢弃 HIS 的更新同样有风险（过敏史漏一项会出
+    用药事故），所以交给医生当面判断。
+    """
+    # 归属校验：只能处理自己接诊过的患者档案
+    await assert_patient_access(db, patient_id, current_user)
+    from app.services.audit_service import log_action
+    await log_action(
+        action="resolve_his_profile",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient_profile", resource_id=patient_id,
+        detail=f"裁决 HIS 档案差异：字段={data.field} 决定={'采纳HIS值' if data.adopt else '保留本地值'}",
+    )
+    service = PatientService(db)
+    return await service.resolve_his_pending(
+        patient_id, data.field, adopt=data.adopt, doctor_id=current_user.id
+    )
 
 
 @router.post("/{patient_id}/profile/confirm", response_model=PatientProfile)

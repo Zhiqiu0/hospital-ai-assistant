@@ -167,6 +167,54 @@ class PatientProfileMixin:
         await _invalidate_patient_cache(patient_id)
         return await self.get_profile(patient_id)
 
+    async def resolve_his_pending(
+        self,
+        patient_id: str,
+        field: str,
+        adopt: bool,
+        doctor_id: Optional[str] = None,
+    ) -> dict:
+        """裁决 HIS 待处理值（2026-08-13）：adopt=True 采纳，False 忽略。
+
+        采纳 → HIS 的值成为档案正式值，updated_by 记为做出决定的医生
+               （是他判断该采纳的，责任归属清晰）。
+        忽略 → 只清掉待处理标记，保留我方原值，updated_at 一并刷新
+               （医生看过并做了判断，等价于一次"仍准确"确认）。
+        两种情况都清除 his_pending，避免提示反复出现。
+        """
+        if field not in PROFILE_FIELDS:
+            raise HTTPException(status_code=400, detail=f"不支持的档案字段: {field}")
+
+        # 同 update_profile：读-改-写整份 JSONB，需行锁串行化
+        result = await self.db.execute(
+            select(Patient).where(
+                Patient.id == patient_id,
+                Patient.is_deleted.is_(False),
+            ).with_for_update()
+        )
+        patient = result.scalar_one_or_none()
+        if not patient:
+            raise HTTPException(status_code=404, detail="患者不存在")
+
+        profile_data = dict(patient.profile or {})
+        entry = dict(profile_data.get(field) or {})
+        pending = entry.pop("his_pending", None)
+        if not pending:
+            # 没有待处理差异（可能已被别的医生处理过）→ 幂等返回当前档案
+            return await self.get_profile(patient_id)
+
+        if adopt:
+            entry["value"] = pending.get("value")
+        entry["updated_at"] = datetime.now().isoformat()
+        entry["updated_by"] = doctor_id
+        profile_data[field] = entry
+        patient.profile = profile_data
+        flag_modified(patient, "profile")
+        await self.db.commit()
+        await self.db.refresh(patient)
+        await _invalidate_patient_cache(patient_id)
+        return await self.get_profile(patient_id)
+
     @staticmethod
     def _serialize_profile(profile_data: dict) -> dict:
         """JSONB profile 扁平化为 API 响应。
@@ -182,12 +230,17 @@ class PatientProfileMixin:
             entry = profile_data.get(f) or {}
             flat[f] = entry.get("value")
             updated_at = entry.get("updated_at")
-            if updated_at:
+            # HIS 待处理值（2026-08-13）：HIS 推来的值与我方不一致时挂在这里，
+            # 前端档案卡显示差异 + 采纳/忽略按钮，绝不静默覆盖也绝不静默丢弃。
+            his_pending = entry.get("his_pending")
+            if updated_at or his_pending:
                 meta[f] = {
                     "updated_at": updated_at,
                     "updated_by": entry.get("updated_by"),
+                    "his_pending_value": (his_pending or {}).get("value"),
+                    "his_pending_at": (his_pending or {}).get("pushed_at"),
                 }
-                if max_updated_at is None or updated_at > max_updated_at:
+                if updated_at and (max_updated_at is None or updated_at > max_updated_at):
                     max_updated_at = updated_at
         flat["updated_at"] = max_updated_at
         flat["fields_meta"] = meta

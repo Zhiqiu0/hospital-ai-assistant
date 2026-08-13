@@ -52,6 +52,7 @@ export default function PatientProfileCard() {
 
   const [collapsed, setCollapsed] = useState(true)
   const [confirmingField, setConfirmingField] = useState<string | null>(null)
+  const [resolvingField, setResolvingField] = useState<string | null>(null)
 
   // 切换患者时按"后端 profile 是否已有内容"决定初始折叠态
   const prevPatientIdRef = useRef<string | null>(null)
@@ -71,6 +72,38 @@ export default function PatientProfileCard() {
   const filledLabels = PROFILE_FIELDS.filter(f => form[f.key] && form[f.key].trim()).map(
     f => f.label
   )
+
+  /**
+   * 裁决 HIS 档案差异（2026-08-13）：HIS 接诊推送带来的过敏史/既往史与本地
+   * 不一致时不自动覆盖也不自动丢弃，由医生在此二选一。
+   * adopt=true 采纳 HIS 值；false 保留本地值。两者都会清掉待处理提示。
+   */
+  const handleResolveHis = async (fieldKey: string, adopt: boolean) => {
+    if (!patientId) return
+    setResolvingField(fieldKey)
+    try {
+      const updated = (await api.post(`/patients/${patientId}/profile/resolve-his`, {
+        field: fieldKey,
+        adopt,
+      })) as ProfileConfirmResponse
+      usePatientCacheStore.getState().upsertProfile(patientId, {
+        past_history: updated.past_history ?? null,
+        allergy_history: updated.allergy_history ?? null,
+        family_history: updated.family_history ?? null,
+        personal_history: updated.personal_history ?? null,
+        current_medications: updated.current_medications ?? null,
+        marital_history: updated.marital_history ?? null,
+        religion_belief: updated.religion_belief ?? null,
+        updated_at: updated.updated_at ?? null,
+        fields_meta: updated.fields_meta ?? null,
+      })
+      message.success(adopt ? '已采纳 HIS 记录' : '已保留本地记录')
+    } catch {
+      message.error('处理失败，请稍后再试')
+    } finally {
+      setResolvingField(null)
+    }
+  }
 
   // ✓ 仍准确按钮：调后端 confirm 端点刷新该字段 updated_at
   const handleConfirmField = async (fieldKey: string) => {
@@ -133,6 +166,9 @@ export default function PatientProfileCard() {
               fieldUpdatedAt={fieldsMeta?.[f.key]?.updated_at}
               confirming={confirmingField === f.key}
               onConfirm={handleConfirmField}
+              hisPendingValue={fieldsMeta?.[f.key]?.his_pending_value}
+              resolving={resolvingField === f.key}
+              onResolveHis={handleResolveHis}
             />
           ))}
           {/* 1.6.3：保存按钮已合并到 InquiryPanel 底部"保存"按钮，
