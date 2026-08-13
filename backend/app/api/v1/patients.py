@@ -143,9 +143,25 @@ async def get_patient_profile(
 
     该档案跟随患者本身，不跟随单次接诊，符合 FHIR 标准。
     复诊/再次住院时前端自动加载，医生无需重复询问。
+
+    权限设计（2026-08-13 放开读）：与已签发病历同口径——任意登录医生可读，
+    每次查阅写审计。原先要求"接诊过该患者"，但同样的过敏史/既往史内容从
+    /medical-records/by-patient 那条路本就对全院开放，拦这里挡不住任何信息，
+    只换来一个临床安全缺口：结构化过敏史正是开药前工作台飘红警示的那个字段，
+    代班/复诊换医生时 403 会让最该看到的人看不到。责任靠留痕不靠拦截。
+    **写入仍受归属保护**（PUT / confirm / resolve-his 保留 assert_patient_access）：
+    真正知道患者新过敏史的是正在接诊的医生，他必然有归属；把写也放开只会让
+    过敏史变成谁都能改的公共字段，改错是会出事的。
     """
-    # 归属校验：只能读自己接诊过的患者档案，防止越权读过敏史/既往史等纵向 PHI
-    await assert_patient_access(db, patient_id, current_user)
+    from app.services.audit_service import log_action
+    await log_action(
+        action="view_patient_profile",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient_profile", resource_id=patient_id,
+        detail=f"查阅患者 {patient_id} 的纵向档案（过敏史/既往史等）",
+    )
     service = PatientService(db)
     return await service.get_profile(patient_id)
 

@@ -71,9 +71,31 @@ async def test_patient_detail_cross_doctor_blocked(client_doc_me):
 
 
 @pytest.mark.asyncio
-async def test_patient_profile_cross_doctor_blocked(client_doc_me):
-    """医生读没接诊过的患者档案（过敏/既往等 PHI）→ 403。"""
+async def test_patient_profile_read_open_to_any_doctor(client_doc_me):
+    """医生读没接诊过的患者档案 → 200（2026-08-13 与已签发病历同口径放开）。
+
+    过敏史/既往史从 /medical-records/by-patient 本就对全院开放，拦档案读挡不住
+    信息，只会让代班/复诊换医生时看不到开药前最该看的结构化过敏史。
+    """
     r = await client_doc_me.get("/api/v1/patients/pat-other/profile")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_patient_profile_write_still_blocked(client_doc_me):
+    """但写档案仍受归属保护——过敏史被改错是临床风险，留一道门槛。"""
+    r = await client_doc_me.put(
+        "/api/v1/patients/pat-other/profile", json={"allergy_history": "越权改"}
+    )
+    assert r.status_code == 403
+    r = await client_doc_me.post(
+        "/api/v1/patients/pat-other/profile/confirm", json={"field": "allergy_history"}
+    )
+    assert r.status_code == 403
+    r = await client_doc_me.post(
+        "/api/v1/patients/pat-other/profile/resolve-his",
+        json={"field": "allergy_history", "adopt": True},
+    )
     assert r.status_code == 403
 
 
