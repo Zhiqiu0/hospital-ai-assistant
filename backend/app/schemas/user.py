@@ -112,7 +112,10 @@ class BulkImportRequest(BaseModel):
     """
 
     items: list[BulkImportDoctorItem]
-    initial_password: str = "MediScribe@2026"   # 全院统一初始密码
+    # 全院统一初始密码。加长度下限（2026-08-13 第三轮审计修复）：原先是裸 str，
+    # 管理员传空串就能批量建出空密码账号，而这些账号的用户名=工号（院内公开），
+    # 等于一键把全院账号敞开。改密端点要求 ≥6 位，建号入口不该比它更松。
+    initial_password: str = Field(default="MediScribe@2026", min_length=6, max_length=128)
     dry_run: bool = False                       # 只校验不落库，供导入前预览
 
 
