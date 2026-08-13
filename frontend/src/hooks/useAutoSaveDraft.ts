@@ -93,7 +93,8 @@ export function useAutoSaveDraft({
         setSavedAt(now)
         setSavingState('saved')
         // 同步到 recordStore，让 WorkbenchStatusBar / 其他组件能感知"已保存"状态
-        useRecordStore.getState().setRecordSavedAt(now)
+        // 同时记下「已落库的正文」，水合时据此判断本地是否有未保存编辑
+        useRecordStore.getState().markSaved(payload.content, now)
       }
       return true
     } catch (err) {
@@ -126,6 +127,23 @@ export function useAutoSaveDraft({
             .catch(() => {
               message.warning('病历已被其他设备修改，请刷新后重试')
             })
+        }
+        return false
+      }
+      // 永久性拒绝（2026-08-13 第五轮审计修复）：403=病历已签发/无权写，
+      // 404=接诊或病历已不存在。这些重试多少次都还是同样的结果，原先却和
+      // 网络错误一样入失败队列——队列条目永远补发不成功，后续所有草稿都堵在
+      // 它后面，医生的草稿保存链路被**永久毒化**且没有任何提示。
+      // 直接清掉该条目并明确告知医生，让他知道为什么草稿不再保存。
+      if (status === 403 || status === 404) {
+        void removeDraftByKey(payload.encounter_id, payload.record_type)
+        setSavingState('idle')
+        if (payload.encounter_id === lastEncounterRef.current) {
+          message.warning(
+            status === 403
+              ? '该病历已签发，草稿不再自动保存；如需更正请走病历修订'
+              : '接诊已不存在，草稿已停止自动保存'
+          )
         }
         return false
       }

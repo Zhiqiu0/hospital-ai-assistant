@@ -161,7 +161,14 @@ class AdminRecordService:
         Raises:
             HTTPException(404): 病历不存在。
         """
-        record = (await self.db.execute(select(MedicalRecord).where(MedicalRecord.id == record_id))).scalar_one_or_none()
+        # 行锁（2026-08-13 第五轮审计修复）：同类写路径 save_content / quick_save
+        # 都带 with_for_update，唯独修订是裸 select，而 record_versions 上没有
+        # UNIQUE(medical_record_id, version_no)。两名管理员同时修订同一份病历会
+        # 各插一条相同 version_no，此后按 current_version 取正文的 JOIN 命中两行，
+        # 同一份病历刷新出不同内容——医疗场景不可接受。
+        record = (await self.db.execute(
+            select(MedicalRecord).where(MedicalRecord.id == record_id).with_for_update()
+        )).scalar_one_or_none()
         if record is None:
             raise HTTPException(status_code=404, detail="病历不存在")
 
@@ -174,6 +181,23 @@ class AdminRecordService:
             source="admin_revise",
             triggered_by=current_user.id,
         )
+
+        # 修订版本也必须进签名链（2026-08-13 第五轮审计修复）：
+        # 原先 sign_hash/prev_hash 都是 NULL，而所有对外读路径都按 current_version
+        # 取正文——一份病历被修订过一次，它此后展示的正文就永久脱离防篡改体系，
+        # 而完整性端点只扫 sign_hash IS NOT NULL，会给出"全部通过"的错误结论。
+        # 只有已签发过的病历才入链（未签发的病历本就没有链）。
+        if record.status == "submitted":
+            from app.services._record_signature import compute_sign_hash, latest_chain_hash
+            prev_hash = await latest_chain_hash(self.db)
+            new_version.prev_hash = prev_hash
+            new_version.sign_hash = compute_sign_hash(
+                content_text=content,
+                patient_snapshot=record.patient_snapshot,
+                doctor_id=current_user.id,
+                submitted_at_iso=record.submitted_at.isoformat() if record.submitted_at else "",
+                prev_hash=prev_hash,
+            )
         self.db.add(new_version)
         record.current_version = new_version_no
         await self.db.commit()

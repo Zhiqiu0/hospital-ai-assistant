@@ -23,7 +23,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import UniqueConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -98,6 +98,13 @@ class RecordVersion(Base):
     # 热路径索引（2026-08-11 病历安全）：按 (medical_record_id, version_no) 取当前/历史
     # 版本是签发、草稿、版本列表的高频操作，原先全表扫描。索引随 alembic 基线建出。
     __table_args__ = (
+        # 版本号唯一（2026-08-13 第五轮审计修复）：version_no 是「读 current_version+1」
+        # 算出来的，并发写入会产生两条相同版本号，此后按 version_no==current_version
+        # 取正文的 JOIN 会命中 2 行——同一份病历刷新两次看到不同内容，医疗场景
+        # 不可接受。应用层三条写路径都加了行锁，这条是数据库层的最后兜底：
+        # 任何路径漏加锁都会当场失败而不是静默产出重复版本。
+        UniqueConstraint("medical_record_id", "version_no",
+                         name="uq_record_versions_record_version"),
         Index("idx_record_versions_rec_ver", "medical_record_id", "version_no"),
         # AI 采纳看板聚合索引（2026-08-12 复检修复）：adoption_stats 按
         # source='doctor_signed' AND ai_similarity IS NOT NULL AND created_at>=X

@@ -198,7 +198,17 @@ class HisEventBus:
     async def try_claim(self, key: str, ttl: int) -> bool:
         """跨 worker 抢占标记（SET NX EX）：谁抢到谁执行，防止重复回写。
 
-        Redis 不可用时返回 True——此时事件只在进程内流转，天然无并发抢占。
+        降级口径分两种（2026-08-13 第五轮审计修复）：
+          · **未配置 Redis** → 返回 True。事件只在进程内流转，本就没有并发对手，
+            放行是对的。
+          · **Redis 报错** → 返回 False（fail-closed）。此时 Redis 是配置了的，
+            意味着确实有别的 worker 在跑，而它可能已经抢到并正在执行——
+            这边再返回 True 就是两个 worker 同时往医院 HIS 推同一份病历。
+            本项目第二轮审计已确立原则：**有对外副作用的降级一律 fail-closed**
+            （见 acquire_lock 的 fail_open 参数），回写是往院方系统推数据，
+            属于最典型的对外副作用。
+            代价是这一轮可能没人执行，但回写有对账循环兜底重投，漏一轮会被补上；
+            而重复推送是当场就发生的、不可撤回的对外动作。
         """
         client = self._get_client()
         if client is None:
@@ -206,8 +216,11 @@ class HisEventBus:
         try:
             return bool(await client.set(key, "1", nx=True, ex=ttl))
         except Exception as exc:
-            logger.warning("his_bus.claim: Redis 失败按抢到处理 key=%s err=%s", key, exc)
-            return True
+            logger.warning(
+                "his_bus.claim: Redis 失败，保守判为未抢到（避免重复回写），"
+                "本轮交由对账循环兜底 key=%s err=%s", key, exc,
+            )
+            return False
 
     async def is_claimed(self, key: str) -> bool:
         """查询抢占标记是否已存在（派发方判断是否需要本地兜底执行）。"""

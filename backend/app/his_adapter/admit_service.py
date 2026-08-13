@@ -100,7 +100,18 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     if enc is not None:
         # 换医生接诊（2026-08-11 审计修复）：HIS 重推带了新 doctor_code（转接/交接）时，
         # 把接诊改派给新医生并更新科室，否则新医生工作台永远收不到叫号。
-        if enc.doctor_id != doctor.id:
+        #
+        # 但**已结束的接诊不能改派**（2026-08-13 第五轮审计修复）：原先不看状态，
+        # 门急诊签发后接诊已 completed、病历也已用原医生的名字签发并回写 HIS，
+        # 此时 HIS 若重推一次（重试、补推、visit_id 复用），接诊就被划到另一位
+        # 医生名下——他的"我的接诊"里凭空多出一个陌生病人，而那份病历署的是
+        # 原医生的名字，责任归属直接错乱。改派只在接诊仍在进行中时才有意义。
+        if enc.status in ("completed", "cancelled"):
+            logger.info(
+                "his.admit: 接诊已结束不改派 encounter_id=%s status=%s doctor_code=%s",
+                enc.id, enc.status, payload.doctor_code,
+            )
+        elif enc.doctor_id != doctor.id:
             prev_doctor_id = enc.doctor_id
             enc.doctor_id = doctor.id
             enc.department_id = doctor.department_id
@@ -244,6 +255,13 @@ async def _prefill_from_push(
                     patient.profile = profile
                     flag_modified(patient, "profile")
                     await db.commit()
+                    # 失效档案缓存（2026-08-13 第五轮审计修复）：档案有 5 分钟
+                    # Redis 缓存，写完不失效的话 HIS 推来的过敏史/既往史更新
+                    # 最长 5 分钟对医生不可见——他可能正好在这窗口里开药。
+                    # 患者档案的所有其他写路径（update_profile/confirm/resolve_his）
+                    # 都调了这个，唯独 HIS 预填这条漏了。
+                    from app.services.patient_cache import _invalidate_patient_cache
+                    await _invalidate_patient_cache(patient_id)
                     logger.info("his_admit.prefill_profile: patient=%s 字段=%s",
                                 patient_id, ",".join(sorted(profile_patch)))
     except Exception:

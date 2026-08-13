@@ -25,6 +25,7 @@ import { useEffect, useRef } from 'react'
 import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
+import { useRecordStore } from '@/store/recordStore'
 import { applySnapshotResult, type SnapshotResult } from '@/store/encounterIntake'
 
 export function useEnsureSnapshotHydrated() {
@@ -37,6 +38,15 @@ export function useEnsureSnapshotHydrated() {
     // 刷新后 patientCacheStore 是空的（故意不持久化），currentPatient 必为 null，
     // 之前用它做守卫会直接 return，永远不会触发回填，导致顶部一直显示"未选择患者"。
     if (!currentEncounterId) return
+
+    // 病历正文归属校验（2026-08-13 第五轮审计修复）
+    // recordStore 与 activeEncounterStore 是两个独立的 localStorage 单槽：医生开两个
+    // 标签页分别看甲、乙两位患者时，接诊指针会被后开的那个覆盖成乙，而 recordStore
+    // 里可能还留着甲的正文；刷新后两槽各自还原，就拼出「乙患者 + 甲患者的病历」，
+    // 再被 auto-save 原样写进乙的接诊——病历写到错误患者身上是医疗事故级问题。
+    // 这里在拉快照之前先校验：对不上就丢弃正文（下面的 snapshot 会拉回该接诊的真实
+    // 病历，宁可让医生等一次网络往返，也不能张冠李戴）。
+    useRecordStore.getState().assertOwner(currentEncounterId)
     // 已 hydrate 过同一个 encounter，跳过
     if (hydratedForRef.current === currentEncounterId) return
     // patientCache 已有该患者数据（同一会话切回来）—— 无需 hydrate
@@ -57,7 +67,11 @@ export function useEnsureSnapshotHydrated() {
         // 只有当前指针仍是发起请求的那条接诊时才应用。
         if (useActiveEncounterStore.getState().encounterId !== requestedFor) return
         // 后端返回的形状已被 SnapshotResult 描述（patient + inquiry + active_record + ai_suggestions 等）
-        if (snapshot) applySnapshotResult(snapshot as SnapshotResult)
+        if (snapshot) {
+          applySnapshotResult(snapshot as SnapshotResult)
+          // 快照回填的正文属于这条接诊，打上归属标记
+          useRecordStore.getState().bindOwner(requestedFor)
+        }
       })
       .catch(() => {
         // 失败不报警；下次刷新还会重试

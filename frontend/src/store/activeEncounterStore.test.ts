@@ -122,3 +122,35 @@ describe('activeEncounterStore', () => {
     expect(useActiveEncounterStore.getState().hasActive()).toBe(true)
   })
 })
+
+describe('病历正文归属校验（2026-08-13 第五轮审计修复）', () => {
+  it('接诊指针与病历正文对不上时，正文被丢弃而不是套到别的患者头上', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+
+    // 模拟多标签页刷新后的残留：正文属于甲的接诊 E1
+    useRecordStore.setState({ recordContent: '甲患者的主诉与现病史', ownerEncounterId: 'E1' })
+
+    // 而当前接诊指针已经是乙的 E2（被另一个标签页覆盖）
+    const ok = useRecordStore.getState().assertOwner('E2')
+
+    expect(ok).toBe(false)
+    expect(useRecordStore.getState().recordContent).toBe('')
+    expect(useRecordStore.getState().ownerEncounterId).toBe('E2')
+  })
+
+  it('归属一致时正文原样保留（不能误伤正常刷新）', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    useRecordStore.setState({ recordContent: '本接诊的病历', ownerEncounterId: 'E1' })
+
+    expect(useRecordStore.getState().assertOwner('E1')).toBe(true)
+    expect(useRecordStore.getState().recordContent).toBe('本接诊的病历')
+  })
+
+  it('无归属标记的旧数据一律丢弃（改动之前留下的，无从判断归谁）', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    useRecordStore.setState({ recordContent: '来历不明的正文', ownerEncounterId: null })
+
+    expect(useRecordStore.getState().assertOwner('E1')).toBe(false)
+    expect(useRecordStore.getState().recordContent).toBe('')
+  })
+})

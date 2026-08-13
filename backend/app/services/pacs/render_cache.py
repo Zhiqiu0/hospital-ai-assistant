@@ -37,6 +37,24 @@ _RENDER_PROFILES = {
 }
 
 
+# 单张图进 Redis 的体积上限（2026-08-13 第五轮审计修复）
+#
+# 生产 Redis 是 `--maxmemory 256mb --maxmemory-policy allkeys-lru`，且**与正确性
+# 关键 key 共用同一实例**：登出吊销名单、登录限流计数、跨 worker 回写抢占标记、
+# HIS msg_id 去重。allkeys-lru 在内存吃紧时会连这些一起淘汰——一份大检查就能把
+# 它们挤干净，回写抢占标记被淘汰意味着两个 worker 同时往医院 HIS 推同一份病历。
+#
+# 影像缓存只是省一次渲染（未命中会重新渲染，功能不受影响），而那些 key 被淘汰是
+# 正确性问题。故给影像单张设上限：超过就不进 Redis，直接返回渲染结果。
+# 512KB 足够覆盖常规缩略图/预览图；真正的大图本就该走重新渲染而不是塞满缓存。
+_MAX_CACHEABLE_BYTES = 512 * 1024
+
+
+def _too_large_to_cache(payload: bytes) -> bool:
+    """是否大到不该进 Redis（见 _MAX_CACHEABLE_BYTES 说明）。"""
+    return len(payload) > _MAX_CACHEABLE_BYTES
+
+
 async def render_and_cache_all(
     study_uid: str,
     instances_with_bytes: list[tuple[str, bytes]],
@@ -65,13 +83,15 @@ async def render_and_cache_all(
             except Exception as e:
                 logger.warning("pacs.preview: render_failed instance=%s err=%s", iuid, e)
                 return
-            if thumb_jpeg:
+            # 同样受体积上限约束：预热是批量写，一次检查就可能塞进上百张，
+            # 是最容易把正确性关键 key 挤出 Redis 的路径
+            if thumb_jpeg and not _too_large_to_cache(thumb_jpeg):
                 await redis_cache.set_bytes(
                     f"pacs:thumb:{study_uid}:{iuid}",
                     thumb_jpeg,
                     ttl=settings.thumbnail_cache_ttl,
                 )
-            if preview_jpeg:
+            if preview_jpeg and not _too_large_to_cache(preview_jpeg):
                 await redis_cache.set_bytes(
                     f"pacs:preview:{study_uid}:{iuid}",
                     preview_jpeg,
@@ -148,8 +168,9 @@ async def fetch_render_jpeg(
     if not jpeg_bytes:
         raise HTTPException(500, "DICOM 渲染失败")
 
-    # 默认窗位窗宽 → 异步写缓存（不阻塞响应）
-    if cache_key:
+    # 默认窗位窗宽 → 异步写缓存（不阻塞响应）。超限的大图不进 Redis：
+    # 影像缓存丢了只是多渲染一次，而它挤掉的回写抢占标记/限流计数是正确性问题。
+    if cache_key and not _too_large_to_cache(jpeg_bytes):
         asyncio.create_task(
             redis_cache.set_bytes(cache_key, jpeg_bytes, ttl=settings.thumbnail_cache_ttl)
         )

@@ -89,7 +89,17 @@ class MedicalRecordSignMixin:
         self.db.add(version)
         record.current_version = new_version_no
         record.status = "submitted"
-        record.submitted_at = datetime.now()
+        # 首次签发时间只写一次（2026-08-13 第五轮审计修复）：
+        # sign_hash 是**版本级**的，但它的哈希输入 submitted_at / patient_snapshot
+        # 是**record 级**的。住院允许对同一 (encounter_id, record_type) 二次签发，
+        # 原先每次都覆写这两个字段——后果有二：
+        #   ① 此前所有签发版本的哈希是用旧 submitted_at 算的，复算必然对不上，
+        #      完整性报告把它们永久列为"已篡改"，真篡改被假阳性淹没；
+        #   ② version 表不存签发时间（只有 created_at/triggered_by），
+        #      第一份文书的法定签发时刻被覆盖后无从追溯。
+        # 保持首签时间不变即可让所有历史版本的哈希继续成立，无需改哈希格式。
+        if record.submitted_at is None:
+            record.submitted_at = datetime.now()
 
         # 接诊关闭策略：
         #   - 门诊/急诊：一次接诊 = 一份病历，签发即结束 → 关闭接诊
@@ -123,7 +133,10 @@ class MedicalRecordSignMixin:
             doctor_row = doctor_r.one_or_none()
             doctor_name = doctor_row[0] if doctor_row else None
             dept_name = doctor_row[1] if doctor_row else None
-            if patient:
+            # 患者快照同样只冻结一次：它也是 sign_hash 的输入，重写会让历史
+            # 签发版本的哈希全部失效（理由同上方 submitted_at）。快照的语义本就是
+            # "签发瞬间冻结"，二次签发时重新冻结反而违背它自己的设计。
+            if patient and record.patient_snapshot is None:
                 record.patient_snapshot = {
                     # 身份信息（来自 patient 表）
                     "name": patient.name,

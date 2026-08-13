@@ -20,7 +20,30 @@ class MedicalRecordCrudMixin:
 
         每次 AI 生成病历时都会调用此方法先创建记录占位，
         之后由 AI 服务保存内容版本（source='ai_generated'）。
+
+        Raises:
+            HTTPException(409): 该 (接诊, 病历类型) 已有签发过的病历。
         """
+        # 已签发不可绕过（2026-08-13 第五轮审计修复）：quick_save 对门急诊有
+        # "已签发就直接返回"的幂等守卫，但本端点完全不查——为同一个
+        # (encounter_id, record_type) 再建一条 draft 就能重新走一遍签发流程，
+        # 产出第二份正式病历。而下游按 (encounter_id, record_type) 取病历时
+        # order_by(updated_at desc)，展示与回写都会指向后建的那份，
+        # 等于"已签发不可修改"被整体绕开。住院同类型多份文书靠 record_no 区分，
+        # 不走这条零字段的建档路径。
+        existing = (await self.db.execute(
+            select(MedicalRecord).where(
+                MedicalRecord.encounter_id == data.encounter_id,
+                MedicalRecord.record_type == data.record_type,
+                MedicalRecord.status == "submitted",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="该接诊的这类病历已签发，不能再建新的；需要更正请走病历修订",
+            )
+
         record = MedicalRecord(
             encounter_id=data.encounter_id,
             record_type=data.record_type,

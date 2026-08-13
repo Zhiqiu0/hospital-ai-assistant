@@ -100,6 +100,20 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
           // 高亮残留误导医生（2026-05-24 治本路线）
           useAiWrittenFieldsStore.getState().clear()
         }
+        // 病历正文归属跟着接诊走（2026-08-13 第五轮审计修复）：正文与接诊指针是
+        // 两个独立的持久化槽，不绑定归属就会在多标签页/刷新后拼出"甲的病历配乙的患者"
+        useRecordStore.getState().bindOwner(input.encounterId)
+
+        // 病历类型也跟着接诊走（2026-08-13 第五轮审计修复）：
+        // 急诊工作台只是 <WorkbenchPage mode="emergency" />，全程没有任何一处
+        // setRecordType('emergency')，recordStore 默认 'outpatient'——于是急诊病历
+        // 一路按门诊类型保存、按门诊评分表质控、按门诊类型回写 HIS，全错。
+        // 靠"每个页面自己记得设"这种约定必然会漏，改为由接诊类型单点推导。
+        // 住院例外：一次住院有入院记录/病程/出院小结等多种文书，具体类型由
+        // ComplianceBar 按待办项切换，这里不覆盖医生已选的住院文书类型。
+        if (input.visitType !== 'inpatient') {
+          useRecordStore.getState().setRecordType(input.visitType)
+        }
         set({
           patientId: input.patientId,
           encounterId: input.encounterId,

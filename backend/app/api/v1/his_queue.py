@@ -79,6 +79,27 @@ async def today_queue(
     return {"items": items}
 
 
+async def _still_authorized(user_id: str) -> bool:
+    """SSE 长连接的周期性重校验：账号仍激活、且未在本连接建立后改过密码。
+
+    用独立会话查（请求会话在流式响应期间的生命周期不适合长期持有）。
+    任何异常都判**通过**：这是保活路径，查库抖动不该把医生的叫号连接踢掉——
+    真正的安全边界在每个业务请求的 get_current_user 上，这里是加固不是主防线。
+    """
+    from app.database import AsyncSessionLocal
+    from app.models.user import User as UserModel
+
+    try:
+        async with AsyncSessionLocal() as db:
+            user = await db.get(UserModel, user_id)
+            if user is None or not user.is_active or user.must_change_password:
+                return False
+            return True
+    except Exception:
+        logger.warning("his_queue.stream: 重校验查库失败，本轮放行 user_id=%s", user_id)
+        return True
+
+
 @router.post("/stream")
 async def queue_stream(
     current_user: User = Depends(get_current_user),
@@ -103,6 +124,17 @@ async def queue_stream(
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=SSE_HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
+                    # 借心跳做轻量重校验（2026-08-13 第五轮审计修复）：
+                    # 本端点只在**建连时**鉴权一次，之后 while True 一直推下去——
+                    # 医生账号被停用、密码被重置（账号疑似泄露的标准处置）、
+                    # 甚至医生已登出，这条长连接照样把患者姓名/就诊信息推给对面。
+                    # token 有效期 30 天，长连接可以挂一整天，等于鉴权形同虚设。
+                    # 每 25 秒查一次库对 SSE 来说开销可忽略（每医生每 25 秒一次）。
+                    if not await _still_authorized(current_user.id):
+                        logger.info(
+                            "his_queue.stream: 账号状态已变更，结束 SSE channel=%s", channel
+                        )
+                        return
                     yield ": ping\n\n"  # SSE 注释行，仅保活
                     continue
                 # 泵死哨兵（2026-08-11 审计修复）：Redis 断连使泵退出、事件永久停投，

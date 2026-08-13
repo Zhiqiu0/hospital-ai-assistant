@@ -45,14 +45,43 @@ interface RecordState {
   /** 最后一次 auto-save 成功时间戳（毫秒），0=从未保存。状态条据此显示"刚刚保存"等。 */
   recordSavedAt: number
 
+  /**
+   * 本份正文所属的接诊 ID（2026-08-13 第五轮审计修复）。
+   *
+   * 为什么必须有：本 store 与 activeEncounterStore 是**两个独立的 localStorage 槽**，
+   * 各自只有一个位置。医生开两个标签页分别看甲、乙两位患者时，接诊指针会被后开的
+   * 那个覆盖成乙，而本 store 里可能还留着甲的病历正文；刷新后两个槽各自还原，
+   * 界面就拼出「乙患者 + 甲患者的病历」，再被 auto-save 原样写进乙的接诊——
+   * 病历写到错误患者身上是医疗事故级问题。
+   * 打上归属标记后，还原时对不上就丢弃正文（宁可让医生重新拉取，也不能张冠李戴）。
+   */
+  ownerEncounterId: string | null
+
+  /**
+   * 上一次成功 auto-save 时的正文（2026-08-13 第五轮审计修复）。
+   *
+   * 用来精确判断「本地是否有未落库的编辑」：auto-save 是 5 秒防抖的，医生打完
+   * 一段话立刻刷新时最后几秒的内容还没落库，而水合会用服务端旧版覆盖它——
+   * 医生收不到任何提示，只会发现自己写的东西没了。
+   * 靠时间戳判断不行：那时 recordSavedAt 还是上一次保存的时刻，不会晚于服务端。
+   * 比对内容才准：current !== lastSaved 就说明有未保存的本地编辑。
+   */
+  lastSavedContent: string
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
+  /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
+  bindOwner: (encounterId: string | null) => void
+  /** 校验归属：与当前接诊不符则丢弃正文并返回 false（刷新还原后调用） */
+  assertOwner: (encounterId: string | null) => boolean
   setRecordType: (type: string) => void
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setPendingGenerate: (v: boolean) => void
   setFinal: (v: boolean) => void
   setRecordSavedAt: (ts: number) => void
+  /** auto-save 成功时记录「已落库的正文」，供水合判断本地是否更脏 */
+  markSaved: (content: string, ts: number) => void
   /** 在病历末尾追加一段（带空行分隔，AI 续写流式输出用） */
   appendToRecord: (text: string) => void
   /** 重置到初始状态（切换接诊 / 登出时调用） */
@@ -61,9 +90,11 @@ interface RecordState {
 
 export const useRecordStore = create<RecordState>()(
   persist(
-    set => ({
+    (set, get) => ({
       recordContent: '',
       recordType: 'outpatient',
+      ownerEncounterId: null,
+      lastSavedContent: '',
 
       isGenerating: false,
       isPolishing: false,
@@ -91,15 +122,40 @@ export const useRecordStore = create<RecordState>()(
 
       setRecordSavedAt: ts => set({ recordSavedAt: ts }),
 
+      markSaved: (content, ts) => set({ lastSavedContent: content, recordSavedAt: ts }),
+
       appendToRecord: text =>
         set(state => ({
           recordContent: state.recordContent ? state.recordContent + '\n\n' + text : text,
         })),
 
+      bindOwner: encounterId => set({ ownerEncounterId: encounterId }),
+
+      assertOwner: encounterId => {
+        const owner = get().ownerEncounterId
+        // 归属为空 = 本次改动之前留下的旧数据，无从判断归谁，一律丢弃更安全
+        if (!encounterId || owner !== encounterId) {
+          if (get().recordContent) {
+            set({
+              recordContent: '',
+              lastSavedContent: '',
+              isFinal: false,
+              finalizedAt: null,
+              recordSavedAt: 0,
+            })
+          }
+          set({ ownerEncounterId: encounterId })
+          return false
+        }
+        return true
+      },
+
       reset: () =>
         set({
           recordContent: '',
           recordType: 'outpatient',
+          ownerEncounterId: null,
+          lastSavedContent: '',
           isGenerating: false,
           isPolishing: false,
           pendingGenerate: false,
@@ -114,6 +170,8 @@ export const useRecordStore = create<RecordState>()(
       partialize: state => ({
         recordContent: state.recordContent,
         recordType: state.recordType,
+        ownerEncounterId: state.ownerEncounterId,
+        lastSavedContent: state.lastSavedContent,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,

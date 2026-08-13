@@ -72,3 +72,112 @@ async def test_his_admit_no_weak_merge_same_name_birthdate(async_db):
     r2 = await process_admit(async_db, _admit(visit_id="V2"))
     # 不同就诊、同名同生日、无身份证 → 必须是两份不同档案
     assert r1.patient_id != r2.patient_id
+
+
+# ── 第五轮审计修复的回归锁（2026-08-13）────────────────────────────────────
+@pytest.mark.asyncio
+async def test_completed_encounter_not_reassigned_by_his(async_db):
+    """已结束的接诊被 HIS 重推时不改派医生。
+
+    门急诊签发后接诊已 completed、病历也已用原医生名字签发并回写 HIS。
+    此时 HIS 若重推（重试/补推/visit_id 复用），原先会把接诊划到另一位医生
+    名下——他的"我的接诊"凭空多出陌生病人，而那份病历署的是原医生的名字，
+    责任归属直接错乱。
+    """
+    from app.models.encounter import Encounter
+
+    doc_a = User(username="DA", password_hash="x", real_name="原医生",
+                 role="doctor", employee_no="DA")
+    doc_b = User(username="DB", password_hash="x", real_name="新医生",
+                 role="doctor", employee_no="DB")
+    async_db.add_all([doc_a, doc_b])
+    await async_db.commit()
+
+    r1 = await process_admit(async_db, _admit(visit_id="VC1", doctor_code="DA"))
+    enc = await async_db.get(Encounter, r1.encounter_id)
+    assert enc.doctor_id == doc_a.id
+
+    # 医生签发后接诊结束
+    enc.status = "completed"
+    await async_db.commit()
+
+    # HIS 用另一个工号重推同一 visit_id
+    await process_admit(async_db, _admit(visit_id="VC1", doctor_code="DB"))
+    await async_db.refresh(enc)
+    assert enc.doctor_id == doc_a.id, "已结束的接诊被改派了，责任归属会错乱"
+
+
+@pytest.mark.asyncio
+async def test_in_progress_encounter_still_reassignable(async_db):
+    """进行中的接诊仍可改派——不能因为加守卫把正常的转接/交接堵死。"""
+    from app.models.encounter import Encounter
+
+    doc_a = User(username="DC", password_hash="x", real_name="医生C",
+                 role="doctor", employee_no="DC")
+    doc_b = User(username="DD", password_hash="x", real_name="医生D",
+                 role="doctor", employee_no="DD")
+    async_db.add_all([doc_a, doc_b])
+    await async_db.commit()
+
+    r1 = await process_admit(async_db, _admit(visit_id="VP1", doctor_code="DC"))
+    enc = await async_db.get(Encounter, r1.encounter_id)
+    assert enc.doctor_id == doc_a.id
+
+    await process_admit(async_db, _admit(visit_id="VP1", doctor_code="DD"))
+    await async_db.refresh(enc)
+    assert enc.doctor_id == doc_b.id, "进行中的接诊应当能正常改派"
+
+
+@pytest.mark.asyncio
+async def test_create_record_rejected_when_already_submitted(async_db):
+    """已签发的 (接诊, 病历类型) 不能再建新病历——否则「已签发不可修改」被绕开。"""
+    from fastapi import HTTPException
+
+    from app.models.medical_record import MedicalRecord
+    from app.schemas.medical_record import MedicalRecordCreate
+    from app.services.medical_record_service import MedicalRecordService
+
+    from tests.test_record_safety import _mk_sign_encounter
+
+    eid, doc_id = await _mk_sign_encounter(async_db)
+    svc = MedicalRecordService(async_db)
+    await svc.quick_save(eid, "outpatient", "主诉：已签发。", doc_id)
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.create(MedicalRecordCreate(encounter_id=eid, record_type="outpatient"))
+    assert exc.value.status_code == 409
+
+    # 未签发的其他类型仍可正常建
+    rec = await svc.create(MedicalRecordCreate(encounter_id=eid, record_type="emergency"))
+    assert isinstance(rec, MedicalRecord)
+
+
+@pytest.mark.asyncio
+async def test_resume_requires_same_visit_type(async_db):
+    """续接进行中的接诊必须同类型（2026-08-13 第五轮审计修复）。
+
+    原先不比对类型——医生在门诊给某患者建了接诊还没签发，转头去急诊工作台接
+    同一位患者会直接续接到那条门诊接诊上：急诊病历落进门诊接诊，质控用门诊
+    评分表、回写 HIS 的类型也错。
+    """
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    from app.services.encounter_service import EncounterService
+
+    p = Patient(name="续接患者")
+    async_db.add(p)
+    await async_db.flush()
+    doc = User(username="RS1", password_hash="x", real_name="医生", role="doctor")
+    async_db.add(doc)
+    await async_db.flush()
+    enc = Encounter(patient_id=p.id, doctor_id=doc.id, visit_type="outpatient",
+                    status="in_progress")
+    async_db.add(enc)
+    await async_db.commit()
+
+    svc = EncounterService(async_db)
+    # 同类型能续接
+    assert (await svc.find_in_progress(p.id, doc.id, visit_type="outpatient")) is not None
+    # 不同类型不能续接（急诊不该捡到门诊那条）
+    assert (await svc.find_in_progress(p.id, doc.id, visit_type="emergency")) is None
+    assert (await svc.find_in_progress(p.id, doc.id, visit_type="inpatient")) is None

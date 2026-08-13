@@ -53,15 +53,28 @@ class EncounterLifecycleMixin:
             await _invalidate_patient_cache(data.patient_id)
         return encounter
 
-    async def find_in_progress(self, patient_id: str, doctor_id: str):
-        """查询该医生对该患者是否已有进行中的接诊，有则返回，无则返回 None。"""
+    async def find_in_progress(
+        self, patient_id: str, doctor_id: str, visit_type: str | None = None
+    ):
+        """查询该医生对该患者是否已有进行中的接诊，有则返回，无则返回 None。
+
+        visit_type（2026-08-13 第五轮审计修复）：**必须同类型才算可续接**。
+        原先不比对类型——医生在门诊给某患者建了接诊还没签发，转头去急诊工作台
+        接同一位患者，会直接续接到那条门诊接诊上：急诊病历落进门诊接诊，
+        质控用门诊评分表、回写给 HIS 的也是门诊类型，全错。
+        住院同理（一次住院与一次门诊完全是两回事）。
+        传 None 表示不限类型（保留给不关心类型的调用方）。
+        """
+        conds = [
+            Encounter.patient_id == patient_id,
+            Encounter.doctor_id == doctor_id,
+            Encounter.status == "in_progress",
+        ]
+        if visit_type:
+            conds.append(Encounter.visit_type == visit_type)
         result = await self.db.execute(
             select(Encounter)
-            .where(
-                Encounter.patient_id == patient_id,
-                Encounter.doctor_id == doctor_id,
-                Encounter.status == "in_progress",
-            )
+            .where(*conds)
             .order_by(Encounter.visited_at.desc())
             .limit(1)
         )
