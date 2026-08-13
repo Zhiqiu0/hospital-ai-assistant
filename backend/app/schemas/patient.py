@@ -106,7 +106,7 @@ class PatientListItem(BaseModel):
     2026-08-13 第二轮审计修复：列表端点原先复用 PatientResponse，把身份证/住址/
     紧急联系人等完整 PHI 批量吐出，且无归属校验无审计——任何登录医生翻页即可
     导出全院患者身份信息库。现在敏感字段只在详情端点 GET /patients/{id} 返回
-    （那里有 assert_patient_access 归属校验 + view_patient 审计留痕）。
+    （那里有 view_patient 审计留痕，读放开给全院医生）。
 
     保留 phone 的理由：同名患者检索消歧刚需，且管理后台患者页的编辑表单要回显。
     """

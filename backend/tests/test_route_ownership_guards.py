@@ -64,10 +64,14 @@ async def client_doc_me(async_db, seeded) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.mark.asyncio
-async def test_patient_detail_cross_doctor_blocked(client_doc_me):
-    """医生读没接诊过的患者详情 → 403（IDOR 修复核心）。"""
+async def test_patient_detail_read_open_to_any_doctor(client_doc_me):
+    """医生读没接诊过的患者详情 → 200（2026-08-13 放开读，靠审计追责）。
+
+    身份证/住址等敏感字段不靠拦截保护，靠"每次查阅写审计"——admin 在操作
+    日志页可追溯谁何时看了谁。写入仍受归属保护（见下条）。
+    """
     r = await client_doc_me.get("/api/v1/patients/pat-other")
-    assert r.status_code == 403
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -79,6 +83,30 @@ async def test_patient_profile_read_open_to_any_doctor(client_doc_me):
     """
     r = await client_doc_me.get("/api/v1/patients/pat-other/profile")
     assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_patient_detail_write_still_blocked(client_doc_me):
+    """读放开了，写没放开：改别人接诊的患者基本信息仍 403。"""
+    r = await client_doc_me.put("/api/v1/patients/pat-other", json={"name": "越权改"})
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cross_doctor_read_writes_audit(client_doc_me, async_db, patched_audit_session):
+    """跨医生读患者详情必须留痕——放开归属后，审计是唯一的追责手段。"""
+    from sqlalchemy import select
+
+    from app.models.audit_log import AuditLog
+
+    r = await client_doc_me.get("/api/v1/patients/pat-other")
+    assert r.status_code == 200
+    rows = (await async_db.execute(
+        select(AuditLog).where(
+            AuditLog.action == "view_patient", AuditLog.resource_id == "pat-other"
+        )
+    )).scalars().all()
+    assert rows, "跨医生读患者详情没写审计日志"
 
 
 @pytest.mark.asyncio
