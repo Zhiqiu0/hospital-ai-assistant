@@ -255,6 +255,13 @@ async def _prefill_from_push(
                     patient.profile = profile
                     flag_modified(patient, "profile")
                     await db.commit()
+                    # 失效档案缓存（2026-08-13 第五轮审计修复）：档案有 5 分钟
+                    # Redis 缓存，写完不失效的话 HIS 推来的过敏史/既往史更新
+                    # 最长 5 分钟对医生不可见——他可能正好在这窗口里开药。
+                    # 患者档案的所有其他写路径（update_profile/confirm/resolve_his）
+                    # 都调了这个，唯独 HIS 预填这条漏了。
+                    from app.services.patient_cache import _invalidate_patient_cache
+                    await _invalidate_patient_cache(patient_id)
                     logger.info("his_admit.prefill_profile: patient=%s 字段=%s",
                                 patient_id, ",".join(sorted(profile_patch)))
     except Exception:

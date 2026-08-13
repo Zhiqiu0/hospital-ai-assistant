@@ -377,3 +377,29 @@ async def test_inpatient_resign_keeps_first_submitted_at(async_db):
     after = await async_db.get(MedicalRecord, rec.id)
     assert after.submitted_at == first_submitted, "首次签发时间被覆盖了"
     assert await verify_chain(async_db) == [], "二次签发把历史版本判成了篡改"
+
+
+@pytest.mark.asyncio
+async def test_his_offline_alerts_but_never_abandons(async_db, monkeypatch):
+    """HIS 整体离线时告警但不放弃回写（2026-08-13 第五轮审计修复）。
+
+    skipped 的含义是「WS 与 HTTP 都不在线」= HIS 侧整体离线，跟「推过去失败了」
+    是两回事。原先它也触发 exhausted，于是 HIS 停机半小时就把全院当天病历统统
+    标记成永久放弃——等 HIS 恢复也不会补推，而这正是对账存在的全部意义。
+    """
+    import app.database as _db
+    from app.his_adapter import writeback_reconcile as wr
+
+    eid = await _mk_his_encounter(async_db, writeback_status="write_failed")
+    monkeypatch.setattr(_db, "AsyncSessionLocal", lambda: _SessionCtx(async_db))
+
+    # 跑到远超上限的轮数（未配回写地址 → 每轮都是 skipped）
+    for _ in range(wr.MAX_RECONCILE_ATTEMPTS + 3):
+        await wr.reconcile_once()
+
+    enc = await async_db.get(Encounter_model(), eid)
+    await async_db.refresh(enc)
+    wb = (enc.his_external_ref or {}).get("writeback") or {}
+    assert not wb.get("reconcile_exhausted"), (
+        "HIS 离线被判成永久放弃了——恢复后这些病历再也不会补推"
+    )

@@ -59,7 +59,12 @@ async def _find_candidates(db: AsyncSession) -> list[Encounter]:
             Encounter.visited_at >= window_start,
             Encounter.status != "cancelled",
             Encounter.id.in_(submitted_enc_ids),
-        ).limit(SCAN_LIMIT)
+        # LIMIT 不能加在这里（2026-08-13 第五轮审计修复）：粗筛只按"HIS 来源 +
+        # 近窗口 + 有已签发病历"取，真正的"回写未成功"判定在下面的 Python 精筛。
+        # 把 200 条上限压在精筛之前，等于按接诊时间截断——高峰期前 200 条里可能
+        # 全是已回写成功的，真正需要重投的排在后面，永远轮不到，病历静默漏回写。
+        # 改为按时间倒序多取一些，精筛后再截断。
+        ).order_by(Encounter.visited_at.desc()).limit(SCAN_LIMIT * 10)
     )).scalars().all()
 
     candidates = []
@@ -74,7 +79,22 @@ async def _find_candidates(db: AsyncSession) -> list[Encounter]:
             continue
         if status is None or status in _RETRYABLE_STATUSES:
             candidates.append(enc)
+        if len(candidates) >= SCAN_LIMIT:
+            break   # 精筛后才截断，保证拿到的都是真正需要重投的
     return candidates
+
+
+async def _reset_reconcile_attempts(db: AsyncSession, encounter_id: str) -> None:
+    """把重投计数清零（HIS 整体离线场景：告警但不放弃，等对方恢复继续重试）。"""
+    enc = await db.get(Encounter, encounter_id)
+    if enc is None:
+        return
+    ref = dict(enc.his_external_ref or {})
+    wb = dict(ref.get("writeback") or {})
+    wb["reconcile_attempts"] = 0
+    ref["writeback"] = wb
+    enc.his_external_ref = ref
+    await db.commit()
 
 
 async def _mark_reconcile(db: AsyncSession, encounter_id: str, *, exhausted: bool) -> None:
@@ -114,6 +134,22 @@ async def reconcile_once(deadline: float | None = None) -> int:
             break
         wb = (enc.his_external_ref or {}).get("writeback") or {}
         attempts = int(wb.get("reconcile_attempts") or 0)
+        if attempts >= MAX_RECONCILE_ATTEMPTS and wb.get("status") == "skipped":
+            # 厂商整体离线不判"永久放弃"（2026-08-13 第五轮审计修复）：
+            # skipped 的含义是"WS 与 HTTP 都不在线"，即 HIS 侧整体离线，
+            # 跟"推过去但失败了"是两回事。原先它也照样触发 exhausted，
+            # 于是 HIS 停机半小时（5 轮 × 5 分钟）就把全院当天病历统统标记成
+            # 永久放弃——等 HIS 恢复也不会再补推，而这正是对账存在的全部意义。
+            # 改为：照常告警（运维要知道 HIS 断了），但重置计数继续重试，
+            # 等对方恢复自动补上。重试成本极低（5 分钟一轮、每轮上限 200 条）。
+            logger.error(
+                "his_wb.reconcile_offline: HIS 持续离线导致病历回写累计 %d 轮未送达，"
+                "已告警但继续重试（不放弃）encounter=%s visit_no=%s",
+                attempts, enc.id, enc.visit_no,
+            )
+            async with AsyncSessionLocal() as db:
+                await _reset_reconcile_attempts(db, enc.id)
+            continue
         if attempts >= MAX_RECONCILE_ATTEMPTS:
             # 达上限：记 error（Sentry 告警）+ 标记耗尽，停止自动重投
             logger.error(
