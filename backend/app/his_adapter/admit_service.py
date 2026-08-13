@@ -100,6 +100,7 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         # 换医生接诊（2026-08-11 审计修复）：HIS 重推带了新 doctor_code（转接/交接）时，
         # 把接诊改派给新医生并更新科室，否则新医生工作台永远收不到叫号。
         if enc.doctor_id != doctor.id:
+            prev_doctor_id = enc.doctor_id
             enc.doctor_id = doctor.id
             enc.department_id = doctor.department_id
             ref = dict(enc.his_external_ref or {})
@@ -107,6 +108,17 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
             enc.his_external_ref = ref
             await db.commit()
             await db.refresh(enc)
+            # 失效两位医生的接诊列表缓存（2026-08-13 第二轮审计修复）：改派后
+            # 原医生的"我的接诊"仍缓存着这条、新医生的缓存里还没有，缓存过期前
+            # 两边看到的都是错的——而改派的初衷正是让新医生立刻接手。
+            # 接诊快照也一并失效（doctor_id 变了）。
+            from app.services.encounter_cache import (
+                invalidate_encounter_snapshot,
+                invalidate_my_encounters,
+            )
+            await invalidate_my_encounters(prev_doctor_id)
+            await invalidate_my_encounters(doctor.id)
+            await invalidate_encounter_snapshot(enc.id)
             logger.info("his_admit.reassigned: visit_id=%s 改派医生 %s",
                         payload.visit_id, doctor.username)
         patient = await db.get(Patient, enc.patient_id)

@@ -61,12 +61,16 @@ def setup_logging(log_level: str = "INFO") -> None:
     console.addFilter(rid_filter)
 
     # ── app.log handler（完整运行日志）────────────────────────────────────────
-    # when="midnight": 每天 0 点切换到新文件，旧文件追加日期后缀
-    # backupCount=30 : 保留最近 30 个日志文件，共约 1 个月
-    app_file = logging.handlers.TimedRotatingFileHandler(
+    # 为什么用 WatchedFileHandler 而不是 TimedRotatingFileHandler
+    # （2026-08-13 第二轮审计修复）：生产是 uvicorn --workers 2，两个进程各持
+    # 一个 handler 写同一个文件。TimedRotatingFileHandler 到午夜会各自尝试
+    # rename，竞态下轻则丢日志，重则某个 worker 之后一直往已被改名的旧 inode 写
+    # ——那半边日志从 error.log 里彻底消失，而本项目排障的第一条铁律就是
+    # "先看 error.log"，等于排障入口静默瘸掉一半。
+    # WatchedFileHandler 专为「外部工具轮转」设计：检测到文件被换掉就重新打开，
+    # 多进程安全；轮转交给 deploy 配的每日 cron（rotate_logs.sh）单进程执行。
+    app_file = logging.handlers.WatchedFileHandler(
         filename=LOGS_DIR / "app.log",
-        when="midnight",
-        backupCount=30,
         encoding="utf-8",
     )
     app_file.setLevel(logging.INFO)
@@ -75,10 +79,8 @@ def setup_logging(log_level: str = "INFO") -> None:
 
     # ── error.log handler（仅告警和错误）──────────────────────────────────────
     # 排查线上问题时只看 error.log，信噪比高
-    err_file = logging.handlers.TimedRotatingFileHandler(
+    err_file = logging.handlers.WatchedFileHandler(
         filename=LOGS_DIR / "error.log",
-        when="midnight",
-        backupCount=30,
         encoding="utf-8",
     )
     err_file.setLevel(logging.WARNING)
