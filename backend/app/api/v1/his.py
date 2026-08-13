@@ -9,7 +9,6 @@ from app.database import get_db
 from app.his_adapter.depends import require_his_enabled
 from app.his_adapter.models import AdmitPushRequest, ApiEnvelope, err, ok
 from app.his_adapter.signing import timestamp_fresh, verify_sign
-from app.his_adapter.writeback_sender import send_writeback
 from app.models.user import User
 
 router = APIRouter(
@@ -69,20 +68,23 @@ async def trigger_writeback(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ApiEnvelope:
-    """医生在工作台确认后触发病历回写（我方→HIS：写入 + 刷新）。
+    """医生在工作台手动触发/重试病历回写（我方→HIS：写入 + 刷新）。
 
-    回写地址未配置时返回 skipped（联调前安全空跑）。
+    走与签发钩子相同的派发链路（2026-08-13 复检修复）：生产 2 worker，厂商 WS
+    长连接只挂在其中一个进程，本端点原先就地执行 send_writeback，请求落到没有
+    连接的 worker 时会误判「WS 未连接」→ 返回 skipped 并把队列上的回写状态覆写
+    成未回写，医生反复点击结果随机。改走 dispatch_writeback 后由持有连接的
+    worker 抢占执行，结果经 SSE（writeback_result）推回工作台。
     """
     # 归属校验（2026-08-11 审计修复）：只能回写自己的接诊，防越权回写他人病历。
     # 管理员天然放行。
     from app.core.authz import assert_encounter_access
-    await assert_encounter_access(db, encounter_id, current_user)
-    try:
-        result = await send_writeback(db, encounter_id)
-    except ValueError as exc:
-        return err(40005, str(exc))
-    if result.ok:
-        return ok({"status": "success", "his_doc_id": result.his_doc_id})
-    if result.status == "skipped":
-        return ok({"status": "skipped", "message": result.message})
-    return err(50001, f"回写失败({result.status})：{result.message}")
+    enc = await assert_encounter_access(db, encounter_id, current_user)
+    if not (enc.his_external_ref or {}).get("source"):
+        return err(40005, "该接诊不是 HIS 来源，无需回写")
+
+    from app.his_adapter.bg_tasks import spawn
+    from app.his_adapter.writeback_dispatch import dispatch_writeback
+    spawn(dispatch_writeback(encounter_id, current_user.id, enc.visit_no or ""),
+          name=f"writeback:manual:{encounter_id}")
+    return ok({"status": "dispatched", "message": "已发起回写，结果稍后推送"})

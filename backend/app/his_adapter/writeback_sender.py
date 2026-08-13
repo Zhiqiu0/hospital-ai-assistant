@@ -129,16 +129,30 @@ async def _persist_writeback_status(
         encounter = await db.get(Encounter, encounter_id)
         if encounter is None or not encounter.his_external_ref:
             return
+        # 对账状态必须保留（2026-08-13 复检修复）：原实现整体替换 writeback 字典，
+        # 把 reconcile_attempts / reconcile_exhausted 一并抹掉——而对账流程是
+        # 「先 send_writeback（计数被抹零）再 _mark_reconcile（+1）」，导致计数
+        # 恒为 1、MAX_RECONCILE_ATTEMPTS 上限永不成立、耗尽告警永不触发，
+        # 失败回写会被静默重投到窗口期结束。这里显式承接旧的对账字段。
+        prev_wb = (encounter.his_external_ref.get("writeback") or {})
+        new_wb = {
+            "status": result.status,
+            "ok": result.ok,
+            "message": result.message,
+            "his_doc_id": result.his_doc_id,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+        for keep in ("reconcile_attempts", "reconcile_exhausted"):
+            if keep in prev_wb:
+                new_wb[keep] = prev_wb[keep]
+        # 回写成功即视为对账结束：清零计数，避免历史失败次数影响将来的重投判定
+        if result.ok:
+            new_wb.pop("reconcile_attempts", None)
+            new_wb.pop("reconcile_exhausted", None)
         # JSONB 整体重赋值才会被 SQLAlchemy 侦测为脏（未挂 MutableDict）
         encounter.his_external_ref = {
             **encounter.his_external_ref,
-            "writeback": {
-                "status": result.status,
-                "ok": result.ok,
-                "message": result.message,
-                "his_doc_id": result.his_doc_id,
-                "at": datetime.now().isoformat(timespec="seconds"),
-            },
+            "writeback": new_wb,
         }
         await db.commit()
     except Exception:

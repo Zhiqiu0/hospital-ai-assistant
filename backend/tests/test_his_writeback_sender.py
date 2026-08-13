@@ -146,3 +146,57 @@ async def test_writeback_skipped_also_persisted(async_db, monkeypatch):
     await send_writeback(async_db, enc_id)
     enc = await async_db.get(Encounter, enc_id)
     assert enc.his_external_ref["writeback"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_failed_writeback_preserves_reconcile_counters(async_db, monkeypatch):
+    """失败回写落库必须保留对账计数（2026-08-13 复检修复的回归锁）。
+
+    修复前 _persist_writeback_status 整体替换 writeback 字典，把
+    reconcile_attempts / reconcile_exhausted 抹掉——而对账是「先重投（抹零）
+    再累加（+1）」，计数恒为 1，5 次上限与耗尽告警永不触发，失败回写被无限静默重投。
+    """
+    monkeypatch.setattr(settings, "his_writeback_url", "")  # → skipped（可重试状态）
+    enc_id = await _make_encounter(async_db)
+    # 模拟对账已累计 4 次失败
+    enc = await async_db.get(Encounter, enc_id)
+    enc.his_external_ref = {**enc.his_external_ref,
+                            "writeback": {"status": "write_failed",
+                                          "reconcile_attempts": 4}}
+    await async_db.commit()
+
+    await send_writeback(async_db, enc_id)
+
+    await async_db.refresh(enc)
+    wb = enc.his_external_ref["writeback"]
+    assert wb["status"] == "skipped"          # 新结果已落库
+    assert wb["reconcile_attempts"] == 4      # 计数未被抹掉（关键）
+
+
+@pytest.mark.asyncio
+async def test_successful_writeback_clears_reconcile_counters(async_db, monkeypatch):
+    """回写成功即对账结束：清零计数，历史失败不影响将来的重投判定。"""
+    monkeypatch.setattr(settings, "his_writeback_url", "http://his/write")
+    monkeypatch.setattr(settings, "his_writeback_refresh_url", "")
+    monkeypatch.setattr(settings, "his_writeback_app_id", "appMe")
+    monkeypatch.setattr(settings, "his_writeback_app_secret", "sec")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": 0, "data": {"record_id": "R9"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    enc_id = await _make_encounter(async_db)
+    enc = await async_db.get(Encounter, enc_id)
+    enc.his_external_ref = {**enc.his_external_ref,
+                            "writeback": {"status": "write_failed",
+                                          "reconcile_attempts": 3}}
+    await async_db.commit()
+
+    result = await send_writeback(async_db, enc_id, client=client)
+    await client.aclose()
+
+    assert result.ok is True
+    await async_db.refresh(enc)
+    wb = enc.his_external_ref["writeback"]
+    assert wb["status"] == "success"
+    assert "reconcile_attempts" not in wb and "reconcile_exhausted" not in wb
