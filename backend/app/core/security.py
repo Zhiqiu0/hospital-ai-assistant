@@ -31,7 +31,12 @@ from app.config import settings
 from app.database import get_db
 
 # bcrypt 密码哈希上下文
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# rounds 走配置（默认 10，理由见 config.bcrypt_rounds）；deprecated="auto" 让
+# passlib 能识别出"强度与当前配置不符"的老哈希，配合登录时的 verify_and_update
+# 把存量账号平滑迁到新强度。
+pwd_context = CryptContext(
+    schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=settings.bcrypt_rounds
+)
 
 # OAuth2 Bearer token 提取器，指向登录端点
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -64,6 +69,15 @@ async def verify_password_async(plain: str, hashed: str) -> bool:
 async def hash_password_async(password: str) -> str:
     """在线程池里做 bcrypt 哈希，避免阻塞事件循环。"""
     return await asyncio.to_thread(pwd_context.hash, password)
+
+
+async def verify_and_upgrade_password_async(plain: str, hashed: str) -> tuple[bool, str | None]:
+    """校验密码，并在哈希强度过时（如存量 rounds=12）时返回新哈希。
+
+    返回 (是否通过, 新哈希或 None)。调用方拿到新哈希应写回库——否则改 rounds
+    只对新建账号生效，存量账号永远停在旧强度，参数调了等于没调。
+    """
+    return await asyncio.to_thread(pwd_context.verify_and_update, plain, hashed)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

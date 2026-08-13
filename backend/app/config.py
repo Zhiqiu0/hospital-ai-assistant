@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     #   保密级别经用户评估可接受，登出仍走 jti 黑名单即时失效）
     access_token_expire_minutes: int = 43200
 
+    # bcrypt 强度（2026-08-13 压测定档）：生产是 2 核机，bcrypt 是纯 CPU 且并行度
+    # 上限就是核数。实测 rounds=12 时 24 人同时登录中位 2.3s、最慢 3.7s，且期间
+    # 其他接口 p95 从 14ms 劣化到 463ms——早高峰全院同时上线会拖垮整机。
+    # rounds=10 是 OWASP 密码存储指南的推荐下限，单次约 1/4 耗时；配合登录限流
+    # （同用户名 10次/10分钟，在线爆破本就走不通），这个取舍是划算的。
+    bcrypt_rounds: int = 10
+
     # ── AI 模型：DeepSeek（病历生成、质控、润色等核心功能）────────────────────
     deepseek_api_key: str = ""                              # DeepSeek API Key
     deepseek_base_url: str = "https://api.deepseek.com"    # API 基础 URL

@@ -11,7 +11,8 @@
   AI 滥用这种粗粒度防护够用。
 
 预置实例：
-  login_limiter : 登录接口，按用户名限速，10次/10分钟，防密码爆破
+  login_limiter : 登录接口，按用户名限速，10次失败/10分钟，防密码爆破
+                  （只计失败，成功即清零——见 peek/hit/reset）
   ai_limiter    : AI 接口，按 IP 限速，30次/分钟，防滥用
 """
 
@@ -77,6 +78,47 @@ class RateLimiter:
 
         # ② Redis 不可用，降级到本进程内存版（单容器场景）
         self._check_in_memory(key)
+
+    # ── 只计失败的三件套（2026-08-13）─────────────────────────────────────────
+    # 背景：check() 在鉴权**之前**无条件计数，成功登录也占额度——医生 10 分钟内
+    # 成功登录超过 10 次，第 11 次密码正确也被 429。而限流真正要挡的是"猜密码"，
+    # 猜对了的那次不该算。拆成 peek/hit/reset 后：只有失败才计数、成功即清零，
+    # 正常医生永远不会被自己锁住，爆破仍然被同一个阈值卡死——两边都更好。
+    async def peek(self, request: Request, extra: str = "", key_override: str = ""):
+        """只判断是否已超限（不计数），超限抛 429。"""
+        key = key_override if key_override else self._get_key(request, extra)
+        window_seconds = int(self.window.total_seconds())
+
+        raw = await redis_cache.get_bytes(f"ratelimit:{self.name}:{key}")
+        if raw is not None:
+            try:
+                if int(raw) >= self.max_calls:
+                    self._raise_429(window_seconds)
+            except ValueError:
+                pass  # 值被写坏就当没限，宁可放行也不误锁医生
+            return
+
+        # Redis 不可用或该 key 尚无记录 → 查内存兜底窗口
+        now = datetime.now()
+        cutoff = now - self.window
+        self._store[key] = [t for t in self._store[key] if t > cutoff]
+        if len(self._store[key]) >= self.max_calls:
+            self._raise_429(window_seconds)
+
+    async def hit(self, request: Request, extra: str = "", key_override: str = ""):
+        """记一次（用于"失败才计数"的场景），不抛 429——判超限交给 peek。"""
+        key = key_override if key_override else self._get_key(request, extra)
+        window_seconds = int(self.window.total_seconds())
+        count = await redis_cache.incr_with_ttl(
+            f"ratelimit:{self.name}:{key}", window_seconds=window_seconds
+        )
+        if count is None:
+            self._store[key].append(datetime.now())
+
+    async def reset(self, key_override: str):
+        """清零（如登录成功、管理员重置密码后解锁该用户名）。"""
+        await redis_cache.delete(f"ratelimit:{self.name}:{key_override}")
+        self._store.pop(key_override, None)
 
     def _check_in_memory(self, key: str):
         """内存滑动窗口（Redis 不可用时降级使用）。"""

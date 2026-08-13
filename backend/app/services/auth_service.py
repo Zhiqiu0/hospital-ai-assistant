@@ -20,7 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.core.security import create_access_token, verify_password_async
+from app.core.security import (
+    create_access_token,
+    verify_and_upgrade_password_async,
+    verify_password_async,
+)
 from app.models.user import User
 
 
@@ -54,8 +58,18 @@ class AuthService:
         user = result.scalar_one_or_none()
 
         # 用户不存在、密码不匹配、账号被禁用——统一返回 None，不暴露具体原因
-        if not user or not await verify_password_async(password, user.password_hash):
+        if not user:
             return None
+        ok, upgraded_hash = await verify_and_upgrade_password_async(
+            password, user.password_hash
+        )
+        if not ok:
+            return None
+        # 哈希强度过时（存量 rounds=12）→ 趁本次已知明文，就地升到当前配置强度。
+        # 不做的话调低 rounds 只惠及新账号，老账号永远慢。每个账号只发生一次。
+        if upgraded_hash:
+            user.password_hash = upgraded_hash
+            await self.db.commit()
         if not user.is_active:
             return None
 
