@@ -224,3 +224,19 @@ async def test_first_login_flow_blocked_then_unlocked(async_db, patched_audit_se
 
     await async_db.refresh(user)
     assert user.must_change_password is False
+
+
+@pytest.mark.asyncio
+async def test_admin_reset_password_reimposes_change_requirement(async_db):
+    """管理员重置密码后重新要求首登改密——否则管理员长期持有该医生的可用凭据。"""
+    from app.services.user_service import UserService
+
+    user = User(username="9002", password_hash="x", real_name="被重置医生",
+                role="doctor", is_active=True, must_change_password=False)
+    async_db.add(user)
+    await async_db.commit()
+    await async_db.refresh(user)
+
+    await UserService(async_db).reset_password(user.id, "TempPass@123")
+    await async_db.refresh(user)
+    assert user.must_change_password is True

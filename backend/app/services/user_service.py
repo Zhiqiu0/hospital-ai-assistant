@@ -185,4 +185,7 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
         user.password_hash = await hash_password_async(new_password)
+        # 重置后重新要求首登改密（2026-08-13）：管理员知道这个临时密码，
+        # 不强制改就等于管理员长期持有能以该医生名义签发病历的凭据。
+        user.must_change_password = True
         await self.db.commit()
