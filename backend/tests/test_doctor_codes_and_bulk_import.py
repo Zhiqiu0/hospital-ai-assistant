@@ -359,3 +359,35 @@ async def test_bulk_import_rejects_short_initial_password(admin_api):
         "initial_password": "",
     })
     assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_backfills_codes_for_existing_account(admin_api):
+    """账号已存在时补挂缺失工号，不动账号本身（2026-08-13 第三轮审计修复）。
+
+    原先整条跳过，而全系统只有批量开户会写 doctor_codes——联调期手工建的试点
+    账号永远补不上「本人住院/助理」工号，HIS 用它们推接诊直接 ack 40007。
+    """
+    db, ac = admin_api
+    # 先建只有主工号的账号
+    await ac.post("/api/v1/admin/users/bulk-import", json={
+        "items": [{"real_name": "老账号", "codes": ["EX001"]}],
+    })
+    user = (await db.execute(select(User).where(User.username == "EX001"))).scalars().first()
+    original_hash = user.password_hash
+
+    # 同名单再跑一次，这次带上住院/助理工号
+    res = await ac.post("/api/v1/admin/users/bulk-import", json={
+        "items": [{"real_name": "老账号", "codes": ["EX001", "EX002", "EX003"]}],
+    })
+    item = res.json()["items"][0]
+    assert item["status"] == "skipped_exists"
+    assert "EX002" in item["message"] and "EX003" in item["message"]
+
+    codes = (await db.execute(
+        select(DoctorCode).where(DoctorCode.user_id == user.id)
+    )).scalars().all()
+    assert {c.code for c in codes} == {"EX001", "EX002", "EX003"}
+
+    await db.refresh(user)
+    assert user.password_hash == original_hash  # 账号本身没被改动

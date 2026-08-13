@@ -47,6 +47,17 @@ _encounter_id: ContextVar[Optional[str]] = ContextVar("encounter_id", default=No
 _medical_record_id: ContextVar[Optional[str]] = ContextVar("medical_record_id", default=None)
 _patient_id: ContextVar[Optional[str]] = ContextVar("patient_id", default=None)
 
+# 客户端来源 IP（2026-08-13 第三轮审计修复）：审计日志需要「谁在什么时候、
+# 从哪台机器看了谁的病历」。原先只有登录端点手工传 ip_address，PHI 查阅那批
+# 审计全是空的——放开归属校验后审计是唯一追责手段，缺来源 IP 就查不到人。
+# 放上下文里由 log_action 缺省读取，一处生效，免得给每个端点塞 Request 参数。
+_client_ip: ContextVar[Optional[str]] = ContextVar("client_ip", default=None)
+
+
+def get_context_client_ip() -> Optional[str]:
+    """取当前请求的来源 IP（不在请求上下文中时返回 None）。"""
+    return _client_ip.get()
+
 
 def get_request_id() -> str:
     """业务代码可以直接调用拿当前 request_id（极少用到，主要给 audit 等场景）。"""
@@ -176,6 +187,9 @@ class RequestIDMiddleware:
         eid_token = _encounter_id.set(None)
         mrid_token = _medical_record_id.set(None)
         pid_token = _patient_id.set(None)
+        # 来源 IP 同样每请求重置，避免跨请求残留把 A 的操作记成 B 的机器
+        from app.core.client_ip import get_client_ip_from_scope
+        ip_token = _client_ip.set(get_client_ip_from_scope(scope))
         start = time.perf_counter()
         # 用 list 装 status，闭包可修改（send_wrapper 设值，finally 读）
         captured = {"status": 500}
@@ -221,3 +235,4 @@ class RequestIDMiddleware:
             _encounter_id.reset(eid_token)
             _medical_record_id.reset(mrid_token)
             _patient_id.reset(pid_token)
+            _client_ip.reset(ip_token)

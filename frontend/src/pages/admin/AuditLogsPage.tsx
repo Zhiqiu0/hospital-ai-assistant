@@ -17,13 +17,42 @@ import api from '@/services/api'
 
 const { Title, Text } = Typography
 
+// 动作标签表。**筛选下拉是从这张表生成的**（见下方 options），所以后端新增的
+// 审计动作若不登记在此，管理员就永远筛不出来——2026-08-13 第三轮审计发现：
+// 后端实际写 21 种动作，这里只有 6 种，「谁查阅了患者 PHI」这类等保关键追溯
+// 根本筛不到，而放开归属校验后审计正是唯一的追责手段。
+// 新增后端审计动作时请同步这里。
 const ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  // 认证
   login: { label: '登录', color: 'blue' },
+  change_password: { label: '修改密码', color: 'blue' },
+  // PHI 查阅（放开归属校验后的追责核心）
+  view_patient: { label: '查阅患者信息', color: 'gold' },
+  view_patient_profile: { label: '查阅患者档案', color: 'gold' },
+  view_records: { label: '查阅病历', color: 'gold' },
+  view_imaging_study: { label: '查看影像检查', color: 'gold' },
+  browse_patients: { label: '浏览患者列表', color: 'default' },
+  // 病历
   sign_record: { label: '签发病历', color: 'green' },
+  revise_record: { label: '修订病历', color: 'green' },
+  // 患者数据
+  update_patient: { label: '修改患者', color: 'cyan' },
+  update_patient_profile: { label: '修改患者档案', color: 'cyan' },
+  resolve_his_profile: { label: '裁决HIS档案差异', color: 'cyan' },
+  soft_delete_patient: { label: '删除患者', color: 'red' },
+  // 账号
   create_user: { label: '创建用户', color: 'purple' },
   update_user: { label: '修改用户', color: 'orange' },
   delete_user: { label: '删除用户', color: 'red' },
-  update_patient: { label: '修改患者', color: 'cyan' },
+  bulk_import_users: { label: '批量开户', color: 'purple' },
+  // AI
+  ai_quick_generate: { label: 'AI生成病历', color: 'geekblue' },
+  ai_quick_supplement: { label: 'AI补充', color: 'geekblue' },
+  ai_quick_continue: { label: 'AI续写', color: 'geekblue' },
+  ai_quick_polish: { label: 'AI润色', color: 'geekblue' },
+  ai_quick_qc: { label: 'AI质控', color: 'geekblue' },
+  ai_qc_fix: { label: 'AI质控修复', color: 'geekblue' },
+  ai_voice_structure: { label: 'AI语音结构化', color: 'geekblue' },
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -106,7 +135,9 @@ export default function AuditLogsPage() {
           <Text strong style={{ fontSize: 13 }}>
             {name || '—'}
           </Text>
-          {row.user_role && <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{row.user_role}</div>}
+          {row.user_role && (
+            <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{row.user_role}</div>
+          )}
         </div>
       ),
     },
@@ -160,7 +191,9 @@ export default function AuditLogsPage() {
       title: '详情',
       dataIndex: 'detail',
       key: 'detail',
-      render: (v: string) => <Text style={{ fontSize: 12, color: 'var(--text-2)' }}>{v || '—'}</Text>,
+      render: (v: string) => (
+        <Text style={{ fontSize: 12, color: 'var(--text-2)' }}>{v || '—'}</Text>
+      ),
     },
     {
       title: 'IP',
@@ -168,7 +201,9 @@ export default function AuditLogsPage() {
       key: 'ip_address',
       width: 120,
       render: (v: string) => (
-        <Text style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-4)' }}>{v || '—'}</Text>
+        <Text style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-4)' }}>
+          {v || '—'}
+        </Text>
       ),
     },
   ]
