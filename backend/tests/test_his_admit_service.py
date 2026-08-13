@@ -144,3 +144,77 @@ async def test_admit_cancelled_encounter_not_reused(async_db):
     second = await process_admit(async_db, _payload())
     assert second.reused is False
     assert second.encounter_id != first.encounter_id
+
+
+# ── 2026-08-13 补接规范 3.1 选填体征/档案 ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_admit_prefills_vitals_into_inquiry(async_db):
+    """HIS 推来的实测体征要预填进问诊（工作台左侧「生命体征快速录入」直接显示）。
+
+    回归的是一个真实缺口：规范 3.1 与发给厂商的参考实现都带 vitals.*，
+    后端模型却没定义 → pydantic 默认忽略未知字段 → 体温血压被静默丢弃，
+    联调现场会变成"我推了/我没收到"且日志无痕。
+    """
+    from sqlalchemy import select
+    from app.models.encounter import InquiryInput
+
+    await _mk_doctor(async_db)
+    payload = _payload(vitals={"temperature": "38.5", "pulse": "96",
+                               "bp_systolic": "138", "bp_diastolic": "86",
+                               "spo2": "", "height": "170"})
+    result = await process_admit(async_db, payload)
+
+    inq = (await async_db.execute(
+        select(InquiryInput).where(InquiryInput.encounter_id == result.encounter_id)
+    )).scalars().first()
+    assert inq is not None, "推送带了体征却没建问诊记录"
+    assert inq.temperature == "38.5" and inq.pulse == "96"
+    assert inq.bp_systolic == "138" and inq.bp_diastolic == "86"
+    assert inq.height == "170"
+    assert not inq.spo2  # 空串不落库，避免占位假数据
+
+
+@pytest.mark.asyncio
+async def test_admit_without_vitals_creates_no_inquiry(async_db):
+    """不带体征的推送不该凭空建空问诊记录（保持原有行为）。"""
+    from sqlalchemy import select
+    from app.models.encounter import InquiryInput
+
+    await _mk_doctor(async_db)
+    result = await process_admit(async_db, _payload())
+    inq = (await async_db.execute(
+        select(InquiryInput).where(InquiryInput.encounter_id == result.encounter_id)
+    )).scalars().first()
+    assert inq is None
+
+
+@pytest.mark.asyncio
+async def test_admit_profile_fills_blank_but_never_overwrites(async_db):
+    """过敏史/既往史只填我方空缺，绝不覆盖医生已确认的值。
+
+    我们的档案是医生当面问出来并确认过的，HIS 推来的可能是陈旧数据，
+    覆盖等于用旧值抹掉医生的确认——临床风险。
+    """
+    from app.models.patient import Patient
+
+    await _mk_doctor(async_db)
+    # 先建一个已有过敏史（医生确认过）的患者，用身份证保证被复用
+    existing = Patient(
+        name="张三", id_card="330521199001011234", is_from_his=True,
+        profile={"allergy_history": {"value": "青霉素过敏（医生确认）",
+                                     "updated_at": "2026-08-01T10:00:00",
+                                     "updated_by": "doc-1"}},
+    )
+    async_db.add(existing)
+    await async_db.commit()
+
+    await process_admit(async_db, _payload(
+        id_card="330521199001011234",
+        allergy_history="无",          # HIS 侧陈旧值，不该覆盖
+        past_history="高血压 10 年",   # 我方为空 → 应填入
+    ))
+
+    await async_db.refresh(existing)
+    assert existing.profile["allergy_history"]["value"] == "青霉素过敏（医生确认）"
+    assert existing.profile["past_history"]["value"] == "高血压 10 年"

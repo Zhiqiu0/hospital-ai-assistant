@@ -13,12 +13,13 @@
 """
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime as _dt
 from typing import Optional
 
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.his_adapter.event_bus import his_event_bus
 from app.his_adapter.models import AdmitPushRequest
@@ -152,6 +153,9 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     db.add(encounter)
     await db.commit()
     await db.refresh(encounter)
+    # 选填体征/档案预填（2026-08-13 补接规范 3.1）：只在新建接诊时做，
+    # 重复推送复用既有接诊时不碰——那时医生可能已经改过，不能被 HIS 覆盖。
+    await _prefill_from_push(db, encounter.id, patient_id, payload)
     patient = await db.get(Patient, patient_id)
     # 日志不落患者姓名（2026-08-13 第二轮审计修复：PHI 不进日志文件）——
     # 排障靠 patient_id/visit_id 关联查库即可，姓名对定位问题没有增量价值。
@@ -162,6 +166,73 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         patient_name=patient.name if patient else payload.patient_name,
         doctor_id=doctor.id, reused=False,
     )
+
+
+_VITALS_KEYS = ("temperature", "pulse", "respiration", "bp_systolic",
+                "bp_diastolic", "spo2", "height", "weight")
+
+
+async def _prefill_from_push(
+    db: AsyncSession, encounter_id: str, patient_id: str, payload: AdmitPushRequest
+) -> None:
+    """把推送里的选填体征/档案预填进工作台（规范 3.1，2026-08-13 补接）。
+
+    落点分两处，与前端读取位置对齐：
+      - vitals.*        → InquiryInput（工作台左侧「生命体征快速录入」直接显示）
+      - allergy/past    → 患者档案 profile（PatientProfileCard 显示，纵向跟随患者）
+
+    安全边界：
+      - 档案**只填空缺**，绝不覆盖我方已有值——我们的档案是医生确认过的，
+        HIS 推来的可能是陈旧数据，覆盖等于用旧值抹掉医生的确认。
+      - 预填失败不影响接诊建立（体征是锦上添花，接诊本身是命门），只记 warning。
+    """
+    from app.models.encounter import InquiryInput
+
+    vitals = payload.vitals
+    vitals_data = {
+        k: (getattr(vitals, k) or "").strip()
+        for k in _VITALS_KEYS
+    } if vitals else {}
+    vitals_data = {k: v for k, v in vitals_data.items() if v}
+
+    try:
+        if vitals_data:
+            db.add(InquiryInput(encounter_id=encounter_id, version=1, **vitals_data))
+            await db.commit()
+            logger.info("his_admit.prefill_vitals: encounter=%s 字段=%s",
+                        encounter_id, ",".join(sorted(vitals_data)))
+
+        # 档案字段：仅在我方为空时填充
+        profile_patch = {
+            "allergy_history": (payload.allergy_history or "").strip(),
+            "past_history": (payload.past_history or "").strip(),
+        }
+        profile_patch = {k: v for k, v in profile_patch.items() if v}
+        if profile_patch:
+            patient = await db.get(Patient, patient_id)
+            if patient is not None:
+                profile = dict(patient.profile or {})
+                changed = False
+                for field, value in profile_patch.items():
+                    existing = (profile.get(field) or {}).get("value")
+                    if existing:
+                        continue  # 我方已有医生确认过的值，不动
+                    profile[field] = {
+                        "value": value,
+                        "updated_at": _dt.now().isoformat(),
+                        "updated_by": None,  # 来源是 HIS 推送，非某个医生手填
+                    }
+                    changed = True
+                if changed:
+                    patient.profile = profile
+                    flag_modified(patient, "profile")
+                    await db.commit()
+                    logger.info("his_admit.prefill_profile: patient=%s 字段=%s",
+                                patient_id, ",".join(sorted(profile_patch)))
+    except Exception:
+        # 预填失败绝不能连累接诊建立（接诊在则医生还能自己录，接诊没了就啥都没了）
+        logger.exception("his_admit.prefill_failed: encounter=%s", encounter_id)
+        await db.rollback()
 
 
 async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
