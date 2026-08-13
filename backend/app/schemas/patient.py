@@ -138,10 +138,16 @@ class ProfileFieldMeta(BaseModel):
 
     - updated_at：医生最近一次写入或主动确认（"✓ 仍准确"）的时间
     - updated_by：医生 ID。前端展示"X 医生 N 天前确认"用
+    - his_pending_value / his_pending_at（2026-08-13）：HIS 接诊推送带来的值
+      与我方现有值不一致时挂在这里等医生裁决。**不覆盖**我方值（HIS 可能是
+      陈旧数据），也**不丢弃**（过敏史漏一项会出用药事故），由档案卡展示差异
+      + 采纳/忽略按钮。为 None 表示无待处理差异。
     """
 
     updated_at: Optional[datetime.datetime] = None
     updated_by: Optional[str] = None
+    his_pending_value: Optional[str] = None
+    his_pending_at: Optional[datetime.datetime] = None
 
 
 class PatientProfile(BaseModel):
@@ -184,6 +190,20 @@ class PatientProfileUpdate(BaseModel):
     current_medications: Optional[str] = None
     marital_history: Optional[str] = None
     religion_belief: Optional[str] = None
+
+
+class PatientProfileHisResolve(BaseModel):
+    """裁决 HIS 待处理档案值的入参（2026-08-13）。
+
+    HIS 接诊推送带来的过敏史/既往史与我方现有值不一致时，系统挂待处理提示，
+    医生在档案卡上看到差异后二选一：
+      adopt=True  → 采纳 HIS 的值（我方值被替换）
+      adopt=False → 保留我方值，忽略本次 HIS 推送
+    两种选择都会清除待处理标记并刷新确认时间（医生确实看过并做了判断）。
+    """
+
+    field: str          # past_history / allergy_history 之一
+    adopt: bool = False
 
 
 class PatientProfileFieldConfirm(BaseModel):

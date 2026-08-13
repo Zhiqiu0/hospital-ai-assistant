@@ -28,10 +28,17 @@ interface PatientProfileFieldProps {
   fieldUpdatedAt: string | null | undefined
   confirming: boolean
   onConfirm: (key: string) => void
+  /** HIS 推来的、与本地不一致的值（2026-08-13）；无差异时为空 */
+  hisPendingValue?: string | null
+  /** 正在裁决该字段的 HIS 差异 */
+  resolving?: boolean
+  /** 裁决回调：adopt=true 采纳 HIS 值，false 保留本地值 */
+  onResolveHis?: (key: string, adopt: boolean) => void
 }
 
 export default function PatientProfileField(props: PatientProfileFieldProps) {
   const { field, value, onChange, fieldUpdatedAt, confirming, onConfirm } = props
+  const { hisPendingValue, resolving, onResolveHis } = props
   const stale = getStaleness(fieldUpdatedAt, field.staleAfterDays ?? 180)
   const hasValue = !!value?.trim()
 
@@ -79,6 +86,51 @@ export default function PatientProfileField(props: PatientProfileFieldProps) {
           </Space>
         )}
       </div>
+      {/* HIS 差异提示（2026-08-13）：HIS 推来的值与本地不一致时展示两边内容，
+          由医生裁决。不自动覆盖（HIS 可能是陈旧数据），也不自动丢弃
+          （过敏史漏一项会出用药事故）。 */}
+      {hisPendingValue && onResolveHis && (
+        <div
+          style={{
+            marginBottom: 6,
+            padding: '6px 8px',
+            borderRadius: 6,
+            background: '#fffbeb',
+            border: '1px solid #fcd34d',
+            fontSize: 12,
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ color: '#92400e', marginBottom: 2 }}>HIS 记录与本地不一致：</div>
+          <div style={{ color: '#78350f', wordBreak: 'break-all' }}>{hisPendingValue}</div>
+          <Space size={4} style={{ marginTop: 2 }}>
+            <Button
+              size="small"
+              type="link"
+              loading={resolving}
+              onClick={e => {
+                e.stopPropagation()
+                onResolveHis(field.key, true)
+              }}
+              style={{ fontSize: 11, height: 20, padding: '0 4px' }}
+            >
+              采纳 HIS
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              loading={resolving}
+              onClick={e => {
+                e.stopPropagation()
+                onResolveHis(field.key, false)
+              }}
+              style={{ fontSize: 11, height: 20, padding: '0 4px', color: 'var(--text-3)' }}
+            >
+              保留本地
+            </Button>
+          </Space>
+        </div>
+      )}
       {field.singleLine ? (
         <Input
           size="small"

@@ -202,7 +202,7 @@ async def _prefill_from_push(
             logger.info("his_admit.prefill_vitals: encounter=%s 字段=%s",
                         encounter_id, ",".join(sorted(vitals_data)))
 
-        # 档案字段：仅在我方为空时填充
+        # 档案字段：我方为空 → 直接填；我方已有且不同 → 挂待处理提示，绝不覆盖
         profile_patch = {
             "allergy_history": (payload.allergy_history or "").strip(),
             "past_history": (payload.past_history or "").strip(),
@@ -214,14 +214,31 @@ async def _prefill_from_push(
                 profile = dict(patient.profile or {})
                 changed = False
                 for field, value in profile_patch.items():
-                    existing = (profile.get(field) or {}).get("value")
-                    if existing:
-                        continue  # 我方已有医生确认过的值，不动
-                    profile[field] = {
+                    entry = dict(profile.get(field) or {})
+                    existing = entry.get("value")
+                    if not existing:
+                        # 我方空缺 → 直接填（复诊首次拿到 HIS 档案的常见情况）
+                        profile[field] = {
+                            "value": value,
+                            "updated_at": _dt.now().isoformat(),
+                            "updated_by": None,  # 来源是 HIS 推送，非某个医生手填
+                        }
+                        changed = True
+                        continue
+                    if existing.strip() == value:
+                        # 两边一致：清掉可能残留的旧提示，不打扰医生
+                        if entry.pop("his_pending", None) is not None:
+                            profile[field] = entry
+                            changed = True
+                        continue
+                    # 两边不一致（2026-08-13）：既不能用 HIS 陈旧值覆盖医生确认过的内容，
+                    # 也不能默默丢弃 HIS 的更新——过敏史漏一项会出用药事故。
+                    # 挂成待处理提示，由医生在档案卡上看到差异后自己决定采纳/忽略。
+                    entry["his_pending"] = {
                         "value": value,
-                        "updated_at": _dt.now().isoformat(),
-                        "updated_by": None,  # 来源是 HIS 推送，非某个医生手填
+                        "pushed_at": _dt.now().isoformat(),
                     }
+                    profile[field] = entry
                     changed = True
                 if changed:
                     patient.profile = profile

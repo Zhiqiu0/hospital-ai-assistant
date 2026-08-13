@@ -218,3 +218,58 @@ async def test_admit_profile_fills_blank_but_never_overwrites(async_db):
     await async_db.refresh(existing)
     assert existing.profile["allergy_history"]["value"] == "青霉素过敏（医生确认）"
     assert existing.profile["past_history"]["value"] == "高血压 10 年"
+
+
+@pytest.mark.asyncio
+async def test_admit_conflicting_profile_becomes_pending_not_overwrite(async_db):
+    """HIS 值与我方不一致 → 挂待处理提示，既不覆盖也不丢弃。
+
+    覆盖我方值 = 用 HIS 陈旧数据抹掉医生确认过的内容；
+    直接丢弃 HIS 值 = 可能漏掉新增的过敏原（用药事故）。
+    所以两边都不做，交给医生在档案卡上裁决。
+    """
+    from app.models.patient import Patient
+
+    await _mk_doctor(async_db)
+    existing = Patient(
+        name="张三", id_card="330521199001011234", is_from_his=True,
+        profile={"allergy_history": {"value": "青霉素过敏",
+                                     "updated_at": "2026-08-01T10:00:00",
+                                     "updated_by": "doc-1"}},
+    )
+    async_db.add(existing)
+    await async_db.commit()
+
+    await process_admit(async_db, _payload(
+        id_card="330521199001011234",
+        allergy_history="青霉素、头孢过敏",   # HIS 侧更全，但不能直接覆盖
+    ))
+
+    await async_db.refresh(existing)
+    entry = existing.profile["allergy_history"]
+    assert entry["value"] == "青霉素过敏"                       # 我方值没被覆盖
+    assert entry["his_pending"]["value"] == "青霉素、头孢过敏"   # HIS 值挂起等裁决
+
+
+@pytest.mark.asyncio
+async def test_admit_same_profile_value_clears_stale_pending(async_db):
+    """两边值一致时清掉残留的待处理标记，不反复打扰医生。"""
+    from app.models.patient import Patient
+
+    await _mk_doctor(async_db)
+    existing = Patient(
+        name="张三", id_card="330521199001011234", is_from_his=True,
+        profile={"allergy_history": {"value": "青霉素过敏",
+                                     "updated_at": "2026-08-01T10:00:00",
+                                     "his_pending": {"value": "旧的待处理值",
+                                                     "pushed_at": "2026-08-02T10:00:00"}}},
+    )
+    async_db.add(existing)
+    await async_db.commit()
+
+    await process_admit(async_db, _payload(
+        id_card="330521199001011234", allergy_history="青霉素过敏",
+    ))
+
+    await async_db.refresh(existing)
+    assert "his_pending" not in existing.profile["allergy_history"]

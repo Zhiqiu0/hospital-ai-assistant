@@ -221,3 +221,58 @@ async def test_profile_concurrent_update_no_lost_field(client_doc_me, async_db):
     # 两个字段都在——后写的没把先写的冲掉
     assert got.get("allergy_history") == "青霉素过敏"
     assert got.get("past_history") == "高血压 10 年"
+
+
+@pytest.mark.asyncio
+async def test_resolve_his_pending_adopt_and_ignore(client_doc_me, async_db, patched_audit_session):
+    """裁决 HIS 档案差异：采纳写入 HIS 值，忽略保留我方值；两者都清掉待处理标记。"""
+    from app.models.patient import Patient
+
+    # 用独立患者隔离：本用例直接写 ORM（绕过服务层的缓存失效），复用 pat-own
+    # 会命中前面用例留在 Redis 里的档案缓存，读到旧值
+    patient = Patient(id="pat-hisres", name="HIS差异患者")
+    enc = Encounter(
+        id="enc-hisres", patient_id="pat-hisres", doctor_id="doc-me",
+        visit_type="outpatient", status="in_progress", visited_at=datetime(2026, 8, 13),
+    )
+    async_db.add_all([patient, enc])
+    await async_db.flush()
+    patient.profile = {
+        "allergy_history": {"value": "青霉素过敏", "updated_at": "2026-08-01T10:00:00",
+                            "his_pending": {"value": "青霉素、头孢过敏",
+                                            "pushed_at": "2026-08-13T10:00:00"}},
+        "past_history": {"value": "高血压", "updated_at": "2026-08-01T10:00:00",
+                         "his_pending": {"value": "高血压、糖尿病",
+                                         "pushed_at": "2026-08-13T10:00:00"}},
+    }
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(patient, "profile")
+    await async_db.commit()
+
+    # 采纳 HIS 值
+    r1 = await client_doc_me.post(
+        "/api/v1/patients/pat-hisres/profile/resolve-his",
+        json={"field": "allergy_history", "adopt": True},
+    )
+    assert r1.status_code == 200
+    assert r1.json()["allergy_history"] == "青霉素、头孢过敏"
+    assert not r1.json()["fields_meta"]["allergy_history"]["his_pending_value"]
+
+    # 忽略 HIS 值（保留我方）
+    r2 = await client_doc_me.post(
+        "/api/v1/patients/pat-hisres/profile/resolve-his",
+        json={"field": "past_history", "adopt": False},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["past_history"] == "高血压"
+    assert not r2.json()["fields_meta"]["past_history"]["his_pending_value"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_his_pending_cross_doctor_blocked(client_doc_me):
+    """裁决他人患者的档案差异 → 403（与其它档案端点同一归属口径）。"""
+    r = await client_doc_me.post(
+        "/api/v1/patients/pat-other/profile/resolve-his",
+        json={"field": "allergy_history", "adopt": True},
+    )
+    assert r.status_code == 403
