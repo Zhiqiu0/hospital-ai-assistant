@@ -134,8 +134,12 @@ async def _quick_start_inner(data, db, current_user):
         patient["id"], current_user.id
     )
 
-    # 若该医生对该患者已有进行中的接诊，直接续接，不再新建
-    existing = await encounter_service.find_in_progress(patient["id"], current_user.id)
+    # 若该医生对该患者已有**同类型**进行中的接诊，直接续接，不再新建。
+    # 必须同类型：门诊未签发的接诊不能被急诊续接，否则急诊病历会落进门诊接诊，
+    # 质控用错评分表、回写 HIS 的类型也错（2026-08-13 第五轮审计修复）。
+    existing = await encounter_service.find_in_progress(
+        patient["id"], current_user.id, visit_type=data.visit_type
+    )
     if existing:
         # 续接时也查上次已签发病历供参考（排除当前续接的接诊本身）
         resume_prev_stmt = (
