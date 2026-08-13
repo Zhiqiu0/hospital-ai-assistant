@@ -35,6 +35,12 @@ QUEUE_MAX = 100
 # 消费方（SSE gen / 回写 consumer_loop）收到即触发各自的重建/重连，避免永久失聪。
 PUMP_DEAD_SENTINEL = "__bus_pump_dead__"
 
+# 本地降级重试间隔（2026-08-13 第二轮审计修复）：Redis 不可用时订阅退化为
+# 进程内直投，原实现就此**永不再试**——消费方阻塞在本地队列上，Redis 恢复后
+# 这个 worker 永久收不到跨进程事件（回写指令、叫号），是个单向门。
+# 现在降级订阅会定时投哨兵，让消费方退出重建订阅，从而周期性重试 Redis。
+LOCAL_FALLBACK_RETRY_SECONDS = 30
+
 
 def _put_pump_dead_sentinel(q: "asyncio.Queue") -> None:
     """保证哨兵必达：队列满时先腾一个位再投（泵已死，无并发写入竞争）。"""
@@ -101,6 +107,34 @@ class HisEventBus:
                 logger.warning("his_bus.local: 队列满丢弃事件 channel=%s", channel)
 
     @asynccontextmanager
+    async def _local_fallback(
+        self, channel: str, q: asyncio.Queue, *, retry: bool
+    ) -> AsyncIterator[asyncio.Queue]:
+        """进程内直投降级订阅。
+
+        retry=True 时起一个定时任务周期投哨兵——消费方收到即退出并重建订阅，
+        于是 Redis 恢复后能重新走 pubsub（2026-08-13 修「降级即永久失聪」的单向门）。
+        未配置 Redis 的本地开发同样走这里：哨兵只会让消费方每 30s 重建一次订阅，
+        无副作用。
+        """
+        self._local.setdefault(channel, set()).add(q)
+        ticker: asyncio.Task | None = None
+        if retry:
+            async def _tick() -> None:
+                try:
+                    await asyncio.sleep(LOCAL_FALLBACK_RETRY_SECONDS)
+                    _put_pump_dead_sentinel(q)
+                except asyncio.CancelledError:
+                    raise
+            ticker = asyncio.create_task(_tick())
+        try:
+            yield q
+        finally:
+            if ticker is not None:
+                ticker.cancel()
+            self._local.get(channel, set()).discard(q)
+
+    @asynccontextmanager
     async def subscription(self, channel: str) -> AsyncIterator[asyncio.Queue]:
         """订阅频道，yield 一个 asyncio.Queue（元素为 dict 事件）。
 
@@ -111,25 +145,19 @@ class HisEventBus:
         q: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
         client = self._get_client()
         if client is None:
-            self._local.setdefault(channel, set()).add(q)
-            try:
-                yield q
-            finally:
-                self._local.get(channel, set()).discard(q)
+            async with self._local_fallback(channel, q, retry=True) as fq:
+                yield fq
             return
 
         pubsub = client.pubsub()
         try:
             await pubsub.subscribe(channel)
         except Exception as exc:
-            # 订阅失败（Redis 刚挂）：退化为进程内直投，行为与未配置一致
+            # 订阅失败（Redis 刚挂）：退化为进程内直投，并定时投哨兵促使重订阅
             logger.warning("his_bus.subscribe: Redis 失败转本地 channel=%s err=%s",
                            channel, exc)
-            self._local.setdefault(channel, set()).add(q)
-            try:
-                yield q
-            finally:
-                self._local.get(channel, set()).discard(q)
+            async with self._local_fallback(channel, q, retry=True) as fq:
+                yield fq
             return
 
         pump = asyncio.create_task(self._pump(pubsub, q, channel))

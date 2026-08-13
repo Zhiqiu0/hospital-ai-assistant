@@ -78,14 +78,39 @@ class HisWsManager:
     ) -> dict:
         """发送下行业务消息并等 ack（规范 7.4：10s 超时重发同 msg_id，最多 3 次）。
 
+        僵尸连接换线（2026-08-13 第二轮审计修复）：网络闪断后的连接要到 90s
+        空闲超时才会被摘除，期间仍可能被 _pick 选中（尤其它是来源诊室连接时），
+        回写在它身上空耗 40s 后直接报失败——即使院内还有其他在线诊室连接。
+        现在一条连接判定失效后自动换下一条重试，全部失效才算失败。
+
         Returns:
             ack 的 payload（业务成败由调用方看 code）
         Raises:
-            ConnectionError: 无连接 / 发送失败 / 重发耗尽（仅关闭出问题的那条连接）
+            ConnectionError: 无连接 / 所有在线连接都发送失败或 ack 耗尽
         """
         if not self._conns:
             raise ConnectionError("HIS WebSocket 未连接")
-        ws = self._pick(prefer_visit)
+        first = self._pick(prefer_visit)
+        # 候选顺序：优先来源诊室连接，其余作为换线兜底
+        candidates = [first] + [c for c in self._conns if c is not first]
+        last_exc: Exception | None = None
+        for idx, conn in enumerate(candidates):
+            if conn not in self._conns:
+                continue  # 期间已被摘除（其他协程判定失效）
+            try:
+                return await self._send_once_with_ack(
+                    conn, msg_type, payload, app_id, secret)
+            except ConnectionError as exc:
+                last_exc = exc
+                if idx + 1 < len(candidates):
+                    logger.warning("his_ws.failover: 连接失效，换下一条重试 type=%s",
+                                   msg_type)
+        raise last_exc or ConnectionError("HIS WebSocket 未连接")
+
+    async def _send_once_with_ack(
+        self, ws: object, msg_type: str, payload: dict, app_id: str, secret: str,
+    ) -> dict:
+        """在指定连接上发送并等 ack；该连接判定失效时关闭+摘除并抛 ConnectionError。"""
         msg_id = f"ms-{uuid.uuid4().hex}"
         for attempt in range(1 + wp.ACK_MAX_RESEND):
             # 重发 msg_id 不变，timestamp/nonce/sign 重新生成（同 2.2 重试规则）
@@ -103,6 +128,9 @@ class HisWsManager:
                 raise  # unregister 触发的断线异常，原样上抛
             except Exception as exc:  # 发送失败 = 该连接半死，按断线处理
                 self._pending.pop(msg_id, None)
+                # 顺手摘除（2026-08-13）：发送失败是连接已死的确定信号，不摘掉
+                # 会让它继续被 _pick 选中，后续回写反复空耗。
+                self.unregister(ws)
                 raise ConnectionError(f"发送失败：{exc}") from exc
         # 重发耗尽：按规范 7.4 判定该连接失效，关闭并清理（其余诊室连接不受影响）
         try:

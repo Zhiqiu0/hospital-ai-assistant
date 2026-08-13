@@ -138,3 +138,44 @@ async def test_ws_write_failed_code_propagates(ws_creds):
     assert not result.ok and result.status == "write_failed"
     assert "40005" in result.message
     assert [m["type"] for m in manager_ws.sent] == [wp.MSG_WRITEBACK]
+
+
+# ── 2026-08-13 第二轮审计：僵尸连接换线 ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_ws_failover_to_healthy_connection(ws_creds, monkeypatch):
+    """来源诊室连接变僵尸时，自动换到另一条在线连接，而不是直接报失败。
+
+    原实现只在被选中的那条连接上重发，耗尽即 ConnectionError——网络闪断后的
+    连接要 90s 才被空闲超时摘除，期间还会被优先选中（它是来源诊室连接），
+    于是回写空耗 40s 后误报失败，哪怕院内还有别的在线诊室。
+    """
+    monkeypatch.setattr(wp, "ACK_TIMEOUT", 0.01)
+    manager = HisWsManager()
+    zombie = DeafWS(manager)      # 闪断后的僵尸：只收不 ack
+    healthy = AckingWS(manager)   # 另一台在线诊室
+    manager.register(zombie)
+    manager.register(healthy)
+    manager.bind_visit("V-ZOMBIE", zombie)  # 僵尸是来源诊室，会被优先选中
+
+    ack = await manager.send_with_ack(
+        wp.MSG_WRITEBACK, FAKE_PAYLOAD, "appHIS", "secret-key",
+        prefer_visit="V-ZOMBIE",
+    )
+
+    assert ack["code"] == 0              # 换线后成功，不再误报失败
+    assert zombie.closed                 # 僵尸被判死并摘除
+    assert healthy.sent                  # 消息确实由健康连接发出
+
+
+@pytest.mark.asyncio
+async def test_ws_failover_all_dead_still_raises(ws_creds, monkeypatch):
+    """所有连接都失效时仍要如实抛错（不能为了换线把失败吞掉）。"""
+    monkeypatch.setattr(wp, "ACK_TIMEOUT", 0.01)
+    manager = HisWsManager()
+    manager.register(DeafWS(manager))
+    manager.register(DeafWS(manager))
+
+    with pytest.raises(ConnectionError):
+        await manager.send_with_ack(wp.MSG_WRITEBACK, FAKE_PAYLOAD, "appHIS", "secret-key")
+    assert not manager.has_connection()

@@ -46,3 +46,41 @@ async def test_claim_without_redis_always_true(local_bus):
     """无 Redis 时抢占恒为 True（进程内无并发抢占）、is_claimed 恒 False。"""
     assert await local_bus.try_claim("k1", ttl=60) is True
     assert await local_bus.is_claimed("k1") is False
+
+
+# ── 2026-08-13 第二轮审计：降级不再是单向门 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_local_fallback_emits_sentinel_for_resubscribe(monkeypatch):
+    """Redis 不可用时的降级订阅必须定时投哨兵，促使消费方重建订阅。
+
+    原实现降级后就地阻塞、永不再试 Redis——Redis 恢复后该 worker 永久收不到
+    跨进程事件（回写指令 / 叫号），是个单向门。
+    """
+    from app.his_adapter import event_bus as eb
+
+    # 把重试间隔压到极短，避免测试等 30 秒
+    monkeypatch.setattr(eb, "LOCAL_FALLBACK_RETRY_SECONDS", 0.05)
+    bus = eb.HisEventBus()
+    monkeypatch.setattr(bus, "_get_client", lambda: None)  # 模拟 Redis 不可用
+
+    async with bus.subscription("ch-fallback") as q:
+        evt = await asyncio.wait_for(q.get(), timeout=2)
+
+    assert evt.get("type") == eb.PUMP_DEAD_SENTINEL
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_still_delivers_events(monkeypatch):
+    """降级期间进程内直投仍要正常工作（不能为了重试牺牲本地投递）。"""
+    from app.his_adapter import event_bus as eb
+
+    monkeypatch.setattr(eb, "LOCAL_FALLBACK_RETRY_SECONDS", 5)  # 本用例内不触发哨兵
+    bus = eb.HisEventBus()
+    monkeypatch.setattr(bus, "_get_client", lambda: None)
+
+    async with bus.subscription("ch-local") as q:
+        await bus.publish("ch-local", {"type": "admit", "x": 1})
+        evt = await asyncio.wait_for(q.get(), timeout=2)
+
+    assert evt["type"] == "admit" and evt["x"] == 1
