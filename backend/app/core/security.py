@@ -95,7 +95,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     # jti（JWT ID）用于支持令牌吊销，每次生成唯一值
-    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
+    # iat（签发时刻）用于密码水印比对：改密/重置后签发时刻更早的 token 一律失效
+    to_encode.update({
+        "exp": expire,
+        "jti": str(uuid.uuid4()),
+        "iat": datetime.now(timezone.utc),
+    })
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 
 
@@ -242,6 +247,22 @@ async def get_current_user(
     # 后续日志自动带 [uid=xxx]，Sentry event 自动带 user 字段
     from app.core.request_context import bind_user_context
     bind_user_context(user.id, user.username)
+
+    # 密码水印（2026-08-13 第三轮审计修复）：签发时刻早于最后一次改密的 token
+    # 一律失效。没有这道判断，「账号疑似泄露 → 信息科重置密码」这个标准动作
+    # 根本踢不掉攻击者手里已有的会话——而本项目 token 有效期是 30 天。
+    changed_at = getattr(user, "password_changed_at", None)
+    if changed_at is not None:
+        iat = payload.get("iat")
+        # 时区口径：本项目统一存 naive 本地时间（生产容器 TZ=Asia/Shanghai），
+        # 所以把 token 的 iat（UTC 纪元秒）也转成 naive 本地时间再比，两边同一口径。
+        # 若按 UTC 解读 naive 的 changed_at，水印会凭空早/晚 8 小时，
+        # 后果是全院 token 一起失效——这种错必须在这里就掐掉。
+        # 老 token 没有 iat（本次改动之前签发的）→ 一并视为过期，强制重登一次。
+        # 注意水印写入时已截断到整秒：JWT 的 iat 只精确到秒，若水印带微秒，
+        # 同一秒内签发的**新** token 也会被判早于水印而立刻失效（改完密码就被踢）。
+        if iat is None or datetime.fromtimestamp(iat) < changed_at:
+            raise credentials_exception
 
     # 首登强改密硬拦（2026-08-13 批量开户）：批量建号用统一初始密码便于分发，
     # 但工号规律性强（尾号全 9、按科室分段）且名单在院内流传，可枚举——

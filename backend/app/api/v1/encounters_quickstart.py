@@ -114,6 +114,19 @@ async def _quick_start_inner(data, db, current_user):
     # 取患者档案（档案数据跟随患者，不跟随接诊）
     patient_profile = await patient_service.get_profile(patient["id"])
 
+    # PHI 查阅留痕（2026-08-13 第三轮审计修复）：本端点返回完整患者信息 + 完整
+    # 纵向档案，与 GET /patients/{id} 同等敏感，原先零审计。归属校验放开后审计
+    # 是唯一的追责手段，留一条不留痕的旁路等于把那道防线作废。
+    from app.services.audit_service import log_action
+    await log_action(
+        action="view_patient",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="patient", resource_id=patient["id"],
+        detail="接诊开始时调阅患者完整信息与纵向档案（quick-start）",
+    )
+
     # ── pending_encounters：别的医生在这个患者身上留下的进行中接诊（非阻断警示）──
     # 业务场景：值班交接、急诊副班接管，硬拦截会阻断真实业务，所以仅返回列表，
     # 让前端弹 Modal 让医生看到自行决策"继续接诊 / 联系原医生"。

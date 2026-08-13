@@ -71,6 +71,11 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
       // 401：token 已过期/失效，停止 SSE 重连循环（2026-08-11 审计修复）：
       // 否则会无限重连绕过全局登出。返回 false 让上层循环退出。
       if (res.status === 401) return false
+      // 403：未改初始密码的账号被服务端硬拦（2026-08-13 第三轮审计修复）。
+      // 这不是瞬时故障——不改密永远是 403，退避重连会在改密弹窗背后每 30 秒
+      // 打一次服务器，改完密码前一直打。同 401 处理：退出循环，等重登/改密后
+      // token 变化触发整个 effect 重建。
+      if (res.status === 403) return false
       if (!res.ok) return true // 瞬时错误：保持现状，等下次重连再拉
       const data = (await res.json()) as { items: HisQueueItem[] }
       setItems(data.items || [])
@@ -149,7 +154,11 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
           )
         } catch (e) {
           if ((e as Error)?.name === 'AbortError') break
-          // 断线/HTTP 错误：走退避重连
+          // 403 与 401 同理：不是瞬时故障，重连多少次都还是 403，直接退出循环。
+          // streamSSE 对非 2xx 抛的是 Error("HTTP <status>")，按消息匹配。
+          const msg = (e as Error)?.message || ''
+          if (msg === 'HTTP 401' || msg === 'HTTP 403') break
+          // 其余断线/HTTP 错误：走退避重连
         }
         setConnected(false)
         if (stopped) break

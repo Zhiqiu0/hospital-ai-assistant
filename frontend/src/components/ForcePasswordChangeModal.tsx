@@ -13,12 +13,14 @@
  */
 
 import { useState } from 'react'
-import { Modal, Form, Input, Alert, message } from 'antd'
+import { Modal, Form, Input, Alert } from 'antd'
+// antd v5 静态 message 不消费 React 上下文、提示不显示，全项目统一走消息桥
+import { message } from '@/services/messageBridge'
 import api from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 
 export default function ForcePasswordChangeModal() {
-  const { user, setMustChangePassword, clearAuth } = useAuthStore()
+  const { user, setAuth, setMustChangePassword, clearAuth } = useAuthStore()
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
 
@@ -29,11 +31,17 @@ export default function ForcePasswordChangeModal() {
     const values = await form.validateFields()
     setSubmitting(true)
     try {
-      await api.post('/auth/change-password', {
+      const res = (await api.post('/auth/change-password', {
         old_password: values.old_password,
         new_password: values.new_password,
-      })
-      setMustChangePassword(false)
+      })) as { access_token?: string }
+      // 后端会写「密码水印」作废改密之前签发的全部 token——包括本人手上这个，
+      // 所以端点换发了新的，这里必须替换掉，否则改完密码立刻被踢回登录页。
+      if (res?.access_token && user) {
+        setAuth(res.access_token, { ...user, must_change_password: false })
+      } else {
+        setMustChangePassword(false)
+      }
       message.success('密码已修改，可以开始使用了')
     } catch (err) {
       // 后端把「原密码错 / 新密码太短 / 与原密码相同」都用 400 + detail 返回

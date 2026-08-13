@@ -56,16 +56,16 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
         但只在确认非爆破（已通过限速）后才向前端暴露具体原因
     """
     # 按用户名维度限速：防爆破单个账号，不影响同网段其他医生。
-    # 只计失败（2026-08-13）：先 peek 判超限，失败才 hit，成功即 reset——
-    # 限流要挡的是"猜密码"，猜对的那次不该占额度，否则医生频繁登录会被自己锁住。
+    # 原子计数（每次尝试都算）+ 成功后清零：既保住 INCR 的原子性（并发爆破
+    # 仍被卡死在阈值），又让正常医生不会因频繁登录把自己锁住——成功那次的计数
+    # 刚 +1 就被下面的 reset 清回 0。
     limit_key = f"login:{request.username}"
-    await login_limiter.peek(http_request, key_override=limit_key)
+    await login_limiter.check(http_request, key_override=limit_key)
 
     service = AuthService(db)
     result = await service.login(request.username, request.password)
 
     if not result:
-        await login_limiter.hit(http_request, key_override=limit_key)
         detail = await service.get_login_error(request.username, request.password)
         await log_action(
             action="login",
@@ -125,6 +125,9 @@ async def change_password(
 
     current_user.password_hash = await hash_password_async(data.new_password)
     current_user.must_change_password = False
+    # 写密码水印：本次之前签发的 token 全部失效（含攻击者可能已拿到的会话）
+    from datetime import datetime as _dt
+    current_user.password_changed_at = _dt.now().replace(microsecond=0)
     await db.commit()
     await log_action(
         action="change_password", user_id=current_user.id,
@@ -132,7 +135,17 @@ async def change_password(
         detail="修改密码成功",
     )
     logger.info("auth.change_password: ok user_id=%s", current_user.id)
-    return {"ok": True}
+    # 换发新 token：密码水印会作废本次之前签发的全部 token——包括医生**自己**
+    # 正在用的这一个。不换发的话，他刚改完密码就被踢回登录页，还得再登一次。
+    # 攻击者的旧 token 依然作废，安全目标不受影响。
+    from datetime import timedelta
+
+    from app.core.security import create_access_token
+    new_token = create_access_token(
+        {"sub": current_user.id, "role": current_user.role},
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    return {"ok": True, "access_token": new_token, "token_type": "bearer"}
 
 
 @router.post("/logout")

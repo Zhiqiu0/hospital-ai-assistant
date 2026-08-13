@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import hash_password_async
-from app.models.user import User
+from app.models.user import DoctorCode, User
 from app.schemas.user import UserCreate, UserUpdate
 
 
@@ -107,8 +107,29 @@ class UserService:
             employee_no=data.employee_no,
             phone=data.phone,
             email=data.email,
+            # 首登强改密（2026-08-13 第三轮审计修复）：原先只有批量开户置位，
+            # 管理员在后台单个建号时不置——那些账号永远不会被要求改密，管理员
+            # 长期持有可冒名签发病历的凭据，与批量开户是同一个威胁模型。
+            must_change_password=True,
         )
         self.db.add(user)
+        await self.db.flush()
+
+        # 工号同时登记到 doctor_codes（2026-08-13 第三轮审计修复）：原先单个建号
+        # 只写 users.employee_no，而 HIS 映射优先查 doctor_codes——同一工号若已挂在
+        # 别的账号名下，接诊会被派给那一个；且该工号的归属会随两个账号的启停而跳变，
+        # 病历署名错人是事故级问题。这里登记后由唯一约束兜底：已被占用则明确报错，
+        # 不再静默产生二义性。
+        if data.employee_no and data.employee_no.strip():
+            code = data.employee_no.strip()
+            taken = (await self.db.execute(
+                select(DoctorCode).where(DoctorCode.code == code)
+            )).scalars().first()
+            if taken is not None:
+                await self.db.rollback()
+                raise HTTPException(status_code=400, detail=f"工号 {code} 已被其他账号占用")
+            self.db.add(DoctorCode(user_id=user.id, code=code, note="主工号"))
+
         await self.db.commit()
         await self.db.refresh(user)
         return user
@@ -188,4 +209,9 @@ class UserService:
         # 重置后重新要求首登改密（2026-08-13）：管理员知道这个临时密码，
         # 不强制改就等于管理员长期持有能以该医生名义签发病历的凭据。
         user.must_change_password = True
+        # 写密码水印（2026-08-13 第三轮审计修复）：重置密码的典型场景就是「账号
+        # 疑似泄露」，必须把已签发的会话一并踢掉，否则攻击者手里的 token 还能
+        # 用满 30 天，重置等于白做。
+        from datetime import datetime as _dt
+        user.password_changed_at = _dt.now().replace(microsecond=0)
         await self.db.commit()

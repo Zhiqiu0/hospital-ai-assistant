@@ -89,3 +89,38 @@ async def test_super_admin_can_reset_doctor_password(api):
                             json={"new_password": "newpass12345"})
     assert res.status_code == 200
     assert res.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_dept_admin_cannot_bulk_import_super_admin(api):
+    """批量开户不能绕过角色分级造超管（2026-08-13 第三轮审计修复）。
+
+    该端点原先只有 require_admin，而 require_admin 放行到 dept_admin——
+    低级管理员传 role="super_admin" 就能造出超管账号，且初始密码由他自己指定，
+    登录改密即接管全院，等于把 PR#89 已修的提权洞开了个新入口。
+    """
+    db, as_user = api
+    dept = await _mk_user(db, username="deptbulk", role="dept_admin")
+    async with as_user(dept) as ac:
+        res = await ac.post("/api/v1/admin/users/bulk-import", json={
+            "items": [{"real_name": "假超管", "codes": ["9999"], "role": "super_admin"}],
+        })
+    assert res.status_code == 403
+    # 确认没有偷偷落库
+    from sqlalchemy import select
+    leaked = (await db.execute(
+        select(User).where(User.username == "9999")
+    )).scalars().first()
+    assert leaked is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_rejects_invalid_role(api):
+    """脏角色字符串也进不去（assert_can_set_role 内部会校验 VALID_ROLES）。"""
+    db, as_user = api
+    superu = await _mk_user(db, username="superbulk", role="super_admin")
+    async with as_user(superu) as ac:
+        res = await ac.post("/api/v1/admin/users/bulk-import", json={
+            "items": [{"real_name": "脏角色", "codes": ["8888"], "role": "god_mode"}],
+        })
+    assert res.status_code == 400

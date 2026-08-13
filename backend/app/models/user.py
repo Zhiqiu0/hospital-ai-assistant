@@ -72,6 +72,10 @@ class User(Base, TimestampMixin):
     # 但未改密前 get_current_user 只放行改密端点，其余一律 403——避免"知道工号
     # 就能用初始密码登进别人账号"（工号规律性强、名单在院内流传，可枚举）。
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 密码最后修改时间（2026-08-13 第三轮审计修复）：改密/管理员重置后写入，
+    # get_current_user 拒绝签发时刻早于它的 token——否则「账号疑似泄露 → 信息科
+    # 重置密码」这个标准动作根本踢不掉攻击者已拿到的会话，而 token 有效期 30 天。
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     phone: Mapped[Optional[str]] = mapped_column(String(20))
     email: Mapped[Optional[str]] = mapped_column(String(100))
     # 软删除标记：禁用账号时设为 False，登录验证会拒绝 is_active=False 的用户

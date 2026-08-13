@@ -20,11 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.core.security import (
-    create_access_token,
-    verify_and_upgrade_password_async,
-    verify_password_async,
-)
+from app.core.security import create_access_token, verify_and_upgrade_password_async
 from app.models.user import User
 
 
@@ -111,11 +107,13 @@ class AuthService:
         user = result.scalar_one_or_none()
         if not user:
             return "账号不存在"
-        if not await verify_password_async(password, user.password_hash):
-            return "密码不正确"
         if not user.is_active:
             return "账号已被禁用"
-        return None
+        # 走到这里说明"用户存在且未停用"，而调用方是在 login() 已返回 None
+        # 之后才调本方法的——失败原因只可能是密码不对，直接下结论。
+        # 不再重跑一次 verify（2026-08-13 第三轮审计修正）：bcrypt 是纯 CPU，
+        # 原先每次失败登录要跑两遍，等于给未认证请求开了 2 倍 CPU 放大器。
+        return "密码不正确"
 
     async def check_username_exists(self, username: str) -> bool:
         """检查用户名是否已被使用（用于注册/创建用户时的唯一性校验）。"""

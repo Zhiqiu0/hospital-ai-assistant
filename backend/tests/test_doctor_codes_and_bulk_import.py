@@ -217,8 +217,32 @@ async def test_first_login_flow_blocked_then_unlocked(async_db, patched_audit_se
                                           "new_password": "MyOwn@2026"})
             assert changed.status_code == 200
 
-            unlocked = await ac.get("/api/v1/patients", headers=headers)
+            # 改密会写密码水印作废此前签发的所有 token（含医生自己手上这个），
+            # 所以端点换发了新 token，前端要替换掉旧的
+            new_token = changed.json()["access_token"]
+            assert new_token and new_token != token
+            new_headers = {"Authorization": f"Bearer {new_token}"}
+
+            unlocked = await ac.get("/api/v1/patients", headers=new_headers)
             assert unlocked.status_code == 200
+
+            # 安全性质：改密**之前**签发的会话失效——这正是「重置密码能踢掉
+            # 泄露会话」的依据。水印是秒级粒度（JWT 的 iat 只精确到秒），
+            # 所以用一个 60 秒前签发的 token 来验，对应现实中攻击者的会话；
+            # 与改密发生在同一秒的 token 会落在粒度内，属已知且可接受的取舍。
+            import time as _time
+
+            from jose import jwt as _jwt
+
+            from app.config import settings as _settings
+            stale_token = _jwt.encode(
+                {"sub": user.id, "role": user.role, "jti": "stale-test",
+                 "iat": int(_time.time()) - 60, "exp": int(_time.time()) + 3600},
+                _settings.secret_key, algorithm="HS256",
+            )
+            stale = await ac.get("/api/v1/patients",
+                                 headers={"Authorization": f"Bearer {stale_token}"})
+            assert stale.status_code == 401
     finally:
         app.dependency_overrides.clear()
 
@@ -283,3 +307,55 @@ async def test_new_password_uses_configured_rounds(async_db):
 
     h = await hash_password_async("Whatever@123")
     assert h.startswith(f"$2b${settings.bcrypt_rounds:02d}$")
+
+
+# ── 6. 第三轮审计修复的回归锁（2026-08-13）────────────────────────────────
+@pytest.mark.asyncio
+async def test_single_create_sets_must_change_password_and_code(async_db):
+    """后台单个建号：同样要求首登改密，且工号登记进 doctor_codes。
+
+    原先只有批量开户置 must_change_password、只有批量开户写 doctor_codes——
+    管理员手工建的账号既不强制改密，工号也不进映射表（HIS 优先查该表，
+    同一工号会因归属二义性把病历派错医生）。
+    """
+    from app.schemas.user import UserCreate
+    from app.services.user_service import UserService
+
+    user = await UserService(async_db).create(UserCreate(
+        username="single001", password="Init@123456", real_name="单建医生",
+        role="doctor", employee_no="SC001",
+    ))
+    assert user.must_change_password is True
+    codes = (await async_db.execute(
+        select(DoctorCode).where(DoctorCode.user_id == user.id)
+    )).scalars().all()
+    assert {c.code for c in codes} == {"SC001"}
+
+
+@pytest.mark.asyncio
+async def test_single_create_rejects_taken_employee_no(async_db):
+    """工号已被别人占用时明确报错，不再静默产生二义性归属。"""
+    from fastapi import HTTPException
+
+    from app.schemas.user import UserCreate
+    from app.services.user_service import UserService
+
+    svc = UserService(async_db)
+    await svc.create(UserCreate(username="owner01", password="Init@123456",
+                                real_name="占号医生", role="doctor", employee_no="SC002"))
+    with pytest.raises(HTTPException) as exc:
+        await svc.create(UserCreate(username="taker01", password="Init@123456",
+                                    real_name="抢号医生", role="doctor", employee_no="SC002"))
+    assert exc.value.status_code == 400
+    assert "已被其他账号占用" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_rejects_short_initial_password(admin_api):
+    """初始密码不能低于 6 位——原先是裸 str，空串就能批量建出空密码账号。"""
+    _db, ac = admin_api
+    res = await ac.post("/api/v1/admin/users/bulk-import", json={
+        "items": [{"real_name": "弱密码", "codes": ["WEAK1"]}],
+        "initial_password": "",
+    })
+    assert res.status_code == 422
