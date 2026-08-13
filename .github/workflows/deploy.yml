@@ -189,6 +189,16 @@ jobs:
               echo "[deploy] crontab 已配置：$BACKUP_CRON"
             fi
 
+            # ── 自动配置 crontab：每天 00:05 轮转应用日志（2026-08-13 审计修复配套）
+            # 应用侧已改 WatchedFileHandler（多进程安全），轮转必须由**单进程**做，
+            # 否则两个 uvicorn worker 各自 rename 会竞态丢日志（error.log 是排障入口）。
+            LOG_ROTATE_CRON="5 0 * * * /app/backend/scripts/rotate_logs.sh >> /var/log/mediscribe-backup.log 2>&1"
+            if ! crontab -l 2>/dev/null | grep -qF "scripts/rotate_logs.sh"; then
+              echo "[deploy] 配置每日日志轮转 crontab..."
+              (crontab -l 2>/dev/null; echo "$LOG_ROTATE_CRON") | crontab -
+              echo "[deploy] crontab 已配置：$LOG_ROTATE_CRON"
+            fi
+
             # ── 自动配置 crontab：每天凌晨 4 点清理 30 天前的语音文件
             # 转写文本与结构化病历永久保留，只删原始 webm（详见 cleanup_voice.py）
             # 4 点跑避开 3 点备份高峰；保留 30 天满足"近一个月可回溯"

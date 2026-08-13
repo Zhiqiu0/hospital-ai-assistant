@@ -82,11 +82,16 @@ class PatientProfileMixin:
         值未实际改变（前后相同）的字段不更新元数据，避免医生只是查看时也"被算确认"——
         想主动确认走 confirm_profile_field 接口。
         """
+        # 行锁（2026-08-13 第二轮审计修复）：档案是「读 JSONB → Python 合并 →
+        # 整体写回」，两个医生同时改同一患者的不同字段时，后提交者用自己读到的
+        # 旧快照覆盖，先提交的那次修改被静默丢弃——过敏史这种字段被回退是临床
+        # 风险。加 with_for_update 把同一患者的档案写入串行化（读-改-写全程持锁
+        # 到事务提交）。跨患者互不影响，不构成吞吐瓶颈。
         result = await self.db.execute(
             select(Patient).where(
                 Patient.id == patient_id,
                 Patient.is_deleted.is_(False),
-            )
+            ).with_for_update()
         )
         patient = result.scalar_one_or_none()
         if not patient:
@@ -134,11 +139,13 @@ class PatientProfileMixin:
         if field not in PROFILE_FIELDS:
             raise HTTPException(status_code=400, detail=f"不支持的档案字段: {field}")
 
+        # 同 update_profile：确认动作也是读-改-写整份 JSONB，需行锁串行化，
+        # 否则与并发的档案修改互相覆盖（2026-08-13 第二轮审计修复）
         result = await self.db.execute(
             select(Patient).where(
                 Patient.id == patient_id,
                 Patient.is_deleted.is_(False),
-            )
+            ).with_for_update()
         )
         patient = result.scalar_one_or_none()
         if not patient:

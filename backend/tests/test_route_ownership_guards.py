@@ -199,3 +199,25 @@ async def test_profile_update_writes_audit(client_doc_me, async_db, patched_audi
     assert rows[0].resource_id == "pat-own"
     # 只记字段名不记内容（PHI 不进审计明细）
     assert "青霉素" not in (rows[0].detail or "")
+
+
+@pytest.mark.asyncio
+async def test_profile_concurrent_update_no_lost_field(client_doc_me, async_db):
+    """并发改档案不同字段不得互相覆盖（行锁回归）。
+
+    档案是「读整份 JSONB → Python 合并 → 整体写回」，无锁时后提交者会用自己
+    读到的旧快照覆盖先提交者的修改——过敏史被静默回退是临床风险。
+    单测在 SQLite 上串行执行，此处锁住的是「两次先后写入各自字段都留存」的契约
+    （真并发由 with_for_update 在 PG 保证）。
+    """
+    r1 = await client_doc_me.put(
+        "/api/v1/patients/pat-own/profile", json={"allergy_history": "青霉素过敏"}
+    )
+    r2 = await client_doc_me.put(
+        "/api/v1/patients/pat-own/profile", json={"past_history": "高血压 10 年"}
+    )
+    assert r1.status_code == 200 and r2.status_code == 200
+    got = (await client_doc_me.get("/api/v1/patients/pat-own/profile")).json()
+    # 两个字段都在——后写的没把先写的冲掉
+    assert got.get("allergy_history") == "青霉素过敏"
+    assert got.get("past_history") == "高血压 10 年"
