@@ -26,6 +26,7 @@ import logging
 
 from app.database import AsyncSessionLocal
 from app.models.audit_log import AuditLog
+from app.core.request_context import get_context_client_ip
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,8 @@ async def log_action(
         resource_type: 操作对象类型，如 "encounter"、"medical_record"、"user" 等。
         resource_id:   操作对象的 UUID，与 resource_type 合用可定位具体记录。
         detail:        操作详情的自由文本描述（如错误原因、关键参数摘要）。
-        ip_address:    请求来源 IP（从 request.client.host 获取），用于安全审计。
+        ip_address:    请求来源 IP，用于安全审计。不传则自动从请求上下文取
+                       （中间件在每个请求开始时按 XFF → X-Real-IP → socket 写入）。
         status:        操作结果："ok" 表示成功，"fail" 表示失败（如登录失败）。
     """
     async with AsyncSessionLocal() as db:
@@ -66,7 +68,9 @@ async def log_action(
             resource_type=resource_type,
             resource_id=resource_id,
             detail=detail,
-            ip_address=ip_address,
+            # 未显式传 IP 时从请求上下文兜底（2026-08-13 第三轮审计修复）：
+            # 原先只有登录端点手工传，PHI 查阅那批审计的来源 IP 全是空的。
+            ip_address=ip_address or get_context_client_ip(),
             status=status,
         )
         db.add(entry)

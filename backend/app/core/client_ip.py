@@ -43,3 +43,33 @@ def get_client_ip(request: Request) -> Optional[str]:
         return request.client.host
 
     return None
+
+
+def get_client_ip_from_scope(scope) -> Optional[str]:
+    """同 get_client_ip，但直接吃 ASGI scope。
+
+    中间件层拿不到 FastAPI 的 Request 对象（那是路由层才构造的），而来源 IP
+    要在请求最开始就写进上下文供审计使用，故提供这个 scope 版本。
+    解析顺序与 get_client_ip 完全一致：XFF → X-Real-IP → socket 兜底。
+    """
+    headers = {}
+    for name, value in scope.get("headers", []) or []:
+        key = name.decode("latin-1", errors="replace").lower()
+        if key in ("x-forwarded-for", "x-real-ip") and key not in headers:
+            headers[key] = value.decode("latin-1", errors="replace")
+
+    xff = headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+
+    real_ip = headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+
+    client = scope.get("client")
+    if client:
+        return client[0]
+
+    return None

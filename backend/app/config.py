@@ -15,6 +15,7 @@
   print(settings.database_url)
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -39,7 +40,10 @@ class Settings(BaseSettings):
     # 其他接口 p95 从 14ms 劣化到 463ms——早高峰全院同时上线会拖垮整机。
     # rounds=10 是 OWASP 密码存储指南的推荐下限，单次约 1/4 耗时；配合登录限流
     # （同用户名 10次/10分钟，在线爆破本就走不通），这个取舍是划算的。
-    bcrypt_rounds: int = 10
+    # 夹在 [10, 14]：低于 10 弱于 OWASP 推荐下限；高于 14 在 2 核机上单次要数秒，
+    # 早高峰会把全院登录拖垮。原先是裸 int，写错值 passlib 会静默夹取或直接慢到
+    # 不可用，且没有任何提示（2026-08-13 第三轮审计修复）。
+    bcrypt_rounds: int = Field(default=10, ge=10, le=14)
 
     # ── AI 模型：DeepSeek（病历生成、质控、润色等核心功能）────────────────────
     deepseek_api_key: str = ""                              # DeepSeek API Key

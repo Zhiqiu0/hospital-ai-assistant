@@ -15,7 +15,9 @@
   4. dry_run=True 只校验不落库，导入前可先预览。
 """
 
+from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password_async
@@ -49,7 +51,11 @@ async def bulk_import_doctors(
     batch_usernames: set[str] = set()
 
     for item in data.items:
-        codes = [c.strip() for c in item.codes if c and c.strip()]
+        # 行内去重（2026-08-13 第三轮审计修复）：门诊/住院工号填成同一个是 Excel
+        # 复制粘贴的常见手误，原先会给同一账号连插两条相同 code，撞唯一索引后
+        # IntegrityError 未捕获 → 500，整个事务回滚，前面上百条全丢、报表也拿不到。
+        # dict.fromkeys 去重同时保持顺序（第一个仍是主工号）。
+        codes = list(dict.fromkeys(c.strip() for c in item.codes if c and c.strip()))
         username = (item.username or (codes[0] if codes else "")).strip()
         entry = BulkImportResultItem(
             real_name=item.real_name, username=username, codes=codes, status="error"
@@ -66,8 +72,27 @@ async def bulk_import_doctors(
             await db.execute(select(User).where(User.username == username))
         ).scalars().first()
         if exists is not None or username in batch_usernames:
+            # 账号已存在时**补挂缺失的工号**（2026-08-13 第三轮审计修复）。
+            # 原先整条跳过，而全系统只有本函数会写 doctor_codes——联调期手工建的
+            # 试点账号永远补不上「本人住院/助理」那几个工号，HIS 用它们推接诊会
+            # 直接 ack 40007 接诊进不来，正是本功能要解决的原始故障。
+            # 只做"补缺"：不动账号本身、不碰密码、不抢别人名下的工号。
+            added: list[str] = []
+            if exists is not None and not data.dry_run:
+                for code in codes:
+                    taken = (await db.execute(
+                        select(DoctorCode).where(DoctorCode.code == code)
+                    )).scalars().first()
+                    if taken is None:
+                        db.add(DoctorCode(user_id=exists.id, code=code, note="补挂工号"))
+                        added.append(code)
+                        batch_codes.add(code)
             entry.status = "skipped_exists"
-            entry.message = "该用户名已存在，未改动"
+            entry.message = (
+                f"账号已存在（未改动），补挂工号：{','.join(added)}" if added
+                else "该用户名已存在，未改动"
+            )
+            batch_usernames.add(username)
             skipped += 1
             results.append(entry)
             continue
@@ -123,7 +148,17 @@ async def bulk_import_doctors(
         results.append(entry)
 
     if not data.dry_run:
-        await db.commit()
+        # 兜底捕获（2026-08-13 第三轮审计修复）：即便上面逐条查过重，仍可能因
+        # 并发导入等原因在 commit 时撞约束。原先未捕获会 500，管理员既看不到
+        # 逐条报表、也不知道是哪一行的问题。这里转成可读错误。
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="导入未生效：存在冲突的用户名或工号，请核对名单后重试",
+            ) from exc
         await log_action(
             action="bulk_import_users",
             user_id=current_user.id,
