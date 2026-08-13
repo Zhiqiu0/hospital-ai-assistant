@@ -56,16 +56,16 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
         但只在确认非爆破（已通过限速）后才向前端暴露具体原因
     """
     # 按用户名维度限速：防爆破单个账号，不影响同网段其他医生。
-    # 只计失败（2026-08-13）：先 peek 判超限，失败才 hit，成功即 reset——
-    # 限流要挡的是"猜密码"，猜对的那次不该占额度，否则医生频繁登录会被自己锁住。
+    # 原子计数（每次尝试都算）+ 成功后清零：既保住 INCR 的原子性（并发爆破
+    # 仍被卡死在阈值），又让正常医生不会因频繁登录把自己锁住——成功那次的计数
+    # 刚 +1 就被下面的 reset 清回 0。
     limit_key = f"login:{request.username}"
-    await login_limiter.peek(http_request, key_override=limit_key)
+    await login_limiter.check(http_request, key_override=limit_key)
 
     service = AuthService(db)
     result = await service.login(request.username, request.password)
 
     if not result:
-        await login_limiter.hit(http_request, key_override=limit_key)
         detail = await service.get_login_error(request.username, request.password)
         await log_action(
             action="login",

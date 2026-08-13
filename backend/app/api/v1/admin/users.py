@@ -148,4 +148,10 @@ async def bulk_import_doctors(
     current_user=Depends(require_admin),
 ):
     """批量开户：按医院人员名单一次性建医生账号（详见 user_bulk_import 服务）。"""
+    # 角色分级守卫（2026-08-13 第三轮审计修复）：本端点原先只有 require_admin，
+    # 而 require_admin 放行到 dept_admin——低级管理员传 role="super_admin" 就能
+    # 造出超管账号，且初始密码是他自己指定的，登录改密即接管全院。
+    # 这等于把 PR#89 已修的提权洞开了个新入口。逐条校验，与 create_user 同一守卫。
+    for item in data.items:
+        assert_can_set_role(current_user, item.role)
     return await bulk_import_doctors_service(db, data, current_user)

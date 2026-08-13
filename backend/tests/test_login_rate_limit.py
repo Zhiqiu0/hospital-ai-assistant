@@ -11,6 +11,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from datetime import timedelta
+
 from app.core.rate_limit import login_limiter
 from app.core.security import hash_password
 from app.database import get_db
@@ -84,3 +86,40 @@ async def test_success_resets_failure_counter(api):
     # 若没清零，这里第一次失败就会撞上阈值
     for _ in range(login_limiter.max_calls - 1):
         assert (await _login(api, "WrongPassword")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_concurrent_checks_cannot_exceed_threshold():
+    """并发计数不能突破阈值（2026-08-13 第三轮审计修复的回归锁）。
+
+    曾经为了「只计失败」把 check 拆成 peek(只读判超限) + hit(事后计数)，
+    丢掉了 INCR 的原子性：N 个并发请求同时 peek 到"未超限"然后一起放行，
+    阈值可按并发数成倍绕过。现在回到原子 check + 登录成功后 reset。
+
+    直接测限流器本身而不走登录接口：并发打同一个 HTTP 端点会让测试里共享的
+    AsyncSession 并发使用而报错，那是测试夹具的限制，与被测性质无关。
+    """
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.core.rate_limit import RateLimiter
+
+    limiter = RateLimiter(max_calls=10, window=timedelta(minutes=10), name="concur_test")
+    key = "concur:case1"
+    await limiter.reset(key)
+
+    async def one():
+        try:
+            await limiter.check(None, key_override=key)
+            return True          # 放行
+        except HTTPException:
+            return False         # 被拦
+
+    passed = sum(await asyncio.gather(*[one() for _ in range(limiter.max_calls * 3)]))
+    await limiter.reset(key)
+
+    assert passed <= limiter.max_calls, (
+        f"并发下放行了 {passed} 次，超过阈值 {limiter.max_calls}——原子性又丢了"
+    )
+    assert passed > 0, "一次都没放行，限流器坏了"

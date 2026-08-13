@@ -11,8 +11,8 @@
   AI 滥用这种粗粒度防护够用。
 
 预置实例：
-  login_limiter : 登录接口，按用户名限速，10次失败/10分钟，防密码爆破
-                  （只计失败，成功即清零——见 peek/hit/reset）
+  login_limiter : 登录接口，按用户名限速，10次/10分钟，防密码爆破
+                  （原子计数 + 登录成功后 reset 清零，见 check/reset）
   ai_limiter    : AI 接口，按 IP 限速，30次/分钟，防滥用
 """
 
@@ -79,42 +79,13 @@ class RateLimiter:
         # ② Redis 不可用，降级到本进程内存版（单容器场景）
         self._check_in_memory(key)
 
-    # ── 只计失败的三件套（2026-08-13）─────────────────────────────────────────
-    # 背景：check() 在鉴权**之前**无条件计数，成功登录也占额度——医生 10 分钟内
-    # 成功登录超过 10 次，第 11 次密码正确也被 429。而限流真正要挡的是"猜密码"，
-    # 猜对了的那次不该算。拆成 peek/hit/reset 后：只有失败才计数、成功即清零，
-    # 正常医生永远不会被自己锁住，爆破仍然被同一个阈值卡死——两边都更好。
-    async def peek(self, request: Request, extra: str = "", key_override: str = ""):
-        """只判断是否已超限（不计数），超限抛 429。"""
-        key = key_override if key_override else self._get_key(request, extra)
-        window_seconds = int(self.window.total_seconds())
-
-        raw = await redis_cache.get_bytes(f"ratelimit:{self.name}:{key}")
-        if raw is not None:
-            try:
-                if int(raw) >= self.max_calls:
-                    self._raise_429(window_seconds)
-            except ValueError:
-                pass  # 值被写坏就当没限，宁可放行也不误锁医生
-            return
-
-        # Redis 不可用或该 key 尚无记录 → 查内存兜底窗口
-        now = datetime.now()
-        cutoff = now - self.window
-        self._store[key] = [t for t in self._store[key] if t > cutoff]
-        if len(self._store[key]) >= self.max_calls:
-            self._raise_429(window_seconds)
-
-    async def hit(self, request: Request, extra: str = "", key_override: str = ""):
-        """记一次（用于"失败才计数"的场景），不抛 429——判超限交给 peek。"""
-        key = key_override if key_override else self._get_key(request, extra)
-        window_seconds = int(self.window.total_seconds())
-        count = await redis_cache.incr_with_ttl(
-            f"ratelimit:{self.name}:{key}", window_seconds=window_seconds
-        )
-        if count is None:
-            self._store[key].append(datetime.now())
-
+    # ── 成功即清零（2026-08-13 第三轮审计修正）─────────────────────────────
+    # 原先为了"只计失败"把 check 拆成了 peek(只读判超限) + hit(事后计数)，
+    # **丢掉了 INCR 的原子性**：N 个并发请求会同时 peek 到"未超限"然后一起放行，
+    # 阈值可按并发数成倍绕过——这是把爆破防护换成了可用性，得不偿失。
+    # 现在回到原子 check（每次尝试都 INCR 后判断），只额外提供 reset：
+    # 登录成功后清零。效果等价——成功者计数刚+1 就被清回 0，永远攒不到阈值；
+    # 而并发失败尝试仍被原子计数卡死在阈值上。
     async def reset(self, key_override: str):
         """清零（如登录成功、管理员重置密码后解锁该用户名）。"""
         await redis_cache.delete(f"ratelimit:{self.name}:{key_override}")
