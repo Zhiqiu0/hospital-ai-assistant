@@ -45,8 +45,24 @@ interface RecordState {
   /** 最后一次 auto-save 成功时间戳（毫秒），0=从未保存。状态条据此显示"刚刚保存"等。 */
   recordSavedAt: number
 
+  /**
+   * 本份正文所属的接诊 ID（2026-08-13 第五轮审计修复）。
+   *
+   * 为什么必须有：本 store 与 activeEncounterStore 是**两个独立的 localStorage 槽**，
+   * 各自只有一个位置。医生开两个标签页分别看甲、乙两位患者时，接诊指针会被后开的
+   * 那个覆盖成乙，而本 store 里可能还留着甲的病历正文；刷新后两个槽各自还原，
+   * 界面就拼出「乙患者 + 甲患者的病历」，再被 auto-save 原样写进乙的接诊——
+   * 病历写到错误患者身上是医疗事故级问题。
+   * 打上归属标记后，还原时对不上就丢弃正文（宁可让医生重新拉取，也不能张冠李戴）。
+   */
+  ownerEncounterId: string | null
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
+  /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
+  bindOwner: (encounterId: string | null) => void
+  /** 校验归属：与当前接诊不符则丢弃正文并返回 false（刷新还原后调用） */
+  assertOwner: (encounterId: string | null) => boolean
   setRecordType: (type: string) => void
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
@@ -61,9 +77,10 @@ interface RecordState {
 
 export const useRecordStore = create<RecordState>()(
   persist(
-    set => ({
+    (set, get) => ({
       recordContent: '',
       recordType: 'outpatient',
+      ownerEncounterId: null,
 
       isGenerating: false,
       isPolishing: false,
@@ -96,10 +113,26 @@ export const useRecordStore = create<RecordState>()(
           recordContent: state.recordContent ? state.recordContent + '\n\n' + text : text,
         })),
 
+      bindOwner: encounterId => set({ ownerEncounterId: encounterId }),
+
+      assertOwner: encounterId => {
+        const owner = get().ownerEncounterId
+        // 归属为空 = 本次改动之前留下的旧数据，无从判断归谁，一律丢弃更安全
+        if (!encounterId || owner !== encounterId) {
+          if (get().recordContent) {
+            set({ recordContent: '', isFinal: false, finalizedAt: null, recordSavedAt: 0 })
+          }
+          set({ ownerEncounterId: encounterId })
+          return false
+        }
+        return true
+      },
+
       reset: () =>
         set({
           recordContent: '',
           recordType: 'outpatient',
+          ownerEncounterId: null,
           isGenerating: false,
           isPolishing: false,
           pendingGenerate: false,
@@ -114,6 +147,7 @@ export const useRecordStore = create<RecordState>()(
       partialize: state => ({
         recordContent: state.recordContent,
         recordType: state.recordType,
+        ownerEncounterId: state.ownerEncounterId,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,

@@ -100,6 +100,9 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
           // 高亮残留误导医生（2026-05-24 治本路线）
           useAiWrittenFieldsStore.getState().clear()
         }
+        // 病历正文归属跟着接诊走（2026-08-13 第五轮审计修复）：正文与接诊指针是
+        // 两个独立的持久化槽，不绑定归属就会在多标签页/刷新后拼出"甲的病历配乙的患者"
+        useRecordStore.getState().bindOwner(input.encounterId)
         set({
           patientId: input.patientId,
           encounterId: input.encounterId,
