@@ -55,13 +55,17 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
       - 失败时调用 get_login_error 获取具体错误描述（账号不存在/密码错误/账号停用），
         但只在确认非爆破（已通过限速）后才向前端暴露具体原因
     """
-    # 按用户名维度限速：防爆破单个账号，不影响同网段其他医生
-    await login_limiter.check(http_request, key_override=f"login:{request.username}")
+    # 按用户名维度限速：防爆破单个账号，不影响同网段其他医生。
+    # 只计失败（2026-08-13）：先 peek 判超限，失败才 hit，成功即 reset——
+    # 限流要挡的是"猜密码"，猜对的那次不该占额度，否则医生频繁登录会被自己锁住。
+    limit_key = f"login:{request.username}"
+    await login_limiter.peek(http_request, key_override=limit_key)
 
     service = AuthService(db)
     result = await service.login(request.username, request.password)
 
     if not result:
+        await login_limiter.hit(http_request, key_override=limit_key)
         detail = await service.get_login_error(request.username, request.password)
         await log_action(
             action="login",
@@ -77,7 +81,11 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
             detail=detail or "登录失败",
         )
 
-    # 登录成功：记录审计日志（user_id 从 result 中取）
+    # 登录成功：清零该用户名的失败计数——猜对的这次不占额度，
+    # 也让"之前手滑输错几次、现在输对了"的医生立刻恢复满额度
+    await login_limiter.reset(limit_key)
+
+    # 记录审计日志（user_id 从 result 中取）
     await log_action(
         action="login",
         user_id=result.get("user", {}).get("id") if isinstance(result, dict) else None,

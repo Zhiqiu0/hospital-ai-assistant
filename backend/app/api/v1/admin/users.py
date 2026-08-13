@@ -134,6 +134,10 @@ async def reset_user_password(
     # 分级守卫：不能给等级 ≥ 自己的账号改密（防夺取超管账号）
     await assert_can_manage_target(db, current_user, target)
     await service.reset_password(user_id, data.new_password)
+    # 解锁登录限流（2026-08-13）：医生真忘了密码、连输失败被锁 10 分钟，找信息科
+    # 重置后那把锁还在，拿着新密码照样 429——重置的意义就没了。这里一并清零。
+    from app.core.rate_limit import login_limiter
+    await login_limiter.reset(f"login:{target.username}")
     return {"ok": True}
 
 
