@@ -391,3 +391,63 @@ async def test_bulk_import_backfills_codes_for_existing_account(admin_api):
 
     await db.refresh(user)
     assert user.password_hash == original_hash  # 账号本身没被改动
+
+
+# ── 7. 第四轮审计修复的回归锁（2026-08-13）────────────────────────────────
+@pytest.mark.asyncio
+async def test_dry_run_matches_real_run_for_backfill(admin_api):
+    """预检与真跑对同一份名单必须给出一致判定。
+
+    上一版补挂逻辑被 `not data.dry_run` 整段挡住，预检恒显示"未改动"，
+    而真跑会补挂并占用工号——同批后面用同一工号的行就从 created 变成
+    code_conflict，预检与真跑结果对不上。dry_run 的契约就是"先看清再落库"。
+    """
+    db, ac = admin_api
+    await ac.post("/api/v1/admin/users/bulk-import", json={
+        "items": [{"real_name": "先建", "codes": ["DR001"]}],
+    })
+
+    payload = {"items": [
+        {"real_name": "先建", "codes": ["DR001", "DR002"]},          # 补挂 DR002
+        {"real_name": "后来", "username": "later", "codes": ["DR002"]},  # 与补挂撞号
+    ]}
+    preview = (await ac.post("/api/v1/admin/users/bulk-import",
+                             json={**payload, "dry_run": True})).json()
+    real = (await ac.post("/api/v1/admin/users/bulk-import", json=payload)).json()
+
+    assert [i["status"] for i in preview["items"]] == [i["status"] for i in real["items"]], (
+        f"预检 {[i['status'] for i in preview['items']]} 与真跑 "
+        f"{[i['status'] for i in real['items']]} 判定不一致"
+    )
+    # 补挂确实发生了，且第二行因撞号被拦
+    assert real["items"][0]["status"] == "skipped_exists"
+    assert "DR002" in real["items"][0]["message"]
+    assert real["items"][1]["status"] == "code_conflict"
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_rejects_overlong_fields(admin_api):
+    """超长姓名/工号在 schema 层就被拦住，不走到数据库抛 DataError。"""
+    _db, ac = admin_api
+    res = await ac.post("/api/v1/admin/users/bulk-import", json={
+        "items": [{"real_name": "名" * 60, "codes": ["X" * 60]}],
+    })
+    assert res.status_code == 422
+
+
+def test_client_ip_sanitize_rejects_forged_and_overlong():
+    """来源 IP 净化：超长/非法值一律丢弃，合法 v4/v6 保留。
+
+    audit_logs.ip_address 是 VARCHAR(50)，超长值会让整条审计写入失败并被
+    静默吞掉——放开归属校验后审计是唯一追责手段，等于给了个一键关闭开关。
+    垃圾值也不能存：可伪造的错误来源 IP 比留空更糟，追责时会指向不存在的机器。
+    """
+    from app.core.client_ip import _sanitize_ip
+
+    assert _sanitize_ip("A" * 80) is None          # 超长
+    assert _sanitize_ip("A" * 45) is None          # 长度合法但不是 IP
+    assert _sanitize_ip("<script>") is None        # 脏值
+    assert _sanitize_ip("999.999.1.1") is None     # 非法 v4
+    assert _sanitize_ip(" 180.158.18.44 ") == "180.158.18.44"
+    assert _sanitize_ip("2001:db8::1") == "2001:db8::1"
+    assert _sanitize_ip("fe80::1%eth0") == "fe80::1%eth0"   # 带 zone id 的 v6
