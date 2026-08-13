@@ -45,16 +45,23 @@ export function useEnsureSnapshotHydrated() {
       return
     }
     // 冷启动：拉 snapshot 回填 patient + profile + inquiry + record + qc + aiSuggestion
+    const requestedFor = currentEncounterId
     hydratedForRef.current = currentEncounterId
     api
       .get(`/encounters/${currentEncounterId}/workspace`)
       .then(snapshot => {
+        // 迟到响应守卫（2026-08-13 第二轮审计修复）：请求在途时医生可能已经
+        // 切到别的接诊（甚至新建了接诊），此时 applySnapshotResult 会把整个
+        // 工作台——患者指针 + 问诊 + 病历正文 + 质控 —— 整体覆盖回上一个患者，
+        // 当前患者已录入的内容被冲掉且随后被 auto-save 落库（跨患者数据污染）。
+        // 只有当前指针仍是发起请求的那条接诊时才应用。
+        if (useActiveEncounterStore.getState().encounterId !== requestedFor) return
         // 后端返回的形状已被 SnapshotResult 描述（patient + inquiry + active_record + ai_suggestions 等）
         if (snapshot) applySnapshotResult(snapshot as SnapshotResult)
       })
       .catch(() => {
         // 失败不报警；下次刷新还会重试
-        hydratedForRef.current = null
+        if (hydratedForRef.current === requestedFor) hydratedForRef.current = null
       })
   }, [currentEncounterId, currentPatientId])
 }

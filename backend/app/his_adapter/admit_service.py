@@ -141,8 +141,10 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     await db.commit()
     await db.refresh(encounter)
     patient = await db.get(Patient, patient_id)
-    logger.info("his_admit.created: visit_id=%s encounter=%s doctor=%s patient=%s",
-                payload.visit_id, encounter.id, doctor.username, payload.patient_name)
+    # 日志不落患者姓名（2026-08-13 第二轮审计修复：PHI 不进日志文件）——
+    # 排障靠 patient_id/visit_id 关联查库即可，姓名对定位问题没有增量价值。
+    logger.info("his_admit.created: visit_id=%s encounter=%s doctor=%s patient_id=%s",
+                payload.visit_id, encounter.id, doctor.username, patient_id)
     return AdmitResult(
         encounter_id=encounter.id, patient_id=patient_id,
         patient_name=patient.name if patient else payload.patient_name,

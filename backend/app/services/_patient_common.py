@@ -42,6 +42,30 @@ class PatientCommonMixin:
                 active.add(pid)
         return active, ever
 
+    def _to_list_item(
+        self,
+        patient: Patient,
+        has_active_inpatient: bool = False,
+        has_any_inpatient_history: bool = False,
+    ) -> dict:
+        """列表项：只含检索必需字段，**不含病案首页级敏感 PHI**。
+
+        2026-08-13 第二轮审计修复：列表原先复用 _to_response 把身份证/住址/
+        紧急联系人等全量吐出（还进了 Redis 缓存），任何登录医生翻页即可导出
+        全院身份信息库。敏感字段只在详情端点返回（有归属校验 + 审计留痕）。
+        """
+        return {
+            "id": patient.id,
+            "patient_no": patient.patient_no,
+            "name": patient.name,
+            "gender": patient.gender,
+            "age": calc_age(patient.birth_date),
+            "phone": patient.phone,          # 同名消歧刚需，且后台编辑表单要回显
+            "birth_date": patient.birth_date,
+            "has_active_inpatient": has_active_inpatient,
+            "has_any_inpatient_history": has_any_inpatient_history,
+        }
+
     def _to_response(
         self,
         patient: Patient,

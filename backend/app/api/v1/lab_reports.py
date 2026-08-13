@@ -91,5 +91,14 @@ async def delete_lab_report(
         raise HTTPException(404, "报告不存在")
     if report.encounter_id:
         await assert_encounter_access(db, report.encounter_id, current_user)
+    else:
+        # 孤儿报告（未挂接诊）原先直接放行删除（2026-08-13 第二轮审计修复）：
+        # 任何登录医生可删任意孤儿报告，且删除不可撤销。收紧为仅上传者本人或
+        # 管理员——普通医生删不到别人传的报告。
+        from app.core.authz import ADMIN_ROLES
+        owner_id = getattr(report, "uploaded_by", None) or getattr(report, "doctor_id", None)
+        is_admin = getattr(current_user, "role", "") in ADMIN_ROLES
+        if not is_admin and (owner_id is None or str(owner_id) != str(current_user.id)):
+            raise HTTPException(403, "无权删除该检验报告（非本人上传）")
     await lab_reports_service.delete_report(db, report)
     return {"ok": True}

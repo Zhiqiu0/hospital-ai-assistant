@@ -167,7 +167,9 @@ class PatientQueryMixin:
         data = {
             "total": total,
             "items": [
-                self._to_response(
+                # 用精简项而非完整响应：敏感 PHI 不进列表、不进 Redis 缓存
+                # （2026-08-13 第二轮审计修复，详见 _to_list_item 说明）
+                self._to_list_item(
                     p,
                     has_active_inpatient=p.id in active_set,
                     has_any_inpatient_history=p.id in ever_set,

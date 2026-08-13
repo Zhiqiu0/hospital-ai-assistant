@@ -100,15 +100,37 @@ class PatientUpdate(BaseModel):
     blood_type: Optional[str] = None
 
 
+class PatientListItem(BaseModel):
+    """患者列表项——**只含检索必需字段，不含病案首页级敏感 PHI**。
+
+    2026-08-13 第二轮审计修复：列表端点原先复用 PatientResponse，把身份证/住址/
+    紧急联系人等完整 PHI 批量吐出，且无归属校验无审计——任何登录医生翻页即可
+    导出全院患者身份信息库。现在敏感字段只在详情端点 GET /patients/{id} 返回
+    （那里有 assert_patient_access 归属校验 + view_patient 审计留痕）。
+
+    保留 phone 的理由：同名患者检索消歧刚需，且管理后台患者页的编辑表单要回显。
+    """
+
+    id: str
+    patient_no: Optional[str] = None
+    name: str
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    phone: Phone = None
+    birth_date: Optional[datetime.date] = None
+    has_active_inpatient: Optional[bool] = None
+    has_any_inpatient_history: Optional[bool] = None
+
+
 class PatientListResponse(BaseModel):
     """患者列表分页响应。
 
     total : 符合条件的总记录数（用于前端计算总页数）
-    items : 当前页的患者数据
+    items : 当前页的患者数据（精简项，敏感 PHI 见 PatientListItem 说明）
     """
 
     total: int
-    items: list[PatientResponse]
+    items: list[PatientListItem]
 
 
 class ProfileFieldMeta(BaseModel):

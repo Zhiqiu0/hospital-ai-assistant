@@ -48,7 +48,23 @@ async def list_patients(
 
     require_completed=True 时为复诊弹窗专用语义：
     过滤掉「档案在但从未真正完成过任何接诊」的患者，避免医生把这类患者误当复诊接。
+
+    隐私边界（2026-08-13 第二轮审计修复）：返回 PatientListItem 精简项，
+    **不含身份证/住址/紧急联系人等病案首页级 PHI**——那些只在
+    GET /patients/{id} 返回（带 assert_patient_access 归属校验 + view_patient 审计）。
     """
+    # 空关键词=枚举全院患者，属"批量浏览"而非临床检索，留痕便于事后追溯
+    # （按姓名检索是高频常规操作，逐次审计会淹没日志，故只审计枚举行为）
+    if not keyword.strip():
+        from app.services.audit_service import log_action
+        await log_action(
+            action="browse_patients",
+            user_id=current_user.id,
+            user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+            user_role=getattr(current_user, "role", None),
+            resource_type="patient_list",
+            detail=f"浏览患者列表（无关键词，第 {page} 页，每页 {page_size}）",
+        )
     service = PatientService(db)
     return await service.search(keyword, page, page_size, require_completed=require_completed)
 

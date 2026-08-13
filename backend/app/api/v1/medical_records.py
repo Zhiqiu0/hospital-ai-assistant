@@ -151,6 +151,11 @@ async def create_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # 归属校验（2026-08-13 第二轮审计修复）：本端点原先零校验，任何登录医生
+    # 都能在他人接诊下凭空建病历（后续版本写入走 record_id 链路，前置 record
+    # 一旦被别人建出，归属判定的起点就被污染了）。与 quick_save / auto_save_draft
+    # 的既有守卫口径对齐。
+    await assert_encounter_access(db, data.encounter_id, current_user)
     service = MedicalRecordService(db)
     return await service.create(data)
 
