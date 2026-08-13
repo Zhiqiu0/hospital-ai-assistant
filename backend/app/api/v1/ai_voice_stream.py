@@ -55,6 +55,18 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
         await websocket.close(code=1008, reason=f"auth failed: {exc}")
         return
 
+    # 首登强改密同样在这里拦（2026-08-13）：本端点不走 get_current_user 依赖，
+    # 只验签不查库，若不补这一刀，未改密的账号能绕开全局硬拦连上语音流。
+    # 一次连接查一次库，不在消息热路径上，代价可忽略。
+    from app.database import AsyncSessionLocal
+    from app.models.user import User
+
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+    if user is None or not user.is_active or user.must_change_password:
+        await websocket.close(code=1008, reason="account not ready")
+        return
+
     # 2. 未配置 API Key 时直接拒绝（前端应走上传兜底）
     if not settings.aliyun_api_key:
         await websocket.accept()
