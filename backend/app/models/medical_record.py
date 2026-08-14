@@ -125,6 +125,16 @@ class RecordVersion(Base):
             postgresql_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
             sqlite_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
         ),
+        # 签名链链尾（2026-08-14 第七轮审计）：latest_chain_hash 每次医生签发
+        # 病历都要跑一次「按 created_at 倒序取最近一条 sign_hash 非空的版本」，
+        # 上面两个索引都不覆盖这个条件 → 签发热路径一直全表扫 + 排序。
+        # 绝大多数版本是草稿、没有 sign_hash，部分索引体积极小且精准。
+        Index(
+            "idx_record_versions_chain_tail",
+            text("created_at DESC"),
+            postgresql_where=text("sign_hash IS NOT NULL"),
+            sqlite_where=text("sign_hash IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)

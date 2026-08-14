@@ -57,6 +57,22 @@ _INDEXES: tuple[tuple[str, str, str], ...] = (
     ("idx_voice_records_encounter", "voice_records", "encounter_id"),
 )
 
+# 部分索引单列（带 WHERE，与上面的普通索引建法不同）
+_PARTIAL_INDEXES: tuple[tuple[str, str, str, str], ...] = (
+    # latest_chain_hash 取「全局链尾」作为新签发的 prev_hash，**每次医生签发
+    # 病历都要跑一次**：ORDER BY created_at DESC LIMIT 1 WHERE sign_hash IS NOT NULL。
+    # record_versions 上原有的两个索引都不覆盖这个条件（adoption 那个是
+    # source='doctor_signed' AND ai_similarity IS NOT NULL 的部分索引），
+    # 于是签发热路径一直在全表扫 + 排序。绝大多数版本是草稿、没有 sign_hash，
+    # 所以部分索引只覆盖签发版本，体积极小且精准。
+    (
+        "idx_record_versions_chain_tail",
+        "record_versions",
+        "created_at DESC",
+        "sign_hash IS NOT NULL",
+    ),
+)
+
 
 def _is_postgres() -> bool:
     return op.get_bind().dialect.name == "postgresql"
@@ -72,11 +88,16 @@ def upgrade() -> None:
             op.execute(
                 f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} ({cols})"
             )
+        for name, table, cols, where in _PARTIAL_INDEXES:
+            op.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                f"ON {table} ({cols}) WHERE {where}"
+            )
 
 
 def downgrade() -> None:
     if not _is_postgres():
         return
     with op.get_context().autocommit_block():
-        for name, _table, _cols in _INDEXES:
+        for name, *_ in (*_INDEXES, *_PARTIAL_INDEXES):
             op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")

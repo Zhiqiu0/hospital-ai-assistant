@@ -48,6 +48,10 @@ def compute_sign_hash(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# verify_chain 每批处理多少个签发版本（限制峰值内存，生产是 4GB 小机器）
+_VERIFY_CHUNK = 500
+
+
 async def latest_chain_hash(db: AsyncSession) -> str:
     """取链尾（最近一份签发病历的 sign_hash）作为新签发的 prev_hash。
 
@@ -70,14 +74,14 @@ def content_text_of(version_content) -> str:
     return str(version_content or "")
 
 
-async def verify_version(db: AsyncSession, version: RecordVersion) -> bool:
-    """复算某签发版本的哈希并比对 → True=未被篡改。无 sign_hash 的返回 True（非签发版本不校验）。"""
+def verify_version_against(version: RecordVersion, record) -> bool:
+    """用已经取到的病历行复算哈希并比对 → True=未被篡改。
+
+    2026-08-14 第七轮审计从 verify_version 里抽出：批量校验路径（verify_chain）
+    已经一次性把病历都查好了，不该再逐行 db.get。这里只做纯计算，不碰 db。
+    """
     if not version.sign_hash:
         return True
-    record = version.record if "record" in version.__dict__ else None
-    if record is None:
-        from app.models.medical_record import MedicalRecord
-        record = await db.get(MedicalRecord, version.medical_record_id)
     snapshot = record.patient_snapshot if record else None
     submitted_iso = record.submitted_at.isoformat() if record and record.submitted_at else ""
     recomputed = compute_sign_hash(
@@ -88,6 +92,17 @@ async def verify_version(db: AsyncSession, version: RecordVersion) -> bool:
         prev_hash=version.prev_hash or GENESIS_HASH,
     )
     return recomputed == version.sign_hash
+
+
+async def verify_version(db: AsyncSession, version: RecordVersion) -> bool:
+    """复算某签发版本的哈希并比对 → True=未被篡改。无 sign_hash 的返回 True（非签发版本不校验）。"""
+    if not version.sign_hash:
+        return True
+    record = version.record if "record" in version.__dict__ else None
+    if record is None:
+        from app.models.medical_record import MedicalRecord
+        record = await db.get(MedicalRecord, version.medical_record_id)
+    return verify_version_against(version, record)
 
 
 async def verify_chain(db: AsyncSession) -> list[dict]:
@@ -115,29 +130,64 @@ async def verify_chain(db: AsyncSession) -> list[dict]:
 
     返回的每项形如 {"medical_record_id": str, "version_no": int, "issue": "..."}。
     """
-    rows = (await db.execute(
-        select(RecordVersion)
-        .where(RecordVersion.sign_hash.isnot(None))
-        .order_by(RecordVersion.created_at)
-    )).scalars().all()
+    from app.models.medical_record import MedicalRecord
 
-    known_hashes = {v.sign_hash for v in rows}
+    # ① 引用集合：只取 sign_hash 这一列，不载入整行。
+    #    链接校验需要**全局**的哈希集合（分叉时后来的环会引用较早的前驱），
+    #    这一份没法分批省掉；好在一行只有一个 64 字符哈希，10 万份也就几 MB。
+    known_hashes = set((await db.execute(
+        select(RecordVersion.sign_hash).where(RecordVersion.sign_hash.isnot(None))
+    )).scalars().all())
+
     issues: list[dict] = []
-    for v in rows:
-        prev = v.prev_hash or GENESIS_HASH
-        # ① 链接校验：prev_hash 必须指向链上真实存在的一环
-        if prev != GENESIS_HASH and prev not in known_hashes:
-            issues.append({
-                "medical_record_id": v.medical_record_id,
-                "version_no": v.version_no,
-                "issue": "链断裂：prev_hash 指向的上一环不存在"
-                         "（中间版本被删除，或其哈希被重算）",
-            })
-        # ② 单行自校验：正文/快照/医生/签发时间有没有被回改
-        if not await verify_version(db, v):
-            issues.append({
-                "medical_record_id": v.medical_record_id,
-                "version_no": v.version_no,
-                "issue": "内容被篡改：正文或患者快照与签发时的哈希对不上",
-            })
+    offset = 0
+    while True:
+        # ② 分批取行（2026-08-14 第七轮审计修复）：原先一次 .all() 把**所有**
+        #    签发版本连正文带患者快照全灌进内存——生产是 4GB 小机器，病历正文
+        #    动辄几 KB，几万份就能把这个管理端点变成一次 OOM。
+        rows = (await db.execute(
+            select(RecordVersion)
+            .where(RecordVersion.sign_hash.isnot(None))
+            .order_by(RecordVersion.created_at, RecordVersion.id)
+            .offset(offset)
+            .limit(_VERIFY_CHUNK)
+        )).scalars().all()
+        if not rows:
+            break
+
+        # ③ 批量取本批涉及的病历（2026-08-14 第七轮审计修复）：原先每行都走一次
+        #    verify_version → db.get(MedicalRecord)，N 份签发病历就是 N 次查询。
+        record_ids = {v.medical_record_id for v in rows}
+        records = {
+            r.id: r for r in (await db.execute(
+                select(MedicalRecord).where(MedicalRecord.id.in_(record_ids))
+            )).scalars().all()
+        }
+
+        for v in rows:
+            prev = v.prev_hash or GENESIS_HASH
+            # 链接校验：prev_hash 必须指向链上真实存在的一环
+            if prev != GENESIS_HASH and prev not in known_hashes:
+                issues.append({
+                    "medical_record_id": v.medical_record_id,
+                    "version_no": v.version_no,
+                    "issue": "链断裂：prev_hash 指向的上一环不存在"
+                             "（中间版本被删除，或其哈希被重算）",
+                })
+            # 单行自校验：正文/快照/医生/签发时间有没有被回改
+            if not verify_version_against(v, records.get(v.medical_record_id)):
+                issues.append({
+                    "medical_record_id": v.medical_record_id,
+                    "version_no": v.version_no,
+                    "issue": "内容被篡改：正文或患者快照与签发时的哈希对不上",
+                })
+
+        # 本批处理完就让 ORM 忘掉它们，否则 identity map 会一直攥着这些行，
+        # 「分批」只省了查询次数、没省内存。
+        # 只 expunge 本批自己载入的对象——不用 expunge_all()：那会把调用方
+        # 传进来的 session 里的其它对象一并 detach，是个看不见的坑。
+        for obj in (*rows, *records.values()):
+            db.expunge(obj)
+        offset += _VERIFY_CHUNK
+
     return issues

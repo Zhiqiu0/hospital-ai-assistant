@@ -86,17 +86,43 @@ class AdminRecordService:
         q = base.order_by(desc(MedicalRecord.submitted_at)).offset(offset).limit(page_size)
         rows = (await self.db.execute(q)).all()
 
+        # ── 批量取本页每份病历的最新版本正文（2026-08-14 第七轮审计修复）──────
+        #
+        # 原先是在下面的 for 里逐行查一次最新版本 —— 一页 100 条就是 100 次
+        # 往返查询。改成两步聚合：先一次拿到每份病历的最大 version_no，
+        # 再一次把这些版本行取回来，总共 2 次查询，且写法在 PG / SQLite 都成立。
+        record_ids = [record.id for record, *_ in rows]
+        latest_content: dict[str, str] = {}
+        if record_ids:
+            max_ver_rows = (await self.db.execute(
+                select(
+                    RecordVersion.medical_record_id,
+                    func.max(RecordVersion.version_no).label("max_no"),
+                )
+                .where(RecordVersion.medical_record_id.in_(record_ids))
+                .group_by(RecordVersion.medical_record_id)
+            )).all()
+            if max_ver_rows:
+                pairs = {(rid, no) for rid, no in max_ver_rows}
+                ver_rows = (await self.db.execute(
+                    select(
+                        RecordVersion.medical_record_id,
+                        RecordVersion.version_no,
+                        RecordVersion.content,
+                    ).where(
+                        RecordVersion.medical_record_id.in_([r for r, _ in pairs])
+                    )
+                )).all()
+                for rid, no, content in ver_rows:
+                    if (rid, no) not in pairs:
+                        continue  # 不是该病历的最新版本
+                    latest_content[rid] = (
+                        content.get("text", "") if isinstance(content, dict) else ""
+                    )
+
         items = []
         for record, encounter, patient, doctor, dept in rows:
-            # 查询最新版本内容（取预览摘要）
-            ver_q = (
-                select(RecordVersion)
-                .where(RecordVersion.medical_record_id == record.id)
-                .order_by(desc(RecordVersion.version_no))
-                .limit(1)
-            )
-            ver = (await self.db.execute(ver_q)).scalar_one_or_none()
-            content_text = ver.content.get("text", "") if ver and isinstance(ver.content, dict) else ""
+            content_text = latest_content.get(record.id, "")
             items.append({
                 "id": record.id,
                 "record_type": record.record_type,
