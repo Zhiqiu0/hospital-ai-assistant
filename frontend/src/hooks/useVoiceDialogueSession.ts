@@ -53,7 +53,6 @@ export function useVoiceDialogueSession({
   const transcriptRef = useRef('')
   // 回调（mediaRecorder.onstop）里要读最新的 voice_record id，闭包里是旧值
   const transcriptIdRef = useRef<string | null>(transcriptId)
-  transcriptIdRef.current = transcriptId
   // 本次录音阿里云实时 ASR 是否可用。false 则停止后走后端整段转写兜底
   const streamFallbackRef = useRef(false)
 
@@ -74,12 +73,22 @@ export function useVoiceDialogueSession({
   const recordingEncounterRef = useRef<string | null>(null)
   // 供回调内读取"此刻的"接诊 id（回调闭包里的 props 是开录那一刻的旧值）
   const currentEncounterIdRef = useRef<string | null>(currentEncounterId)
-  currentEncounterIdRef.current = currentEncounterId
   const [uploadingAudio, setUploadingAudio] = useState(false)
 
   useEffect(() => {
     transcriptRef.current = fullTranscript
   }, [fullTranscript])
+
+  // 这两个 ref 只是给回调读"此刻的值"用（回调闭包里是开录那一刻的旧 props）。
+  // 必须在 effect 里同步而不是 render 期间直接赋值——render 要保持无副作用，
+  // 并发渲染下被打断重跑会写出不一致的值。
+  useEffect(() => {
+    transcriptIdRef.current = transcriptId
+  }, [transcriptId])
+
+  useEffect(() => {
+    currentEncounterIdRef.current = currentEncounterId
+  }, [currentEncounterId])
 
   // ── 组件卸载强制清理（2026-05-03 治本）────────────────────────────────────
   // 之前用户报告"录音中途关掉网页，再开就只录到静音、ASR 0 句、刷新或换电脑都
@@ -136,21 +145,6 @@ export function useVoiceDialogueSession({
     streamRef.current = null
   }
 
-  // ── 切换患者时自动收尾本次录音（2026-08-14 第七轮审计 #28）─────────────────
-  //
-  // 录音属于某一位患者，跨患者继续录没有任何合法解释：继续下去，说的话会进
-  // 新患者的转写框、音频却挂在旧接诊上。这里主动停止 —— stopListening 会走
-  // 完整的收尾流程（停 ASR → 停 MediaRecorder → onstop 里把音频归档给
-  // recordingEncounterRef 记下的**原**患者），医生已经说过的内容不会丢。
-  useEffect(() => {
-    if (!listening) return
-    if (recordingEncounterRef.current === currentEncounterId) return
-    message.warning('已切换患者，本次语音录入已自动结束并归档到原患者')
-    void stopListening()
-    // stopListening 每次渲染重建，但这里只该在接诊变化时触发一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEncounterId, listening])
-
   /** 上传录音音频文件（归档 / 兜底转写的结果处理见 voiceAudioArchive）。 */
   const uploadAudioBlob = async (
     blob: Blob,
@@ -195,6 +189,21 @@ export function useVoiceDialogueSession({
     setListening(false)
     setInterimText('')
   }
+
+  // ── 切换患者时自动收尾本次录音（2026-08-14 第七轮审计 #28）─────────────────
+  //
+  // 录音属于某一位患者，跨患者继续录没有任何合法解释：继续下去，说的话会进
+  // 新患者的转写框、音频却挂在旧接诊上。这里主动停止 —— stopListening 会走
+  // 完整的收尾流程（停 ASR → 停 MediaRecorder → onstop 里把音频归档给
+  // recordingEncounterRef 记下的**原**患者），医生已经说过的内容不会丢。
+  useEffect(() => {
+    if (!listening) return
+    if (recordingEncounterRef.current === currentEncounterId) return
+    message.warning('已切换患者，本次语音录入已自动结束并归档到原患者')
+    void stopListening()
+    // stopListening 每次渲染重建，但这里只该在接诊变化时触发一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEncounterId, listening])
 
   const startListening = async () => {
     if (!recordingSupported) {

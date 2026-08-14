@@ -195,6 +195,9 @@ export function useAutoSaveDraft({
       // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）
       void flushDraftQueue(performSave)
     }
+    // 只在接诊真的变化时跑。flushPending 每次渲染都会重建，但它读的全是 ref
+    // （pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounterId])
 
   // 关标签页 / 切后台 / 卸载（含退出登录跳转）：来不及等防抖，立刻落盘。
@@ -212,6 +215,9 @@ export function useAutoSaveDraft({
       document.removeEventListener('visibilitychange', onVisibility)
       flushPending() // 组件卸载（路由跳走 / 退出登录）
     }
+    // 只在挂载/卸载时装卸监听。flushPending 每次渲染都会重建，但它读的全是
+    // ref（pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值，
+    // 因此不需要跟着重新装卸——那样反而会在每次输入时反复增删事件监听。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

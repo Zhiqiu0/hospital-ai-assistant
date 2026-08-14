@@ -200,8 +200,6 @@ async def _quick_start_inner(data, db, current_user):
             "is_first_visit": existing.is_first_visit,
             "previous_record_content": resume_prev_content,
             "pending_encounters": pending_other,
-        # 同名同生日候选（第七轮审计）：仅提示，前端弹框让医生确认是否同一人
-        "similar_patients": similar_patients,
             # 同名同生日候选（第七轮审计）：仅提示，前端弹框让医生确认是否同一人
             "similar_patients": similar_patients,
             "resumed": True,
@@ -299,5 +297,8 @@ async def _quick_start_inner(data, db, current_user):
         "previous_record_content": previous_record_content,
         "previous_inquiry": previous_inquiry,
         "pending_encounters": pending_other,
+        # 同名同生日候选（第七轮审计）：仅提示，前端弹框让医生确认是否同一人。
+        # 新建分支才是真正会出现候选的场景（续接说明患者早就定了）。
+        "similar_patients": similar_patients,
         "resumed": False,
     }

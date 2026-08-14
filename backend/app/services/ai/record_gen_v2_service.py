@@ -137,6 +137,7 @@ async def _log_and_save_draft(
     db: AsyncSession,
     *,
     save_draft: bool,
+    model_name: str | None = None,
 ) -> None:
     """写 ai_tasks 审计 + 可选自动落 draft 病历。
 
@@ -149,7 +150,7 @@ async def _log_and_save_draft(
             task_type,
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
-            model_name=opts.get("model_name"),  # 真实模型，非全局默认（审计 #7）
+            model_name=model_name,  # 真实模型，非全局默认（审计 #7）
         )
     except Exception as exc:
         logger.error("log_ai_task_failed task=%s err=%s", task_type, exc)
@@ -240,7 +241,10 @@ async def _stream_json_pipeline(
     )
 
     # 4. 审计 + 可选保存草稿
-    await _log_and_save_draft(task_type, record_type, record_text, db, save_draft=save_draft)
+    await _log_and_save_draft(
+        task_type, record_type, record_text, db,
+        save_draft=save_draft, model_name=opts.get("model_name"),
+    )
 
     # 5. SSE 分片推回（16 字符 / 片 + 20ms sleep）
     chunk_size = 16

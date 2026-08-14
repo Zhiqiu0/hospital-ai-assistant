@@ -182,5 +182,9 @@ jobs:
 
       - name: nginx -t
         run: |
+          # nginx -t 会解析 proxy_pass 里的 upstream 主机名。CI 里没有
+          # docker-compose 网络，`backend` 解析不到会直接 emerg 退出——
+          # 那是环境缺失，不是配置语法错误。指到本机让解析通过即可。
+          echo "127.0.0.1 backend" >> /etc/hosts
           cp frontend/nginx.conf /etc/nginx/conf.d/default.conf
           nginx -t

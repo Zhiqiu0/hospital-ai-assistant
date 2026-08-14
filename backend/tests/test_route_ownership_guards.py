@@ -451,3 +451,42 @@ async def test_voice_transcript_update_rejects_other_doctors_record(client_doc_m
         json={"encounter_id": "enc-own", "transcript": "改掉", "voice_record_id": "vr-other"},
     )
     assert r.status_code == 403
+
+
+# ── quick-start 返回契约（2026-08-14 第七轮审计 #18 配套）────────────────────
+
+@pytest.mark.asyncio
+async def test_quick_start_returns_similar_patients_on_new_branch(client_doc_me):
+    """新建分支必须返回 similar_patients 字段。
+
+    这条是补课：加该字段时用脚本往两个 return 分支插入，结果同一个分支被插了
+    两次、另一个一次都没有（第一次替换后的新文本里含有匹配串），ruff 的
+    F601「重复键」抓到了，但当时没有任何测试覆盖返回契约。
+    """
+    r = await client_doc_me.post(
+        "/api/v1/encounters/quick-start",
+        json={"patient_name": "新患者甲", "gender": "男", "visit_type": "outpatient"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "similar_patients" in body
+    assert isinstance(body["similar_patients"], list)
+    assert body["resumed"] is False
+
+
+@pytest.mark.asyncio
+async def test_quick_start_returns_similar_patients_on_resume_branch(client_doc_me):
+    """续接分支同样要返回该字段（前端两条路径读同一个 key）。"""
+    payload = {"patient_name": "新患者乙", "gender": "女", "visit_type": "outpatient"}
+    first = await client_doc_me.post("/api/v1/encounters/quick-start", json=payload)
+    assert first.status_code == 200
+    patient_id = first.json()["patient"]["id"]
+
+    # 带 patient_id 再来一次 → 命中同一医生的进行中接诊，走续接分支
+    second = await client_doc_me.post(
+        "/api/v1/encounters/quick-start", json={**payload, "patient_id": patient_id}
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["resumed"] is True, "没走到续接分支，这条测试就没验到东西"
+    assert "similar_patients" in body

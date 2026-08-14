@@ -15,7 +15,6 @@ from app.services.ai.task_logger import log_ai_task
 
 @pytest.mark.asyncio
 async def test_传入的模型名被如实记录(monkeypatch, async_db):
-    from app.database import AsyncSessionLocal
     import app.services.ai.task_logger as tl
 
     # log_ai_task 用独立会话，测试里换成当前测试会话
