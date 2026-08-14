@@ -22,7 +22,7 @@ Round 5 瘦身：原文件 432 行超标，按职责拆到同目录子模块（�
   POST   /{encounter_id}/inquiry-suggestions  问诊追问建议
   POST   /{encounter_id}/exam-suggestions     检查建议
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.authz import assert_can_write_record
@@ -58,6 +58,15 @@ async def create_encounter(
     # → 该接诊下的病程记录、问题列表、体征、问诊、语音全部可写可签。
     # 实测确认：护士打本端点返回 201，打 quick-start 返回 403。
     assert_can_write_record(current_user)
+    # 患者存在性前置校验（2026-08-14 第八轮冒烟发现）：原先不校验，
+    # patient_id 不存在时直接落到 INSERT 的外键冲突 → 500「服务器内部错误」。
+    # 这不是服务端故障而是入参问题，该给 404 让调用方知道错在哪；
+    # 500 还会白白污染 error.log，掩盖真正的故障。
+    from app.models.patient import Patient
+    patient = await db.get(Patient, data.patient_id)
+    if patient is None or patient.is_deleted:
+        raise HTTPException(status_code=404, detail="患者不存在")
+
     service = EncounterService(db)
     return await service.create(data, current_user.id)
 
