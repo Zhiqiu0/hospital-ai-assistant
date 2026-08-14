@@ -4,6 +4,7 @@
 （数据全保留供回溯），并联动软删"这次接诊新建又立即取消"的孤儿患者档案。
 由 EncounterService 组合。
 """
+import logging
 from datetime import datetime as _dt
 
 from fastapi import HTTPException
@@ -15,6 +16,8 @@ from app.services.encounter_cache import (
     invalidate_encounter_snapshot,
     invalidate_my_encounters,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EncounterCancelMixin:
@@ -143,6 +146,49 @@ class EncounterCancelMixin:
         if other_enc is not None:
             return False
 
+        # 1.5 名下还挂着临床数据就不算「孤儿」（2026-08-14 第八轮审计修复）
+        #
+        # 原先「孤儿」只判「除本接诊外没有别的接诊」。可医生给新病人建档后，
+        # 影像科完全可能已经在这次接诊里传了一套 CT 并发布了报告；这时医生发现
+        # 患者信息录错、点「取消接诊」，档案就被软删了——而 imaging_studies 那行
+        # 仍在、patient_id 指向一个查不到的患者、影像科工作列表照样列出它、
+        # Orthanc 里那套带患者姓名的 DICOM 原样保留。更糟的是已发布的 study
+        # 禁止删除（pacs_reports 有 409 守卫），这套孤儿影像连影像科都清不掉。
+        # 而全仓没有任何一处把 is_deleted 写回 False，也没有"已删档案"列表或
+        # 恢复入口——误点一次就永久失联，只能重新建档，老档案带着 PHI 留在库里。
+        # 判定收紧：名下有影像/检验/语音任一，就保留档案（不删总比删错强，
+        # 空档案顶多是一条无用记录，删掉却不可逆）。
+        from app.models.imaging import ImagingStudy
+        from app.models.lab_report import LabReport
+        from app.models.voice_record import VoiceRecord
+
+        has_imaging = (await self.db.execute(
+            select(ImagingStudy.id).where(ImagingStudy.patient_id == patient_id).limit(1)
+        )).scalar_one_or_none()
+        if has_imaging is not None:
+            logger.info(
+                "encounter.cancel: 患者名下有影像，保留档案不软删 patient_id=%s",
+                patient_id,
+            )
+            return False
+
+        # 检验/语音挂在接诊维度，本接诊即将取消，查的是它名下的
+        has_clinical = (await self.db.execute(
+            select(LabReport.id)
+            .where(LabReport.encounter_id == current_encounter_id)
+            .limit(1)
+        )).scalar_one_or_none() or (await self.db.execute(
+            select(VoiceRecord.id)
+            .where(VoiceRecord.encounter_id == current_encounter_id)
+            .limit(1)
+        )).scalar_one_or_none()
+        if has_clinical is not None:
+            logger.info(
+                "encounter.cancel: 接诊名下有检验/语音，保留患者档案 patient_id=%s",
+                patient_id,
+            )
+            return False
+
         # 2. 取患者本体，校验来源 + 标软删
         patient = (await self.db.execute(
             select(Patient).where(
@@ -162,6 +208,7 @@ class EncounterCancelMixin:
         # 孤儿患者档案，原先零审计——档案从列表消失后无从追溯是谁、何时、
         # 因哪次取消而删。等保 2.0 要求 PHI 生命周期可追溯。
         from app.services.audit_service import log_action
+
         await log_action(
             action="soft_delete_patient",
             user_id=operator_doctor_id,
