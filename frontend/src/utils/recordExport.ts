@@ -247,14 +247,28 @@ export function printRecord(
   .signed { text-align: center; font-size: 12px; color: #64748b; margin-bottom: 16px; }
   .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; border-top: 1px solid #cbd5e1; padding-top: 14px; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 12px; color: #94a3b8; text-align: right; }
+  /* 未签发草稿标识（2026-08-14 第六轮审计修复）：草稿也能一键导出，而原先
+     页脚硬编码"本病历由医生审核签发"——草稿被当成正式病历流出去是合规问题。
+     横幅放正文顶部，因为翻内页看不到页脚。 */
+  .draft-banner { margin: 8px 0 14px; padding: 8px; border: 2px solid #dc2626; color: #dc2626;
+                  font-size: 15px; font-weight: 700; text-align: center; letter-spacing: 2px; }
+  .footer.draft { color: #dc2626; font-weight: 600; }
   ${HEADER_CSS}
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
 <h2>${esc(typeLabel)}</h2>
-${signedAt ? `<div class="signed">签发时间：${esc(signedAt)}</div>` : ''}
+${
+  signedAt
+    ? `<div class="signed">签发时间：${esc(signedAt)}</div>`
+    : '<div class="draft-banner">未 签 发 草 稿 · 不作为正式病历</div>'
+}
 ${headerHtml}
 <div class="content">${formatted}</div>
-<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
+${
+  signedAt
+    ? '<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>'
+    : '<div class="footer draft">MediScribe 智能病历系统 · 未签发草稿，仅供内部核对，不作为正式病历</div>'
+}
 <script>window.onload = function() { window.print(); }<\/script>
 </body></html>`
   const w = window.open('', '_blank')
@@ -294,10 +308,18 @@ export function exportWordDoc(
 </style>
 </head><body>
 <h1>${esc(typeLabel)}</h1>
-${signedAt ? `<p class="signed">签发时间：${esc(signedAt)}</p>` : ''}
+${
+  signedAt
+    ? `<p class="signed">签发时间：${esc(signedAt)}</p>`
+    : '<p style="color:#c00;font-size:13pt;font-weight:bold;text-align:center;border:2px solid #c00;padding:6pt;">未 签 发 草 稿 · 不作为正式病历</p>'
+}
 ${headerHtml}
 ${paragraphs}
-<p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>
+${
+  signedAt
+    ? '<p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>'
+    : '<p style="margin-top:24pt;color:#c00;font-size:10pt;text-align:center;font-weight:bold;">未签发草稿 · 仅供内部核对，不作为正式病历</p>'
+}
 </body></html>`
   const blob = new Blob(['﻿' + html], { type: 'application/msword;charset=utf-8' })
   const url = URL.createObjectURL(blob)
