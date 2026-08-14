@@ -103,11 +103,20 @@ function pickGender(v?: string | null): string {
   return GENDER_LABEL[v] || v
 }
 
-function calcAgeFromBirth(birth?: string | null): number | null {
+/**
+ * 按**指定基准日**算年龄（缺省为今天）。
+ *
+ * 病案首页的年龄必须按"就诊那一天"算而不是打印当天（2026-08-14 第六轮审计修复）：
+ * 病案首页的语义是签发瞬间冻结的一份档案，而原实现恒用 new Date()——
+ * 签发时 40 岁的患者，两年后再打印同一份病历会显示 42 岁，
+ * 同一份已签发病历打印两次得到不同内容，与"冻结"的设计直接矛盾。
+ */
+function calcAgeFromBirth(birth?: string | null, asOf?: string | null): number | null {
   if (!birth) return null
   const d = new Date(birth)
   if (Number.isNaN(d.getTime())) return null
-  const now = new Date()
+  const base = asOf ? new Date(asOf) : new Date()
+  const now = Number.isNaN(base.getTime()) ? new Date() : base
   let age = now.getFullYear() - d.getFullYear()
   const m = now.getMonth() - d.getMonth()
   if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--
@@ -173,7 +182,10 @@ export function buildPatientHeaderHtml(
   const name = pick(s.name, p.name) || '—'
   const gender = pickGender(pick(s.gender, p.gender)) || '—'
   const birth = pick(s.birth_date, p.birth_date)
-  const age = p.age ?? calcAgeFromBirth(birth)
+  // 优先按就诊时间算（快照里冻结的那个），拿不到才回落 patient.age 实时值。
+  // 注意顺序：原先是 p.age 优先，等于永远用实时年龄、快照形同虚设。
+  const visitAt = pick(s.visit_time, c.visit_time)
+  const age = calcAgeFromBirth(birth, visitAt) ?? p.age ?? null
   const ageText = age != null ? `${age}岁` : '—'
   const patientNo = pick(s.patient_no, p.patient_no) || '—'
   const idCard = pick(s.id_card, p.id_card) || '—'
@@ -247,14 +259,28 @@ export function printRecord(
   .signed { text-align: center; font-size: 12px; color: #64748b; margin-bottom: 16px; }
   .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; border-top: 1px solid #cbd5e1; padding-top: 14px; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 12px; color: #94a3b8; text-align: right; }
+  /* 未签发草稿标识（2026-08-14 第六轮审计修复）：草稿也能一键导出，而原先
+     页脚硬编码"本病历由医生审核签发"——草稿被当成正式病历流出去是合规问题。
+     横幅放正文顶部，因为翻内页看不到页脚。 */
+  .draft-banner { margin: 8px 0 14px; padding: 8px; border: 2px solid #dc2626; color: #dc2626;
+                  font-size: 15px; font-weight: 700; text-align: center; letter-spacing: 2px; }
+  .footer.draft { color: #dc2626; font-weight: 600; }
   ${HEADER_CSS}
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
 <h2>${esc(typeLabel)}</h2>
-${signedAt ? `<div class="signed">签发时间：${esc(signedAt)}</div>` : ''}
+${
+  signedAt
+    ? `<div class="signed">签发时间：${esc(signedAt)}</div>`
+    : '<div class="draft-banner">未 签 发 草 稿 · 不作为正式病历</div>'
+}
 ${headerHtml}
 <div class="content">${formatted}</div>
-<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
+${
+  signedAt
+    ? '<div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>'
+    : '<div class="footer draft">MediScribe 智能病历系统 · 未签发草稿，仅供内部核对，不作为正式病历</div>'
+}
 <script>window.onload = function() { window.print(); }<\/script>
 </body></html>`
   const w = window.open('', '_blank')
@@ -294,10 +320,18 @@ export function exportWordDoc(
 </style>
 </head><body>
 <h1>${esc(typeLabel)}</h1>
-${signedAt ? `<p class="signed">签发时间：${esc(signedAt)}</p>` : ''}
+${
+  signedAt
+    ? `<p class="signed">签发时间：${esc(signedAt)}</p>`
+    : '<p style="color:#c00;font-size:13pt;font-weight:bold;text-align:center;border:2px solid #c00;padding:6pt;">未 签 发 草 稿 · 不作为正式病历</p>'
+}
 ${headerHtml}
 ${paragraphs}
-<p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>
+${
+  signedAt
+    ? '<p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>'
+    : '<p style="margin-top:24pt;color:#c00;font-size:10pt;text-align:center;font-weight:bold;">未签发草稿 · 仅供内部核对，不作为正式病历</p>'
+}
 </body></html>`
   const blob = new Blob(['﻿' + html], { type: 'application/msword;charset=utf-8' })
   const url = URL.createObjectURL(blob)

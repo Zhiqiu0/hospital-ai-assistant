@@ -22,7 +22,16 @@ router = APIRouter(prefix="/his", tags=["HIS对接"])
 
 @router.websocket("/ws")
 async def his_ws_endpoint(websocket: WebSocket) -> None:
-    """HIS 长连接入口：握手验签不过直接拒绝，验签通过后进入消息循环。"""
+    """HIS 长连接入口：握手验签不过直接拒绝，验签通过后进入消息循环。
+
+    **消息串行处理是有意的**（2026-08-14 第六轮审计评估后保留）：
+    审计报"慢 admit 会阻塞 ack 读取"，属实，但改成并发会破坏两件更重要的事——
+    msg_id 去重与消息顺序保证，而这两样是联调稳定性的基础（重复接诊、
+    ack 错位都会让厂商侧对不上账）。
+    容量上也不需要：实测生产 40 条并发语音、45 条 SSE 都无压力，
+    而接诊推送一个医院一天不过几百次，串行完全够用。
+    真出现阻塞再针对性改（比如只把 admit 处理丢后台、ack 仍走主循环）。
+    """
     # 保险丝：HIS 对接开关关闭时拒绝握手（accept 之前 close = 拒绝升级）
     if not settings.his_adapter_enabled:
         await websocket.close(code=4403)

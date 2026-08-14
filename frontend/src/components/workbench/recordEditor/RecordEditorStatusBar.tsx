@@ -11,9 +11,11 @@
 import { Button, Space, Spin } from 'antd'
 import { CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 import { printRecord } from '@/utils/recordExport'
+import { reportRecordExport } from '@/utils/exportAudit'
 import type { Patient } from '@/domain/medical'
 import { useAuthStore } from '@/store/authStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useRecordStore } from '@/store/recordStore'
 
 interface RecordEditorStatusBarProps {
   isBusy: boolean
@@ -33,9 +35,15 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
   // 所以用 ctx 兜底——这是当前正在签发的接诊，doctor/dept/visit_type 都准确。
   const user = useAuthStore(s => s.user)
   const visitType = useActiveEncounterStore(s => s.visitType)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const visitedAt = useActiveEncounterStore(s => s.visitedAt)
+  // 已签发病历打印用签发时冻结的首页快照，不是实时患者数据
+  const patientSnapshot = useRecordStore(s => s.patientSnapshot)
   const ctx = {
     visit_type: visitType,
-    visit_time: finalizedAt,
+    // 就诊时间用接诊自己的时间，不是签发时刻（2026-08-14 第六轮审计修复）：
+    // 病案首页的"就诊时间"是患者什么时候来的，原先赋成 finalizedAt 直接写错。
+    visit_time: visitedAt,
     doctor_name: user?.real_name,
     department_name: user?.department_name,
   }
@@ -84,9 +92,23 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
         <Button
           size="small"
           icon={<PrinterOutlined />}
-          onClick={() =>
-            printRecord(recordContent, currentPatient, recordType, finalizedAt, null, ctx)
-          }
+          onClick={() => {
+            // 导出/打印是最敏感的 PHI 操作（整份病历带走），必须留痕
+            reportRecordExport({
+              encounter_id: currentEncounterId,
+              record_type: recordType,
+              method: 'print',
+              is_signed: !!finalizedAt,
+            })
+            printRecord(
+              recordContent,
+              currentPatient,
+              recordType,
+              finalizedAt,
+              patientSnapshot,
+              ctx
+            )
+          }}
           style={{
             borderRadius: 6,
             fontSize: 12,

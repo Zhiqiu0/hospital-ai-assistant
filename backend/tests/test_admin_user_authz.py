@@ -124,3 +124,40 @@ async def test_bulk_import_rejects_invalid_role(api):
             "items": [{"real_name": "脏角色", "codes": ["8888"], "role": "god_mode"}],
         })
     assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_dept_admin_cannot_reset_other_department(api):
+    """科室管理员不能重置其他科室医生的密码（2026-08-14 第六轮审计修复）。
+
+    原守卫只比角色等级、完全不看科室——dept_admin 实际等于全院管理员。
+    而重置密码后那个账号要用管理员知道的临时密码登录，等于跨科室接管账号，
+    之后可以以那位医生的名义签发病历。
+    """
+    db, as_user = api
+    dept_a = await _mk_user(db, username="dadmin_a", role="dept_admin")
+    dept_a.department_id = "DEPT-A"
+    other = await _mk_user(db, username="doc_b", role="doctor")
+    other.department_id = "DEPT-B"
+    await db.commit()
+
+    async with as_user(dept_a) as ac:
+        res = await ac.post(f"/api/v1/admin/users/{other.id}/reset-password",
+                            json={"new_password": "Hacked@12345"})
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_dept_admin_can_manage_own_department(api):
+    """本科室的仍可正常管理——不能因为加限制把正常工作堵死。"""
+    db, as_user = api
+    dept_a = await _mk_user(db, username="dadmin_c", role="dept_admin")
+    dept_a.department_id = "DEPT-C"
+    mine = await _mk_user(db, username="doc_c", role="doctor")
+    mine.department_id = "DEPT-C"
+    await db.commit()
+
+    async with as_user(dept_a) as ac:
+        res = await ac.post(f"/api/v1/admin/users/{mine.id}/reset-password",
+                            json={"new_password": "NewPass@12345"})
+    assert res.status_code == 200

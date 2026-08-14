@@ -110,6 +110,10 @@ class EncounterSnapshotMixin:
             "encounter_id": encounter.id,
             "visit_type": encounter.visit_type,
             "status": encounter.status,
+            # 就诊时间（2026-08-14 第六轮审计修复）：病案首页有"就诊时间"一栏，
+            # 而快照原先不返回它——前端编辑器打印时只能拿到签发时间，于是把
+            # visit_time 赋成了 finalizedAt，首页上"患者什么时候来的"直接写错。
+            "visited_at": encounter.visited_at.isoformat() if encounter.visited_at else None,
             # 病案首页需要完整字段（id_card/address/民族/婚姻/职业/紧急联系人等）；
             # 之前只返 4 个字段，导致前端导出 Word/打印病历时顶部首页缺信息。
             "patient": {

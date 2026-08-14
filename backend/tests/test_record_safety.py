@@ -98,8 +98,12 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
     db.add(enc)
     await db.flush()
     if submitted:
+        # submitted_at 必须给（2026-08-14）：真实签发一定会写它，而对账窗口现在
+        # 按签发时间筛（原先按接诊开始时间，住院中后期签发的会被漏掉）。
+        # 夹具不设这个字段等于造了一份现实中不存在的数据。
         db.add(MedicalRecord(encounter_id=enc.id, record_type="outpatient",
-                             status="submitted"))
+                             status="submitted",
+                             submitted_at=visited or datetime.now()))
     await db.commit()
     return enc.id
 
@@ -493,3 +497,124 @@ async def test_inpatient_second_course_record_does_not_overwrite_first(async_db)
 
     assert len(rows) == 2, f"住院第二份病程没有新建，仍然只有 {len(rows)} 份（第一份被覆盖了）"
     assert [r.record_no for r in rows] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_discharge_record_timeliness_counts_from_discharge(async_db):
+    """出院记录时效从**出院**时刻起算，不是入院（2026-08-14 第六轮审计修复）。
+
+    原先所有类型统一用 submitted_at - visited_at，住院半个月的病人出院记录必然
+    被判超时，达标率被系统性压低、指标失去意义。
+    """
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.models.user import User as U
+    from app.services.admin_stats_service import get_quality_health
+
+    doc = U(username=f"tl{uuid4().hex[:6]}", password_hash="x", real_name="医生", role="doctor")
+    pat = Patient(name="长住院患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+
+    now = datetime.now()
+    # 住院 15 天，出院后 2 小时签发出院记录 → 应判达标
+    enc = Encounter(
+        patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient", status="completed",
+        visited_at=now - timedelta(days=15), completed_at=now - timedelta(hours=2),
+    )
+    async_db.add(enc)
+    await async_db.flush()
+    async_db.add(MedicalRecord(
+        encounter_id=enc.id, record_type="discharge_record", status="submitted",
+        current_version=1, submitted_at=now,
+    ))
+    await async_db.commit()
+
+    res = await get_quality_health(async_db, days=30)
+    tl = res.get("timeliness") or {}
+    dr = tl.get("discharge_record")
+    assert dr is not None, f"出院记录未纳入时效统计：{tl}"
+    assert dr["on_time"] == dr["total"] == 1, (
+        f"出院后 2 小时签发却被判超时（说明还在用入院时刻起算）：{dr}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_covers_late_signed_inpatient_record(async_db):
+    """住院中后期签发的病历也要能被对账扫到（2026-08-14 第六轮审计修复）。
+
+    原窗口条件是「接诊**开始**于 3 天内」。门急诊当天接诊当天签发没问题，
+    但住院一次接诊长达十几天——病人第 5 天签发的病程，接诊早已在窗口外，
+    对账根本扫不到它，回写失败后永远不重投也不告警。
+    """
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    from app.his_adapter.writeback_reconcile import _find_candidates
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.models.user import User as U
+
+    suffix = uuid4().hex[:8]
+    pat = Patient(name="长住院患者")
+    doc = U(username=f"lr{suffix}", password_hash="x", real_name="医生", role="doctor")
+    async_db.add_all([pat, doc])
+    await async_db.flush()
+
+    now = datetime.now()
+    # 接诊 10 天前开始（远在 3 天窗口外），但病历是刚刚签发的
+    enc = Encounter(
+        patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+        visit_no=f"V{suffix}", status="in_progress",
+        visited_at=now - timedelta(days=10),
+        his_external_ref={"source": "admit_push", "hospital_code": "H1",
+                          "writeback": {"status": "write_failed", "reconcile_attempts": 0}},
+    )
+    async_db.add(enc)
+    await async_db.flush()
+    async_db.add(MedicalRecord(
+        encounter_id=enc.id, record_type="course_record", status="submitted",
+        current_version=1, submitted_at=now - timedelta(hours=1),
+    ))
+    await async_db.commit()
+
+    cands = await _find_candidates(async_db)
+    assert enc.id in [c.id for c in cands], (
+        "住院中后期签发的病历没被对账扫到——回写失败会永远不重投"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inpatient_each_document_has_own_submitted_at(async_db):
+    """住院每份文书有独立的签发时间，回写才能选中最新签发的那份。
+
+    第六轮审计报「住院同类型文书的 submitted_at 只写一次，导致当天签发的病程
+    回写不到 HIS」。该问题的前提是"多份文书共用一行"，而 record_no 修复后每份
+    文书是独立的行、各有自己的 submitted_at——这条测试锁住这个前提不被改回去。
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import MedicalRecord
+    from app.services.medical_record_service import MedicalRecordService
+
+    eid, doc_id = await _mk_sign_encounter(async_db, visit_type="inpatient")
+    svc = MedicalRecordService(async_db)
+    await svc.quick_save(eid, "course_record", "病程一。", doc_id)
+    await svc.quick_save(eid, "course_record", "病程二。", doc_id)
+
+    rows = (await async_db.execute(
+        select(MedicalRecord).where(
+            MedicalRecord.encounter_id == eid,
+            MedicalRecord.record_type == "course_record",
+        ).order_by(MedicalRecord.record_no)
+    )).scalars().all()
+
+    assert len(rows) == 2
+    assert all(r.submitted_at is not None for r in rows), "有文书没有签发时间"
+    # 回写按 (已签发, submitted_at desc) 排序，能选中最新签发的那份
+    assert rows[1].submitted_at >= rows[0].submitted_at

@@ -181,3 +181,151 @@ async def test_resume_requires_same_visit_type(async_db):
     # 不同类型不能续接（急诊不该捡到门诊那条）
     assert (await svc.find_in_progress(p.id, doc.id, visit_type="emergency")) is None
     assert (await svc.find_in_progress(p.id, doc.id, visit_type="inpatient")) is None
+
+
+@pytest.mark.asyncio
+async def test_ward_keeps_discharged_pending_record(async_db):
+    """已出院但出院记录未签发的接诊仍留在病区列表（2026-08-14 第六轮审计修复）。
+
+    办理出院会把接诊置 completed，而病区列表原先只查 in_progress——接诊当场
+    从列表消失。可出院记录按规范是出院后 24 小时内完成，医生这时候已经没有
+    任何入口进这个接诊补写了。
+    """
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.services.inpatient_service import list_active_ward
+
+    doc = User(username="WD1", password_hash="x", real_name="住院医生", role="doctor")
+    p1 = Patient(name="待补出院记录")
+    p2 = Patient(name="已完成出院")
+    async_db.add_all([doc, p1, p2])
+    await async_db.flush()
+
+    # 甲：已出院、出院记录未签发 → 应保留
+    e1 = Encounter(patient_id=p1.id, doctor_id=doc.id, visit_type="inpatient",
+                   status="completed")
+    # 乙：已出院、出院记录已签发 → 应移出
+    e2 = Encounter(patient_id=p2.id, doctor_id=doc.id, visit_type="inpatient",
+                   status="completed")
+    async_db.add_all([e1, e2])
+    await async_db.flush()
+    async_db.add(MedicalRecord(encounter_id=e2.id, record_type="discharge_record",
+                               status="submitted", current_version=1))
+    await async_db.commit()
+
+    items = await list_active_ward(async_db, doc.id)
+    ids = {i["encounter_id"] for i in items}
+    assert e1.id in ids, "已出院但出院记录未签发的接诊被移出了，医生补写不了"
+    assert e2.id not in ids, "出院记录已签发的接诊不该继续占着病区列表"
+    got = next(i for i in items if i["encounter_id"] == e1.id)
+    assert got["pending_discharge_record"] is True
+
+
+@pytest.mark.asyncio
+async def test_previous_record_excludes_draft_and_cross_type(async_db):
+    """带入的「上次病历」必须是已签发 + 同接诊类型（2026-08-14 第六轮审计修复）。
+
+    原查询只按患者过滤，于是带进来的可能是别人未签发的草稿，或者住院接诊
+    带入了门诊病历。注释一直写着「最近一次签发病历」，代码里从来没有这个条件。
+    """
+    from sqlalchemy import desc, select
+
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord, RecordVersion
+    from app.models.patient import Patient
+
+    doc = User(username="PF1", password_hash="x", real_name="医生", role="doctor")
+    pat = Patient(name="复诊患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+
+    # ① 门诊已签发（跨类型，不该被住院接诊带入）
+    e_out = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="outpatient",
+                      status="completed")
+    # ② 住院未签发草稿（不该被带入）
+    e_draft = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                        status="in_progress")
+    # ③ 住院已签发（这才是应该带入的）
+    e_ok = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                     status="completed")
+    async_db.add_all([e_out, e_draft, e_ok])
+    await async_db.flush()
+
+    for enc, status, text in [
+        (e_out, "submitted", "门诊病历正文"),
+        (e_draft, "draft", "别人的草稿"),
+        (e_ok, "submitted", "住院已签发正文"),
+    ]:
+        rec = MedicalRecord(encounter_id=enc.id, record_type="admission_note",
+                            status=status, current_version=1)
+        async_db.add(rec)
+        await async_db.flush()
+        async_db.add(RecordVersion(medical_record_id=rec.id, version_no=1,
+                                   content={"text": text}, source="doctor_signed"))
+    await async_db.commit()
+
+    # 模拟 quick-start 里带入上次病历的查询（住院、排除当前接诊）
+    row = (await async_db.execute(
+        select(RecordVersion.content)
+        .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
+        .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+        .where(
+            Encounter.patient_id == pat.id,
+            Encounter.visit_type == "inpatient",
+            MedicalRecord.status == "submitted",
+            RecordVersion.content.isnot(None),
+        )
+        .order_by(desc(RecordVersion.created_at))
+        .limit(1)
+    )).scalar_one_or_none()
+
+    text = (row or {}).get("text")
+    assert text == "住院已签发正文", f"带入了不该带的内容：{text}"
+
+
+@pytest.mark.asyncio
+async def test_compliance_ignores_unsigned_draft(async_db):
+    """住院时效合规只认已签发文书，空白草稿不算完成（2026-08-14 第六轮审计修复）。
+
+    原先不过滤 status——AI 一生成就建了 MedicalRecord 行，医生什么都没写，
+    合规面板却显示「入院记录已完成」，而这个面板正是给医生和质控看
+    「还有哪些文书没写」的。
+    """
+    from datetime import datetime, timedelta
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.security import get_current_user
+    from app.database import get_db
+    from app.main import app
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+
+    doc = User(username="CP1", password_hash="x", real_name="住院医生", role="doctor")
+    pat = Patient(name="合规测试患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+    enc = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                    status="in_progress", visited_at=datetime.now() - timedelta(hours=2))
+    async_db.add(enc)
+    await async_db.flush()
+    # 只有草稿，没签发
+    async_db.add(MedicalRecord(encounter_id=enc.id, record_type="admission_note",
+                               status="draft", current_version=1))
+    await async_db.commit()
+
+    app.dependency_overrides[get_db] = lambda: async_db
+    app.dependency_overrides[get_current_user] = lambda: doc
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+            res = await ac.get(f"/api/v1/encounters/{enc.id}/compliance")
+        assert res.status_code == 200
+        items = {i["record_type"]: i for i in res.json()["items"]}
+        adm = items.get("admission_note")
+        assert adm is not None
+        assert adm["status"] != "done", "空白草稿被当成已完成了"
+        assert adm["done_at"] is None
+    finally:
+        app.dependency_overrides.clear()

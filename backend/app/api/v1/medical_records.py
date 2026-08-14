@@ -31,6 +31,7 @@ from app.schemas.medical_record import (
     MedicalRecordResponse,
     QuickSaveRequest,
     RecordContentUpdate,
+    RecordExportAudit,
 )
 from app.services.audit_service import log_action
 from app.services.medical_record_service import MedicalRecordService
@@ -206,3 +207,32 @@ async def get_record_versions(
     # 先校验归属权，再读版本列表
     await service.get_by_id(record_id, doctor_id=current_user.id)
     return await service.get_versions(record_id)
+
+
+@router.post("/export-audit", status_code=204)
+async def log_record_export(
+    data: RecordExportAudit,
+    current_user=Depends(get_current_user),
+):
+    """记录一次病历导出/打印（2026-08-14 第六轮审计修复）。
+
+    为什么需要这个端点：打印与导出 Word 全在客户端完成（前端直接把正文拼成
+    HTML 再下载/打印），服务端根本不知道发生过——而**导出是把整份病历连同
+    患者身份信息一起带走**，是所有 PHI 操作里最敏感的一个。
+    放开归属校验后审计是唯一的追责手段，这条路径上却完全没有留痕。
+
+    前端在触发导出/打印时调用本端点上报。它只写审计、不返回任何数据，
+    失败也不该阻断医生导出（log_action 内部已吞异常），故返回 204。
+    """
+    await log_action(
+        action="export_record",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None) or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="medical_record",
+        resource_id=data.record_id or data.encounter_id or "",
+        detail=(
+            f"导出/打印病历（方式={data.method}，类型={data.record_type}，"
+            f"{'已签发' if data.is_signed else '未签发草稿'}）"
+        ),
+    )

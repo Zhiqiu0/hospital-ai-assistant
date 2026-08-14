@@ -16,6 +16,7 @@ import {
   type RecordExportContext,
   type RecordExportPatient,
 } from '@/utils/recordExport'
+import { reportRecordExport } from '@/utils/exportAudit'
 
 /**
  * 病历详情视图所需字段。
@@ -135,5 +136,13 @@ export function handlePrint(record: ViewableRecord, recordTypeLabel: (type: stri
   // recordExport.printRecord 走 RECORD_TYPE_LABEL；这里调用方传的 recordTypeLabel
   // 仅用于弹窗顶部标题展示，不影响打印（打印自己查 RECORD_TYPE_LABEL[record_type]）
   void recordTypeLabel
+  // 导出/打印是最敏感的 PHI 操作（整份病历带走），必须留痕。
+  // 这条路径能拿到 record.id，留痕信息最完整。
+  reportRecordExport({
+    record_id: record.id,
+    record_type: record.record_type,
+    method: 'print',
+    is_signed: !!record.submitted_at,
+  })
   printRecord(record.content || '', patient, record.record_type, signedAt, snapshot, ctx)
 }

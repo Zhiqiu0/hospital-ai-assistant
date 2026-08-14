@@ -22,30 +22,60 @@
 本层只返回 ORM 对象或纯数据，不耦合 HTTP。
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.encounter import Encounter
 from app.models.inpatient import ProblemItem, VitalSign
+from app.models.medical_record import MedicalRecord
 from app.models.patient import Patient
 from app.utils.age import calc_age
 
 
 # ── 病区视图 ──────────────────────────────────────────────────────────────────
 
+# 已出院但出院记录未签发时，接诊在病区列表里保留多久（天）
+_DISCHARGED_PENDING_DAYS = 7
+
+
 async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
-    """返回当前医生负责的活跃住院接诊列表（用于病区视图）。"""
+    """返回当前医生负责的住院接诊列表（用于病区视图）。
+
+    包含两类：
+      1. 在院（status=in_progress）
+      2. **已出院但出院记录还没签发**的（近 7 天内）
+
+    第 2 类是 2026-08-14 第六轮审计修复：办理出院会把接诊置为 completed，
+    而病区列表原先只查 in_progress——接诊当场从列表消失。可出院记录按规范是
+    **出院后 24 小时内**完成，医生这时候已经没有任何入口进这个接诊补写了。
+    保留到出院记录签发为止（最多 7 天，避免列表被历史堆满）。
+    """
+    discharge_cutoff = datetime.now() - timedelta(days=_DISCHARGED_PENDING_DAYS)
+
+    # 已签发出院记录的接诊 id（这些不再需要留在列表里）
+    discharged_done = select(MedicalRecord.encounter_id).where(
+        MedicalRecord.record_type == "discharge_record",
+        MedicalRecord.status == "submitted",
+    )
+
     stmt = (
         select(Encounter, Patient)
         .join(Patient, Encounter.patient_id == Patient.id)
         .where(
             Encounter.doctor_id == doctor_id,
             Encounter.visit_type == "inpatient",
-            Encounter.status == "in_progress",
+            or_(
+                Encounter.status == "in_progress",
+                and_(
+                    Encounter.status == "completed",
+                    Encounter.visited_at >= discharge_cutoff,
+                    Encounter.id.not_in(discharged_done),
+                ),
+            ),
         )
         .order_by(Encounter.visited_at.desc())
     )
@@ -63,6 +93,9 @@ async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
             "admission_condition": enc.admission_condition,
             "visited_at": enc.visited_at.isoformat() if enc.visited_at else None,
             "chief_complaint": enc.chief_complaint_brief,
+            # 供前端区分展示：已出院的这条是"待补出院记录"，不是在院病人
+            "encounter_status": enc.status,
+            "pending_discharge_record": enc.status == "completed",
         }
         for enc, pat in rows
     ]

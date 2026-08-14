@@ -70,3 +70,18 @@ class MedicalRecordResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class RecordExportAudit(BaseModel):
+    """病历导出/打印的审计上报入参（2026-08-14 第六轮审计修复）。
+
+    打印与导出全在客户端完成，服务端无从感知，而导出是把整份病历连同患者身份
+    信息一起带走——放开归属校验后审计是唯一追责手段，这条路径不能没有留痕。
+    字段都可空：上报失败不该阻断医生导出，能记多少记多少。
+    """
+
+    record_id: Optional[str] = None
+    encounter_id: Optional[str] = None
+    record_type: Optional[str] = None
+    method: str = "print"          # print / word
+    is_signed: bool = False

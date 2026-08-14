@@ -326,3 +326,30 @@ async def test_resolve_his_pending_cross_doctor_blocked(client_doc_me):
         json={"field": "allergy_history", "adopt": True},
     )
     assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_radiologist_cannot_write_patient_profile(async_db):
+    """影像科医生不能改患者档案（2026-08-14 第六轮审计修复）。
+
+    assert_patient_access 把 radiologist 放进直通名单是为了让他看影像与患者信息，
+    但该函数同时被患者档案的**写**端点复用——影像科医生因此能改任意患者的
+    过敏史/既往史，而这些是临床用药依据，不该由不接诊的角色改动。
+    读放行、写按归属，两件事分开判。
+    """
+    from fastapi import HTTPException
+
+    from app.core.authz import assert_patient_access, assert_patient_write_access
+
+    radio = User(username="radio1", password_hash="x", real_name="影像科医生",
+                 role="radiologist", is_active=True)
+    async_db.add(radio)
+    await async_db.commit()
+
+    # 读：仍然直通（看影像需要）
+    await assert_patient_access(async_db, "pat-other", radio)
+
+    # 写：必须被拦住
+    with pytest.raises(HTTPException) as exc:
+        await assert_patient_write_access(async_db, "pat-other", radio)
+    assert exc.value.status_code == 403

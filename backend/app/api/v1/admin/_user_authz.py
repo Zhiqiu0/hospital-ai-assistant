@@ -72,6 +72,20 @@ async def assert_can_manage_target(
             detail="无权操作权限等级不低于自己的账号",
         )
 
+    # 科室范围限制（2026-08-14 第六轮审计修复）：原先守卫只比**角色等级**、
+    # 完全不看科室——dept_admin 实际等于全院管理员，能重置任意科室医生的密码。
+    # 而重置密码后那个账号就要用管理员知道的临时密码登录，等于跨科室接管账号，
+    # 之后以那位医生的名义签发病历。"科室管理员"这个角色名本身就界定了范围。
+    # hospital_admin / super_admin 是全院角色，不受此限。
+    if operator.role == "dept_admin":
+        op_dept = getattr(operator, "department_id", None)
+        tg_dept = getattr(target, "department_id", None)
+        if not op_dept or op_dept != tg_dept:
+            raise HTTPException(
+                status_code=403,
+                detail="科室管理员只能管理本科室的账号",
+            )
+
 
 async def assert_not_last_super_admin(
     db: AsyncSession, target: User, *, will_deactivate: bool, new_role: str | None,

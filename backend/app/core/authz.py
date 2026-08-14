@@ -81,6 +81,35 @@ async def assert_patient_access(db: AsyncSession, patient_id: str, user) -> None
         raise HTTPException(status_code=403, detail="无权访问该患者的病历档案（只能查看你接诊过的患者）")
 
 
+async def assert_patient_write_access(db: AsyncSession, patient_id: str, user) -> None:
+    """患者档案**写**操作的归属校验（2026-08-14 第六轮审计修复）。
+
+    与 assert_patient_access 的差别只有一点：**radiologist 不直通**。
+
+    assert_patient_access 把 radiologist 放进直通名单，是为了让影像科医生能看
+    影像与对应患者信息；但那个函数同时被患者档案的写端点复用，于是影像科医生
+    可以改任意患者的过敏史/既往史——这些是临床用药依据，不该由不接诊的角色改动。
+    读放行、写按归属，两件事分开判。
+    """
+    role = getattr(user, "role", "")
+    if role in ADMIN_ROLES:
+        return
+    stmt = (
+        select(EncounterModel.id)
+        .where(
+            EncounterModel.patient_id == patient_id,
+            EncounterModel.doctor_id == getattr(user, "id", ""),
+        )
+        .limit(1)
+    )
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if not row:
+        raise HTTPException(
+            status_code=403,
+            detail="无权修改该患者的档案（只能修改你接诊过的患者）",
+        )
+
+
 # 可以书写/签发病历的角色（2026-08-14 第六轮审计修复）
 #
 # 医院给的硬要求是「病历上写的名字必须都是本人（医生）」。而原先所有病历写端点

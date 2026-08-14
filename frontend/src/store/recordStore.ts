@@ -68,6 +68,16 @@ interface RecordState {
    */
   lastSavedContent: string
 
+  /**
+   * 签发时冻结的病案首页快照（2026-08-14 第六轮审计修复）。
+   *
+   * 后端 workspace 快照的 active_record 里**一直有** patient_snapshot，
+   * 但编辑器打印/导出把这个参数写死成 null——于是已签发病历打印时用的是
+   * **实时患者数据**而不是冻结快照：患者签发后改了住址/电话，重新打印这份
+   * 已签发病历，首页会跟着变。而首页冻结正是 2026-05-16 加快照机制的目的。
+   */
+  patientSnapshot: Record<string, unknown> | null
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
   /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
@@ -78,10 +88,20 @@ interface RecordState {
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setPendingGenerate: (v: boolean) => void
-  setFinal: (v: boolean) => void
+  /**
+   * 设置签发状态。
+   *
+   * signedAt 传后端返回的真实签发时间（2026-08-14 第六轮审计修复）：
+   * 原实现无条件用 new Date()，而医生刷新页面水合已签发病历时也会走这里——
+   * **签发时间被改成刷新那一刻**，打印出来的病历上写着错误的签发时刻，
+   * 而后端明明返回了真实的 submitted_at。
+   * 不传则用当前时间（医生本人刚点签发的场景，此刻就是签发时刻）。
+   */
+  setFinal: (v: boolean, signedAt?: string | null) => void
   setRecordSavedAt: (ts: number) => void
   /** auto-save 成功时记录「已落库的正文」，供水合判断本地是否更脏 */
   markSaved: (content: string, ts: number) => void
+  setPatientSnapshot: (snap: Record<string, unknown> | null) => void
   /** 在病历末尾追加一段（带空行分隔，AI 续写流式输出用） */
   appendToRecord: (text: string) => void
   /** 重置到初始状态（切换接诊 / 登出时调用） */
@@ -95,6 +115,7 @@ export const useRecordStore = create<RecordState>()(
       recordType: 'outpatient',
       ownerEncounterId: null,
       lastSavedContent: '',
+      patientSnapshot: null,
 
       isGenerating: false,
       isPolishing: false,
@@ -126,6 +147,7 @@ export const useRecordStore = create<RecordState>()(
             finalizedAt: null,
             recordContent: '',
             lastSavedContent: '',
+            patientSnapshot: null,
             recordSavedAt: 0,
           }
         }),
@@ -134,12 +156,21 @@ export const useRecordStore = create<RecordState>()(
       setPolishing: v => set({ isPolishing: v }),
       setPendingGenerate: v => set({ pendingGenerate: v }),
 
-      setFinal: v =>
-        set({ isFinal: v, finalizedAt: v ? new Date().toLocaleString('zh-CN') : null }),
+      setFinal: (v, signedAt) =>
+        set({
+          isFinal: v,
+          finalizedAt: v
+            ? signedAt
+              ? new Date(signedAt).toLocaleString('zh-CN')
+              : new Date().toLocaleString('zh-CN')
+            : null,
+        }),
 
       setRecordSavedAt: ts => set({ recordSavedAt: ts }),
 
       markSaved: (content, ts) => set({ lastSavedContent: content, recordSavedAt: ts }),
+
+      setPatientSnapshot: snap => set({ patientSnapshot: snap }),
 
       appendToRecord: text =>
         set(state => ({
@@ -189,6 +220,7 @@ export const useRecordStore = create<RecordState>()(
         recordType: state.recordType,
         ownerEncounterId: state.ownerEncounterId,
         lastSavedContent: state.lastSavedContent,
+        patientSnapshot: state.patientSnapshot,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,

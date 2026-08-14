@@ -45,6 +45,8 @@ export interface EncounterIntakePayload {
   visit_type?: string | null
   patient_reused?: boolean
   previous_record_content?: string | null
+  /** 就诊时间：病案首页的法定字段，不能拿签发时间顶替 */
+  visited_at?: string | null
 }
 
 /** quick-start 响应专用：含初诊/复诊判断、上次病历参考 */
@@ -66,6 +68,10 @@ export interface SnapshotResult extends EncounterIntakePayload {
     content?: string
     /** ISO 字符串，后端 _serialize_record 返回，用于状态条显示"X 分钟前保存" */
     updated_at?: string | null
+    /** 签发瞬间冻结的病案首页快照；未签发为 null */
+    patient_snapshot?: Record<string, unknown> | null
+    /** 真实签发时间（ISO），打印页的「签发时间」取它 */
+    submitted_at?: string | null
   } | null
   /** 最新 QC 跑出来的问题列表（logout 重登也能恢复） */
   latest_qc_issues?: QCIssue[] | null
@@ -129,6 +135,7 @@ export function applyQuickStartResult(res: QuickStartResult): void {
     isFirstVisit: !res.patient_reused,
     isPatientReused: !!res.patient_reused,
     previousRecordContent: res.previous_record_content ?? null,
+    visitedAt: res.visited_at ?? null,
   })
 }
 
@@ -196,7 +203,13 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (!localIsDirty) {
       recordStore.setRecordContent(res.active_record.content || '')
     }
-    recordStore.setFinal(res.active_record.status === 'submitted')
+    // 传后端真实签发时间，否则刷新页面会把签发时刻改成"现在"
+    recordStore.setFinal(
+      res.active_record.status === 'submitted',
+      res.active_record.submitted_at ?? null
+    )
+    // 冻结快照跟着病历走，打印/导出时用它而不是实时患者数据
+    recordStore.setPatientSnapshot(res.active_record.patient_snapshot ?? null)
     // 把 DB 里的 updated_at 灌回 recordSavedAt——logout 重登 / 切设备时
     // 状态条立即显示"病历 X 分钟前保存"，而不是误报"草稿未保存"。
     // 本地有未保存编辑时不回灌，否则会把"本地更脏"这个事实抹掉，下次水合就覆盖了。

@@ -27,6 +27,15 @@ interface WardPatient {
   /** 入院天数：在 fetchWard 时一次性计算好，避免 render 内调 Date.now()
       触发 react-hooks/purity 规则 */
   admit_days?: number | null
+  /**
+   * 已办理出院、但出院记录还没签发（2026-08-14 第六轮审计修复）。
+   *
+   * 这类接诊会继续留在病区列表里让医生补写出院记录——办理出院会把接诊置为
+   * completed，而列表原先只查 in_progress，接诊当场消失，医生再也进不去；
+   * 而出院记录按规范是出院后 24 小时内完成。
+   * 必须在界面上和在院病人区分开，否则医生会误以为病人还没出院。
+   */
+  pending_discharge_record?: boolean
 }
 
 interface Props {
@@ -179,14 +188,26 @@ export default function WardView({
                       {p.patient_name}
                     </Text>
                   </div>
-                  {p.bed_no && (
-                    <Tag
-                      color={isSelected ? 'green' : 'default'}
-                      style={{ margin: 0, fontSize: 11, borderRadius: 6 }}
-                    >
-                      {p.bed_no}
-                    </Tag>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {/* 已出院待补出院记录：必须和在院病人区分，否则医生会以为病人还没出院 */}
+                    {p.pending_discharge_record && (
+                      <Tag
+                        color="orange"
+                        style={{ margin: 0, fontSize: 10, borderRadius: 6 }}
+                        title="该患者已办理出院，出院记录尚未签发"
+                      >
+                        待补出院记录
+                      </Tag>
+                    )}
+                    {p.bed_no && (
+                      <Tag
+                        color={isSelected ? 'green' : 'default'}
+                        style={{ margin: 0, fontSize: 11, borderRadius: 6 }}
+                      >
+                        {p.bed_no}
+                      </Tag>
+                    )}
+                  </div>
                 </div>
 
                 {/* 性别/年龄/病情 */}

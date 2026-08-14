@@ -310,6 +310,9 @@ export default function InpatientWorkbenchPage() {
         accentColor={ACCENT}
         tagColor="green"
         recordTypeLabel={t => RECORD_TYPE_LABEL[t] || t}
+        // 住院端也要能打印（2026-08-14 第六轮审计修复）：门诊端传了 showPrint、
+        // 住院端漏了——同一个组件、同样的病历，住院医生看得到却打不出来
+        showPrint
       />
 
       <ImagingUploadModal open={imagingOpen} onClose={() => setImagingOpen(false)} />

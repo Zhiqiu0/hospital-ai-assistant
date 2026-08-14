@@ -16,6 +16,9 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
+import { reportRecordExport } from '@/utils/exportAudit'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useRecordStore } from '@/store/recordStore'
 import { useAuthStore } from '@/store/authStore'
 import type { Patient, VisitType } from '@/domain/medical'
 
@@ -99,9 +102,15 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
   // 导出 Word 时拼"病案首页"用的接诊上下文：医生姓名/科室来自 authStore，
   // visit_type 来自 activeEncounterStore（由父组件传入）。编辑器场景没有 snapshot，传 null。
   const user = useAuthStore(s => s.user)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const visitedAt = useActiveEncounterStore(s => s.visitedAt)
+  // 已签发病历打印用签发时冻结的首页快照，不是实时患者数据
+  const patientSnapshot = useRecordStore(s => s.patientSnapshot)
   const exportCtx = {
     visit_type: visitType,
-    visit_time: finalizedAt,
+    // 就诊时间用接诊自己的时间，不是签发时刻（2026-08-14 第六轮审计修复）：
+    // 病案首页的"就诊时间"是患者什么时候来的，原先赋成 finalizedAt 直接写错。
+    visit_time: visitedAt,
     doctor_name: user?.real_name,
     department_name: user?.department_name,
   }
@@ -224,9 +233,23 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
         icon={<FileWordOutlined />}
         size="small"
         disabled={!recordContent.trim() || isBusy}
-        onClick={() =>
-          exportWordDoc(recordContent, currentPatient, recordType, finalizedAt, null, exportCtx)
-        }
+        onClick={() => {
+          // 导出整份病历属最敏感的 PHI 操作，必须留痕
+          reportRecordExport({
+            encounter_id: currentEncounterId,
+            record_type: recordType,
+            method: 'word',
+            is_signed: !!finalizedAt,
+          })
+          exportWordDoc(
+            recordContent,
+            currentPatient,
+            recordType,
+            finalizedAt,
+            patientSnapshot,
+            exportCtx
+          )
+        }}
         style={{ borderRadius: 8, fontSize: 12, height: 30 }}
       >
         导出 Word

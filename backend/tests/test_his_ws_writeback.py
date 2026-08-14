@@ -67,7 +67,10 @@ async def test_writeback_prefers_ws_channel(ws_creds):
     assert types == [wp.MSG_WRITEBACK, wp.MSG_REFRESH]
     # 刷新消息按规范带 visit_id + target
     refresh_payload = fake.sent[1]["payload"]
-    assert refresh_payload == {"visit_id": "V1", "target": "outpatient_record"}
+    # target 直接用 record_type（2026-08-14 第六轮审计修复）：原先硬拼
+    # f"{record_type}_record"，住院会拼成 admission_note_record /
+    # course_record_record 这类非法值下发给厂商。
+    assert refresh_payload == {"visit_id": "V1", "target": "outpatient"}
 
 
 @pytest.mark.asyncio

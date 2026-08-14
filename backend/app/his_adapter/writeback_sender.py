@@ -207,7 +207,13 @@ async def _send_writeback_inner(
 
         # 2. 刷新（刷新地址未配置则跳过）
         if settings.his_writeback_refresh_url:
-            target = f"{payload['record_type']}_record"
+            # target 直接用 record_type（2026-08-14 第六轮审计修复）：
+            # 原先硬拼 f"{record_type}_record"，门诊拼出 outpatient_record 尚可，
+            # 住院则拼成 admission_note_record / course_record_record 这类非法值。
+            # record_type 本身就是规范附录里与厂商对齐过的枚举
+            # （outpatient/emergency/admission_note/course_record/discharge_record/
+            # op_record...），直接下发最可靠。
+            target = payload["record_type"]
             refresh_raw = json.dumps(
                 {"visit_id": payload["visit_id"], "target": target},
                 ensure_ascii=False, sort_keys=True,
@@ -259,7 +265,8 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
     # 2. 刷新（与 HTTP 通道语义一致：写入成功后必须刷新，失败标记 refresh_failed）
     refresh_payload = {
         "visit_id": payload["visit_id"],
-        "target": f"{payload['record_type']}_record",
+        # 同 HTTP 通道：直接用 record_type，不再硬拼 "_record" 后缀
+        "target": payload["record_type"],
     }
     try:
         rack = await his_ws_manager.send_with_ack(

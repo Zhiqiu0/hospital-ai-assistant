@@ -39,6 +39,14 @@ interface ActiveEncounterState {
   isPatientReused: boolean
   /** 复诊时上一次的病历全文，供 AI 生成参考（null=初诊或暂无） */
   previousRecordContent: string | null
+  /**
+   * 本次接诊的就诊时间（2026-08-14 第六轮审计修复）。
+   *
+   * 病案首页有「就诊时间」一栏。原先前端拿不到它（快照不返回），于是编辑器
+   * 打印时把 visit_time 赋成了 finalizedAt（签发时刻）——首页上「患者什么时候
+   * 来的」直接写错，而这是病案首页的法定字段。
+   */
+  visitedAt: string | null
 
   /**
    * 一次性设置当前接诊（quick-start 成功 / snapshot 恢复时调用）
@@ -51,6 +59,7 @@ interface ActiveEncounterState {
     isFirstVisit: boolean
     isPatientReused: boolean
     previousRecordContent?: string | null
+    visitedAt?: string | null
   }) => void
 
   /**
@@ -63,6 +72,7 @@ interface ActiveEncounterState {
       isFirstVisit: boolean
       isPatientReused: boolean
       previousRecordContent: string | null
+      visitedAt: string | null
     }>
   ) => void
 
@@ -84,6 +94,7 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
       isFirstVisit: true,
       isPatientReused: false,
       previousRecordContent: null,
+      visitedAt: null,
 
       setActive: input => {
         // Audit Round 4 M1：encounterId 真的变了 → 主动清空 4 个子 store 派生数据，
@@ -121,6 +132,7 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
           isFirstVisit: input.isFirstVisit,
           isPatientReused: input.isPatientReused,
           previousRecordContent: input.previousRecordContent ?? null,
+          visitedAt: input.visitedAt ?? null,
         })
       },
 
@@ -190,6 +202,7 @@ export function setCurrentEncounterFromPatient(
     isFirstVisit?: boolean
     isPatientReused?: boolean
     previousRecordContent?: string | null
+    visitedAt?: string | null
   }
 ): void {
   // 先 upsert 到 cache，让 useCurrentPatient 能查到
@@ -203,6 +216,7 @@ export function setCurrentEncounterFromPatient(
     isFirstVisit: options?.isFirstVisit ?? current.isFirstVisit,
     isPatientReused: options?.isPatientReused ?? current.isPatientReused,
     previousRecordContent: options?.previousRecordContent ?? null,
+    visitedAt: options?.visitedAt ?? null,
   })
 }
 
