@@ -70,6 +70,8 @@ export interface SnapshotResult extends EncounterIntakePayload {
     updated_at?: string | null
     /** 签发瞬间冻结的病案首页快照；未签发为 null */
     patient_snapshot?: Record<string, unknown> | null
+    /** 真实签发时间（ISO），打印页的「签发时间」取它 */
+    submitted_at?: string | null
   } | null
   /** 最新 QC 跑出来的问题列表（logout 重登也能恢复） */
   latest_qc_issues?: QCIssue[] | null
@@ -201,7 +203,11 @@ export function applySnapshotResult(res: SnapshotResult): void {
     if (!localIsDirty) {
       recordStore.setRecordContent(res.active_record.content || '')
     }
-    recordStore.setFinal(res.active_record.status === 'submitted')
+    // 传后端真实签发时间，否则刷新页面会把签发时刻改成"现在"
+    recordStore.setFinal(
+      res.active_record.status === 'submitted',
+      res.active_record.submitted_at ?? null
+    )
     // 冻结快照跟着病历走，打印/导出时用它而不是实时患者数据
     recordStore.setPatientSnapshot(res.active_record.patient_snapshot ?? null)
     // 把 DB 里的 updated_at 灌回 recordSavedAt——logout 重登 / 切设备时

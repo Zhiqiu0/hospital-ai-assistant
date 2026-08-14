@@ -220,7 +220,10 @@ export function useWorkbenchBase({
         setRecordType(snapshot.active_record.record_type || defaultRecordType)
         setRecordContent(snapshot.active_record.content || '')
         // 尊重该病历自身的签发状态，不再无条件放开编辑
-        setFinal(snapshot.active_record.status === 'submitted')
+        setFinal(
+          snapshot.active_record.status === 'submitted',
+          snapshot.active_record.submitted_at ?? null
+        )
       } else {
         setRecordType(defaultRecordType)
         setRecordContent('')

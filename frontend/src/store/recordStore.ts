@@ -88,7 +88,16 @@ interface RecordState {
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setPendingGenerate: (v: boolean) => void
-  setFinal: (v: boolean) => void
+  /**
+   * 设置签发状态。
+   *
+   * signedAt 传后端返回的真实签发时间（2026-08-14 第六轮审计修复）：
+   * 原实现无条件用 new Date()，而医生刷新页面水合已签发病历时也会走这里——
+   * **签发时间被改成刷新那一刻**，打印出来的病历上写着错误的签发时刻，
+   * 而后端明明返回了真实的 submitted_at。
+   * 不传则用当前时间（医生本人刚点签发的场景，此刻就是签发时刻）。
+   */
+  setFinal: (v: boolean, signedAt?: string | null) => void
   setRecordSavedAt: (ts: number) => void
   /** auto-save 成功时记录「已落库的正文」，供水合判断本地是否更脏 */
   markSaved: (content: string, ts: number) => void
@@ -147,8 +156,15 @@ export const useRecordStore = create<RecordState>()(
       setPolishing: v => set({ isPolishing: v }),
       setPendingGenerate: v => set({ pendingGenerate: v }),
 
-      setFinal: v =>
-        set({ isFinal: v, finalizedAt: v ? new Date().toLocaleString('zh-CN') : null }),
+      setFinal: (v, signedAt) =>
+        set({
+          isFinal: v,
+          finalizedAt: v
+            ? signedAt
+              ? new Date(signedAt).toLocaleString('zh-CN')
+              : new Date().toLocaleString('zh-CN')
+            : null,
+        }),
 
       setRecordSavedAt: ts => set({ recordSavedAt: ts }),
 
