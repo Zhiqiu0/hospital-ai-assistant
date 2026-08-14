@@ -62,7 +62,11 @@ async def test_local_fallback_emits_sentinel_for_resubscribe(monkeypatch):
     # 把重试间隔压到极短，避免测试等 30 秒
     monkeypatch.setattr(eb, "LOCAL_FALLBACK_RETRY_SECONDS", 0.05)
     bus = eb.HisEventBus()
-    monkeypatch.setattr(bus, "_get_client", lambda: None)  # 模拟 Redis 不可用
+    # 模拟 Redis 不可用：publish 与 subscribe 现在用两个不同的客户端
+    # （2026-08-14：订阅端不能设 socket_timeout，否则 pubsub 长阻塞会被误判
+    # 为超时、订阅泵每 5 秒重建一次，生产日志实测到），两个入口都要置空
+    monkeypatch.setattr(bus, "_get_client", lambda: None)
+    monkeypatch.setattr(bus, "_get_sub_client", lambda: None)
 
     async with bus.subscription("ch-fallback") as q:
         evt = await asyncio.wait_for(q.get(), timeout=2)
@@ -78,6 +82,7 @@ async def test_local_fallback_still_delivers_events(monkeypatch):
     monkeypatch.setattr(eb, "LOCAL_FALLBACK_RETRY_SECONDS", 5)  # 本用例内不触发哨兵
     bus = eb.HisEventBus()
     monkeypatch.setattr(bus, "_get_client", lambda: None)
+    monkeypatch.setattr(bus, "_get_sub_client", lambda: None)
 
     async with bus.subscription("ch-local") as q:
         await bus.publish("ch-local", {"type": "admit", "x": 1})

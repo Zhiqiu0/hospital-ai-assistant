@@ -62,6 +62,8 @@ class HisEventBus:
 
     def __init__(self) -> None:
         self._client: Optional[aioredis.Redis] = None
+        # 订阅专用客户端：与 publish 用的分开，不设 socket_timeout（见 _get_sub_client）
+        self._sub_client: Optional[aioredis.Redis] = None
         self._unavailable = False
         # 进程内直投注册表：channel → 本进程订阅队列集合（仅无 Redis 时使用）
         self._local: dict[str, set[asyncio.Queue]] = {}
@@ -95,6 +97,29 @@ class HisEventBus:
                 socket_timeout=2.0,
             )
         return self._client
+
+    def _get_sub_client(self) -> Optional[aioredis.Redis]:
+        """订阅专用客户端：**不设 socket_timeout**（2026-08-14 修回归）。
+
+        publish 侧必须有读超时，否则 Redis 假死时会顶死 HIS WS 的串行消息循环；
+        但 pubsub 的 listen/get_message 本来就要长时间阻塞等消息——同一个 2 秒
+        读超时套上去，订阅泵每 2 秒就抛一次 "Timeout reading from redis"、
+        被判为泵终止，consumer 再每 5 秒重建订阅，整条 HIS 回写命令总线持续
+        flapping（上线后生产日志实测到）。两种诉求相反，只能分成两个连接。
+
+        断连检测改用 health_check_interval：redis-py 会定期发 PING 探活，
+        既不会误杀正常的长阻塞，又能发现真正断掉的连接。
+        """
+        if self._unavailable or not settings.redis_url:
+            return None
+        if self._sub_client is None:
+            self._sub_client = aioredis.from_url(
+                settings.redis_url, decode_responses=True,
+                socket_connect_timeout=2.0,
+                # 不设 socket_timeout —— 订阅就是要长时间等
+                health_check_interval=30,
+            )
+        return self._sub_client
 
     async def publish(self, channel: str, event: dict) -> None:
         """发布事件：优先 Redis 广播（覆盖所有 worker），失败落回进程内直投。
@@ -157,7 +182,7 @@ class HisEventBus:
         上下文退出时自动清理（SSE 断开 / 任务取消都会走到）。
         """
         q: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
-        client = self._get_client()
+        client = self._get_sub_client()
         if client is None:
             async with self._local_fallback(channel, q, retry=True) as fq:
                 yield fq
