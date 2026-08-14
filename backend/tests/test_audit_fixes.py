@@ -181,3 +181,42 @@ async def test_resume_requires_same_visit_type(async_db):
     # 不同类型不能续接（急诊不该捡到门诊那条）
     assert (await svc.find_in_progress(p.id, doc.id, visit_type="emergency")) is None
     assert (await svc.find_in_progress(p.id, doc.id, visit_type="inpatient")) is None
+
+
+@pytest.mark.asyncio
+async def test_ward_keeps_discharged_pending_record(async_db):
+    """已出院但出院记录未签发的接诊仍留在病区列表（2026-08-14 第六轮审计修复）。
+
+    办理出院会把接诊置 completed，而病区列表原先只查 in_progress——接诊当场
+    从列表消失。可出院记录按规范是出院后 24 小时内完成，医生这时候已经没有
+    任何入口进这个接诊补写了。
+    """
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.services.inpatient_service import list_active_ward
+
+    doc = User(username="WD1", password_hash="x", real_name="住院医生", role="doctor")
+    p1 = Patient(name="待补出院记录")
+    p2 = Patient(name="已完成出院")
+    async_db.add_all([doc, p1, p2])
+    await async_db.flush()
+
+    # 甲：已出院、出院记录未签发 → 应保留
+    e1 = Encounter(patient_id=p1.id, doctor_id=doc.id, visit_type="inpatient",
+                   status="completed")
+    # 乙：已出院、出院记录已签发 → 应移出
+    e2 = Encounter(patient_id=p2.id, doctor_id=doc.id, visit_type="inpatient",
+                   status="completed")
+    async_db.add_all([e1, e2])
+    await async_db.flush()
+    async_db.add(MedicalRecord(encounter_id=e2.id, record_type="discharge_record",
+                               status="submitted", current_version=1))
+    await async_db.commit()
+
+    items = await list_active_ward(async_db, doc.id)
+    ids = {i["encounter_id"] for i in items}
+    assert e1.id in ids, "已出院但出院记录未签发的接诊被移出了，医生补写不了"
+    assert e2.id not in ids, "出院记录已签发的接诊不该继续占着病区列表"
+    got = next(i for i in items if i["encounter_id"] == e1.id)
+    assert got["pending_discharge_record"] is True
