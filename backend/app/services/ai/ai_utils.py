@@ -232,4 +232,5 @@ async def stream_text(
         task_type,
         token_input=usage.prompt_tokens if usage else 0,
         token_output=usage.completion_tokens if usage else 0,
+        model_name=options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
     )

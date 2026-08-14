@@ -14,7 +14,7 @@
 """
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,12 +138,37 @@ class DepartmentService:
         停用后该科室不会出现在接诊页的科室选择列表中（list_all 默认只返回 is_active=True）；
         但后台管理页（list_all(include_inactive=True)）仍能看到，可"启用"恢复。
 
+        关联检查（2026-08-14 第七轮审计 #6）：
+            停用前必须确认没有在职医生还挂在这个科室。原先零检查，后果是：
+            那些医生的 department_id 仍指向已停用科室，他们新建的接诊、
+            HIS 推来的接诊都会落到一个**在下拉里根本选不到**的科室上，
+            医生自己也改不回来（列表里没有它）；管理员那头则毫无提示，
+            以为只是从列表里去掉一个名字。
+            医院真实的科室调整流程本来就是「先把人转走，再停用」，
+            这里拦住并把人数说清楚，比事后排查错挂的接诊便宜得多。
+
         Raises:
             HTTPException(404): 科室不存在。
+            HTTPException(409): 仍有在职用户挂在该科室。
         """
         dept = await self.get_by_id(dept_id)
         if not dept:
             raise HTTPException(status_code=404, detail="科室不存在")
+
+        from app.models.user import User
+
+        in_use = (await self.db.execute(
+            select(func.count()).select_from(User).where(
+                User.department_id == dept_id,
+                User.is_active.is_(True),
+            )
+        )).scalar() or 0
+        if in_use:
+            raise HTTPException(
+                status_code=409,
+                detail=f"该科室下还有 {in_use} 位在职人员，请先把他们调整到其他科室再停用",
+            )
+
         dept.is_active = False
         await self.db.commit()
         await redis_cache.delete(_LIST_KEY)

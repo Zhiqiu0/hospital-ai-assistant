@@ -12,13 +12,42 @@
  *   通过管理页热更新比改代码重部署效率高。
  */
 import { useEffect, useState } from 'react'
-import { List, Button, Modal, Form, Input, Select, Tag, Typography, Card, Popconfirm } from 'antd'
+import {
+  List,
+  Button,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Tag,
+  Tooltip,
+  Typography,
+  Card,
+  Popconfirm,
+} from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { message } from '@/services/messageBridge'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
+
+/**
+ * 后端**真的会去读**自定义提示词的场景（2026-08-14 第七轮审计 #1）。
+ *
+ * 全仓只有 ai_suggestions.py 里两处 get_active_prompt(db, "inquiry" / "exam")。
+ * 病历生成、润色、质控走的都是代码里的 prompts_*.py 常量，
+ * 管理员在本页为那些场景建模板、点激活，保存成功、页面显示"已启用"，
+ * 但 AI 那边**根本不会读**——运维改了半天以为调优了，实际一字未变。
+ *
+ * 为什么不把其余场景也接上，而是标注出来：
+ *   与本项目对质控评分标准的既定立场一致（见 admin/rubrics.py：
+ *   「修改评分标准 = 修改国家法定文件 → 走代码 PR review，不在 admin 后台改」）。
+ *   病历生成提示词直接决定写进病历的内容，同属临床安全关键项，
+ *   不该在后台被无审查地改掉。所以：只读的场景保留展示（便于查看历史模板），
+ *   但明确标记不生效，且新建时不再提供这些选项。
+ */
+const EFFECTIVE_SCENES = new Set(['inquiry', 'exam'])
 
 const SCENE_MAP: Record<string, { label: string; color: string }> = {
   outpatient: { label: '门诊病历生成', color: 'blue' },
@@ -147,6 +176,12 @@ export default function PromptsPage() {
                   <span>{item.name}</span>
                   <Tag>{item.version}</Tag>
                   {!item.is_active && <Tag color="default">已停用</Tag>}
+                  {/* 该场景后端不读自定义提示词，标出来免得运维白改（审计 #1）*/}
+                  {!EFFECTIVE_SCENES.has(item.scene) && (
+                    <Tooltip title="该场景的提示词由代码维护（prompts_*.py），在此编辑不会生效；如需调整请走代码 PR">
+                      <Tag color="warning">此处编辑不生效</Tag>
+                    </Tooltip>
+                  )}
                 </div>
               }
               extra={
@@ -199,7 +234,9 @@ export default function PromptsPage() {
           </Form.Item>
           <Form.Item label="应用场景" name="scene" rules={[{ required: true }]}>
             <Select
-              options={Object.entries(SCENE_MAP).map(([v, s]) => ({ value: v, label: s.label }))}
+              options={Object.entries(SCENE_MAP)
+                .filter(([v]) => EFFECTIVE_SCENES.has(v))
+                .map(([v, s]) => ({ value: v, label: s.label }))}
             />
           </Form.Item>
           <Form.Item label="版本号" name="version">

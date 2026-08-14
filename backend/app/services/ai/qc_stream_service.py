@@ -147,6 +147,7 @@ async def run_quick_qc_stream(
                 "qc",
                 token_input=usage.prompt_tokens if usage else 0,
                 token_output=usage.completion_tokens if usage else 0,
+                model_name=model_options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
             )
 
             # LLM 建议去重（避免与 rule 引擎扣分项重复）

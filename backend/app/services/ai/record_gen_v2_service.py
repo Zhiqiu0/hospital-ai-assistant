@@ -149,6 +149,7 @@ async def _log_and_save_draft(
             task_type,
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
+            model_name=opts.get("model_name"),  # 真实模型，非全局默认（审计 #7）
         )
     except Exception as exc:
         logger.error("log_ai_task_failed task=%s err=%s", task_type, exc)

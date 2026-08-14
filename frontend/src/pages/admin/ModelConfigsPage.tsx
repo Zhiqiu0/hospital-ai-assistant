@@ -4,7 +4,11 @@
  * 管理各 AI 功能使用的大语言模型配置，调用 GET/POST/PUT /admin/model-configs：
  *   - 配置项：task_type（生成/质控/建议等）、model_name、
  *     api_base、temperature、max_tokens、is_active
- *   - Switch 控制启用/禁用：禁用后对应功能降级为规则引擎兜底
+ *   - Switch 控制本行配置是否生效。⚠️ 关掉**不会停用该场景的 AI**：
+ *     后端 get_model_options 查不到启用中的行时，回退到系统默认模型与参数
+ *     继续调用。也就是说这个开关的语义是「用这套自定义参数 / 用默认参数」，
+ *     不是「开 AI / 关 AI」。（2026-08-14 第七轮审计 #4：原注释写的是
+ *     禁用后降级为规则引擎兜底，与实际行为不符，会误导运维。）
  *   - 支持多个 task_type 使用不同模型（如质控用 deepseek-chat，
  *     生成用 deepseek-reasoner）
  *
@@ -29,9 +33,17 @@ import { message } from '@/services/messageBridge'
 
 const { Title, Text } = Typography
 
+/**
+ * 可配置场景 = 后端**真的会去读**模型配置的场景。
+ *
+ * 2026-08-14 第七轮审计 #3：这里原先还列了 `polish`（病历润色），可后端全仓
+ * 没有一处 get_model_options(db, "polish")——管理员在这一行里换模型、调
+ * temperature，保存也成功、页面也显示生效，实际一点作用都没有。
+ * 与其留个假开关，不如只列真正接线的场景。
+ * 新增场景时：先在后端加 get_model_options(db, "xxx") 调用，再加到这里。
+ */
 const SCENE_LABELS: Record<string, string> = {
   generate: '病历生成',
-  polish: '病历润色',
   qc: '质控分析',
   inquiry: '问诊建议/诊断建议',
   exam: '检查建议',
@@ -139,7 +151,12 @@ export default function ModelConfigsPage() {
                   <Form.Item name="max_tokens" label="最大Token" rules={[{ required: true }]}>
                     <InputNumber min={256} max={16384} step={256} style={{ width: 120 }} />
                   </Form.Item>
-                  <Form.Item name="is_active" label="启用" valuePropName="checked">
+                  <Form.Item
+                    name="is_active"
+                    label="启用"
+                    valuePropName="checked"
+                    tooltip="关掉表示本场景改用系统默认模型与参数，AI 仍会调用；不是关闭 AI"
+                  >
                     <Switch />
                   </Form.Item>
                   <Form.Item name="description" label="说明">
