@@ -19,7 +19,7 @@
 import json
 from typing import Optional
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -33,6 +33,13 @@ class VoiceRecord(Base, TimestampMixin):
     """
 
     __tablename__ = "voice_records"
+
+    # 2026-08-14 第七轮审计：本表零索引。管理端列表按 created_at 倒序分页，
+    # 医生侧按 doctor_id 过滤自己的录音；encounter_id 是外键（PG 不自动建索引）。
+    __table_args__ = (
+        Index("idx_voice_records_doctor_created", "doctor_id", "created_at"),
+        Index("idx_voice_records_encounter", "encounter_id"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 关联接诊（可空：允许不绑定接诊直接录音）

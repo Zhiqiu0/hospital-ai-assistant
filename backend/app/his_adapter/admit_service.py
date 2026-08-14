@@ -83,7 +83,13 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     # 用 hospital_code + visit_id 双键（2026-08-11 审计修复）：visit_id 只在机构内唯一，
     # 且限定 source=admit_push，与历史其它链路数据的命名空间隔离，避免跨机构/跨链路撞号。
     # JSONB 字段的 source/hospital_code 过滤放 Python 侧做（SQLite 测试库不支持 .astext，
-    # 生产 PG 用 GIN 索引命中 visit_no 后候选很少，内存过滤开销可忽略）。
+    # 命中 visit_no 后候选很少，内存过滤开销可忽略）。
+    #
+    # 2026-08-14 第七轮审计：这里原本写的是「生产 PG 用 GIN 索引命中 visit_no」——
+    # 不成立。那个 GIN 索引建在 his_external_ref->'his_patient_no' 上，与本查询
+    # 过滤的 visit_no 裸列毫无关系，visit_no 当时**没有任何索引**，
+    # 每次患者叫号都在 advisory lock 里全表扫 encounters。
+    # 已由迁移 j20260814hotidx 补上 idx_encounters_visit_no。
     candidates = (await db.execute(
         select(Encounter).where(
             Encounter.visit_no == payload.visit_id,

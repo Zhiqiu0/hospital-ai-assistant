@@ -58,6 +58,15 @@ class Encounter(Base, TimestampMixin):
         # 热路径索引（2026-08-11 病历安全）："我的接诊"/叫号队列都按
         # doctor_id + visited_at 过滤排序，原先无索引全表扫描。索引随 alembic 基线建出。
         Index("idx_encounters_doctor_visited", "doctor_id", "visited_at"),
+        # HIS 接诊幂等查重（2026-08-14 第七轮审计）：process_admit 每收到一条
+        # 推送都要按 visit_no 反查已有接诊，且这条查询跑在 advisory lock 里面。
+        # 原先 visit_no 上**没有任何索引**——上面那个 GIN 索引建的是
+        # his_external_ref->'his_patient_no'，跟 visit_no 是两回事，
+        # 而 admit_service 里的注释一直宣称「用 GIN 索引命中 visit_no」。
+        # 实际每次患者叫号都全表扫 encounters，还串行化在锁内，随接诊量线性劣化。
+        Index("idx_encounters_visit_no", "visit_no"),
+        # 患者维度反查（档案页、既往接诊、病历列表都按 patient_id 过滤）
+        Index("idx_encounters_patient", "patient_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
