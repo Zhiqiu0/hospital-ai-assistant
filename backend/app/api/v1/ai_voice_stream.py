@@ -34,6 +34,10 @@ from app.core.security import verify_token_str
 
 logger = logging.getLogger(__name__)
 
+# 上行泵单次 receive 的等待上限（秒）。只用于定期回到循环顶部检查
+# client_closed，不是空闲断连阈值——医生说话间歇几十秒无帧是正常的。
+_UPLINK_RECV_TIMEOUT = 5.0
+
 router = APIRouter()
 
 # 阿里云 DashScope Paraformer 实时 ASR WebSocket 入口
@@ -191,7 +195,28 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
             """浏览器 → 阿里云：转发 PCM 二进制帧，收到 finish 文本时触发 finish-task。"""
             try:
                 while not client_closed.is_set():
-                    msg = await websocket.receive()
+                    # 带超时地收（2026-08-14 第八轮审计修复）：
+                    #
+                    # 原先是裸 `await websocket.receive()`，于是循环条件
+                    # `not client_closed.is_set()` 形同虚设——标志位只有在下一次
+                    # 真收到消息时才会被检查到。downlink 收到 task-finished 后
+                    # set(client_closed) 就 return，注释声称由此"触发 uplink 收尾"，
+                    # 实际 uplink 只有在客户端再发一帧或真正断开（TCP FIN）时才退出。
+                    # 正常情况下前端会主动 close 所以看不出问题；但客户端半开时
+                    # （医生合上笔记本、WiFi 掉线、进程被杀但无 FIN），gather 永不
+                    # 返回，finally 里的 upstream.close() 与 websocket.close() 都
+                    # 不执行，这条协程 + WebSocket 连接永久驻留。
+                    # 而本端点对面向客户端的这条连接没有任何空闲超时或心跳
+                    # （ping_interval 只作用于到 DashScope 的上游），对照
+                    # his_ws 对厂商连接是有 90s IDLE_TIMEOUT 的。
+                    try:
+                        msg = await asyncio.wait_for(
+                            websocket.receive(), timeout=_UPLINK_RECV_TIMEOUT
+                        )
+                    except asyncio.TimeoutError:
+                        # 超时只是回到循环顶部重新检查 client_closed；
+                        # 医生说话间歇本就可能几十秒没有帧，不能因此断连。
+                        continue
                     if msg.get("type") == "websocket.disconnect":
                         break
                     if "bytes" in msg and msg["bytes"] is not None:
