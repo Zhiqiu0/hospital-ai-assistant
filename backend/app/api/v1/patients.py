@@ -15,7 +15,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.authz import assert_patient_access
+from app.core.authz import assert_patient_write_access
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.patient import (
@@ -123,7 +123,7 @@ async def update_patient(
 ):
     """更新患者信息（只更新传入的非 None 字段）。"""
     # 归属校验：只能改自己接诊过的患者，防止越权篡改他人档案
-    await assert_patient_access(db, patient_id, current_user)
+    await assert_patient_write_access(db, patient_id, current_user)
     # 档案修改留痕（2026-08-11 分级评审）：改了哪些字段名进审计（不含值，避免 PHI 入日志）
     from app.services.audit_service import log_action
     await log_action(
@@ -184,7 +184,7 @@ async def update_patient_profile(
     每个被改动的字段独立刷新 updated_at + updated_by（FHIR 字段级 verification 思路）。
     """
     # 归属校验：只能改自己接诊过的患者档案
-    await assert_patient_access(db, patient_id, current_user)
+    await assert_patient_write_access(db, patient_id, current_user)
     # 档案写入留痕（2026-08-13 第二轮审计修复）：过敏史/既往史等纵向 PHI 被改动
     # 原先零审计，且档案是原地覆盖无历史版本——出事后既查不到谁改的、也回不去。
     # 与 update_patient 的既有审计口径一致，只记字段名不记内容（避免 PHI 进日志）。
@@ -215,7 +215,7 @@ async def resolve_his_pending_profile(
     用药事故），所以交给医生当面判断。
     """
     # 归属校验：只能处理自己接诊过的患者档案
-    await assert_patient_access(db, patient_id, current_user)
+    await assert_patient_write_access(db, patient_id, current_user)
     from app.services.audit_service import log_action
     await log_action(
         action="resolve_his_profile",
@@ -244,6 +244,6 @@ async def confirm_patient_profile_field(
     重新计时，但不需要真的修改值。对应 FHIR verificationStatus: confirmed。
     """
     # 归属校验：只能确认自己接诊过的患者档案字段
-    await assert_patient_access(db, patient_id, current_user)
+    await assert_patient_write_access(db, patient_id, current_user)
     service = PatientService(db)
     return await service.confirm_profile_field(patient_id, data.field, doctor_id=current_user.id)
