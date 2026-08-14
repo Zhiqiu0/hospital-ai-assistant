@@ -12,13 +12,14 @@
   - delete_note(db, encounter_id, note_id)
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.encounter import Encounter
 from app.models.inpatient import ProgressNote
 
 
@@ -61,6 +62,48 @@ async def list_notes(db: AsyncSession, encounter_id: str) -> list[ProgressNote]:
     return list((await db.execute(stmt)).scalars().all())
 
 
+# 病程时间允许早于入院多久（小时）。留一点余量：急诊转住院、补录时
+# 医生填的时间可能略早于系统记录的入院时刻。
+_RECORDED_AT_LEEWAY_HOURS = 24
+
+
+async def _validate_recorded_at(
+    db: AsyncSession, encounter_id: str, value: datetime
+) -> None:
+    """校验病程时间落在本次住院的合理区间内（2026-08-14 第八轮审计新增）。
+
+    原先 recorded_at 完全不做范围校验（补写场景确实需要医生手填），
+    于是入院前、出院后、甚至明年的时间都原样入库，而 list_notes 只按它排序：
+    这条会静默排到入院记录之前或整条时间轴最末尾，医生看到的病程顺序与真实
+    诊疗过程不符——而**病历时间逻辑正是住院质控的必查项**。
+
+    跨年尤其危险：前端 DatePicker 用 format='MM-DD HH:mm'，**界面上根本不显示
+    年份**。2027 年 1 月补写 2026 年 12 月的病程，选出来的是 2027-12-xx，
+    输入框显示「12-29 10:00」，与正确值肉眼无法区分。
+
+    Raises:
+        HTTPException(400): 时间早于入院过多，或晚于当前时刻。
+    """
+    now = datetime.now()
+    if value > now:
+        raise HTTPException(
+            status_code=400,
+            detail=f"病程时间不能晚于当前时刻（填的是 {value:%Y-%m-%d %H:%M}，"
+                   f"请检查年份是否选错）",
+        )
+    visited_at = (await db.execute(
+        select(Encounter.visited_at).where(Encounter.id == encounter_id)
+    )).scalar_one_or_none()
+    if visited_at is not None:
+        earliest = visited_at - timedelta(hours=_RECORDED_AT_LEEWAY_HOURS)
+        if value < earliest:
+            raise HTTPException(
+                status_code=400,
+                detail=f"病程时间早于本次入院时间（入院 {visited_at:%Y-%m-%d %H:%M}，"
+                       f"填的是 {value:%Y-%m-%d %H:%M}，请检查年份是否选错）",
+            )
+
+
 async def create_note(
     db: AsyncSession,
     *,
@@ -82,6 +125,8 @@ async def create_note(
             detail=f"note_type 必须是 {sorted(VALID_NOTE_TYPES)} 之一",
         )
     parsed = parse_iso_naive(recorded_at_raw)
+    if parsed is not None:
+        await _validate_recorded_at(db, encounter_id, parsed)
     recorded_at = parsed or datetime.now()
 
     note = ProgressNote(
@@ -154,6 +199,7 @@ async def update_note(
     if recorded_at_raw is not None:
         parsed = parse_iso_naive(recorded_at_raw)
         if parsed:
+            await _validate_recorded_at(db, encounter_id, parsed)
             note.recorded_at = parsed
 
     await db.commit()

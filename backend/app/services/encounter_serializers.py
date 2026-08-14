@@ -59,7 +59,14 @@ def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -
         "record_type": record.record_type,
         "status": record.status,
         "current_version": record.current_version,
+        # record_no：住院同类型多份文书的序号，前端时间轴要靠它区分显示
+        "record_no": getattr(record, "record_no", None),
         "submitted_at": record.submitted_at.isoformat() if record.submitted_at else None,
+        # created_at 必须返回（2026-08-14 第八轮审计）：前端时间轴用
+        # submitted_at || created_at 排序，未签发草稿 submitted_at 为 null，
+        # 原先后端不返回 created_at → recordedAt 为空串 → 按 0 排序，
+        # 草稿一律排到入院记录之前的时间轴最顶端且不显示日期。
+        "created_at": record.created_at.isoformat() if record.created_at else None,
         "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         "content": _parse_record_content(version.content if version else None),
         # 病案首页快照：签发瞬间冻结的患者完整身份 + 接诊信息。

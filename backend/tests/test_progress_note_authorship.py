@@ -102,3 +102,61 @@ async def test_空正文的占位条不改署名(async_db):
         recorded_at_raw=None, editor_name="李四医生",
     )
     assert updated.recorded_by == "张三医生"
+
+
+# ── 病程时间区间校验（第八轮审计 medium）────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_病程时间不能早于入院(async_db):
+    """跨年补写选错年份是最危险的形态：前端 DatePicker 原先不显示年份，
+    2027-12-29 在框里显示成「12-29 10:00」，与 2026-12-29 肉眼无法区分。
+    而病历时间逻辑是住院质控的必查项。"""
+    from fastapi import HTTPException
+
+    await _seed(async_db)  # 入院时间 2026-08-01
+    with pytest.raises(HTTPException) as exc:
+        await svc.create_note(
+            async_db, encounter_id="enc-1", note_type="daily_course",
+            title=None, content="补写", recorded_at_raw="2026-07-20T09:00:00",
+            recorded_by="张三医生",
+        )
+    assert exc.value.status_code == 400
+    assert "早于本次入院" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_病程时间不能是未来(async_db):
+    from fastapi import HTTPException
+
+    await _seed(async_db)
+    with pytest.raises(HTTPException) as exc:
+        await svc.create_note(
+            async_db, encounter_id="enc-1", note_type="daily_course",
+            title=None, content="明年的病程", recorded_at_raw="2027-08-05T09:00:00",
+            recorded_by="张三医生",
+        )
+    assert exc.value.status_code == 400
+    assert "晚于当前时刻" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_入院当天稍早的时间仍放行(async_db):
+    """急诊转住院、补录时医生填的时间可能略早于系统记录的入院时刻，留 24h 余量。"""
+    await _seed(async_db)
+    note = await svc.create_note(
+        async_db, encounter_id="enc-1", note_type="daily_course",
+        title=None, content="入院当天早些时候", recorded_at_raw="2026-08-01T02:00:00",
+        recorded_by="张三医生",
+    )
+    assert note.id
+
+
+@pytest.mark.asyncio
+async def test_正常住院期间的补写照常放行(async_db):
+    await _seed(async_db)
+    note = await svc.create_note(
+        async_db, encounter_id="enc-1", note_type="daily_course",
+        title=None, content="8月5日补写", recorded_at_raw="2026-08-05T09:00:00",
+        recorded_by="张三医生",
+    )
+    assert note.id
