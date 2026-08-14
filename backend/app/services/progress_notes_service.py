@@ -108,6 +108,7 @@ async def update_note(
     content: Optional[str],
     status: Optional[str],
     recorded_at_raw: Optional[str],
+    editor_name: Optional[str] = None,
 ) -> ProgressNote:
     """更新病程记录。
 
@@ -136,6 +137,18 @@ async def update_note(
         note.title = title
     if content is not None:
         note.content = content
+        # ── 署名跟随实际书写人（2026-08-14 第八轮审计修复）──────────────────
+        #
+        # recorded_by 原先只在 create_note「建空条目」那一刻写死，此后再不更新。
+        # 真实形态：白班 A 医生在时间轴点一下「日常病程」建了条空草稿就下班了
+        # （前端建的就是 content='' 的立即建条），夜班接手的 B 医生打开它、
+        # 写完全部正文、点签发——这条病程的书写医生仍是 A。
+        # 签发即整条冻结，此后无法更正；而 recorded_by 是这条病程**唯一**的
+        # 署名字段（ProgressNote 没有版本表、没有 triggered_by、没有快照）。
+        # 30 天住院里换管床、值班交接是常态，医院硬要求是「病历上写的名字
+        # 必须是本人」。谁写的正文就署谁，空正文的占位条不改（没人写过内容）。
+        if editor_name and content.strip():
+            note.recorded_by = editor_name
     if status is not None:
         note.status = status
     if recorded_at_raw is not None:

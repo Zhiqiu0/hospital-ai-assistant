@@ -120,6 +120,8 @@ async def update_progress_note(
         content=data.content,
         status=data.status,
         recorded_at_raw=data.recorded_at,
+        # 谁写的正文就署谁（审计：交接后署名仍是前一位医生）
+        editor_name=getattr(current_user, "real_name", None) or current_user.username,
     )
     # 业务里程碑：病程记录签发（status=submitted 是冻结点）
     if data.status == "submitted":

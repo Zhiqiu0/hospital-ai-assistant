@@ -104,6 +104,7 @@ async def save_qc_issues(
     task_id: str,
     issues: list[dict],
     encounter_id: Optional[str] = None,
+    record_type: Optional[str] = None,
 ) -> None:
     """将质控问题列表持久化到 qc_issues 表。
 
@@ -130,13 +131,37 @@ async def save_qc_issues(
         # 尝试通过 encounter_id 找到最新病历，建立关联（可选，找不到不阻塞）
         medical_record_id: Optional[str] = None
         if encounter_id:
+            # ── 定位到**实际被质控的那一份**（2026-08-14 第八轮审计修复）────────
+            #
+            # 原先只按 encounter_id 取「最近创建的那份病历」。门急诊一次接诊
+            # 一份病历时这恰好总是对的，住院一律错：住院第 20 天医生把编辑器
+            # 切回入院记录跑质控（前端按 record_type 正确选了住院评分表），
+            # 落库时却取到最近新建的第 15 份日常病程——入院记录的质控问题
+            # 被写进了病程记录的 qc_issues。
+            # 影响面：按病历追溯质控历史、admin 质控统计，以及工作台恢复时
+            # 按 encounter 取「最新一次 QC」——医生打开任一文书，看到的都是
+            # 上一次给别的文书跑的质控结果。
+            # 调用方本来就有 record_type（_select_rubric 就是用它选评分表的），
+            # 传下来按类型定位即可。
+            stmt = select(MedicalRecord).where(
+                MedicalRecord.encounter_id == encounter_id
+            )
+            if record_type:
+                stmt = stmt.where(MedicalRecord.record_type == record_type)
+            # 同类型有多份时取最近更新的那份（医生正在写的就是它）
             result = await db.execute(
-                select(MedicalRecord)
-                .where(MedicalRecord.encounter_id == encounter_id)
-                .order_by(MedicalRecord.created_at.desc())
-                .limit(1)
+                stmt.order_by(MedicalRecord.updated_at.desc()).limit(1)
             )
             rec = result.scalar_one_or_none()
+            if rec is None and record_type:
+                # 该类型还没建过病历行（纯草稿态跑质控）：退回原口径兜底，
+                # 总比完全不关联强
+                rec = (await db.execute(
+                    select(MedicalRecord)
+                    .where(MedicalRecord.encounter_id == encounter_id)
+                    .order_by(MedicalRecord.created_at.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
             if rec:
                 medical_record_id = rec.id
 
