@@ -25,6 +25,7 @@ Round 5 瘦身：原文件 432 行超标，按职责拆到同目录子模块（�
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import assert_can_write_record
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.encounter import EncounterCreate, EncounterResponse
@@ -49,6 +50,14 @@ async def create_encounter(
     current_user=Depends(get_current_user),
 ):
     """标准接诊记录创建（患者必须已存在）。"""
+    # 角色守卫（2026-08-14 第八轮审计）：本端点与 quick-start 做的是**同一件事**
+    # ——把 current_user 写成该接诊的 doctor_id。第六轮给 quick-start 补守卫时
+    # 写下的理由（"护士自建接诊后就成了接诊医生，病历署名落到护士头上"）
+    # 逐字适用于这里，却没跟着补，于是这条成了整条越权链的入口：
+    # 护士自建接诊 → 成为接诊医生 → assert_encounter_access 从此对她全部放行
+    # → 该接诊下的病程记录、问题列表、体征、问诊、语音全部可写可签。
+    # 实测确认：护士打本端点返回 201，打 quick-start 返回 403。
+    assert_can_write_record(current_user)
     service = EncounterService(db)
     return await service.create(data, current_user.id)
 
