@@ -63,18 +63,22 @@ export default function InpatientTimeline({
       const [notesRes, recordRes] = (await Promise.all([
         api.get(`/encounters/${currentEncounterId}/progress-notes`),
         api.get(`/encounters/${currentEncounterId}/workspace`),
-      ])) as [{ items?: RecordLike[] }, { active_record?: RecordLike }]
+      ])) as [{ items?: RecordLike[] }, { active_record?: RecordLike; records?: RecordLike[] }]
       const progressNotes = notesRes.items || []
 
-      // 入院记录从 workspace active_record 构造
-      const admissionItems: RecordLike[] = []
+      // 病历条目取 workspace 的**完整 records 列表**（2026-08-14 第六轮审计修复）
+      //
+      // 原先只取 active_record 一份，且把 record_type 覆盖成
+      // `draft.type`（编辑器下拉当前选中的类型）。两处都错：
+      //   ① 住院一次接诊有入院记录 + 多份病程 + 出院小结，时间轴只显示一份，
+      //      医生看不到自己写过的其他文书；
+      //   ② 用当前下拉类型覆盖真实类型——医生把下拉切到"出院记录"，
+      //      时间轴上那份入院记录就被标成出院记录，时间轴变成误导。
+      // 后端 workspace 一直返回 records 完整列表，直接用它，各条保留自己的类型。
       const draft = draftRef.current
-      if (recordRes.active_record) {
-        admissionItems.push({
-          ...recordRes.active_record,
-          record_type: draft.type || 'admission_note',
-        })
-      } else if (draft.content) {
+      const admissionItems: RecordLike[] = [...(recordRes.records || [])]
+      if (admissionItems.length === 0 && draft.content) {
+        // 服务端还没有任何病历（医生正在写第一份且未保存）→ 造一个本地占位
         admissionItems.push({
           id: 'current-admission',
           record_type: draft.type || 'admission_note',
