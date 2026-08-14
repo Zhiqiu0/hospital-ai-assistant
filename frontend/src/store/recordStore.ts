@@ -85,6 +85,17 @@ interface RecordState {
   /** 校验归属：与当前接诊不符则丢弃正文并返回 false（刷新还原后调用） */
   assertOwner: (encounterId: string | null) => boolean
   setRecordType: (type: string) => void
+  /**
+   * 只改类型、**不动正文**（水合专用，2026-08-14 第七轮审计修复）。
+   *
+   * setRecordType 会清空正文（第六轮为「住院切文书」加的）。而水合流程是
+   * 「先设类型 → 再判断本地是否更脏 → 决定要不要用服务端内容覆盖」——
+   * 先调 setRecordType 就把正文清空了，等读到 recordContent 时恒为空，
+   * localIsDirty 永远 false，第五轮加的防覆盖保护被整个抵消：
+   * 医生刷新页面时未落库的内容照样丢，而且比修之前更彻底（直接变空）。
+   * 两个改动单独看都对，合在一起就废了——水合必须用这个不清空的入口。
+   */
+  setRecordTypeOnly: (type: string) => void
   setGenerating: (v: boolean) => void
   setPolishing: (v: boolean) => void
   setPendingGenerate: (v: boolean) => void
@@ -131,6 +142,8 @@ export const useRecordStore = create<RecordState>()(
         // 病历内容变化时通知 qcStore：上一轮质控结果已过时（按钮变"重新质控"）
         useQCStore.getState().markStale()
       },
+
+      setRecordTypeOnly: type => set({ recordType: type }),
 
       setRecordType: type =>
         set(state => {

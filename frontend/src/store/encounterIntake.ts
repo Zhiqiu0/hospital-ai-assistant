@@ -185,7 +185,10 @@ export function applySnapshotResult(res: SnapshotResult): void {
   if (res.active_record) {
     const recordStore = useRecordStore.getState()
     if (res.active_record.record_type) {
-      recordStore.setRecordType(res.active_record.record_type)
+      // 用 setRecordTypeOnly 而不是 setRecordType（2026-08-14 第七轮审计修复）：
+      // 后者会清空正文，而下面第 200 行正要靠 recordContent 判断「本地是否更脏」——
+      // 先清空就让 localIsDirty 恒为 false，第五轮加的防覆盖保护被整个抵消。
+      recordStore.setRecordTypeOnly(res.active_record.record_type)
     }
 
     // ⚠️ 不无条件覆盖本地正文（2026-08-13 第五轮审计修复）
