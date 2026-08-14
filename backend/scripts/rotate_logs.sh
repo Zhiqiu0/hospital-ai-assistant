@@ -16,7 +16,12 @@ set -euo pipefail
 
 LOGS_DIR="${LOGS_DIR:-/app/logs}"
 RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
-STAMP=$(date +%Y%m%d)
+# 用**昨天**的日期命名（2026-08-14 第六轮审计修复）：
+# 本脚本在 00:05 执行，此刻切走的是刚过去那一天的日志，而原先用 date +%Y%m%d
+# 取当天日期——归档 app-20260814.log.gz 里装的其实是 8月13日 的内容。
+# 查 bug 按日期找会打开错误的文件（本项目铁律是先看 error.log，日期错位很误事）。
+# date -d yesterday 是 GNU coreutils 语法，生产是 Ubuntu，可用。
+STAMP=$(date -d "yesterday" +%Y%m%d 2>/dev/null || date +%Y%m%d)
 
 [ -d "${LOGS_DIR}" ] || { echo "[rotate_logs] 目录不存在: ${LOGS_DIR}"; exit 0; }
 

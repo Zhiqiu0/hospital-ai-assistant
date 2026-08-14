@@ -14,7 +14,7 @@ from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -46,6 +46,11 @@ async def today_queue(
 
     只含 HIS 推送来源的接诊（his_external_ref 非空），医生手动新建的不混入。
     """
+    # 时间窗不能按 date.today() 硬切（2026-08-14 第六轮审计修复）：
+    # 原先只取今天零点之后的接诊，**跨零点仍在进行中的病人会从队列里凭空消失**
+    # ——急诊夜班、住院跨天必然踩到，医生看不到还没看完的病人。
+    # 改为：进行中的接诊不受时间窗限制一律保留，已完成的才按当天过滤
+    # （避免把历史全量拉出来）。
     today_start = datetime.combine(date.today(), time.min)
     result = await db.execute(
         select(Encounter, Patient)
@@ -53,8 +58,11 @@ async def today_queue(
         .where(
             Encounter.doctor_id == current_user.id,
             Encounter.his_external_ref.isnot(None),
-            Encounter.visited_at >= today_start,
             Encounter.status != "cancelled",
+            or_(
+                Encounter.status == "in_progress",
+                Encounter.visited_at >= today_start,
+            ),
         )
         .order_by(Encounter.visited_at.desc())
     )
