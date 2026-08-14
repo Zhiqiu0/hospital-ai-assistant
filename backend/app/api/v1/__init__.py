@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, progress_notes, ai_feedback, sentry_tunnel, his, his_queue, his_ws
+from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, ai_feedback, sentry_tunnel, his, his_queue, his_ws
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -18,7 +18,6 @@ router.include_router(lab_reports.router, prefix="/lab-reports", tags=["检验�
 # 住院专项：病区视图、体征、问题列表、时效合规
 router.include_router(inpatient.router, prefix="", tags=["住院专项"])
 # 病程记录 CRUD
-router.include_router(progress_notes.router, prefix="", tags=["病程记录"])
 # AI 建议反馈收集
 router.include_router(ai_feedback.router, prefix="/ai", tags=["AI反馈"])
 # Sentry tunnel：透传前端 envelope 绕过 ad-blocker / 出口防火墙

@@ -8,6 +8,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Button, Tag, Empty, Spin, Popconfirm } from 'antd'
 import { message } from '@/services/messageBridge'
 import { PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useRecordStore } from '@/store/recordStore'
 import { buildTimeline, TimelineItem } from '@/domain/inpatient'
@@ -21,12 +22,19 @@ interface Props {
   refreshToken: number // 外部触发刷新
 }
 
+// 时间轴底部的「新建文书」按钮。
+//
+// value 用的是**正式病历**的 record_type（2026-08-14 统一文书模型）：
+// 这些按钮原先建的是 progress_notes ——那是一张与病历主表互不相通的表，
+// 没有版本、没有签名链、不回写 HIS、不进任何病历列表与质控，
+// 而界面上它同样显示「已签发」，医生完全看不出区别。
+// 统一到 medical_records 后这四样自动都有。
+// 命名对齐 HL7 FHIR 的做法：所有临床文书是同一个文档模型，靠 type 码区分种类。
 const NOTE_TYPE_OPTIONS = [
-  { value: 'first_course', label: '首次病程' },
-  { value: 'daily_course', label: '日常病程' },
-  { value: 'surgery_pre', label: '术前小结' },
-  { value: 'surgery_post', label: '术后病程' },
-  { value: 'discharge', label: '出院小结' },
+  { value: 'first_course_record', label: '首次病程' },
+  { value: 'course_record', label: '日常病程' },
+  { value: 'senior_round', label: '上级查房' },
+  { value: 'discharge_record', label: '出院记录' },
 ]
 
 export default function InpatientTimeline({
@@ -41,7 +49,7 @@ export default function InpatientTimeline({
   // 正文/类型只在"服务端没有 active_record 时造一个本地占位条目"用得到。
   // 把它们放进 load 的依赖数组，会让**医生每敲一个字、AI 每吐一个 chunk**
   // 都重跑 useCallback → useEffect 重新执行 → 重发两个 GET
-  // （progress-notes + workspace）。写一段病程就是上百次无谓请求。
+  // （workspace）。写一段病程就是上百次无谓请求。
   // 用 ref 读实时值，依赖只留接诊 id（2026-08-14 第六轮审计修复）。
   const draftRef = useRef({ content: recordContent, type: recordType })
   // 在 effect 里同步而不是渲染期直接赋值——渲染期写 ref 是 React 反模式
@@ -60,11 +68,13 @@ export default function InpatientTimeline({
       // 后端返回的 progress note / active_record 字段并不稳定（admission_note 部分
       // 来自 workspace.active_record，含字段视 record_type 而定），所以用 Record 装载
       type RecordLike = Record<string, unknown>
-      const [notesRes, recordRes] = (await Promise.all([
-        api.get(`/encounters/${currentEncounterId}/progress-notes`),
-        api.get(`/encounters/${currentEncounterId}/workspace`),
-      ])) as [{ items?: RecordLike[] }, { active_record?: RecordLike; records?: RecordLike[] }]
-      const progressNotes = notesRes.items || []
+      // 只拉 workspace（2026-08-14 统一文书模型）：住院文书已全部落在
+      // medical_records，progress_notes 那条旧路没有任何入口了，多这一个
+      // 请求也拿不到东西。
+      const recordRes = (await api.get(`/encounters/${currentEncounterId}/workspace`)) as {
+        active_record?: RecordLike
+        records?: RecordLike[]
+      }
 
       // 病历条目取 workspace 的**完整 records 列表**（2026-08-14 第六轮审计修复）
       //
@@ -88,7 +98,7 @@ export default function InpatientTimeline({
         })
       }
 
-      setItems(buildTimeline(admissionItems, progressNotes))
+      setItems(buildTimeline(admissionItems, []))
     } catch {
       message.error('加载病程记录失败')
     } finally {
@@ -104,30 +114,31 @@ export default function InpatientTimeline({
     if (!currentEncounterId) return
     setCreating(true)
     try {
-      // 后端返回的 progress note 结构由病程记录 schema 决定，前端仅消费
-      // id / note_type / recorded_at / status / content 几个字段，用最小接口约束
-      interface ProgressNoteResponse {
-        id: string
-        note_type: string
-        recorded_at: string
-        status: string
-        content: string
+      // 建一份空的正式病历草稿（auto-save 接口首次调用即建 record）。
+      // recorded_at 传当前时刻：这是"这份文书对应的诊疗时点"，医生随后可在
+      // 面板里调整；与系统录入时间差得多会被后端标为「补记」——
+      // 规范不允许静默回填时间线，见 backend/app/services/record_time.py。
+      interface DraftResponse {
+        record_id: string
+        version_no: number
       }
-      const note = (await api.post(`/encounters/${currentEncounterId}/progress-notes`, {
-        note_type: noteType,
+      const draft = (await api.post('/medical-records/auto-save-draft', {
+        encounter_id: currentEncounterId,
+        record_type: noteType,
         content: '',
-      })) as ProgressNoteResponse
+        recorded_at: dayjs().format('YYYY-MM-DDTHH:mm:ss'),
+      })) as DraftResponse
       await load()
       onSelect({
-        id: note.id,
-        type: 'progress_note',
-        noteType: note.note_type,
-        label: getNoteRule(note.note_type).label,
-        color: getNoteRule(note.note_type).color,
-        bgColor: getNoteRule(note.note_type).bgColor,
-        recordedAt: note.recorded_at,
-        status: note.status,
-        content: note.content,
+        id: draft.record_id,
+        type: 'medical_record',
+        noteType,
+        label: getNoteRule(noteType).label,
+        color: getNoteRule(noteType).color,
+        bgColor: getNoteRule(noteType).bgColor,
+        recordedAt: dayjs().format('YYYY-MM-DDTHH:mm:ss'),
+        status: 'editing',
+        content: '',
       })
       onCreated()
     } catch {
@@ -139,11 +150,15 @@ export default function InpatientTimeline({
 
   const handleDelete = async (item: TimelineItem) => {
     try {
-      await api.delete(`/encounters/${currentEncounterId}/progress-notes/${item.id}`)
+      // 只删得掉**空白草稿**（误点新建的）。病历是法律文件，写过内容的只能
+      // 走修订留痕、已签发的不可删——后端会返回 409 并说明原因，
+      // 这里如实透传给医生，而不是笼统报删除失败。
+      await api.delete(`/medical-records/${item.id}`)
       await load()
       message.success('已删除')
-    } catch {
-      message.error('删除失败')
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail
+      message.error(detail || '删除失败')
     }
   }
 
@@ -217,7 +232,9 @@ export default function InpatientTimeline({
                     : ''}
                 </div>
               </div>
-              {item.type === 'progress_note' && item.status === 'draft' && (
+              {/* 只有未签发草稿能删；后端还会再判一次「必须是空白草稿」，
+                  写过内容的只能走修订留痕（病历是法律文件） */}
+              {item.status !== 'submitted' && (
                 <Popconfirm
                   title="确认删除？"
                   onConfirm={e => {

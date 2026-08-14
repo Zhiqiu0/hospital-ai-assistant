@@ -49,6 +49,7 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
   const { markSaved } = useProgressNoteAutosave({
     encounterId: currentEncounterId,
     itemId: item?.id,
+    recordType: item?.noteType,
     content,
     recordedAt,
     disabled:
@@ -117,7 +118,10 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
     if (!currentEncounterId || !item) return
     setSaving(true)
     try {
-      await api.patch(`/encounters/${currentEncounterId}/progress-notes/${item.id}`, {
+      // 正式病历的草稿保存（统一文书模型，见 InpatientTimeline 的说明）
+      await api.post('/medical-records/auto-save-draft', {
+        encounter_id: currentEncounterId,
+        record_type: item.noteType,
         content,
         // 用本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE 字段
         recorded_at: recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
@@ -136,11 +140,13 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
     if (!currentEncounterId || !item) return
     setSubmitting(true)
     try {
-      await api.patch(`/encounters/${currentEncounterId}/progress-notes/${item.id}`, {
+      // 走正式签发（quick-save）：这条路径才有版本、签名链、HIS 回写与质控。
+      // 原先打 progress-notes 的 PATCH status=submitted，界面同样显示「已签发」，
+      // 但那份文书四样一样都没有。
+      await api.post('/medical-records/quick-save', {
+        encounter_id: currentEncounterId,
+        record_type: item.noteType,
         content,
-        // 用本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE 字段
-        recorded_at: recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
-        status: 'submitted',
       })
       setLocalStatus('submitted') // 乐观更新本地状态，立即切到只读
       message.success('已签发')

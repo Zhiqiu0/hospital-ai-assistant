@@ -11,23 +11,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProgressNoteAutosave } from './useProgressNoteAutosave'
 
 vi.mock('@/services/api', () => ({
-  default: { patch: vi.fn(() => Promise.resolve({})) },
+  default: { post: vi.fn(() => Promise.resolve({})) },
 }))
 
 import api from '@/services/api'
 
-const patchMock = api.patch as unknown as ReturnType<typeof vi.fn>
+const postMock = api.post as unknown as ReturnType<typeof vi.fn>
 
 const base = {
   encounterId: 'enc-1',
   itemId: 'note-1',
+  recordType: 'course_record',
   content: '',
   recordedAt: null,
   disabled: false,
 }
 
 beforeEach(() => {
-  patchMock.mockClear()
+  postMock.mockClear()
   vi.useFakeTimers()
 })
 
@@ -37,7 +38,7 @@ describe('useProgressNoteAutosave', () => {
     act(() => {
       vi.advanceTimersByTime(10_000)
     })
-    expect(patchMock).not.toHaveBeenCalled()
+    expect(postMock).not.toHaveBeenCalled()
   })
 
   it('正文变化后 5 秒自动落库', async () => {
@@ -50,9 +51,9 @@ describe('useProgressNoteAutosave', () => {
       vi.advanceTimersByTime(5_000)
     })
 
-    expect(patchMock).toHaveBeenCalledTimes(1)
-    expect(patchMock.mock.calls[0][0]).toBe('/encounters/enc-1/progress-notes/note-1')
-    expect(patchMock.mock.calls[0][1]).toMatchObject({ content: '医生新写的内容' })
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][0]).toBe('/medical-records/auto-save-draft')
+    expect(postMock.mock.calls[0][1]).toMatchObject({ content: '医生新写的内容' })
   })
 
   it('连续输入只在停下来之后落一次（尾防抖）', async () => {
@@ -69,24 +70,33 @@ describe('useProgressNoteAutosave', () => {
       vi.advanceTimersByTime(5_000)
     })
 
-    expect(patchMock).toHaveBeenCalledTimes(1)
-    expect(patchMock.mock.calls[0][1]).toMatchObject({ content: '一二三' })
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][1]).toMatchObject({ content: '一二三' })
   })
 
   it('切换条目时把上一条的正文存到上一条的 id 上', async () => {
     const { rerender } = renderHook(props => useProgressNoteAutosave(props), {
       initialProps: { ...base, content: '初始' },
     })
-    // 医生在 note-1 里写了东西，还没到 5 秒就点了时间轴上的另一份文书
-    rerender({ ...base, content: 'note-1 写了一半的内容' })
+    // 医生在日常病程里写了东西，还没到 5 秒就点了时间轴上的另一份文书
+    rerender({ ...base, content: '日常病程写了一半的内容' })
     await act(async () => {
-      rerender({ ...base, itemId: 'note-2', content: 'note-2 的原有内容' })
+      rerender({
+        ...base,
+        itemId: 'note-2',
+        recordType: 'senior_round',
+        content: '上级查房的原有内容',
+      })
     })
 
-    expect(patchMock).toHaveBeenCalledTimes(1)
-    expect(patchMock.mock.calls[0][0]).toBe('/encounters/enc-1/progress-notes/note-1')
-    expect(patchMock.mock.calls[0][1]).toMatchObject({
-      content: 'note-1 写了一半的内容',
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][0]).toBe('/medical-records/auto-save-draft')
+    // 统一到病历后，文书是按 (encounter_id, record_type) 定位的——所以这里
+    // 要验的是 record_type 存的是**切走前那一份**，写错就会把日常病程的内容
+    // 灌进上级查房记录里
+    expect(postMock.mock.calls[0][1]).toMatchObject({
+      record_type: 'course_record',
+      content: '日常病程写了一半的内容',
     })
   })
 
@@ -100,8 +110,8 @@ describe('useProgressNoteAutosave', () => {
       unmount()
     })
 
-    expect(patchMock).toHaveBeenCalledTimes(1)
-    expect(patchMock.mock.calls[0][1]).toMatchObject({
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][1]).toMatchObject({
       content: '关标签页前写的内容',
     })
   })
@@ -116,7 +126,7 @@ describe('useProgressNoteAutosave', () => {
       vi.advanceTimersByTime(10_000)
     })
 
-    expect(patchMock).not.toHaveBeenCalled()
+    expect(postMock).not.toHaveBeenCalled()
   })
 
   it('内容没变不重复回写', async () => {
@@ -127,13 +137,13 @@ describe('useProgressNoteAutosave', () => {
     await act(async () => {
       vi.advanceTimersByTime(5_000)
     })
-    expect(patchMock).toHaveBeenCalledTimes(1)
+    expect(postMock).toHaveBeenCalledTimes(1)
 
     // 再触发一次渲染但内容不变
     rerender({ ...base, content: '改过一次' })
     await act(async () => {
       vi.advanceTimersByTime(5_000)
     })
-    expect(patchMock).toHaveBeenCalledTimes(1)
+    expect(postMock).toHaveBeenCalledTimes(1)
   })
 })
