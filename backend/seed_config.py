@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
@@ -734,31 +734,56 @@ async def seed() -> None:
 
     async with AsyncSession(engine) as session:
 
-        # ── 1. 质控规则：清空后重新插入（ORM 方式，避免 asyncpg 参数语法冲突）──
-        await session.execute(text("DELETE FROM qc_rules"))
-        print("[清空] qc_rules 表已清空")
+        # ── 1. 质控规则：按 rule_code 幂等 upsert ────────────────────────────
+        #
+        # 2026-08-14 第七轮审计修复：原先是 `DELETE FROM qc_rules` 再全量重插，
+        # 而本脚本在 **entrypoint.sh 里每次容器启动都跑**、deploy.yml 里每次发版
+        # 也跑，且重插时把 is_active 硬编码成 True。后果：
+        #   谁要是把某条误报很多的规则停掉（qc_rules 已无管理端编辑接口，
+        #   只剩手工改库这一条路），下次重启就被无声打开，且没有任何日志提示。
+        # deploy.yml 里那句「重复执行幂等」的注释此前并不成立，现在成立了。
+        #
+        # 规则正文（关键词/扣分/文案）仍以代码为准、每次覆盖——这是有意的，
+        # 质控口径归代码 review 管；只有 is_active 这个运维开关按库里的为准。
+        existing = {
+            row.rule_code: row
+            for row in (await session.execute(select(QCRule))).scalars()
+        }
+        seeded_codes = {r["rule_code"] for r in QC_RULES}
+        created = updated = 0
 
         for rule in QC_RULES:
-            obj = QCRule(
-                rule_code=rule["rule_code"],
-                name=rule["name"],
-                description=rule.get("description"),
-                rule_type=rule["rule_type"],
-                scope=rule.get("scope", "all"),
-                gender_scope=rule.get("gender_scope", "all"),
-                field_name=rule.get("field_name"),
-                keywords=rule.get("keywords") or [],
-                indication_keywords=rule.get("indication_keywords") or [],
-                risk_level=rule.get("risk_level", "medium"),
-                issue_description=rule.get("issue_description"),
-                suggestion=rule.get("suggestion"),
-                score_impact=rule.get("score_impact"),
-                is_active=True,
-            )
-            session.add(obj)
+            obj = existing.get(rule["rule_code"])
+            if obj is None:
+                obj = QCRule(rule_code=rule["rule_code"], is_active=True)
+                session.add(obj)
+                created += 1
+            else:
+                updated += 1
+            # 正文字段每次与代码对齐；is_active 不碰，保留库里的运维开关状态
+            obj.name = rule["name"]
+            obj.description = rule.get("description")
+            obj.rule_type = rule["rule_type"]
+            obj.scope = rule.get("scope", "all")
+            obj.gender_scope = rule.get("gender_scope", "all")
+            obj.field_name = rule.get("field_name")
+            obj.keywords = rule.get("keywords") or []
+            obj.indication_keywords = rule.get("indication_keywords") or []
+            obj.risk_level = rule.get("risk_level", "medium")
+            obj.issue_description = rule.get("issue_description")
+            obj.suggestion = rule.get("suggestion")
+            obj.score_impact = rule.get("score_impact")
+
+        # 代码里已删除的规则要真的消失，否则会一直参与打分
+        removed = [code for code in existing if code not in seeded_codes]
+        for code in removed:
+            await session.delete(existing[code])
 
         await session.flush()
-        print(f"[OK] 插入 {len(QC_RULES)} 条质控规则")
+        print(
+            f"[OK] 质控规则 upsert：新增 {created} 条、更新 {updated} 条、"
+            f"删除 {len(removed)} 条（保留库中 is_active 开关）"
+        )
 
         # ── 2. Prompt 模板：仅在表为空时插入 ────────────────────────────────
         r = await session.execute(text("SELECT COUNT(*) FROM prompt_templates"))

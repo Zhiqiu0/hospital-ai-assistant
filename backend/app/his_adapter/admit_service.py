@@ -348,10 +348,36 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     try:
         create_data = PatientCreate(**fields)
     except ValidationError:
-        # 身份证/手机号校验不过（HIS 脏数据）：丢弃这两个字段重建
-        fields["id_card"] = None
-        fields["phone"] = None
-        create_data = PatientCreate(**fields)
+        # ── 脏数据降级：逐字段丢弃，不再一次性清空两个 ────────────────────────
+        #
+        # 2026-08-14 第七轮审计修复：原实现是「任一字段校验不过 → id_card 和
+        # phone 一起置 None」。可 HIS 侧最常见的脏数据是**手机号**（留的座机、
+        # 空号、7 位老号码），身份证本身好好的。一起丢的后果是这份档案落库时
+        # **一个强键都没有**，于是下次复诊 find_existing 三级查重全 miss
+        # （HIS 链路还禁用了弱键）→ 每来一次门诊就新建一份档案。
+        # 同一个人在系统里散成十几份，病历分散在各档案下，医生查不全既往史。
+        # 现在：只丢掉真正校验不过的那个字段，能留的强键必须留住。
+        for field in ("id_card", "phone"):
+            if fields[field] is None:
+                continue
+            # 单独试探这一个字段：另一个先摘掉，免得被对方的错误连累
+            probe = {**fields, "id_card": None, "phone": None, field: fields[field]}
+            try:
+                PatientCreate(**probe)
+            except ValidationError:
+                logger.warning(
+                    "his_admit: HIS 推送的 %s 未通过校验，仅丢弃该字段建档 "
+                    "visit_no=%s", field, payload.visit_id,
+                )
+                fields[field] = None
+
+        try:
+            create_data = PatientCreate(**fields)
+        except ValidationError:
+            # 走到这里说明不合格的不是这两个字段（如姓名/生日），退回原策略兜底
+            fields["id_card"] = None
+            fields["phone"] = None
+            create_data = PatientCreate(**fields)
 
     # commit=False：建患者与建接诊合并为同一事务，接诊失败不留孤儿档案
     created = await service.create(create_data, commit=False)

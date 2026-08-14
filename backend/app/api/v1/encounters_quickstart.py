@@ -71,18 +71,38 @@ async def _quick_start_inner(data, db, current_user):
 
     patient_service = PatientService(db)
 
+    # 同名同生日的候选档案（非阻断提示，交前端让医生确认是不是同一人）
+    similar_patients: list[dict] = []
+
     # 前端传入已知患者 ID 时（复诊场景）直接复用，跳过模糊匹配
     if data.patient_id:
         patient = await patient_service.get_by_id(data.patient_id)
         patient_reused = True
     else:
+        # allow_weak_match=False（2026-08-14 第七轮审计修复）：
+        # 原先这里用默认值 True，「姓名+出生日期」命中就**静默复用**别人的档案，
+        # 紧接着 get_profile 把那个人的过敏史/既往史预填进表单。医生看到"系统
+        # 已有资料"通常不会逐条核对，按别人的过敏史用药可能致命，病历也写进了
+        # 错误的档案。同名同生日在几万份档案里是必然会撞的。
+        # 现在弱键改成非阻断提示：强键没命中就新建档案（重复档案可事后人工合并，
+        # 误合并两个人不可逆），同时把候选人返回前端让医生自己认。
         patient = await patient_service.find_existing(
             id_card=data.id_card,
             phone=data.phone,
             name=data.patient_name,
             birth_date=birth_date_val,
+            allow_weak_match=False,
         )
         patient_reused = patient is not None
+        if not patient:
+            similar_patients = await patient_service.find_weak_candidates(
+                name=data.patient_name, birth_date=birth_date_val
+            )
+            if similar_patients:
+                logger.info(
+                    "encounter.quick_start: 同名同生日候选 %d 位，已交前端确认 name=%s",
+                    len(similar_patients), data.patient_name,
+                )
 
     if not patient:
         patient = await patient_service.create(PatientCreate(
@@ -180,6 +200,10 @@ async def _quick_start_inner(data, db, current_user):
             "is_first_visit": existing.is_first_visit,
             "previous_record_content": resume_prev_content,
             "pending_encounters": pending_other,
+        # 同名同生日候选（第七轮审计）：仅提示，前端弹框让医生确认是否同一人
+        "similar_patients": similar_patients,
+            # 同名同生日候选（第七轮审计）：仅提示，前端弹框让医生确认是否同一人
+            "similar_patients": similar_patients,
             "resumed": True,
         }
 

@@ -51,6 +51,12 @@ import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 import HisQueueDock from '@/components/workbench/HisQueueDock'
 import { genderCode } from '@/utils/gender'
+import {
+  showPendingEncountersWarning,
+  showSimilarPatientsWarning,
+  type PendingEncounter,
+  type SimilarPatient,
+} from '@/pages/workbench/quickStartWarnings'
 
 const { Header, Content } = Layout
 
@@ -131,11 +137,10 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     resumed?: boolean
     is_first_visit?: boolean
     previous_inquiry?: Partial<InquiryData> | null
-    pending_encounters?: Array<{
-      doctor_name: string
-      visit_type: string
-      visited_at?: string
-    }>
+    pending_encounters?: PendingEncounter[]
+    // 同名同生日的已有档案（2026-08-14 第七轮审计）：后端不再静默复用弱键命中的
+    // 档案（会把别人的过敏史预填进来），改为把候选人交给医生自己确认
+    similar_patients?: SimilarPatient[]
   }
   const handleEncounterCreated = (res: EncounterCreatedRes, visitType: string) => {
     resetAllWorkbench()
@@ -159,39 +164,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       isPatientReused: !!res.patient_reused,
       previousRecordContent: res.previous_record_content || null,
     })
-    // 跨医生未完成接诊警示（非阻断）：让医生看到该患者还有别的医生留下的进行中接诊
-    if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
-      modal.info({
-        title: '该患者尚有未完成接诊',
-        width: 480,
-        content: (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ marginBottom: 10, color: 'var(--text-3)', fontSize: 13 }}>
-              建议联系下列医生处理后再继续，避免重复就诊：
-            </div>
-            <ul style={{ paddingLeft: 18, margin: 0, fontSize: 13, lineHeight: 2 }}>
-              {res.pending_encounters.map(
-                (
-                  e: { doctor_name: string; visit_type: string; visited_at?: string },
-                  i: number
-                ) => (
-                  <li key={i}>
-                    医生 <b>{e.doctor_name}</b>（
-                    {e.visit_type === 'emergency'
-                      ? '急诊'
-                      : e.visit_type === 'inpatient'
-                        ? '住院'
-                        : '门诊'}
-                    {e.visited_at ? `，${new Date(e.visited_at).toLocaleString('zh-CN')}` : ''}）
-                  </li>
-                )
-              )}
-            </ul>
-          </div>
-        ),
-        okText: '我已知悉，继续接诊',
-      })
-    }
+    // 同名同生日档案提示 + 跨医生未完成接诊警示（均为非阻断，见 quickStartWarnings）
+    showSimilarPatientsWarning(res.similar_patients ?? [], modal)
+    showPendingEncountersWarning(res.pending_encounters ?? [], modal)
     // 复诊且非续接：把上次稳定字段（既往史/过敏史/个人史等）预填入问诊表单
     if (res.patient_reused && !res.resumed && res.previous_inquiry) {
       const current = useInquiryStore.getState().inquiry
