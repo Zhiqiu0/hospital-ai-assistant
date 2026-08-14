@@ -97,10 +97,15 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
-        # 患者基础信息——独立成 PatientMeta，不再串到 inquiry 字典
-        patient_name=req.patient_name or "",
-        patient_gender=req.patient_gender or "",
-        patient_age=req.patient_age or "",
+        # 患者基础信息——独立成 PatientMeta，不再串到 inquiry 字典。
+        # 用 getattr 兜底（2026-08-14 第六轮审计修复）：GradeScoreRequest 里压根没有
+        # 这三个字段（只有 content/record_type + 住院问诊字段），pydantic v2 对未定义
+        # 字段的属性访问直接抛 AttributeError → 该端点 100% 500。
+        # 目前前端没有调用方所以医生侧无感，但它是已注册、已鉴权暴露的端点，
+        # 任何接入方（对外评分接口/批量质控脚本）一调就炸。
+        patient_name=getattr(req, "patient_name", "") or "",
+        patient_gender=getattr(req, "patient_gender", "") or "",
+        patient_age=getattr(req, "patient_age", "") or "",
         inquiry=extract_inquiry_dict(req),
     )
     report = score(rubric, ctx)

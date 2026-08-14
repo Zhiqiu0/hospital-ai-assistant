@@ -186,6 +186,11 @@ def render_admission_note(
     parts.append(_section("【主诉】", _v(data, "chief_complaint")))
     parts.append(_section("【现病史】", _v(data, "history_present_illness")))
     parts.append(_section("【既往史】", _v(data, "past_history")))
+    # 过敏史（2026-08-14 第六轮审计修复）：ADMISSION_NOTE_SCHEMA 里有
+    # allergy_history、LLM 也正常返回，但原先这里漏了一行渲染——值被静默丢弃，
+    # 住院病历正文里根本没有过敏史。门诊(render_outpatient)与急诊(render_emergency)
+    # 都有这一行，明确是漏写而非设计取舍。过敏史缺失是直接用药安全问题。
+    parts.append(_section("【过敏史】", _v(data, "allergy_history")))
     parts.append(_section("【个人史】", _v(data, "personal_history")))
     parts.append(_section("【婚育史】", _v(data, "marital_history")))
 

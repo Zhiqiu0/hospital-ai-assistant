@@ -77,7 +77,15 @@ export function useRecordSupplement(
       }
 
       // 行级写入 + 标记 AI 写入字段（顺序写入，每次基于上次结果再写下一条）
-      let newContent = original
+      //
+      // 基线取**回来那一刻的实时正文**而不是发起时的快照（2026-08-14 第六轮审计修复）：
+      // 补全是一次批量 LLM 调用，往返数秒到十几秒，而正文编辑器在此期间完全可编辑
+      // （只有 isFinal 才 readOnly，补全期间无遮罩）。原先用闭包快照 original 作基线
+      // 整段覆盖，医生这十几秒里敲的内容被静默丢弃，随后还被 handleQC 和 5 秒自动
+      // 保存固化到库里，医生毫无察觉。useRecordGenerate 早已改用 getState() 取实时值，
+      // 补全这条路径没跟上。
+      const liveContent = useRecordStore.getState().recordContent
+      let newContent = liveContent
       const writtenFields: string[] = []
       for (const it of items) {
         const before = newContent
@@ -96,7 +104,8 @@ export function useRecordSupplement(
     } catch (e) {
       const err = e as { name?: string; message?: string }
       if (err?.name === 'AbortError') return
-      setRecordContent(original)
+      // 失败时不要把正文回退成发起时的快照——那同样会抹掉医生这段时间的编辑。
+      // 补全没写入任何内容，正文保持现状即可。
       message.error('补全失败，请重试')
     } finally {
       setIsSupplementing(false)

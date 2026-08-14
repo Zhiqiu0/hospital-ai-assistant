@@ -403,3 +403,64 @@ async def test_his_offline_alerts_but_never_abandons(async_db, monkeypatch):
     assert not wb.get("reconcile_exhausted"), (
         "HIS 离线被判成永久放弃了——恢复后这些病历再也不会补推"
     )
+
+
+# ── 第六轮审计修复的回归锁（2026-08-14）────────────────────────────────────
+def test_emergency_record_can_pass_qc():
+    """填写完整的急诊病历必须能通过质控——否则急诊医生根本签发不了病历。
+
+    原缺陷：中医四诊/中医诊断/治则治法等**中医门诊专属**规则没有急诊判别，
+    而急诊模板压根不渲染这些子行 → 必然扣满 体格检查/诊断/治疗意见 三个大项
+    上限、总分恒 70 不合格 → 前端 canSubmit 带 qcPass !== false 条件 →
+    签发按钮永久置灰，且模板里没有这些章节可补，医生无法自救。
+    """
+    from app.services.ai._render_visit import render_emergency
+    from app.services.qc_engine.checker import build_context
+    from app.services.qc_engine.rubrics.zj_outpatient_emergency_2023 import (
+        ZJ_OUTPATIENT_EMERGENCY_V2023,
+    )
+    from app.services.qc_engine.scorer import score
+
+    text = render_emergency(
+        {
+            "chief_complaint": "胸痛3小时",
+            "history_present_illness": "3小时前活动后突发胸骨后压榨样疼痛",
+            "past_history": "高血压10年",
+            "allergy_history": "否认药物食物过敏",
+            "physical_exam_vitals": "T:36.8℃ P:98次/分 R:20次/分 BP:150/95mmHg",
+            "physical_exam_text": "急性痛苦面容，双肺呼吸音清，心律齐",
+            "auxiliary_exam": "心电图示ST段抬高",
+            "diagnosis": "急性ST段抬高型心肌梗死",
+            "treatment_plan": "心电监护、吸氧、阿司匹林负荷量，急诊PCI",
+            "patient_disposition": "收住心内科CCU",
+        },
+        visit_time="2026-08-14 09:00",
+        onset_time="2026-08-14 06:00",
+    )
+    rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, build_context(text, record_type="emergency"))
+    assert rep.passed, f"急诊病历质控不通过（{rep.score} 分），医生将无法签发"
+
+
+def test_admission_note_renders_allergy_history():
+    """入院记录必须渲染过敏史——schema 里有、LLM 会返回，原先渲染时被静默丢弃。
+
+    过敏史缺失是直接用药安全问题，且门诊/急诊渲染都有这一行，明确是漏写。
+    """
+    from app.services.ai._render_visit import render_admission_note
+
+    text = render_admission_note(
+        {"chief_complaint": "主诉", "allergy_history": "青霉素过敏（皮试阳性）"},
+        patient_gender="男",
+    )
+    assert "【过敏史】" in text and "青霉素" in text
+
+
+def test_vitals_guard_covers_inpatient_course_field():
+    """住院病程/术后记录的查体字段也必须受数值守卫保护。
+
+    physical_exam_today 的 schema 描述直接要求 LLM 输出 T/P/R/BP，
+    漏掉它等于住院这条最高频文书路径上守卫完全没装，AI 编的体征直接进病历。
+    """
+    from app.services.ai.record_gen_v2_service import _VITALS_GUARDED_FIELDS
+
+    assert "physical_exam_today" in _VITALS_GUARDED_FIELDS
