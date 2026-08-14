@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.1 第 7 章）
+"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.2 第 7 章）
 
 本文件演示贵方程序要做的全部 4 件事，可直接运行（python 3.8+，pip install websockets）：
   ① 签名握手建立 wss 长连接（断线自动重连）
@@ -106,10 +106,21 @@ async def run_once(app_id: str, secret: str) -> None:
 
             elif mtype == "record_writeback":
                 # ③ 病历回写：payload = 完整病历字段 + visit_id（字段见规范 3.2）
-                # 贵方在这里【写数据库】：按 visit_id 定位就诊，病历存为"草稿/待确认"，
-                # 重复收到同一 visit_id 为覆盖更新（幂等，见规范 2.5）。
-                visit_id = msg["payload"].get("visit_id")
-                print(f"[←] 收到病历回写 visit_id={visit_id}，此处写库…")
+                # 贵方在这里【写数据库】，病历存为"草稿/待确认"。
+                #
+                # ⚠️ 幂等键是三段：visit_id + record_type + record_no（见规范 2.5）
+                #    · 该键对应的文书尚无 → 新建；已有 → 覆盖更新
+                #    · 住院一次就诊有多份文书（入院记录 / 多次日常病程 / 出院记录…），
+                #      **必须靠 record_no 区分**。若只按 visit_id 定位，
+                #      15 份日常病程会互相覆盖，最终只剩最后一天那份。
+                #    · 门诊/急诊单份病历，record_no 可能不下发，
+                #      此时 (visit_id + record_type) 即唯一。
+                payload = msg["payload"]
+                visit_id = payload.get("visit_id")
+                record_type = payload.get("record_type")
+                record_no = payload.get("record_no")  # 住院多份文书的序号
+                print(f"[←] 收到病历回写 visit_id={visit_id} "
+                      f"type={record_type} no={record_no}，此处按三段键写库…")
                 await ws.send(signed_message("ack", {
                     "code": 0, "message": "success", "trace_id": uuid.uuid4().hex,
                     "data": {"record_id": "贵方落库后的病历ID"},

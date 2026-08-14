@@ -17,7 +17,7 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import field_validator, BaseModel, Field
 
 
 class HISExternalRef(BaseModel):
@@ -60,6 +60,70 @@ def err(code: int, message: str, trace_id: str = "") -> ApiEnvelope:
     return ApiEnvelope(code=code, message=message, trace_id=trace_id, data={})
 
 
+def _coerce_str(v):
+    """数值型入参统一转字符串（2026-08-14 规范一致性核对修复）。
+
+    HIS 里体温/脉搏/血压/身高体重几乎都是数值列，序列化成 JSON number 是最
+    自然的写法；而我方字段声明为 str，pydantic 严格模式下 36.5 会直接
+    ValidationError → **整条接诊推送 40004 被拒，患者进不了工作台**。
+    规范承诺的是「选填字段没有就不传，完全不影响流程」，一个格式偏差就把
+    主流程打挂，与承诺不符。身份证、手机号同理（厂商可能存成数字列）。
+    """
+    if isinstance(v, bool):
+        return v  # bool 不在此列，交给各自的校验器
+    if isinstance(v, (int, float)):
+        # 36.0 这种整数值浮点要还原成 "36" 而不是 "36.0"
+        if isinstance(v, float) and v.is_integer():
+            return str(int(v))
+        return str(v)
+    return v
+
+
+# 性别的宽容映射：接受英文、国标代码（XB：1男/2女/9未知）、中文
+_GENDER_ALIASES = {
+    "male": "male", "m": "male", "1": "male", "男": "male",
+    "female": "female", "f": "female", "2": "female", "女": "female",
+    "unknown": "unknown", "9": "unknown", "0": "unknown", "未知": "unknown",
+}
+
+
+def _coerce_gender(v):
+    """性别归一（同上修复）。
+
+    规范给的浙里智医对应字段是 XB（国标代码 1/2/9），厂商极可能直接透传原值
+    或数据库 NULL，而我方原先是 Literal 严格枚举——传 "1"/"男"/None 都会让
+    **整条接诊被拒**。对照：visit_type 早就有中英文+数字的宽容映射。
+    识别不了的一律降级为 unknown，不拒收接诊（人进得来最重要，
+    性别错了医生在工作台一眼能看出来并改）。
+    """
+    if v is None:
+        return "unknown"
+    key = str(v).strip().lower()
+    return _GENDER_ALIASES.get(key, "unknown")
+
+
+# 初诊标志的宽容映射：规范类型写 bool，但对应字段 CZBZDM 是国标代码
+_FIRST_VISIT_TRUE = {"true", "1", "初诊", "y", "yes"}
+_FIRST_VISIT_FALSE = {"false", "0", "2", "复诊", "n", "no"}
+
+
+def _coerce_first_visit(v):
+    """初诊/复诊归一（同上修复）。
+
+    规范把类型写成 bool 却把对应字段写成 CZBZDM（国标代码），厂商直接映射
+    代码值时，"2"（复诊）会 ValidationError 打挂整条接诊。
+    识别不了的返回 None，由业务层按「初诊」兜底。
+    """
+    if v is None or isinstance(v, bool):
+        return v
+    key = str(v).strip().lower()
+    if key in _FIRST_VISIT_TRUE:
+        return True
+    if key in _FIRST_VISIT_FALSE:
+        return False
+    return None
+
+
 class AdmitVitals(BaseModel):
     """接诊推送里的选填体征（规范 3.1 vitals.*，与 3.2 回写字段对称）。
 
@@ -77,6 +141,9 @@ class AdmitVitals(BaseModel):
     height: Optional[str] = None         # 身高 cm
     weight: Optional[str] = None         # 体重 kg
 
+    # 数值型入参统一转字符串（见 _coerce_str 说明）
+    _coerce = field_validator("*", mode="before")(_coerce_str)
+
 
 class AdmitPushRequest(BaseModel):
     """接诊推送请求体（HIS→我方）。visit_id/hospital_code/patient_name 必填，其余容错可空。"""
@@ -84,6 +151,7 @@ class AdmitPushRequest(BaseModel):
     visit_id: str
     hospital_code: str
     patient_name: str
+    # 宽容接受英文 / 国标代码 / 中文，识别不了降级 unknown（见 _coerce_gender）
     gender: Literal["male", "female", "unknown"] = "unknown"
     birth_date: Optional[str] = None
     id_card: Optional[str] = None
@@ -103,3 +171,16 @@ class AdmitPushRequest(BaseModel):
     vitals: Optional[AdmitVitals] = None
     allergy_history: Optional[str] = None   # 过敏史（纵向档案，跟随患者）
     past_history: Optional[str] = None      # 既往史（同上）
+
+    # ── 入参容错（2026-08-14 规范一致性核对修复）─────────────────────────
+    # 规范承诺「选填字段没有则不传，完全不影响流程」，但原先任意一个格式偏差
+    # （体温传数字 / 性别传国标码 / 身份证传数字 / 初诊传 "2"）都会让整条接诊
+    # 推送 40004 被拒、患者进不了工作台。这里把格式差异吸收掉，让承诺成立。
+    _norm_gender = field_validator("gender", mode="before")(_coerce_gender)
+    _norm_first_visit = field_validator("is_first_visit", mode="before")(
+        _coerce_first_visit
+    )
+    _norm_str_fields = field_validator(
+        "id_card", "phone", "visit_id", "hospital_code",
+        "dept_code", "doctor_code", mode="before",
+    )(_coerce_str)

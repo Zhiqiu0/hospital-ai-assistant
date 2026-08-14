@@ -84,9 +84,19 @@ function connect(appId, secret, retryDelay = 1000) {
       ws.send(signedMessage("pong", {}, appId, secret));
     } else if (msg.type === "record_writeback") {
       // ③ 病历回写：payload = 完整病历字段 + visit_id（字段见规范 3.2）
-      // 贵方在这里【写数据库】：按 visit_id 定位就诊，病历存为"草稿/待确认"状态，
-      // 重复收到同一 visit_id 为覆盖更新（幂等，见规范 2.5）。写完回 ack。
-      console.log(`[←] 收到病历回写 visit_id=${msg.payload.visit_id}，此处写库…`);
+      // 贵方在这里【写数据库】，病历存为"草稿/待确认"状态，写完回 ack。
+      //
+      // ⚠️ 幂等键是三段：visit_id + record_type + record_no（见规范 2.5）
+      //    · 该键对应的文书尚无 → 新建；已有 → 覆盖更新
+      //    · 住院一次就诊有多份文书（入院记录 / 多次日常病程 / 出院记录…），
+      //      **必须靠 record_no 区分**。若只按 visit_id 定位，
+      //      15 份日常病程会互相覆盖，最终只剩最后一天那份。
+      //    · 门诊/急诊单份病历，record_no 可能不下发，
+      //      此时 (visit_id + record_type) 即唯一。
+      const { visit_id, record_type, record_no } = msg.payload;
+      console.log(
+        `[←] 收到病历回写 visit_id=${visit_id} type=${record_type} no=${record_no}，此处按三段键写库…`
+      );
       ws.send(signedMessage("ack", {
         code: 0, message: "success", trace_id: crypto.randomUUID(),
         data: { record_id: "贵方落库后的病历ID" }, ack_msg_id: msg.msg_id,
