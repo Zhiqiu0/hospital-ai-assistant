@@ -112,6 +112,15 @@ class Encounter(Base, TimestampMixin):
     #   {"his_brand": "jinsuanpan", "hospital_code": "H33052300957",
     #    "his_patient_no": "Y1232605260025", "his_visit_no": "20260526000200"}
     # 加 GIN 索引（his_patient_no 路径），方便医生从 HIS 切回查上次接诊。
+    #
+    # ⚠️ 现状（2026-08-14 第七轮审计 #21）：**his_patient_no 实际从来没被写入过**。
+    #    admit_service 建接诊时只写 source/hospital_code/his_visit_no/dept/doctor，
+    #    因为 AdmitPushRequest 里压根没有"HIS 患者编号"这个字段——规范的接诊推送
+    #    只带 visit_id。于是上面那个 GIN 索引索引的是一个恒不存在的键，
+    #    「从 HIS 切回查上次接诊」这个能力也并不存在。
+    #    Patient.patient_no 同理，全仓只读不写，恒为 NULL。
+    #    要补齐需要厂商在推送里加患者编号字段（改接口契约，需与厂商约定），
+    #    不是后端单方面能补的，故此处只把注释改成实话，不做假实现。
     # none_as_null=True：Python None 存 SQL NULL（而非 JSON null），否则
     # 「his_external_ref IS NOT NULL」这类过滤（叫号队列只看 HIS 接诊）会失效。
     his_external_ref: Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True))

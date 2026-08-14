@@ -226,14 +226,32 @@ async def _prefill_from_push(
         }
         profile_patch = {k: v for k, v in profile_patch.items() if v}
         if profile_patch:
-            patient = await db.get(Patient, patient_id)
+            # 行锁（2026-08-14 第七轮审计 #20）：档案是「读 JSONB → Python 合并 →
+            # 整体写回」。update_profile 早在第二轮就为此加了 with_for_update，
+            # 唯独 HIS 预填这条路径漏了——医生正在档案卡上改过敏史时 HIS 推来一条
+            # 接诊，两边各自读到旧快照、后提交的把先提交的抹掉，医生刚填的过敏史
+            # 就这么没了。process_admit 顶上的 advisory lock 只按 visit_id 串行，
+            # 挡不住"同一患者的不同就诊"或"医生手改 vs HIS 推送"。
+            patient = (await db.execute(
+                select(Patient).where(Patient.id == patient_id).with_for_update()
+            )).scalar_one_or_none()
             if patient is not None:
                 profile = dict(patient.profile or {})
                 changed = False
                 for field, value in profile_patch.items():
                     entry = dict(profile.get(field) or {})
                     existing = entry.get("value")
-                    if not existing:
+                    # ── 区分「从没填过」与「医生特意清空」（2026-08-14 审计 #19）──
+                    #
+                    # 原判断是 `if not existing`，而医生把过敏史清空时
+                    # update_profile 写进去的是 {"value": "", updated_at, updated_by}
+                    # ——一条**有医生署名**的空值，语义是"已核实，无"。
+                    # 空字符串是假值，于是下面直接用 HIS 的陈旧值填了回去，
+                    # 医生特意做的删除被无声撤销：他刚确认患者不对青霉素过敏，
+                    # HIS 那条老记录又冒回来了。
+                    # 只有**整条不存在**才算空缺；已有署名的空值走下面的差异提示。
+                    doctor_cleared = bool(entry) and entry.get("updated_at") is not None
+                    if not existing and not doctor_cleared:
                         # 我方空缺 → 直接填（复诊首次拿到 HIS 档案的常见情况）
                         profile[field] = {
                             "value": value,
@@ -242,7 +260,9 @@ async def _prefill_from_push(
                         }
                         changed = True
                         continue
-                    if existing.strip() == value:
+                    # existing 走到这里可能是 ""（医生特意清空）甚至 None，
+                    # 统一兜一层，别让一条畸形档案把整个接诊预填打挂
+                    if (existing or "").strip() == value:
                         # 两边一致：清掉可能残留的旧提示，不打扰医生
                         if entry.pop("his_pending", None) is not None:
                             profile[field] = entry

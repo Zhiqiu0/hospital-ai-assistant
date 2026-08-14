@@ -46,6 +46,13 @@ export function useInquiryFormSync({
     // inquiry 是整个表单状态，加进 deps 会让每次输入都重置——只在接诊切换时重置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, currentEncounterId, inquirySavedAt])
+  //
+  // ⚠️ 谁 bump 了 inquirySavedAt，谁就会触发上面这次**全量**表单覆盖。
+  //    所以只有「问诊表单真的整体保存了」才允许调 setInquiry；任何"顺手改一个
+  //    字段"的场景（AI 建议写入、语音结构化回填等）一律用 updateInquiryFields，
+  //    否则医生正在输入、还没保存的主诉/现病史会被 store 里的旧值静默抹掉，
+  //    而且下面 setIsDirty(false) 连"未保存"提示都一并清掉。
+  //    2026-08-14 第七轮审计 #33：ExamSuggestionTab 就踩了这个坑。
 
   // 辅助检查由外部（如追问建议）写入时同步表单
   useEffect(() => {

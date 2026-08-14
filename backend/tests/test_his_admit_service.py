@@ -273,3 +273,61 @@ async def test_admit_same_profile_value_clears_stale_pending(async_db):
 
     await async_db.refresh(existing)
     assert "his_pending" not in existing.profile["allergy_history"]
+
+
+# 合法身份证（两次推送靠它命中同一份档案；HIS 链路禁用姓名+生日弱键，见审计 #18）
+_ID = "11010519491231002X"
+
+
+# ── 第七轮审计 #19：医生特意清空的档案字段不许被 HIS 旧值填回 ────────────────
+
+@pytest.mark.asyncio
+async def test_prefill_does_not_undo_doctor_cleared_field(async_db):
+    """医生把过敏史清空（=已核实，无），HIS 推来的陈旧值不能悄悄填回去。
+
+    update_profile 在医生清空时写的是 {"value": "", updated_at, updated_by}——
+    一条**有医生署名**的空值。原判断用 `if not existing` 把空字符串当"从没填过"，
+    于是直接用 HIS 的老记录覆盖：医生刚确认患者不对青霉素过敏，那条又冒回来了。
+    现在应该走"差异提示"（his_pending），由医生自己决定采纳还是忽略。
+    """
+    from app.models.patient import Patient
+    from app.services.patient_service import PatientService
+    from app.schemas.patient import PatientProfileUpdate
+    from sqlalchemy import select
+
+    await _mk_doctor(async_db)
+    # 第一次接诊：HIS 推来过敏史，我方空缺 → 直接填
+    await process_admit(async_db, _payload(id_card=_ID, allergy_history="青霉素过敏"))
+    patient = (await async_db.execute(select(Patient))).scalars().first()
+    assert (patient.profile or {})["allergy_history"]["value"] == "青霉素过敏"
+
+    # 医生核实后清空
+    await PatientService(async_db).update_profile(
+        patient.id, PatientProfileUpdate(allergy_history=""), doctor_id="doc-1"
+    )
+
+    # 第二次接诊：HIS 又推同一条陈旧过敏史
+    await process_admit(
+        async_db,
+        _payload(visit_id="20260811000102", id_card=_ID, allergy_history="青霉素过敏"),
+    )
+
+    await async_db.refresh(patient)
+    entry = (patient.profile or {})["allergy_history"]
+    assert entry["value"] == "", "医生清空的过敏史被 HIS 旧值填回来了"
+    assert entry.get("his_pending", {}).get("value") == "青霉素过敏", (
+        "HIS 的值应挂成待处理提示交医生决定，而不是直接丢弃"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prefill_still_fills_never_set_field(async_db):
+    """防过度收紧：从没填过的字段（整条不存在）仍然要直接填。"""
+    from app.models.patient import Patient
+    from sqlalchemy import select
+
+    await _mk_doctor(async_db)
+    await process_admit(async_db, _payload(past_history="高血压 10 年"))
+
+    patient = (await async_db.execute(select(Patient))).scalars().first()
+    assert (patient.profile or {})["past_history"]["value"] == "高血压 10 年"

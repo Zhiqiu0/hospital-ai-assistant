@@ -50,6 +50,7 @@ import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
 import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 import HisQueueDock from '@/components/workbench/HisQueueDock'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { genderCode } from '@/utils/gender'
 import {
   showPendingEncountersWarning,
@@ -264,7 +265,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
                 label: '检验报告',
                 children: (
                   <div style={{ height: '100%', overflow: 'hidden' }}>
-                    <LabReportTab />
+                    <ErrorBoundary label="检验报告" compact>
+                      <LabReportTab />
+                    </ErrorBoundary>
                   </div>
                 ),
               },
@@ -289,7 +292,11 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
             boxShadow: 'var(--shadow-sm)',
           }}
         >
-          <AISuggestionPanel />
+          {/* 局部错误边界（2026-08-14 第七轮审计 #35）：AI 返回结构异常时，
+              崩的只是这块面板，医生正在写的病历编辑器不受影响。 */}
+          <ErrorBoundary label="AI 建议面板" compact>
+            <AISuggestionPanel />
+          </ErrorBoundary>
         </div>
 
         {/* 无接诊遮罩 */}
@@ -335,7 +342,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       />
 
       {/* HIS 叫号队列（保险丝关闭时组件自隐藏，纯 SaaS 零感知） */}
-      <HisQueueDock onOpen={handleResume} />
+      <ErrorBoundary label="叫号队列" compact>
+        <HisQueueDock onOpen={handleResume} />
+      </ErrorBoundary>
 
       {/* 底部状态栏：接诊状态 + 保存时间 */}
       <div
