@@ -159,7 +159,14 @@ export function useWorkbenchBase({
         is_first_visit?: boolean
         is_patient_reused?: boolean
       }
-      if (snapshot.active_record?.status === 'submitted') {
+      // 住院不走这条分支（2026-08-14 第六轮审计修复）：
+      // 住院一次接诊有入院记录 + 多份病程 + 出院小结，签完入院记录后 active_record
+      // 就是 submitted——医生从病区列表点进来只会看到"本次病历已签发"并被弹去历史
+      // 病历，**再也进不了工作台写后续文书**。而下面这段注释里的理由（签发后患者从
+      // 进行中列表移除）只成立于门急诊：门急诊一次接诊=一份病历，签发即结束；
+      // 住院签一份不代表出院，患者仍在病区列表里。
+      const isInpatientSnapshot = toVisitType(snapshot.visit_type) === 'inpatient'
+      if (!isInpatientSnapshot && snapshot.active_record?.status === 'submitted') {
         // 已签发病历不可继续编辑：不再让用户自己去找历史病历入口（住院端 PatientHistoryDrawer
         // 需要先选中病区患者才能查看，而签发后该患者已从"进行中"列表移除，会陷入死循环）。
         // 直接帮用户：① 把患者塞进 currentEncounter 让历史抽屉能识别 patientId
@@ -195,10 +202,23 @@ export function useWorkbenchBase({
         // 沿用旧实现"直接灌 partial"行为，用 unknown 桥接以消除 any 噪音
         setInquiry(snapshot.inquiry as unknown as Parameters<typeof setInquiry>[0])
       }
-      if (snapshot.active_record) {
+      if (isInpatientSnapshot && snapshot.active_record?.status === 'submitted') {
+        // 住院：active_record 是"最近动过的那份"（后端按 updated_at 倒序取第一条），
+        // 签完入院记录后它就是那份已签发的入院记录。
+        // 不能把它灌进编辑器（2026-08-14 第六轮审计修复）——
+        //   ① 医生本来是进来写病程的，看到的却是入院记录正文；
+        //   ② 下面原先无条件 setFinal(false)，等于把已签发病历当草稿放开编辑，
+        //      医生一改一存就在改已签发的病历。
+        // 住院进工作台时留空，医生从时间轴选具体文书，选中时再由该文书自己的
+        // 状态决定是否只读。
+        setRecordType(defaultRecordType)
+        setRecordContent('')
+        setFinal(false)
+      } else if (snapshot.active_record) {
         setRecordType(snapshot.active_record.record_type || defaultRecordType)
         setRecordContent(snapshot.active_record.content || '')
-        setFinal(false)
+        // 尊重该病历自身的签发状态，不再无条件放开编辑
+        setFinal(snapshot.active_record.status === 'submitted')
       } else {
         setRecordType(defaultRecordType)
         setRecordContent('')
