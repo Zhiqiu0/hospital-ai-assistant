@@ -62,11 +62,21 @@ async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
 
     window_start = datetime.now() - timedelta(days=days)
 
-    # ── 回写成功率（HIS 来源、近窗口、已有回写状态的接诊）──
+    # ── 回写成功率（HIS 来源、窗口内**签发过**病历、已有回写状态的接诊）──
+    #
+    # 窗口按签发时间而不是接诊时间（2026-08-14 第六轮审计修复）：
+    # 原先回写率按 visited_at、下面的时效率按 submitted_at，两个口径不一致——
+    # 住院一次接诊十几天，两个指标算的**根本不是同一批病历**，
+    # 放在同一张看板上对比会误导（"回写率 100% 但时效率 60%"可能只是因为
+    # 它们统计的病历集合不同）。而且回写本来就是签发后才触发的。
+    signed_in_window = select(MedicalRecord.encounter_id).where(
+        MedicalRecord.status == "submitted",
+        MedicalRecord.submitted_at >= window_start,
+    )
     enc_rows = (await db.execute(
         select(Encounter.his_external_ref).where(
             Encounter.his_external_ref.isnot(None),
-            Encounter.visited_at >= window_start,
+            Encounter.id.in_(signed_in_window),
         )
     )).scalars().all()
     wb_by_status: dict[str, int] = {}
