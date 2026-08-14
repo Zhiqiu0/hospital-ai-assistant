@@ -170,3 +170,17 @@ async def test_his工号映射正常派给医生(async_db):
 
     mapped = await _map_doctor(async_db, "D1001")
     assert mapped.id == "u-doc2"
+
+
+@pytest.mark.asyncio
+async def test_患者不存在时返回404而不是500(async_db, seeded):
+    """冒烟发现：原先不校验患者存在性，直接落到 INSERT 的外键冲突 → 500。
+
+    这不是服务端故障而是入参问题，且 500 会白白污染 error.log 掩盖真故障。
+    """
+    async for ac in _client_as(async_db, "u-doc", "doctor"):
+        r = await ac.post(
+            "/api/v1/encounters",
+            json={"patient_id": "not-exist", "visit_type": "outpatient"},
+        )
+        assert r.status_code == 404, f"得到 {r.status_code}（期望 404）"
