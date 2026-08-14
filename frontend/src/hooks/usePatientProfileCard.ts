@@ -18,6 +18,7 @@ import { usePatientCacheStore } from '@/store/patientCacheStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientProfileEditStore, type ProfileFormState } from '@/store/patientProfileEditStore'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
+import { genderCode } from '@/utils/gender'
 
 export function usePatientProfileCard() {
   const patientId = useActiveEncounterStore(s => s.patientId)
@@ -29,7 +30,9 @@ export function usePatientProfileCard() {
   const setField = usePatientProfileEditStore(s => s.setField)
 
   const profile = cache?.profile ?? null
-  const isFemale = cache?.patient.gender === 'female'
+  // 用 genderCode 归一化：后端存中文「女」，直接比 'female' 永远不成立，
+  // 女性患者的月经史等按性别渲染的内容会全部不显示（2026-08-14 第六轮审计修复）
+  const isFemale = genderCode(cache?.patient.gender) === 'female'
 
   // 切换患者或后端档案变化时同步到编辑 store
   // 同一患者且本地 dirty 时不会被 store 内部覆盖（保留医生未保存改动）

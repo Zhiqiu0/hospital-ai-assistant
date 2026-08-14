@@ -17,6 +17,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.core.authz import assert_can_write_record
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.encounter import EncounterCreate, QuickStartRequest
@@ -56,6 +57,10 @@ async def quick_start_encounter(
 
 async def _quick_start_inner(data, db, current_user):
     """quick-start 主体逻辑（外层包了幂等锁）。"""
+    # 角色守卫（2026-08-14 第六轮审计修复）：本端点会把 current_user 设为接诊医生，
+    # 原先只要求登录——护士自建接诊后就成了"接诊医生"，后续病历署名落到护士头上，
+    # 违反医院"病历署名必须是接诊医生本人"的硬要求。
+    assert_can_write_record(current_user)
     # 解析出生日期（前端统一传 YYYY-MM-DD），格式无效则忽略，patient 仍可创建
     birth_date_val: Optional[date] = None
     if data.birth_date:

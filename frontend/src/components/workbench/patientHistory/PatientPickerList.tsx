@@ -8,6 +8,7 @@
  */
 import { Avatar, Empty, Space, Spin, Tag } from 'antd'
 import type { Patient } from '@/domain/medical'
+import { genderText } from '@/utils/gender'
 
 interface PatientPickerListProps {
   patientList: Patient[]
@@ -102,7 +103,7 @@ export default function PatientPickerList({
               ) : null}
             </Space>
             <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
-              {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
+              {genderText(p.gender, '')}
               {p.age != null ? ` · ${p.age}岁` : ''}
               {p.patient_no ? ` · ${p.patient_no}` : ''}
             </div>

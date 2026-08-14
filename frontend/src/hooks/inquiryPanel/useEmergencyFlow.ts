@@ -13,6 +13,7 @@ import { resetAllWorkbench, setCurrentEncounterFromPatient } from '@/store/activ
 import { applyQuickStartResult } from '@/store/encounterIntake'
 import api from '@/services/api'
 import type { QuickStartResult } from '@/store/encounterIntake'
+import { genderCode } from '@/utils/gender'
 
 interface EmergencyFlowParams {
   currentPatient: Patient | null
@@ -42,10 +43,7 @@ export function useEmergencyFlow({
       applyQuickStartResult(res)
       // 后端 patient.gender 是 string | null，domain Patient.gender 是 Gender 联合，
       // 与 encounterIntake.syncPatientToCache 同步逻辑保持一致——未知值统一归为 unknown
-      const normalizedGender: Gender =
-        res.patient.gender === 'male' || res.patient.gender === 'female'
-          ? res.patient.gender
-          : 'unknown'
+      const normalizedGender: Gender = genderCode(res.patient.gender)
       const patientForActive: Patient = {
         ...res.patient,
         gender: normalizedGender,

@@ -125,23 +125,44 @@ def _missing_menstrual_history_for_female(ctx: RecordContext) -> bool:
 # 新设计每条规则 target_field 是具体子字段（望诊/闻诊/舌象/脉象），
 # AI 批量补全 / 逐条修复都能各自针对性补，写入【体格检查】对应子行。
 
+# 中医四诊 / 中医诊断 / 治则治法 属**中医门诊专属**，急诊一律豁免
+# （2026-08-14 第六轮审计修复）。
+#
+# 原先这些规则没有急诊判别，而 render_emergency 的模板里压根没有"望诊/闻诊/
+# 舌象/脉象"子行，也没有"中医诊断/治则治法"子行（急诊模板是【诊断】+【急诊处置】
+# +【患者去向】的扁平结构）。后果是**急诊病历必然扣满 体格检查/诊断/治疗意见
+# 三个大项的上限、总分恒在 70 分不合格**，而前端 FinalRecordModal 的 canSubmit
+# 带 `qcPass !== false` 条件——**急诊医生的签发按钮被永久置灰，且模板里没有这些
+# 章节可补，医生无法自救**。
+#
+# 判据取自渲染器自身的契约（_render_visit.render_emergency 的 docstring 明写
+# "急诊不含中医四诊"），不是我们临时放宽标准。
+
 def _missing_tcm_inspection(ctx: RecordContext) -> bool:
     """缺望诊（神色/形态）扣 2.5 分。"""
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("望诊").is_filled()
 
 
 def _missing_tcm_auscultation(ctx: RecordContext) -> bool:
     """缺闻诊（语声/气味）扣 2.5 分。"""
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("闻诊").is_filled()
 
 
 def _missing_tongue(ctx: RecordContext) -> bool:
     """缺切诊·舌象扣 2.5 分。"""
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("舌象").is_filled()
 
 
 def _missing_pulse(ctx: RecordContext) -> bool:
     """缺切诊·脉象扣 2.5 分。"""
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("脉象").is_filled()
 
 
@@ -159,12 +180,17 @@ def _missing_tcm_diagnosis(ctx: RecordContext) -> bool:
     """中医诊断缺失（疾病诊断 + 证候诊断至少有疾病诊断）。
 
     PDF："有中医治疗的病历无中医诊断扣 10 分"——这里宽松判定为"无中医疾病诊断扣"。
+    急诊豁免：急诊模板是扁平的【诊断】章节，不分中西医。
     """
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("中医疾病诊断").is_filled()
 
 
 def _incomplete_tcm_diagnosis(ctx: RecordContext) -> bool:
-    """中医诊断不全扣 2 分（疾病 + 证候 缺其一）。"""
+    """中医诊断不全扣 2 分（疾病 + 证候 缺其一）。急诊豁免，理由同上。"""
+    if ctx.encounter_meta.is_emergency:
+        return False
     has_disease = ctx.section("中医疾病诊断").is_filled()
     has_syndrome = ctx.section("中医证候诊断").is_filled()
     # 只在"至少有一项"时才触发不全（两项都缺由 _missing_tcm_diagnosis 报）
@@ -172,26 +198,47 @@ def _incomplete_tcm_diagnosis(ctx: RecordContext) -> bool:
 
 
 def _missing_western_diagnosis(ctx: RecordContext) -> bool:
-    """西医诊断缺失（PDF 要求"规范书写中、西医诊断"）。"""
+    """西医诊断缺失（PDF 要求"规范书写中、西医诊断"）。
+
+    急诊模板是扁平的【诊断】章节（不分中西医），故急诊看【诊断】是否填写。
+    """
+    if ctx.encounter_meta.is_emergency:
+        return not ctx.section("诊断").is_filled()
     return not ctx.section("西医诊断").is_filled()
 
 
 # ── 9. 治疗意见及措施（10 分） ───────────────────────────────────────
 
 def _missing_treatment_plan(ctx: RecordContext) -> bool:
-    """检查治疗项目不明确——处理意见为空即视为不明确。"""
+    """检查治疗项目不明确——处理意见为空即视为不明确。
+
+    急诊模板里对应的章节叫【急诊处置】（见 render_emergency）。
+    """
+    if ctx.encounter_meta.is_emergency:
+        return not ctx.section("急诊处置").is_filled()
     return not ctx.section("处理意见").is_filled()
 
 
 def _missing_followup_advice(ctx: RecordContext) -> bool:
-    """无复诊建议或注意事项——两者都缺才扣（任一有即合规）。"""
+    """无复诊建议或注意事项——两者都缺才扣（任一有即合规）。
+
+    急诊模板用【患者去向】承载"接下来怎么办"（留观/收住院/回家观察），
+    等价于门诊的复诊建议。
+    """
+    if ctx.encounter_meta.is_emergency:
+        return not ctx.section("患者去向").is_filled()
     return not (
         ctx.section("复诊建议").is_filled() or ctx.section("注意事项").is_filled()
     )
 
 
 def _missing_treatment_method(ctx: RecordContext) -> bool:
-    """治则治法缺失——中医治疗规范要求"辨证施治"，应有治则治法。"""
+    """治则治法缺失——中医治疗规范要求"辨证施治"，应有治则治法。
+
+    急诊豁免：急诊是西医急救流程，模板里没有治则治法子行。
+    """
+    if ctx.encounter_meta.is_emergency:
+        return False
     return not ctx.section("治则治法").is_filled()
 
 

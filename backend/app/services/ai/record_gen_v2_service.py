@@ -34,7 +34,15 @@ logger = logging.getLogger(__name__)
 
 # 会被数值守卫检查的字段：生命体征行 + 阳性体征描述（AI 可能在这两处编造数值）。
 # 诊断/治则等临床判断字段不查——它们允许基于上下文合理推断，无客观数值。
-_VITALS_GUARDED_FIELDS = ("physical_exam_vitals", "physical_exam_text")
+# physical_exam_today 是**住院病程记录/术后记录**的查体字段（见
+# record_schemas_inpatient.py），schema 描述直接要求 LLM 输出
+# "T:__℃ P:__次/分 R:__次/分 BP:__/__mmHg"——漏掉它等于住院这条最高频的文书
+# 路径上守卫完全没装，AI 编的体征直接进病历并自动落草稿（2026-08-14 第六轮审计修复）。
+_VITALS_GUARDED_FIELDS = (
+    "physical_exam_vitals",
+    "physical_exam_text",
+    "physical_exam_today",
+)
 
 
 def _guard_vitals_in_result(result: Any, req: Any) -> None:
@@ -51,7 +59,16 @@ def _guard_vitals_in_result(result: Any, req: Any) -> None:
         str(getattr(req, f, "") or "")
         for f in ("temperature", "pulse", "respiration", "bp_systolic", "bp_diastolic",
                   "spo2", "height", "weight", "physical_exam",
-                  "chief_complaint", "history_present_illness")
+                  "chief_complaint", "history_present_illness",
+                  # 医生在正文里手改的数值也算出处（2026-08-14 第六轮审计修复）：
+                  # 正文是本产品的主编辑入口，医生把血压改成实测值后不会回左侧
+                  # 问诊面板同步。原先出处不含它 → 润色时守卫认为该数值"查无出处"，
+                  # 把整个 BP token 剔除，医生只看到半行没了、毫无提示，
+                  # 而润色 prompt 明写"严禁修改任何客观数值"——LLM 老实照抄了，
+                  # 却被后端守卫删掉，自相矛盾。
+                  # run_qc_fix 早就把 current_record 计入出处，说明"正文算出处"
+                  # 本就是本项目的既定口径，只有生成/润色这条路径漏了。
+                  "current_content", "current_record")
     )
     for field in _VITALS_GUARDED_FIELDS:
         val = result.get(field)

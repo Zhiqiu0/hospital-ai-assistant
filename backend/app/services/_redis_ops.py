@@ -131,9 +131,16 @@ class RedisOpsMixin:
             return None
         try:
             # pipeline 保证 INCR 与 EXPIRE 原子（避免第一次 INCR 后未 EXPIRE 进程崩溃，留下永久 key）
+            #
+            # EXPIRE 必须带 nx=True（2026-08-14 第六轮审计修复）：
+            # 原先每次 INCR 都无条件重设过期时间，固定窗口退化成**滚动窗口**——
+            # 计数永远不会自然清零，只要还有请求打进来，锁定就一直不解除。
+            # 医生连输 10 次错密码后，本该 10 分钟自动解锁，实际会被无限延长
+            # （他自己每次重试都在续期），只能等信息科重置。
+            # nx=True 让过期时间只在第一次设置，窗口从首次计数起算。
             async with client.pipeline(transaction=True) as pipe:
                 pipe.incr(key)
-                pipe.expire(key, window_seconds)
+                pipe.expire(key, window_seconds, nx=True)
                 results = await pipe.execute()
             self._on_success()
             return int(results[0]) if results else None

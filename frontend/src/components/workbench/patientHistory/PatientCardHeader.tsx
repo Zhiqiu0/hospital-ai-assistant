@@ -6,6 +6,7 @@
  */
 import { Avatar, Button, Space, Tag, Typography } from 'antd'
 import { IdcardOutlined } from '@ant-design/icons'
+import { genderText } from '@/utils/gender'
 
 const { Text } = Typography
 
@@ -88,7 +89,7 @@ export default function PatientCardHeader({ selected, total, searchable, onChang
         </Space>
         <Space size={6} style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
           {selected.gender && selected.gender !== 'unknown' && (
-            <span>{selected.gender === 'male' ? '男' : '女'}</span>
+            <span>{genderText(selected.gender)}</span>
           )}
           {selected.age != null && <span>{selected.age} 岁</span>}
           <span style={{ fontFamily: 'monospace', color: 'var(--text-4)' }}>

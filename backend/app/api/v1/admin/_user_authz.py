@@ -20,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 
 # 合法角色枚举（写入前校验，防脏角色入库）
-VALID_ROLES = {"super_admin", "hospital_admin", "dept_admin", "doctor", "nurse"}
+# radiologist 必须在列（2026-08-14 第六轮审计修复）：原先漏了它，导致
+# assert_can_set_role 拒绝一切影像科账号——PACS 工作台除管理员外无人可用，
+# 而 PACS_WRITE_ROLES 里明明把 radiologist 当成正经角色在放行。
+VALID_ROLES = {"super_admin", "hospital_admin", "dept_admin", "doctor", "nurse", "radiologist"}
 
 # 角色等级表：管理类三级 + 普通用户。未知角色按最低(0)处理，天然不越权
 _ROLE_LEVEL = {"super_admin": 3, "hospital_admin": 2, "dept_admin": 1, "doctor": 0, "nurse": 0}

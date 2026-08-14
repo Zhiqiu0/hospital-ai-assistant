@@ -16,6 +16,7 @@ import {
 } from '@ant-design/icons'
 import api from '@/services/api'
 import type { Patient } from '@/domain/medical'
+import { genderText } from '@/utils/gender'
 
 const { Header } = Layout
 const { Text } = Typography
@@ -184,7 +185,7 @@ export default function InpatientHeader({
             </Text>
             {currentPatient.gender && currentPatient.gender !== 'unknown' && (
               <Text style={{ fontSize: 12, color: '#059669' }}>
-                {currentPatient.gender === 'male' ? '男' : '女'}
+                {genderText(currentPatient.gender)}
               </Text>
             )}
             {currentPatient.age != null && currentPatient.age > 0 && (

@@ -79,3 +79,27 @@ async def assert_patient_access(db: AsyncSession, patient_id: str, user) -> None
     row = (await db.execute(stmt)).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=403, detail="无权访问该患者的病历档案（只能查看你接诊过的患者）")
+
+
+# 可以书写/签发病历的角色（2026-08-14 第六轮审计修复）
+#
+# 医院给的硬要求是「病历上写的名字必须都是本人（医生）」。而原先所有病历写端点
+# 只用 get_current_user（要求登录），nurse 与 doctor 权限完全等同——护士能自建
+# 接诊、写病历、签发，签发还会自动回写 HIS，署名落到护士头上。
+# radiologist 同理：影像科医生不书写门急诊/住院病历。
+# 管理员保留（他们要做病历修订与后台维护）。
+RECORD_WRITE_ROLES = {"doctor", *ADMIN_ROLES}
+
+
+def assert_can_write_record(user) -> None:
+    """校验当前用户是否有权书写/签发病历。
+
+    Raises:
+        HTTPException(403): 角色不允许书写病历（如 nurse / radiologist）。
+    """
+    role = getattr(user, "role", "")
+    if role not in RECORD_WRITE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="当前角色无权书写或签发病历（病历署名须为接诊医生本人）",
+        )

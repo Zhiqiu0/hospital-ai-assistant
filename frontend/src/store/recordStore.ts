@@ -111,7 +111,24 @@ export const useRecordStore = create<RecordState>()(
         useQCStore.getState().markStale()
       },
 
-      setRecordType: type => set({ recordType: type }),
+      setRecordType: type =>
+        set(state => {
+          // 切换病历类型要连带重置"已签发"锁（2026-08-14 第六轮审计修复）：
+          // isFinal 是**整个编辑器**的只读开关，而住院一次接诊要写入院记录、
+          // 多份病程、出院小结等**多份文书**——签完第一份后 isFinal 恒为 true，
+          // 医生切到"日常病程"仍然是只读，后续文书根本没法写。
+          // 换类型 = 换一份文书，锁应当跟着新文书的真实状态走；新文书的
+          // 已签发状态随后由水合/拉取病历时的 setFinal 灌入。
+          if (type === state.recordType) return { recordType: type }
+          return {
+            recordType: type,
+            isFinal: false,
+            finalizedAt: null,
+            recordContent: '',
+            lastSavedContent: '',
+            recordSavedAt: 0,
+          }
+        }),
 
       setGenerating: v => set({ isGenerating: v }),
       setPolishing: v => set({ isPolishing: v }),

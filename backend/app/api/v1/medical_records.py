@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.core.authz import assert_encounter_access
+from app.core.authz import assert_can_write_record, assert_encounter_access
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.medical_record import (
@@ -50,6 +50,11 @@ async def auto_save_draft(
     409 表示多设备冲突（罕见，单医生单设备不会触发）。
     """
     # 归属校验：只能给自己的接诊自动保存草稿，防止越权写他人接诊病历
+    # 角色守卫（2026-08-14 第六轮审计修复）：原先病历写端点只要求登录，
+    # nurse/radiologist 与 doctor 权限完全等同——护士能写病历、签发，
+    # 签发还会自动回写 HIS，署名落到护士头上，直接违反医院"病历署名必须是
+    # 接诊医生本人"的硬要求。
+    assert_can_write_record(current_user)
     await assert_encounter_access(db, data.encounter_id, current_user)
 
     # 把接诊维度写入 RequestContext（上游若有 AI 调用能用到，与 quick-generate 行为一致）
@@ -74,6 +79,11 @@ async def quick_save_record(
 ):
     """签发时快速保存病历到数据库"""
     # 归属校验：只能签发自己的接诊，防止越权在他人接诊上签发/篡改病历
+    # 角色守卫（2026-08-14 第六轮审计修复）：原先病历写端点只要求登录，
+    # nurse/radiologist 与 doctor 权限完全等同——护士能写病历、签发，
+    # 签发还会自动回写 HIS，署名落到护士头上，直接违反医院"病历署名必须是
+    # 接诊医生本人"的硬要求。
+    assert_can_write_record(current_user)
     await assert_encounter_access(db, data.encounter_id, current_user)
     service = MedicalRecordService(db)
     try:
@@ -155,6 +165,11 @@ async def create_record(
     # 都能在他人接诊下凭空建病历（后续版本写入走 record_id 链路，前置 record
     # 一旦被别人建出，归属判定的起点就被污染了）。与 quick_save / auto_save_draft
     # 的既有守卫口径对齐。
+    # 角色守卫（2026-08-14 第六轮审计修复）：原先病历写端点只要求登录，
+    # nurse/radiologist 与 doctor 权限完全等同——护士能写病历、签发，
+    # 签发还会自动回写 HIS，署名落到护士头上，直接违反医院"病历署名必须是
+    # 接诊医生本人"的硬要求。
+    assert_can_write_record(current_user)
     await assert_encounter_access(db, data.encounter_id, current_user)
     service = MedicalRecordService(db)
     return await service.create(data)

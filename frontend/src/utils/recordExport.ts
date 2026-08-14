@@ -140,6 +140,24 @@ function pickVisitType(v?: string | null): string {
  * 渲染样式：两列网格，灰色 label + 黑色 value。打印/导出都用同一段 HTML，
  * 保证查看、打印、导出三处首页一致。
  */
+/**
+ * HTML 转义（2026-08-14 第六轮审计修复）。
+ *
+ * 打印/导出把患者字段与病历正文原样拼进 HTML 再 document.write 到**同源**新窗口，
+ * 任何一处含 `<script>` 都会在同源上下文执行，能直接读走 localStorage 里的登录
+ * token —— 而患者姓名、主诉、现病史这些内容既可能由 HIS 推送带入，也可能由医生
+ * 粘贴，属于典型的存储型 XSS 输入面。
+ * 所有进 HTML 的值一律先过这里。
+ */
+function esc(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export function buildPatientHeaderHtml(
   patient: RecordExportPatient | null | undefined,
   snapshot: RecordExportSnapshot | null | undefined,
@@ -149,7 +167,7 @@ export function buildPatientHeaderHtml(
   const s = snapshot || {}
   const p = patient || {}
   const c = ctx || {}
-  const pick = <T,>(...vs: (T | null | undefined)[]): T | null =>
+  const pick = <T>(...vs: (T | null | undefined)[]): T | null =>
     vs.find(v => v !== null && v !== undefined && v !== '') ?? null
 
   const name = pick(s.name, p.name) || '—'
@@ -180,8 +198,8 @@ export function buildPatientHeaderHtml(
   // 两列对齐的首页表格——简单 table 兼容 Word/打印渲染最稳
   const row = (a: string, av: string, b: string, bv: string) =>
     `<tr>
-      <td class="hk">${a}</td><td class="hv">${av}</td>
-      <td class="hk">${b}</td><td class="hv">${bv}</td>
+      <td class="hk">${esc(a)}</td><td class="hv">${esc(av)}</td>
+      <td class="hk">${esc(b)}</td><td class="hv">${esc(bv)}</td>
     </tr>`
 
   return `
@@ -217,10 +235,12 @@ export function printRecord(
   ctx?: RecordExportContext | null
 ) {
   const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
-  const formatted = content.replace(/\n/g, '<br>')
+  // 先转义再换行：正文里的 < > 必须先变成 HTML 实体，否则 <script> 会在
+  // document.write 出来的**同源**窗口里执行，直接读走 localStorage 里的登录 token
+  const formatted = esc(content).replace(/\n/g, '<br>')
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-<title>${typeLabel} - ${patient?.name || '未知患者'}</title>
+<title>${esc(typeLabel)} - ${esc(patient?.name || '未知患者')}</title>
 <style>
   body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
   h2 { text-align: center; font-size: 20px; margin-bottom: 12px; }
@@ -230,8 +250,8 @@ export function printRecord(
   ${HEADER_CSS}
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
-<h2>${typeLabel}</h2>
-${signedAt ? `<div class="signed">签发时间：${signedAt}</div>` : ''}
+<h2>${esc(typeLabel)}</h2>
+${signedAt ? `<div class="signed">签发时间：${esc(signedAt)}</div>` : ''}
 ${headerHtml}
 <div class="content">${formatted}</div>
 <div class="footer">MediScribe 智能病历系统 · 本病历由医生审核签发</div>
@@ -265,7 +285,7 @@ export function exportWordDoc(
     })
     .join('')
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>${typeLabel}</title>
+<head><meta charset="utf-8"><title>${esc(typeLabel)}</title>
 <style>
   body{font-family:'宋体',serif;font-size:12pt;line-height:1.8;margin:2cm;}
   h1{text-align:center;font-size:16pt;margin-bottom:8pt;}
@@ -273,8 +293,8 @@ export function exportWordDoc(
   ${HEADER_CSS}
 </style>
 </head><body>
-<h1>${typeLabel}</h1>
-${signedAt ? `<p class="signed">签发时间：${signedAt}</p>` : ''}
+<h1>${esc(typeLabel)}</h1>
+${signedAt ? `<p class="signed">签发时间：${esc(signedAt)}</p>` : ''}
 ${headerHtml}
 ${paragraphs}
 <p style="margin-top:24pt;color:#999;font-size:9pt;text-align:right;">MediScribe 智能病历系统 · 本病历由医生审核签发</p>

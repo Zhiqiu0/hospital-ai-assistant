@@ -99,7 +99,11 @@ async def get_audio_token(
     """
     # 验证该语音记录存在且属于当前用户（管理员可访问所有）
     query = select(VoiceRecord).where(VoiceRecord.id == voice_record_id)
-    if current_user.role not in ("admin", "super_admin"):
+    # 角色名修正（2026-08-14 第六轮审计修复）：系统里根本没有 "admin" 这个角色
+    # （实际是 super_admin/hospital_admin/dept_admin 三级），原判断等于把
+    # hospital_admin 与 dept_admin 挡在外面——他们在后台语音记录页永远播不了录音。
+    from app.core.authz import ADMIN_ROLES
+    if current_user.role not in ADMIN_ROLES:
         query = query.where(VoiceRecord.doctor_id == current_user.id)
     result = await db.execute(query)
     record = result.scalar_one_or_none()

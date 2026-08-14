@@ -7,7 +7,7 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
@@ -61,9 +61,33 @@ class MedicalRecordSignMixin:
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
                 MedicalRecord.record_type == record_type,
-            ).order_by(MedicalRecord.updated_at.desc()).with_for_update()
+            ).order_by(MedicalRecord.record_no.desc(),
+                       MedicalRecord.updated_at.desc()).with_for_update()
         )
         record = result.scalars().first()
+
+        # 住院同类型多份文书：已签发的那份不再被覆盖（2026-08-14 第六轮审计修复）
+        #
+        # 住院一次接诊天然有多份同类型文书（日常病程、上级查房、术后病程……）。
+        # 原先只按 (encounter_id, record_type) 取最近更新的一行来写，第二份病程
+        # 直接覆盖第一份——医生前一天写的病程被今天这份顶掉，内容永久丢失。
+        # 现在遇到"已签发"的同类型文书就新起一份（record_no 递增），
+        # 旧的原样保留在库里。
+        if (record is not None and record.status == "submitted"
+                and enc_locked.visit_type == "inpatient"):
+            logger.info(
+                "record.sign: 住院新建同类型文书 encounter_id=%s type=%s 上一份 no=%s",
+                encounter_id, record_type, record.record_no,
+            )
+            record = None
+            next_no = (await self.db.execute(
+                select(func.coalesce(func.max(MedicalRecord.record_no), 0) + 1).where(
+                    MedicalRecord.encounter_id == encounter_id,
+                    MedicalRecord.record_type == record_type,
+                )
+            )).scalar() or 1
+        else:
+            next_no = record.record_no if record is not None else 1
         # 已签发病历幂等守卫：门诊/急诊一次接诊一份病历，已 submitted 则不重复改写
         # （前端双击/重试会重复调）；直接返回现有记录，天然幂等。
         if record is not None and record.status == "submitted" \
@@ -73,7 +97,9 @@ class MedicalRecordSignMixin:
             return record
         if not record:
             # 首次签发，病历记录尚未创建（极少数情况：直接签发跳过了 AI 生成步骤）
-            record = MedicalRecord(encounter_id=encounter_id, record_type=record_type)
+            record = MedicalRecord(
+                encounter_id=encounter_id, record_type=record_type, record_no=next_no
+            )
             self.db.add(record)
             await self.db.flush()  # 获取数据库生成的 id，后续 RecordVersion 需要引用
 

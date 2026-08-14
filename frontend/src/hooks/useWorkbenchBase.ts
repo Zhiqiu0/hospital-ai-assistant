@@ -32,6 +32,7 @@ import {
 import { applySnapshotResult, type SnapshotResult } from '@/store/encounterIntake'
 import api from '@/services/api'
 import type { Gender, Patient, VisitType } from '@/domain/medical'
+import { genderCode } from '@/utils/gender'
 
 /**
  * 历史病历抽屉 / 详情弹窗共用的"可视记录"形状。
@@ -76,7 +77,7 @@ function toVisitType(raw: unknown): VisitType | undefined {
 
 /** 后端 patient.gender 字符串 → domain Gender；未知值统一归为 unknown。 */
 function toDomainPatient(p: NonNullable<SnapshotResult['patient']>): Patient {
-  const g: Gender = p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown'
+  const g: Gender = genderCode(p.gender)
   return {
     id: p.id,
     name: p.name,

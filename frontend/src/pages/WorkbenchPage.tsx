@@ -50,6 +50,7 @@ import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
 import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 import HisQueueDock from '@/components/workbench/HisQueueDock'
+import { genderCode } from '@/utils/gender'
 
 const { Header, Content } = Layout
 
@@ -143,10 +144,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     applyQuickStartResult(res)
     // 后端 patient.gender 是 string | null；domain Patient.gender 是 Gender 联合，
     // 与 encounterIntake.syncPatientToCache 同步逻辑保持一致——未知值统一归为 unknown
-    const normalizedGender: Gender =
-      res.patient.gender === 'male' || res.patient.gender === 'female'
-        ? res.patient.gender
-        : 'unknown'
+    const normalizedGender: Gender = genderCode(res.patient.gender)
     const patientForActive: Patient = {
       ...res.patient,
       gender: normalizedGender,

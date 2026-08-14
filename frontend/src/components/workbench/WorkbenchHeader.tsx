@@ -15,6 +15,7 @@ import {
   UserOutlined,
   CloseCircleOutlined,
 } from '@ant-design/icons'
+import { genderText } from '@/utils/gender'
 
 const { Text } = Typography
 
@@ -183,7 +184,7 @@ export default function WorkbenchHeader({
             </Text>
             {currentPatient.gender && currentPatient.gender !== 'unknown' && (
               <Text style={{ fontSize: 12, color: '#059669' }}>
-                {currentPatient.gender === 'male' ? '男' : '女'}
+                {genderText(currentPatient.gender)}
               </Text>
             )}
             {currentPatient.age != null && currentPatient.age > 0 && (
