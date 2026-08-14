@@ -76,9 +76,23 @@ class HisEventBus:
                 logger.warning("his_bus: Redis 未配置，事件总线退化为进程内直投")
                 return None
             # decode_responses=True：本总线只传 JSON 文本，直接拿 str 省去手动解码
+            # socket_timeout 必须有（2026-08-14 第八轮审计修复）：
+            #
+            # 原先只设了 socket_connect_timeout，也就是只管「连不上」，不管
+            # 「连上了但不回话」。Redis 进程还活着却停止响应的场景在这台 2 核 4G
+            # 机器上很现实——swap、maxmemory 触顶后的淘汰风暴、宿主网络单向不通，
+            # TCP 都是已建立状态。那时 `await client.publish(...)` 没有任何超时，
+            # 会无限期挂住。
+            # 而 publish 就在 HIS WS 的**串行**消息循环里（his_ws 一条一条 await
+            # 处理，这是有意设计）：一次挂起就让整个循环停摆——后续接诊推送收不到、
+            # 我方下行回写的 ack 也读不到（ack 走同一条循环）→ 所有在途回写
+            # 10s×3 后判失败并把连接摘掉，90s 后厂商连接被空闲超时关闭。
+            # 同一进程里的 redis_cache 早就设了 socket_timeout=2.0 并带熔断，
+            # 事件总线这两样都没有，降级哲学在这里断了档。
             self._client = aioredis.from_url(
                 settings.redis_url, decode_responses=True,
                 socket_connect_timeout=2.0,
+                socket_timeout=2.0,
             )
         return self._client
 

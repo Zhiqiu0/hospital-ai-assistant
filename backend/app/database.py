@@ -54,6 +54,18 @@ if not async_db_url.startswith("sqlite"):
     # 与"全项目 naive=北京时间"约定差 8 小时。给每条连接设 timezone=Asia/Shanghai，
     # 让 func.now() 返回北京时间，与 Python 侧口径一致。纯代码改动，对存量卷也生效。
     _engine_kwargs["connect_args"] = {"server_settings": {"timezone": "Asia/Shanghai"}}
+    # 借出前探活 + 定期轮换（2026-08-14 第八轮审计修复）：
+    #
+    # 原先两者都没设（pool_pre_ping 默认 False）。PostgreSQL 容器重启、被 OOM
+    # kill、或长连接被中间设备静默断开后，池里的常驻连接全是死的；下一个借到
+    # 死连接的请求第一条 SQL 直接抛断连异常 → 返回 500。SQLAlchemy 随后会做
+    # 池级 invalidate 自愈，所以爆炸半径有限——但那个「踩雷」的请求是随机的，
+    # 可能正好是医生点签发的 quick-save，他看到的是「服务器内部错误」。
+    # pre_ping 每次借出前发一个极轻的探活包，这一类 500 直接归零。
+    # recycle 3600：asyncpg 连接不主动轮换的话，被中间设备静默断开的长连接
+    # 会一直留在池里，表现同上。
+    _engine_kwargs["pool_pre_ping"] = True
+    _engine_kwargs["pool_recycle"] = 3600
 engine = create_async_engine(async_db_url, **_engine_kwargs)
 
 # ── Session 工厂 ──────────────────────────────────────────────────────────────

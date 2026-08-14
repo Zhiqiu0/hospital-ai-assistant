@@ -51,11 +51,35 @@ echo "[$(date)] === 备份开始: ${DEST} ==="
 
 cd "${COMPOSE_DIR}"
 
+# ── 0. 先清理过期本地备份（2026-08-14 第八轮审计修复）────────────────────────
+#
+# 这一段原先是**最后一步**，而脚本头部是 set -euo pipefail：前面任何一步失败
+# 就直接退出，清理永远轮不到。真实故障链：某天 db 容器正在重启，第 1 步
+# pg_dump 管道失败 → 脚本立刻退出 → 旧备份一份都不删。此后每天照样建目录、
+# 留下半截文件，而每份完整备份含 PG 主库 + Orthanc 索引 + 整个 DICOM 存储
+# + uploads，全量非增量，很快把 2 核 4G 机器的盘吃满；盘一满 PostgreSQL
+# 写不进去，**全院病历系统停摆**。等发现时是「备份好几周没成功 + 磁盘满」
+# 双故障叠加。
+# 清理跟"这次备份成没成功"本来就没有依赖关系，放最前面先把空间腾出来。
+echo "[cleanup] 删除超过 ${RETENTION_DAYS} 天的旧备份..."
+find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime "+${RETENTION_DAYS}" \
+    -exec echo "  removing {}" \; -exec rm -rf {} \; || \
+    echo "    WARN: 清理失败，继续备份"
+
 # ── 1. PostgreSQL 主库（业务数据）─────────────────────────────────────────────
 echo "[1/4] pg_dump ${DB_NAME}..."
-docker compose exec -T db pg_dump -U "${DB_USER}" -d "${DB_NAME}" --clean --if-exists \
-    | gzip > "${DEST}/postgres_${DB_NAME}.sql.gz"
-echo "    OK ($(du -h "${DEST}/postgres_${DB_NAME}.sql.gz" | cut -f1))"
+# 用 if 包住而不是裸奔（2026-08-14 第八轮审计）：第 2/3/4 步本来就都包了，
+# 唯独最关键的这步没包——它一失败，set -e 让整个脚本当场退出，
+# 后面的 Orthanc 索引、DICOM、uploads 一样都备不成，也没有任何告警。
+# 现在失败只标记并继续，让其余部分尽量备下来，最后以非零退出码告知 cron。
+BACKUP_FAILED=0
+if docker compose exec -T db pg_dump -U "${DB_USER}" -d "${DB_NAME}" --clean --if-exists \
+    | gzip > "${DEST}/postgres_${DB_NAME}.sql.gz"; then
+    echo "    OK ($(du -h "${DEST}/postgres_${DB_NAME}.sql.gz" | cut -f1))"
+else
+    echo "    ERROR: 主库 pg_dump 失败！（其余步骤继续，脚本最终以非零码退出）"
+    BACKUP_FAILED=1
+fi
 
 # ── 2. Orthanc 索引库 ────────────────────────────────────────────────────────
 # Orthanc 的 metadata（study/series/instance 索引）存在 PostgreSQL 里
@@ -104,11 +128,10 @@ else
     echo "[5/5] SKIP：未配置 ossutil，异地上传未启用（见脚本头部前置说明）"
 fi
 
-# ── 6. 清理过期本地备份（保留最近 N 天；异地 OSS 侧保留 180 天）───────────────
-echo "[cleanup] 删除超过 ${RETENTION_DAYS} 天的旧备份..."
-find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime "+${RETENTION_DAYS}" \
-    -exec echo "  removing {}" \; -exec rm -rf {} \;
-
+if [ "${BACKUP_FAILED}" -ne 0 ]; then
+    echo "[$(date)] === 备份结束：**有步骤失败**，请检查上方日志 ==="
+    exit 1
+fi
 echo "[$(date)] === 备份完成 ==="
 du -sh "${DEST}"
 

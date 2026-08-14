@@ -54,6 +54,19 @@ async def lifespan(_app: FastAPI):
     # worker 抢占执行。保险丝关闭时不起任务，生产 SaaS 零影响。
     # 回写对账任务（2026-08-11 病历安全）：周期扫"已签发但回写未成功"的 HIS 接诊
     # 自动重投，耗尽报 Sentry。多 worker 靠 Redis 锁防重。同受保险丝保护。
+    # 回收被上一次进程退出打断的检验单解析（2026-08-14 第八轮审计）：
+    # OCR 是「先落 analyzing → 最长 3 分钟外部调用 → 再落 done」，deploy 重启
+    # 必然会打断其中一些，那些记录永久停在 analyzing、ocr_text 为空，医生看到
+    # 一张空卡片却既不知道失败也无法重来。启动时扫一次正好收拾上一次的残局。
+    # 失败不阻断启动——它只是收尾工作，不值得让整个服务起不来。
+    try:
+        from app.database import AsyncSessionLocal
+        from app.services.lab_reports_service import reclaim_stale_analyzing
+        async with AsyncSessionLocal() as _db:
+            await reclaim_stale_analyzing(_db)
+    except Exception as exc:
+        logger.warning("app.startup: 回收卡死的检验单解析失败 err=%s", exc)
+
     bg_tasks = []
     if settings.his_adapter_enabled:
         import asyncio
