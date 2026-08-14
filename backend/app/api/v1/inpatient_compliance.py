@@ -60,16 +60,30 @@ async def get_compliance(
     admission_time = enc.visited_at or datetime.now()
     now = datetime.now()
 
-    # 查询该接诊已有的病历类型
+    # 查询该接诊**已签发**的文书及其签发时刻
+    #
+    # 两处都是 2026-08-14 第六轮审计修复：
+    #   ① 原先不过滤 status——AI 一生成就建了 MedicalRecord 行，**空白草稿也被
+    #      算作"已完成"**：医生什么都没写，合规面板却显示"入院记录已完成"，
+    #      而这个面板正是给医生和质控看"还有哪些文书没写"的。
+    #   ② 原先取 created_at（草稿**建立**时刻）当完成时间，用它判超时等于
+    #      把"什么时候开始写"当成"什么时候写完"——只要 AI 早早生成过草稿，
+    #      哪怕拖到几天后才签发，也会被判成"按时完成"。
+    # 时效合规的口径必须是"文书签发了没有、什么时候签的"。
     rec_result = await db.execute(
-        select(MedicalRecord.record_type, MedicalRecord.created_at)
-        .where(MedicalRecord.encounter_id == encounter_id)
-        .order_by(MedicalRecord.created_at.asc())
+        select(MedicalRecord.record_type, MedicalRecord.submitted_at)
+        .where(
+            MedicalRecord.encounter_id == encounter_id,
+            MedicalRecord.status == "submitted",
+            MedicalRecord.submitted_at.isnot(None),
+        )
+        .order_by(MedicalRecord.submitted_at.asc())
     )
     existing: dict[str, datetime] = {}
     for row in rec_result.all():
+        # 同类型多份（住院病程）取最早那份的签发时刻——时效考核的是"首次完成"
         if row.record_type not in existing:
-            existing[row.record_type] = row.created_at
+            existing[row.record_type] = row.submitted_at
 
     items = []
     for rule in _COMPLIANCE_RULES:

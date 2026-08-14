@@ -282,3 +282,50 @@ async def test_previous_record_excludes_draft_and_cross_type(async_db):
 
     text = (row or {}).get("text")
     assert text == "住院已签发正文", f"带入了不该带的内容：{text}"
+
+
+@pytest.mark.asyncio
+async def test_compliance_ignores_unsigned_draft(async_db):
+    """住院时效合规只认已签发文书，空白草稿不算完成（2026-08-14 第六轮审计修复）。
+
+    原先不过滤 status——AI 一生成就建了 MedicalRecord 行，医生什么都没写，
+    合规面板却显示「入院记录已完成」，而这个面板正是给医生和质控看
+    「还有哪些文书没写」的。
+    """
+    from datetime import datetime, timedelta
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.security import get_current_user
+    from app.database import get_db
+    from app.main import app
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+
+    doc = User(username="CP1", password_hash="x", real_name="住院医生", role="doctor")
+    pat = Patient(name="合规测试患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+    enc = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                    status="in_progress", visited_at=datetime.now() - timedelta(hours=2))
+    async_db.add(enc)
+    await async_db.flush()
+    # 只有草稿，没签发
+    async_db.add(MedicalRecord(encounter_id=enc.id, record_type="admission_note",
+                               status="draft", current_version=1))
+    await async_db.commit()
+
+    app.dependency_overrides[get_db] = lambda: async_db
+    app.dependency_overrides[get_current_user] = lambda: doc
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+            res = await ac.get(f"/api/v1/encounters/{enc.id}/compliance")
+        assert res.status_code == 200
+        items = {i["record_type"]: i for i in res.json()["items"]}
+        adm = items.get("admission_note")
+        assert adm is not None
+        assert adm["status"] != "done", "空白草稿被当成已完成了"
+        assert adm["done_at"] is None
+    finally:
+        app.dependency_overrides.clear()
