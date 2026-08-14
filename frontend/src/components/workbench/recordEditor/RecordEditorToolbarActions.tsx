@@ -16,6 +16,8 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { exportWordDoc } from '@/utils/recordExport'
+import { reportRecordExport } from '@/utils/exportAudit'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useAuthStore } from '@/store/authStore'
 import type { Patient, VisitType } from '@/domain/medical'
 
@@ -99,6 +101,7 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
   // 导出 Word 时拼"病案首页"用的接诊上下文：医生姓名/科室来自 authStore，
   // visit_type 来自 activeEncounterStore（由父组件传入）。编辑器场景没有 snapshot，传 null。
   const user = useAuthStore(s => s.user)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const exportCtx = {
     visit_type: visitType,
     visit_time: finalizedAt,
@@ -224,9 +227,16 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
         icon={<FileWordOutlined />}
         size="small"
         disabled={!recordContent.trim() || isBusy}
-        onClick={() =>
+        onClick={() => {
+          // 导出整份病历属最敏感的 PHI 操作，必须留痕
+          reportRecordExport({
+            encounter_id: currentEncounterId,
+            record_type: recordType,
+            method: 'word',
+            is_signed: !!finalizedAt,
+          })
           exportWordDoc(recordContent, currentPatient, recordType, finalizedAt, null, exportCtx)
-        }
+        }}
         style={{ borderRadius: 8, fontSize: 12, height: 30 }}
       >
         导出 Word

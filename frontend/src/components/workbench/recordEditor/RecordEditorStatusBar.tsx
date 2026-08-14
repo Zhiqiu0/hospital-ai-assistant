@@ -11,6 +11,7 @@
 import { Button, Space, Spin } from 'antd'
 import { CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 import { printRecord } from '@/utils/recordExport'
+import { reportRecordExport } from '@/utils/exportAudit'
 import type { Patient } from '@/domain/medical'
 import { useAuthStore } from '@/store/authStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
@@ -33,6 +34,7 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
   // 所以用 ctx 兜底——这是当前正在签发的接诊，doctor/dept/visit_type 都准确。
   const user = useAuthStore(s => s.user)
   const visitType = useActiveEncounterStore(s => s.visitType)
+  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const ctx = {
     visit_type: visitType,
     visit_time: finalizedAt,
@@ -84,9 +86,16 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
         <Button
           size="small"
           icon={<PrinterOutlined />}
-          onClick={() =>
+          onClick={() => {
+            // 导出/打印是最敏感的 PHI 操作（整份病历带走），必须留痕
+            reportRecordExport({
+              encounter_id: currentEncounterId,
+              record_type: recordType,
+              method: 'print',
+              is_signed: !!finalizedAt,
+            })
             printRecord(recordContent, currentPatient, recordType, finalizedAt, null, ctx)
-          }
+          }}
           style={{
             borderRadius: 6,
             fontSize: 12,

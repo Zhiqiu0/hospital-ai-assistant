@@ -31,6 +31,7 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   view_patient_profile: { label: '查阅患者档案', color: 'gold' },
   view_records: { label: '查阅病历', color: 'gold' },
   view_imaging_study: { label: '查看影像检查', color: 'gold' },
+  export_record: { label: '导出/打印病历', color: 'volcano' },
   browse_patients: { label: '浏览患者列表', color: 'default' },
   // 病历
   sign_record: { label: '签发病历', color: 'green' },
