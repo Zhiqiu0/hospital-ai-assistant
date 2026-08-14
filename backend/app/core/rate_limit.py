@@ -37,6 +37,10 @@ class RateLimiter:
         name:      限速器名称，用于 Redis key 前缀，避免不同 limiter 互相干扰。
     """
 
+    # 内存表条目数超过它就顺带扫一次过期项（见 _sweep_expired）。
+    # 取值只需远大于正常并发用户数、又不至于让单次清扫太久。
+    _SWEEP_THRESHOLD = 512
+
     def __init__(self, max_calls: int, window: timedelta, *, name: str):
         self.max_calls = max_calls
         self.window = window
@@ -91,10 +95,33 @@ class RateLimiter:
         await redis_cache.delete(f"ratelimit:{self.name}:{key_override}")
         self._store.pop(key_override, None)
 
+    def _sweep_expired(self, cutoff: datetime) -> None:
+        """清掉整段窗口内都没再出现过的 key（2026-08-14 第八轮审计修复）。
+
+        原先清理**只发生在「同一个 key 再次被 check 到」那一行**，此外没有任何
+        后台清理或容量上限。ai_limiter / username_check_limiter 的 key 是客户端
+        IP：扫描器或 NAT 后的大量不同 IP 各留一个条目后再不回来，条目就永久驻留；
+        Redis 恢复后也不会被回收（reset 只删单个 key），只有重启进程才清。
+        在 2 核 4G、每 worker 约 200MB 的生产上，这是一条只增不减的内存占用。
+        """
+        stale = [k for k, times in self._store.items()
+                 if not times or times[-1] <= cutoff]
+        for k in stale:
+            self._store.pop(k, None)
+
     def _check_in_memory(self, key: str):
-        """内存滑动窗口（Redis 不可用时降级使用）。"""
+        """内存滑动窗口（Redis 不可用时降级使用）。
+
+        ⚠️ 已知局限：生产是 2 个 uvicorn worker，各持一份内存计数，
+        降级期间登录爆破的实际阈值翻倍（10 次/10 分钟 → 20 次/10 分钟）——
+        而这恰恰是 Redis 出问题、最需要防护的时候。彻底解决要引入进程间共享
+        存储，那本来就是 Redis 的职责；这里如实记录，不假装它是准确的。
+        """
         now = datetime.now()
         cutoff = now - self.window
+        # 每积累一定条目就顺带扫一次过期的，避免只增不减
+        if len(self._store) > self._SWEEP_THRESHOLD:
+            self._sweep_expired(cutoff)
         self._store[key] = [t for t in self._store[key] if t > cutoff]
         if len(self._store[key]) >= self.max_calls:
             self._raise_429(int(self.window.total_seconds()))

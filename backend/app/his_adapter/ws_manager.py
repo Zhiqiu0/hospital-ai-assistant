@@ -94,12 +94,23 @@ class HisWsManager:
         # 候选顺序：优先来源诊室连接，其余作为换线兜底
         candidates = [first] + [c for c in self._conns if c is not first]
         last_exc: Exception | None = None
+        # ── msg_id 在这里生成，换线时**不变**（2026-08-14 第八轮审计）─────────
+        #
+        # 原先 msg_id 生成在 _send_once_with_ack 内部，于是「重发 msg_id 不变」
+        # 这句承诺只在同一条连接的 3 次重发内成立，换线就换了个新 msg_id。
+        # 真实故障形态：来源诊室连接是「半死」的（TCP 未断、全科客户端其实
+        # 已经收到 writeback 并写进了 HIS，只是 ack 因卡顿/单向丢包没回来），
+        # 我方 10s×3 判失效后换线重发——同一份病历以两个不同 msg_id 下发两次，
+        # 厂商无法按 msg_id 判重，HIS 病案里就多出一份，而医生侧显示的是一次成功。
+        # msg_id 正是本协议约定的幂等键：我方处理厂商上行 admit 时就是用它去重
+        # （his_ws.py 的 claim_nonce），下行方向没有理由不一致。
+        msg_id = f"ms-{uuid.uuid4().hex}"
         for idx, conn in enumerate(candidates):
             if conn not in self._conns:
                 continue  # 期间已被摘除（其他协程判定失效）
             try:
                 return await self._send_once_with_ack(
-                    conn, msg_type, payload, app_id, secret)
+                    conn, msg_type, payload, app_id, secret, msg_id=msg_id)
             except ConnectionError as exc:
                 last_exc = exc
                 if idx + 1 < len(candidates):
@@ -109,9 +120,14 @@ class HisWsManager:
 
     async def _send_once_with_ack(
         self, ws: object, msg_type: str, payload: dict, app_id: str, secret: str,
+        *, msg_id: str,
     ) -> dict:
-        """在指定连接上发送并等 ack；该连接判定失效时关闭+摘除并抛 ConnectionError。"""
-        msg_id = f"ms-{uuid.uuid4().hex}"
+        """在指定连接上发送并等 ack；该连接判定失效时关闭+摘除并抛 ConnectionError。
+
+        msg_id 由调用方（send_with_ack）传入并在**换线时保持不变**——它是本协议
+        约定的幂等键，同一份病历无论换几条连接重投都必须是同一个值，
+        否则厂商无法判重、HIS 病案里会多出一份病历（第八轮审计）。
+        """
         for attempt in range(1 + wp.ACK_MAX_RESEND):
             # 重发 msg_id 不变，timestamp/nonce/sign 重新生成（同 2.2 重试规则）
             text = wp.build_signed_message(msg_type, payload, app_id, secret, msg_id=msg_id)

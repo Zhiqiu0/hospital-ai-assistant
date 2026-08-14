@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.storage_paths import UPLOADS_ROOT, resolve_upload_path
 from app.models.base import generate_uuid
 from app.models.lab_report import LabReport
 
@@ -158,7 +159,12 @@ def save_report_file(content: bytes, filename: Optional[str], encounter_id: Opti
     encounter_id 清洗为安全目录名，dest_dir 必须在 uploads/ 之下（防路径穿越）。
     返回相对 uploads_root 的路径（供 DB 存 file_path）。
     """
-    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    # 用单一真源而不是自己数 parents 层数（2026-08-14 第八轮审计修复）：
+    # 本文件在 app/services/ 下只有三层，原先照抄了 app/api/v1/ 下四层文件的
+    # parents[3]，算出来是仓库根而非 backend/——容器里就落到了挂载卷之外，
+    # 每次 deploy 清零且从未被备份过，而路径穿越校验用的也是这个错误 root
+    # 所以自洽通过、不报任何错。详见 app/core/storage_paths.py。
+    uploads_root = UPLOADS_ROOT
     safe_eid = re.sub(r"[^a-zA-Z0-9_-]", "", encounter_id or "") or "no_encounter"
     rel_dir = Path("lab_reports") / safe_eid
     dest_dir = (uploads_root / rel_dir).resolve()
@@ -216,6 +222,43 @@ async def process_and_create_report(
     return report
 
 
+# 卡在 analyzing 多久就认定是被中断的（秒）。OCR 最长约 180s（PDF 扫描件
+# 最多 3 页 × 60s 超时），留一倍余量。
+_ANALYZING_STALE_SECONDS = 360
+
+
+async def reclaim_stale_analyzing(db: AsyncSession) -> int:
+    """把卡死在 analyzing 的报告标记为失败，返回处理条数。
+
+    2026-08-14 第八轮审计修复：process_and_create_report 是「先落 analyzing →
+    再做最长 3 分钟的外部调用 → 最后落 done」。只要在这段窗口里进程结束——
+    **部署重启（本项目每次 deploy 必然发生）**、容器 OOM、compose 重建——
+    第二次 commit 永远不会执行，该记录永久停在 analyzing 且 ocr_text 为 NULL。
+    原先全仓没有任何针对 analyzing 的扫描/重试/超时兜底，前端也不渲染 status，
+    医生看到的是一张内容为空、类型「未知类型」的卡片：既不知道它失败了，
+    也没法让它重来，只能重新上传，旧记录变成死数据留在患者名下。
+    注意正常失败路径是有兜底文案的（"（解析失败，请手动输入内容）"），
+    唯独被中断这条路径什么都没有——这里补上，让它和正常失败长得一样。
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now() - timedelta(seconds=_ANALYZING_STALE_SECONDS)
+    stale = (await db.execute(
+        select(LabReport).where(
+            LabReport.status == "analyzing",
+            LabReport.created_at < cutoff,
+        )
+    )).scalars().all()
+    for report in stale:
+        report.ocr_text = report.ocr_text or "（解析被中断，请手动输入内容或重新上传）"
+        report.status = "done"
+        report.analyzed_at = datetime.now()
+    if stale:
+        await db.commit()
+        logger.warning("lab_report.reclaim: 回收卡死的解析任务 %d 条", len(stale))
+    return len(stale)
+
+
 async def list_reports(db: AsyncSession, encounter_id: str) -> list[LabReport]:
     stmt = (
         select(LabReport)
@@ -231,5 +274,29 @@ async def get_report(db: AsyncSession, report_id: str) -> Optional[LabReport]:
 
 
 async def delete_report(db: AsyncSession, report: LabReport) -> None:
+    """删除检验报告，**连同磁盘上的原图一起删**。
+
+    2026-08-14 第八轮审计修复：原先只 db.delete(report)。而 file_path 列是
+    全系统指向那个文件的**唯一引用**，行一删就再没有任何程序能定位到它——
+    既不会被清理，也无法被找出来人工删除。那张图上有患者姓名、性别、年龄和
+    全部检验结果。医生上传错了病人的化验单点删除，界面上消失了，
+    服务器上一份不少。
+    对照：语音记录删除（ai_voice_records）会先 unlink 音频再删行，
+    还有 cleanup_voice.py + 每日 cron 做 30 天保留期清理；检验报告两样都没有。
+
+    先删文件再删行：反过来的话文件删失败就再也找不到它了。
+    文件删不掉不阻断删行——那样会让医生连"删掉错误报告"都做不到。
+    """
+    if report.file_path:
+        try:
+            path = resolve_upload_path(report.file_path)
+            if path.exists():
+                path.unlink()
+        except (ValueError, OSError) as exc:
+            # 越界路径/权限问题：记下来人工清，不挡住删除本身
+            logger.warning(
+                "lab_report.delete: 原图删除失败 report_id=%s path=%s err=%s",
+                report.id, report.file_path, exc,
+            )
     await db.delete(report)
     await db.commit()

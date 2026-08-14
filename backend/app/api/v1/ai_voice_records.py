@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.authz import assert_encounter_access
 from app.core.security import get_current_user
+from app.core.storage_paths import UPLOADS_ROOT
 from app.core.upload_limits import MAX_AUDIO_BYTES, read_upload_capped
 from app.database import get_db
 from app.models.base import generate_uuid
@@ -68,7 +69,7 @@ async def upload_voice_record(
     if encounter_id and not _SAFE_ID_RE.fullmatch(encounter_id):
         raise HTTPException(status_code=400, detail="接诊 ID 格式非法")
 
-    uploads_root = (Path(__file__).resolve().parents[3] / "uploads").resolve()
+    uploads_root = UPLOADS_ROOT.resolve()  # 单一真源，见 app/core/storage_paths.py
     rel_dir = Path("voice_records") / (encounter_id or "no_encounter")
     target_dir = (uploads_root / rel_dir).resolve()
     if not target_dir.is_relative_to(uploads_root):
@@ -254,7 +255,7 @@ async def get_voice_audio(
     if not record or not record.audio_file_path:
         raise HTTPException(status_code=404, detail="音频文件不存在")
 
-    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    uploads_root = UPLOADS_ROOT  # 单一真源，见 app/core/storage_paths.py
     audio_path = uploads_root / record.audio_file_path
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="音频文件已被清理")
@@ -280,7 +281,7 @@ async def delete_voice_record(
         raise HTTPException(status_code=404, detail="语音记录不存在")
 
     if record.audio_file_path:
-        audio_path = Path(__file__).resolve().parents[3] / "uploads" / record.audio_file_path
+        audio_path = UPLOADS_ROOT / record.audio_file_path
         if audio_path.exists():
             audio_path.unlink()
 

@@ -68,3 +68,62 @@ def strip_unsubstantiated_vitals(value: str, source_text: str) -> str:
     cleaned = re.sub(r"(^|\n)[，,、;；。\s]+", r"\1", cleaned)        # 行首悬空标点
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip("，,、;； \t")
+
+
+# ── 结构化生命体征守卫（2026-08-14 第八轮审计）─────────────────────────────
+#
+# 上面那个 strip_unsubstantiated_vitals 只能守**文本**里的体征 token
+# （形如「体温36.5℃」，标记词 + 数值）。但语音结构化接口
+# （/ai/voice-structure）返回的是 inquiry.vital_signs 结构体，值是**裸数值**：
+#     {"temperature": "36.5", "pulse": "72", "bp_systolic": "120"}
+# 裸数值匹配不上 _VITAL_TOKEN_RE，把旧守卫套上去是**空操作**（实测确认）。
+#
+# 更要命的是成因：prompts_voice 里明确规定「生命体征只填 vital_signs 结构体，
+# **严禁**出现在 physical_exam 文字里」——这条为了字段归位而写的规则，
+# 恰好把体征数值从**受守卫保护的文本**挪进了**守卫够不到的结构体**。
+# 于是 LLM 编一个「默认正常」的体温 36.5，就直接落进医生工作台的体温输入框，
+# 医生签发后连同病历一起回写 HIS。而语音正是医生最主要的输入路径。
+#
+# 判定沿用同一套哲学：数值必须在医生口述原文里**字面出现**才保留。
+# 已知代价：医生说「血压一百二十」这类中文数字会被判无出处而剔除。
+# 这是有意的——剔除了医生可以手填，编造的数值医生可能直接签发。
+
+# vital_signs 里需要校验的数值字段（与 prompts_voice 的输出契约一致）
+_VITAL_VALUE_KEYS = (
+    "temperature", "pulse", "respiration",
+    "bp_systolic", "bp_diastolic", "spo2", "height", "weight",
+)
+
+
+def strip_unsubstantiated_vital_values(
+    vitals: dict, source_text: str
+) -> tuple[dict, list[str]]:
+    """剔除 vital_signs 结构体里数值无出处的字段。
+
+    Args:
+        vitals:      LLM 返回的 vital_signs 字典（值为字符串裸数值）
+        source_text: 医生口述转写原文，数值在这里字面出现过才算有出处
+
+    Returns:
+        (清理后的 vitals, 被剔除的字段名列表)
+    """
+    if not isinstance(vitals, dict) or not vitals:
+        return (vitals if isinstance(vitals, dict) else {}), []
+
+    source_numbers = _extract_numbers(source_text)
+    cleaned: dict = {}
+    dropped: list[str] = []
+
+    for key, value in vitals.items():
+        text = str(value).strip() if value is not None else ""
+        if key not in _VITAL_VALUE_KEYS or not text:
+            # 非数值字段（未来可能扩展）与空值原样保留，不做判断
+            cleaned[key] = value
+            continue
+        numbers = _NUM_RE.findall(text)
+        if numbers and all(n in source_numbers for n in numbers):
+            cleaned[key] = value
+        else:
+            dropped.append(key)
+
+    return cleaned, dropped

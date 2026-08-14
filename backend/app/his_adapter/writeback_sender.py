@@ -14,6 +14,7 @@
   - 写入成功后再调刷新（刷新地址未配置则跳过，由 HIS 自动刷新场景兼容）。
 """
 import json
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -40,8 +41,18 @@ class WritebackResult:
     http_status: Optional[int] = None
 
 
-def _signed_headers(body_raw: str) -> dict:
-    """按规范给回写请求生成签名头（每次调用换新的 timestamp/nonce）。"""
+def _signed_headers(body_raw: str, request_id: str) -> dict:
+    """按规范给回写请求生成签名头（每次调用换新的 timestamp/nonce）。
+
+    request_id 是**请求级幂等键**，与 timestamp/nonce 相反——它在整条重试链路上
+    保持不变（2026-08-14 第八轮审计）：
+      原先整条 HTTP 回写没有任何幂等键。HIS 处理慢导致 30s 读超时时（写入与刷新
+      各 30s，很容易触发），HIS 其实已经把病历落库了，我方判为失败立刻原样重发，
+      病案里就多一份；后面对账任务还会最多再重投 5 次，每次都是全新 nonce，
+      HIS 无从判重。项目自己在 reconcile 与 event_bus 的注释里反复强调
+      「重复回写 = 病案里出现两份病历」，发送侧却从未提供让 HIS 去重的手段。
+      WS 通道用的是 msg_id，HTTP 这条对应下来就是这个头。
+    """
     app_id = settings.his_writeback_app_id
     ts = str(int(time.time() * 1000))
     nonce = uuid.uuid4().hex
@@ -51,27 +62,44 @@ def _signed_headers(body_raw: str) -> dict:
         "X-Timestamp": ts,
         "X-Nonce": nonce,
         "X-Sign": sign,
+        # 幂等键：同一份病历的所有重试（含对账重投）共用同一个值
+        "X-Request-Id": request_id,
         "Content-Type": "application/json; charset=utf-8",
     }
 
 
+# 5xx 重试的退避基数（秒）。原先是裸 continue，3 次重试在毫秒内打完——
+# 对一台正在重启的 HIS 毫无意义，只是把重复写入的概率乘 3。
+_RETRY_BACKOFF_BASE = 1.0
+
+
 async def _post_with_retry(
-    client: httpx.AsyncClient, url: str, body_raw: str, max_retries: int
+    client: httpx.AsyncClient, url: str, body_raw: str, max_retries: int,
+    *, request_id: Optional[str] = None,
 ) -> httpx.Response:
-    """POST body_raw 到 url；网络异常或 5xx 时重试，最多 max_retries 次。"""
+    """POST body_raw 到 url；网络异常或 5xx 时重试，最多 max_retries 次。
+
+    request_id 贯穿整条重试链路不变，供 HIS 侧去重（见 _signed_headers）。
+    """
+    # 调用方不传时就地生成：保证「同一次 _post_with_retry 的所有重试」同键
+    req_id = request_id or uuid.uuid4().hex
     last_exc: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:
             resp = await client.post(
-                url, content=body_raw.encode("utf-8"), headers=_signed_headers(body_raw)
+                url, content=body_raw.encode("utf-8"),
+                headers=_signed_headers(body_raw, req_id),
             )
             if resp.status_code >= 500 and attempt < max_retries:
+                # 指数退避：给对面重启/过载留出恢复时间
+                await asyncio.sleep(_RETRY_BACKOFF_BASE * (2 ** attempt))
                 continue
             return resp
         except httpx.HTTPError as exc:
             last_exc = exc
             if attempt >= max_retries:
                 raise
+            await asyncio.sleep(_RETRY_BACKOFF_BASE * (2 ** attempt))
     # 理论不可达：循环要么 return 要么 raise
     raise last_exc  # type: ignore[misc]
 
@@ -187,9 +215,21 @@ async def _send_writeback_inner(
     if own_client:
         client = httpx.AsyncClient(timeout=settings.his_writeback_timeout_seconds)
     try:
+        # ── 确定性幂等键（2026-08-14 第八轮审计）────────────────────────────
+        # 用规范 §2.5 定义的那三段拼，而不是随机 uuid：这样不仅本次调用的
+        # 3 次重试同键，**几小时后对账任务的重投也是同一个键**——那才是重复
+        # 写入的主要来源（MAX_RECONCILE_ATTEMPTS=5，每次都是全新 nonce）。
+        req_id = "wb-{}-{}-{}".format(
+            payload.get("visit_id") or "", payload.get("record_type") or "",
+            payload.get("record_no") if payload.get("record_no") is not None else "0",
+        )
+
         # 1. 写入
         try:
-            resp = await _post_with_retry(client, settings.his_writeback_url, body_raw, max_retries)
+            resp = await _post_with_retry(
+                client, settings.his_writeback_url, body_raw, max_retries,
+                request_id=req_id,
+            )
         except httpx.HTTPError as exc:
             return WritebackResult(ok=False, status="write_failed", message=f"网络异常：{exc}")
         if resp.status_code != 200:
@@ -220,7 +260,9 @@ async def _send_writeback_inner(
             )
             try:
                 rresp = await _post_with_retry(
-                    client, settings.his_writeback_refresh_url, refresh_raw, max_retries
+                    client, settings.his_writeback_refresh_url, refresh_raw, max_retries,
+                    # 刷新是同一次回写的第二个动作，键上加后缀区分
+                    request_id=f"{req_id}:refresh",
                 )
             except httpx.HTTPError as exc:
                 return WritebackResult(

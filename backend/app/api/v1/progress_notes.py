@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.security import get_current_user
-from app.core.authz import assert_encounter_access
+from app.core.authz import assert_can_write_record, assert_encounter_access
 from app.models.inpatient import ProgressNote
 from app.services import progress_notes_service
 
@@ -77,6 +77,13 @@ async def create_progress_note(
 ):
     """新建病程记录。"""
     await assert_encounter_access(db, encounter_id, current_user)
+    # 角色守卫（2026-08-14 第八轮审计）：病程记录是住院病历的**法定组成部分**，
+    # recorded_by 直接取 current_user.real_name，且 PATCH status='submitted'
+    # 能一路走到签发冻结点。而这三个写端点原先只挂了归属校验、没有角色校验——
+    # 护士/影像科在自己名下的接诊上可以写出并签发一份署自己名字的病程记录，
+    # 直接违反医院「病历署名必须是接诊医生本人」的硬要求。
+    # 同为病历文书写入，medical_records.py 那边四个端点里三个都挂了这道守卫。
+    assert_can_write_record(current_user)
     note = await progress_notes_service.create_note(
         db,
         encounter_id=encounter_id,
@@ -104,6 +111,7 @@ async def update_progress_note(
 ):
     """更新病程记录（已签发整条冻结，status 白名单 draft/submitted）。"""
     await assert_encounter_access(db, encounter_id, current_user)
+    assert_can_write_record(current_user)  # 角色守卫，理由见本文件 create 端点
     note = await progress_notes_service.update_note(
         db,
         encounter_id=encounter_id,
@@ -112,6 +120,8 @@ async def update_progress_note(
         content=data.content,
         status=data.status,
         recorded_at_raw=data.recorded_at,
+        # 谁写的正文就署谁（审计：交接后署名仍是前一位医生）
+        editor_name=getattr(current_user, "real_name", None) or current_user.username,
     )
     # 业务里程碑：病程记录签发（status=submitted 是冻结点）
     if data.status == "submitted":
@@ -131,4 +141,5 @@ async def delete_progress_note(
 ):
     """删除病程记录（仅 draft 状态）。"""
     await assert_encounter_access(db, encounter_id, current_user)
+    assert_can_write_record(current_user)  # 角色守卫，理由见本文件 create 端点
     await progress_notes_service.delete_note(db, encounter_id, note_id)

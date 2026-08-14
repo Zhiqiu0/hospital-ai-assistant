@@ -159,7 +159,12 @@ async def run_quick_qc_stream(
             ]
 
             all_issues = rule_issues + insurance_tagged + llm_issues
-            await save_qc_issues(task_id, all_issues, encounter_id=req.encounter_id)
+            await save_qc_issues(
+                task_id, all_issues,
+                encounter_id=req.encounter_id,
+                # 按类型定位实际被质控的那份文书（住院多文书场景，审计修复）
+                record_type=req.record_type,
+            )
 
             summary_parts: list[str] = []
             if report.passed:

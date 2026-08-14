@@ -22,6 +22,10 @@ from app.models.voice_record import VoiceRecord
 from app.schemas.ai_request import VoiceStructureRequest
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_guards import (
+    strip_unsubstantiated_vital_values,
+    strip_unsubstantiated_vitals,
+)
 from app.services.ai.prompts import (
     VOICE_STRUCTURE_PROMPT_INPATIENT,
     VOICE_STRUCTURE_PROMPT_OUTPATIENT,
@@ -120,6 +124,41 @@ async def voice_structure(
             token_output=usage.completion_tokens if usage else 0,
             model_name=model_options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
         )
+
+        # ── 数值真实性红线守卫（2026-08-14 第八轮审计）─────────────────────
+        #
+        # prompts_voice 规定「生命体征只填 vital_signs 结构体，严禁出现在
+        # physical_exam 文字里」——这条为字段归位而写的规则，恰好把体征数值
+        # 从**受 output_guards 保护的文本**挪进了**守卫够不到的结构体**，
+        # 于是这条路径上只剩 prompt 里那句「未提及留空」的软约束。
+        # 而 output_guards 的模块注释早就写明：软约束不够，实测 LLM 仍会编
+        # 「默认正常」的体征数值。语音又是医生最主要的输入路径，编出来的体温
+        # 直接落进工作台输入框，医生签发后连同病历回写 HIS。
+        # 这里做确定性后校验：数值必须在医生口述原文里字面出现才保留。
+        inquiry_result = result.get("inquiry") or {}
+        if isinstance(inquiry_result, dict) and inquiry_result.get("vital_signs"):
+            kept, dropped = strip_unsubstantiated_vital_values(
+                inquiry_result["vital_signs"], transcript
+            )
+            inquiry_result["vital_signs"] = kept
+            if dropped:
+                logger.warning(
+                    "voice.structure: 剔除无出处的生命体征数值 %s（口述原文里查无此数）"
+                    " transcript_id=%s", ",".join(dropped), req.transcript_id,
+                )
+            result["inquiry"] = inquiry_result
+
+        # draft_record 是含【体格检查】章节的**病历草稿全文**，直接显示进编辑区。
+        # 它是文本，走文本版守卫（同一条红线的另一个出口，同样原先没挂）。
+        draft = result.get("draft_record")
+        if isinstance(draft, str) and draft:
+            cleaned_draft = strip_unsubstantiated_vitals(draft, transcript)
+            if cleaned_draft != draft:
+                logger.warning(
+                    "voice.structure: 病历草稿里剔除了无出处的体征数值 transcript_id=%s",
+                    req.transcript_id,
+                )
+                result["draft_record"] = cleaned_draft
 
         if voice_record:
             voice_record.raw_transcript = transcript

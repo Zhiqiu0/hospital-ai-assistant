@@ -10,13 +10,37 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.medical_record import MedicalRecord, RecordVersion
 
 
 class MedicalRecordDraftMixin:
     """病历草稿保存（依赖宿主类提供 self.db）。"""
+
+    async def _is_inpatient(self, encounter_id: str) -> bool:
+        """该接诊是否住院。
+
+        住院一次接诊天然有多份同类型文书（15 份日常病程、3 份查房……），
+        「上一份已签发」不代表「这一份不能写」；门急诊一次接诊一份病历，
+        已签发就是真的不能再改。两条草稿路径都要按这个区分，
+        与签发路径（_medical_record_sign）保持同一口径。
+        """
+        from app.models.encounter import Encounter
+
+        visit_type = (await self.db.execute(
+            select(Encounter.visit_type).where(Encounter.id == encounter_id)
+        )).scalar_one_or_none()
+        return visit_type == "inpatient"
+
+    async def _next_record_no(self, encounter_id: str, record_type: str) -> int:
+        """同类型文书的下一个序号（与 _medical_record_sign 同一算法）。"""
+        return (await self.db.execute(
+            select(func.coalesce(func.max(MedicalRecord.record_no), 0) + 1).where(
+                MedicalRecord.encounter_id == encounter_id,
+                MedicalRecord.record_type == record_type,
+            )
+        )).scalar() or 1
 
     async def auto_save_draft(
         self,
@@ -54,7 +78,22 @@ class MedicalRecordDraftMixin:
         record = result.scalars().first()
 
         if record is not None and record.status == "submitted":
-            raise HTTPException(status_code=403, detail="病历已签发，不可再编辑")
+            # ── 住院多份同类型文书（2026-08-14 第八轮审计修复）────────────────
+            #
+            # 住院一次接诊天然有多份同类型文书（15 份日常病程、3 份查房……）。
+            # 原先这里无条件 403「病历已签发，不可再编辑」——医生 8/2 签发第 1 份
+            # 病程后，8/3 写第 2 份时每 5 秒的 auto-save 全部 403；而前端
+            # useAutoSaveDraft 把 403 判为「永久性拒绝」，清空失败队列并提示
+            # 「该病历已签发，草稿不再自动保存」，此后整段住院期间该类型的草稿
+            # **一个字都不落库**，只有签发那一刻才有数据。
+            # 签发路径（_medical_record_sign）第六轮就已经有「住院遇 submitted
+            # 就新起一份 record_no」的分支，这两条草稿路径当时没跟上。
+            # 这里对齐：住院 → 置空走下面的新建分支；门急诊一次接诊一份，
+            # 仍然 403（那才是真正的"已签发不可改"）。
+            if await self._is_inpatient(encounter_id):
+                record = None
+            else:
+                raise HTTPException(status_code=403, detail="病历已签发，不可再编辑")
 
         # 乐观锁校验（只在传入预期值时启用——AI 生成那次首发不需要）
         if expected_updated_at is not None and record is not None and record.updated_at:
@@ -81,6 +120,8 @@ class MedicalRecordDraftMixin:
                 record_type=record_type,
                 status="editing",
                 current_version=1,
+                # 同类型第几份（住院多份文书的区分键，与签发路径同一算法）
+                record_no=await self._next_record_no(encounter_id, record_type),
             )
             self.db.add(record)
             await self.db.flush()
@@ -188,7 +229,18 @@ class MedicalRecordDraftMixin:
 
         # 已签发病历不让 AI 覆盖（医生最终确认过的版本是法定证据）
         if record is not None and record.status == "submitted":
-            return {"record_id": record.id, "version_no": record.current_version, "saved": False}
+            # 住院例外（2026-08-14 第八轮审计修复）：住院一次接诊有多份同类型
+            # 文书，"上一份已签发"不等于"这一份不能写"。原先无条件 saved=False，
+            # 而 record_gen_v2_service 不检查返回值也不报错 → AI 生成的第 2 份
+            # 病程只活在浏览器 store 里，刷新即丢，医生毫不知情。
+            if await self._is_inpatient(encounter_id):
+                record = None
+            else:
+                return {
+                    "record_id": record.id,
+                    "version_no": record.current_version,
+                    "saved": False,
+                }
 
         if record is None:
             record = MedicalRecord(
@@ -196,6 +248,7 @@ class MedicalRecordDraftMixin:
                 record_type=record_type,
                 status="editing",
                 current_version=0,
+                record_no=await self._next_record_no(encounter_id, record_type),
             )
             self.db.add(record)
             await self.db.flush()  # 拿到 record.id

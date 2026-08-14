@@ -20,6 +20,7 @@
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
+import logging
 from datetime import datetime
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
@@ -28,12 +29,15 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
+from app.config import settings
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.patient import Patient
 from app.models.user import User
 from app.services.audit_service import log_action
 from app.services.encounter_service import invalidate_encounter_snapshot
+
+logger = logging.getLogger(__name__)
 
 
 class AdminRecordService:
@@ -243,9 +247,38 @@ class AdminRecordService:
         # 失效该接诊的 snapshot，让医生端工作台再打开能拿到最新内容
         await invalidate_encounter_snapshot(record.encounter_id)
 
+        # ── 修订后必须重推 HIS（2026-08-14 第八轮审计修复）──────────────────
+        #
+        # 原先这里完全不碰回写。于是：门诊病历签发 → 自动回写 HIS 成功 →
+        # 事后发现诊断录错 → 管理员在后台修订、填了理由、系统建新版本进签名链、
+        # 前端提示修订成功；而 **HIS 病案里躺着的仍是修订前的错误版本，永久不会
+        # 更新**，医生和管理员都以为改过了。
+        # 对账任务也够不着：_find_candidates 只捞 writeback.status 属
+        # {skipped, write_failed, refresh_failed, error} 或从未回写的，
+        # 'success' 不在重投集合里。
+        # 而修订的动机通常正是「原版本有错」——这恰恰是最不能让 HIS 停在旧版本
+        # 的场景。回写按 (visit_id+record_type+record_no) 幂等，重推即覆盖更新。
+        his_writeback = None
+        if settings.his_adapter_enabled and record.encounter_id:
+            enc = await self.db.get(Encounter, record.encounter_id)
+            if enc is not None and enc.his_external_ref:
+                from app.his_adapter.bg_tasks import spawn
+                from app.his_adapter.writeback_dispatch import dispatch_writeback
+                spawn(
+                    dispatch_writeback(enc.id, current_user.id, enc.visit_no or ""),
+                    name=f"writeback-revise:{enc.id}",
+                )
+                his_writeback = "dispatched"
+                logger.info(
+                    "record.revise: 已派发 HIS 重推 encounter_id=%s record_id=%s",
+                    enc.id, record_id,
+                )
+
         return {
             "ok": True,
             "record_id": record_id,
             "new_version_no": new_version_no,
             "revised_at": datetime.now().isoformat(),
+            # 让管理端能显示"已重推 HIS"，而不是让人以为只改了本地
+            "his_writeback": his_writeback,
         }

@@ -193,6 +193,15 @@ async def save_record_content(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # 角色守卫（2026-08-14 第八轮审计）：本文件四个病历写端点里，
+    # auto_save_draft / quick_save / create_record 三个都挂了这道守卫，唯独
+    # 这个漏了。归属校验在 service 层是有的（按 Encounter.doctor_id 过滤，
+    # 不存在 IDOR），缺的正是角色这一层——而医院的硬要求是
+    # 「病历上写的名字必须是接诊医生本人」。
+    # 现实触发点不是新建（其余三个入口已堵死拿不到 record_id），而是**调岗**：
+    # 医生转去影像科/护理岗后，他名下的存量接诊与病历还在，角色已不是 doctor，
+    # 却仍能写出 source='doctor_edited' 的新版本。
+    assert_can_write_record(current_user)
     service = MedicalRecordService(db)
     return await service.save_content(record_id, data, current_user.id)
 

@@ -55,6 +55,24 @@ def _too_large_to_cache(payload: bytes) -> bool:
     return len(payload) > _MAX_CACHEABLE_BYTES
 
 
+# 单次预热写进 Redis 的**总量**上限（2026-08-14 第八轮审计修复）
+#
+# 上面那个单张上限挡的是「单张巨图」，而真实主路径是「很多张中等大小的图」：
+# 上传一份检查会对**全部** instance 预热缩略图 + 1024 高清预览，一份 500 帧的
+# CT 就是约 500 张预览（每张 100-200KB）+ 500 张缩略图，合计 60-110MB，
+# 每一张都在 512KB 以下、全部畅通无阻地写进去，TTL 还是 7 天不会自然过期。
+# 两三份这样的检查就把 256MB 填满，此后 Redis 长期处于 maxmemory 状态，
+# allkeys-lru 按近似 LRU 淘汰**任意** key —— 包括 his:wb:claim:*（被淘汰即
+# 两个 worker 同时往 HIS 推同一份病历）、ratelimit:login:*（登录爆破计数清零，
+# 10 次/10 分钟形同虚设）、nonce:*（防重放与接诊去重失效）、lock:quickstart:*。
+#
+# 影像缓存只是省一次渲染（未命中会重新渲染，功能不受影响），那些 key 被淘汰
+# 却是正确性问题。给单次预热设总预算：超预算就停止写入，后续帧走按需渲染。
+# 32MB ≈ 256MB 的 1/8，既能覆盖常规检查的前若干帧（医生大多只看前几张），
+# 又不至于把关键 key 挤出去。
+_MAX_PREWARM_TOTAL_BYTES = 32 * 1024 * 1024
+
+
 async def render_and_cache_all(
     study_uid: str,
     instances_with_bytes: list[tuple[str, bytes]],
@@ -73,6 +91,17 @@ async def render_and_cache_all(
 
     loop = asyncio.get_event_loop()
     sem = asyncio.Semaphore(concurrency)
+    # 本次预热已写入的字节数（见 _MAX_PREWARM_TOTAL_BYTES）。
+    # 单进程 event loop 内的累加，不需要锁。
+    budget = {"used": 0, "skipped": 0}
+
+    def _try_spend(n: int) -> bool:
+        """预算够就扣减并放行，不够则拒绝（后续帧一律走按需渲染）。"""
+        if budget["used"] + n > _MAX_PREWARM_TOTAL_BYTES:
+            budget["skipped"] += 1
+            return False
+        budget["used"] += n
+        return True
 
     async def _one(iuid: str, dcm_bytes: bytes) -> None:
         async with sem:
@@ -85,13 +114,16 @@ async def render_and_cache_all(
                 return
             # 同样受体积上限约束：预热是批量写，一次检查就可能塞进上百张，
             # 是最容易把正确性关键 key 挤出 Redis 的路径
-            if thumb_jpeg and not _too_large_to_cache(thumb_jpeg):
+            # 缩略图优先占预算：它小得多，且列表页全靠它，命中率远高于预览图
+            if (thumb_jpeg and not _too_large_to_cache(thumb_jpeg)
+                    and _try_spend(len(thumb_jpeg))):
                 await redis_cache.set_bytes(
                     f"pacs:thumb:{study_uid}:{iuid}",
                     thumb_jpeg,
                     ttl=settings.thumbnail_cache_ttl,
                 )
-            if preview_jpeg and not _too_large_to_cache(preview_jpeg):
+            if (preview_jpeg and not _too_large_to_cache(preview_jpeg)
+                    and _try_spend(len(preview_jpeg))):
                 await redis_cache.set_bytes(
                     f"pacs:preview:{study_uid}:{iuid}",
                     preview_jpeg,
@@ -103,9 +135,14 @@ async def render_and_cache_all(
         return_exceptions=True,
     )
     logger.info(
-        "pacs.render: done study=%s frames=%d（缩略+预览）",
+        "pacs.render: done study=%s frames=%d（缩略+预览）已缓存 %.1fMB"
+        "%s",
         study_uid[-12:],
         len(instances_with_bytes),
+        budget["used"] / 1024 / 1024,
+        # 明确说出被跳过的量，别让"没缓存全"变成看不见的截断
+        f"，超预算跳过 {budget['skipped']} 张（按需渲染，不影响功能）"
+        if budget["skipped"] else "",
     )
 
 

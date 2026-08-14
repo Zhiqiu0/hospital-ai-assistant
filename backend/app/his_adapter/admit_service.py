@@ -308,28 +308,60 @@ async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
     **助理工号命中的也是本人账号**，因此签发病历署名恒为本人（医院硬要求：
     病历上不能出现助理名字）。
     """
+    from app.core.authz import RECORD_WRITE_ROLES
     from app.models.user import DoctorCode
 
     code = (doctor_code or "").strip()
     if not code:
         raise AdmitError(40007, "接诊推送缺少医生工号（doctor_code）")
 
+    # 角色约束（2026-08-14 第八轮审计）：三条兜底查询原先都只过滤 is_active，
+    # 不看 role。而医院给的人员名单**是全院名单不是医生名单**——里面混着
+    # 自助机、护工、财务这类条目，批量开户时只要有一条角色判成了非临床角色，
+    # HIS 推来对应工号，接诊就被静默派给它，doctor_id 落到一个不该署名的账号上，
+    # 之后该账号对这条接诊的一切写操作都被 assert_encounter_access 放行。
+    # 「谁能当接诊医生」这个不变量，quick-start 与 POST /encounters 都已用
+    # assert_can_write_record 强制，这里是第三处、也是唯一的自动化入口。
+    role_ok = User.role.in_(tuple(RECORD_WRITE_ROLES))
+
     doctor = (await db.execute(
         select(User)
         .join(DoctorCode, DoctorCode.user_id == User.id)
-        .where(DoctorCode.code == code, User.is_active.is_(True))
+        .where(DoctorCode.code == code, User.is_active.is_(True), role_ok)
     )).scalars().first()
     if doctor is None:
         result = await db.execute(
-            select(User).where(User.employee_no == code, User.is_active.is_(True))
+            select(User).where(
+                User.employee_no == code, User.is_active.is_(True), role_ok
+            )
         )
         doctor = result.scalars().first()
     if doctor is None:
         result = await db.execute(
-            select(User).where(User.username == code, User.is_active.is_(True))
+            select(User).where(
+                User.username == code, User.is_active.is_(True), role_ok
+            )
         )
         doctor = result.scalars().first()
     if doctor is None:
+        # 区分「查无此工号」与「工号对应的账号不是临床角色」——后者在联调现场
+        # 光看 40007 会以为是没开户，实际是角色配错，能省下大量排查时间。
+        exists_any = (await db.execute(
+            select(User.id)
+            .outerjoin(DoctorCode, DoctorCode.user_id == User.id)
+            .where(
+                (DoctorCode.code == code)
+                | (User.employee_no == code)
+                | (User.username == code)
+            )
+            .limit(1)
+        )).scalar_one_or_none()
+        if exists_any is not None:
+            raise AdmitError(
+                40007,
+                f"工号 {code} 对应的账号不是可书写病历的角色（或已停用），"
+                f"接诊不予派发——请核对该账号角色",
+            )
         raise AdmitError(40007, f"医生工号 {code} 未在 MediScribe 注册或已停用")
     return doctor
 

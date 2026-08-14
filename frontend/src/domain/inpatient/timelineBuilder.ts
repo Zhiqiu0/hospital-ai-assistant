@@ -12,12 +12,12 @@ export type TimelineItemType = 'medical_record' | 'progress_note'
 export interface TimelineItem {
   id: string
   type: TimelineItemType
-  noteType: string        // admission_note / first_course / daily_course / ...
-  label: string           // 显示文字
-  color: string           // tag 颜色
+  noteType: string // admission_note / first_course / daily_course / ...
+  label: string // 显示文字
+  color: string // tag 颜色
   bgColor: string
-  recordedAt: string      // ISO 字符串
-  status: string          // draft / submitted
+  recordedAt: string // ISO 字符串
+  status: string // draft / submitted
   title?: string | null
   content: string
 }
@@ -28,8 +28,12 @@ export interface TimelineItem {
  * 可能只有最小子集。沿用与 domain/medical/types.ts MedicalRecord 兼容的命名。
  */
 export interface MedicalRecordRaw {
+  /** 后端 _serialize_record 用的主键字段名（快照接口返回的是它，不是 id） */
+  record_id?: string
   id?: string
   record_type?: string | null
+  /** 住院同类型多份文书的序号（第 1/2/3 份日常病程） */
+  record_no?: number | null
   status?: string | null
   content?: string | null
   submitted_at?: string | null
@@ -54,7 +58,11 @@ export interface ProgressNoteRaw {
 export function medicalRecordToItem(r: MedicalRecordRaw): TimelineItem {
   const rule = getNoteRule(r.record_type || 'admission_note')
   return {
-    id: r.id || '',
+    // 后端 _serialize_record 返回的主键字段叫 record_id，不是 id
+    // （2026-08-14 第八轮审计修复）：原先读 r.id → 所有病历条目的 id 都是空串，
+    // 而 InpatientTimeline 用它做 React key（全部重复）和 selectedId 比对——
+    // 点任意一份病历，时间轴上全部病历同时高亮。保留 r.id 兜底。
+    id: r.record_id || r.id || '',
     type: 'medical_record',
     noteType: r.record_type || 'admission_note',
     label: rule.label,

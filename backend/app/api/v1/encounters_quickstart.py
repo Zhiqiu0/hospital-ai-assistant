@@ -105,7 +105,15 @@ async def _quick_start_inner(data, db, current_user):
                 )
 
     if not patient:
-        patient = await patient_service.create(PatientCreate(
+        # commit=False（2026-08-14 第八轮审计修复）：与 admit_service 同一约定
+        # ——「建患者与建接诊合并为同一事务，接诊失败不留孤儿档案」。
+        # 原先这里默认 commit=True 先把患者提交掉，随后还要跑复诊判断、取档案、
+        # 写审计日志（另开会话写库），最后才建接诊。这中间任一环节失败，
+        # 结果就是患者档案已落库、接诊没建成；医生看到报错重试，而如果这位患者
+        # 既没身份证也没手机号（老人、无证儿童、代挂号，都很常见），
+        # find_existing 的强键全 miss、弱键又在第七轮被有意禁用，
+        # 重试就再建一份档案——同一个人散成多份，正是第七轮刚修过的痛点。
+        patient = await patient_service.create(commit=False, data=PatientCreate(
             name=data.patient_name,
             gender=data.gender,
             birth_date=birth_date_val,

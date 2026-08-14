@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.encounter import Encounter
@@ -72,7 +72,17 @@ async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
                 Encounter.status == "in_progress",
                 and_(
                     Encounter.status == "completed",
-                    Encounter.visited_at >= discharge_cutoff,
+                    # 按**出院时刻**算保留窗口（2026-08-14 第八轮审计修复）：
+                    # 原先写的是 visited_at（入院时刻）——住 30 天的患者出院时
+                    # visited_at 已是 29 天前，这个条件恒不成立，接诊当场从
+                    # 病区列表消失。而住院端唯一的接诊入口就是这个列表
+                    # （出院后 currentPatient 被 resetAllWorkbench 清空），
+                    # 医生再也点不进去，规范要求的「出院后 24 小时内完成出院
+                    # 记录」直接没有入口——正是本函数注释声称修好的那个问题。
+                    # 住得越久越必然踩中，短住院（≤7 天）测试全绿，所以没被发现。
+                    # completed_at 兜底用 visited_at：极老数据可能没有该字段。
+                    func.coalesce(Encounter.completed_at, Encounter.visited_at)
+                    >= discharge_cutoff,
                     Encounter.id.not_in(discharged_done),
                 ),
             ),
