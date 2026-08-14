@@ -8,6 +8,7 @@ AI 语音记录子路由（/api/v1/ai/voice-records/*）
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.authz import assert_encounter_access
 from app.core.security import get_current_user
 from app.core.upload_limits import MAX_AUDIO_BYTES, read_upload_capped
 from app.database import get_db
@@ -30,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 接诊 ID 只允许 UUID 形态（36 位十六进制 + 连字符），杜绝路径穿越与脏值
+_SAFE_ID_RE = re.compile(r"[0-9a-fA-F-]{1,64}")
+
 
 @router.post("/voice-records/upload")
 async def upload_voice_record(
@@ -40,17 +45,41 @@ async def upload_voice_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """上传语音文件，可选 ASR 转写（优先使用浏览器端转写，无则调 Qwen-Audio 兜底）。"""
-    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    """上传语音文件，可选 ASR 转写（优先使用浏览器端转写，无则调 Qwen-Audio 兜底）。
+
+    Raises:
+        HTTPException(403): 该接诊不属于当前医生。
+        HTTPException(400): encounter_id 不是合法 UUID。
+    """
+    # ① 归属校验（2026-08-14 第七轮审计修复）：本端点原先**零校验**——任何登录
+    #    用户（含护士/影像科）都能带上别人的 encounter_id 往他的接诊里塞语音转写
+    #    文本。而消费侧 _encounter_snapshot 取 latest_voice_record 时也不比对
+    #    doctor_id，那位医生下次刷新工作台就会看到伪造内容写进自己的语音文本框、
+    #    并覆盖他本地的转写草稿，点「AI 整理」还会把伪造内容结构化进病历。
+    #    全仓其它接诊维度写接口一律先 assert_encounter_access，唯独这里漏了。
+    if encounter_id:
+        await assert_encounter_access(db, encounter_id, current_user)
+
+    # ② 路径安全（同轮修复）：encounter_id 原样拼进落盘路径，
+    #    传 "../../../x" 就能把文件写到 uploads 之外。文件名虽是随机 UUID
+    #    （覆盖不了已有文件），但可在容器内任意可写目录制造文件、绕开 uploads
+    #    的备份与清理策略。这里做两道：格式白名单 + 落盘前确认仍在 uploads 内。
+    if encounter_id and not _SAFE_ID_RE.fullmatch(encounter_id):
+        raise HTTPException(status_code=400, detail="接诊 ID 格式非法")
+
+    uploads_root = (Path(__file__).resolve().parents[3] / "uploads").resolve()
     rel_dir = Path("voice_records") / (encounter_id or "no_encounter")
-    (uploads_root / rel_dir).mkdir(parents=True, exist_ok=True)
+    target_dir = (uploads_root / rel_dir).resolve()
+    if not target_dir.is_relative_to(uploads_root):
+        raise HTTPException(status_code=400, detail="非法的存储路径")
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = Path(file.filename or "recording.webm").suffix or ".webm"
     file_name = f"{generate_uuid()}{suffix}"
     rel_path = rel_dir / file_name
     # 分块读 + 超 50MB 即 413，避免超大录音吃满内存
     audio_bytes = await read_upload_capped(file, MAX_AUDIO_BYTES)
-    (uploads_root / rel_path).write_bytes(audio_bytes)
+    (target_dir / file_name).write_bytes(audio_bytes)
 
     # 浏览器端转写优先；无则 Qwen-Audio 兜底
     asr_transcript = (transcript or "").strip()

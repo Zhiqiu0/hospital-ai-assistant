@@ -353,3 +353,40 @@ async def test_radiologist_cannot_write_patient_profile(async_db):
     with pytest.raises(HTTPException) as exc:
         await assert_patient_write_access(async_db, "pat-other", radio)
     assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_voice_upload_requires_encounter_ownership(async_db):
+    """语音上传必须校验接诊归属（2026-08-14 第七轮审计修复）。
+
+    该端点原先**零校验**——任何登录用户（含护士/影像科）都能带上别人的
+    encounter_id 往他的接诊里塞语音转写文本。而消费侧取 latest_voice_record 时
+    也不比对 doctor_id，那位医生刷新工作台就会看到伪造内容写进自己的语音文本框、
+    覆盖本地草稿，点「AI 整理」还会把伪造内容结构化进病历。
+    """
+    from fastapi import HTTPException
+
+    from app.core.authz import assert_encounter_access
+
+    intruder = User(username="voiceintruder", password_hash="x", real_name="闯入者",
+                    role="doctor", is_active=True)
+    async_db.add(intruder)
+    await async_db.commit()
+
+    # pat-other 的接诊不属于 intruder → 必须 403
+    with pytest.raises(HTTPException) as exc:
+        await assert_encounter_access(async_db, "enc-other", intruder)
+    assert exc.value.status_code in (403, 404)
+
+
+def test_voice_upload_rejects_path_traversal_ids():
+    """接诊 ID 走白名单，挡住路径穿越（同轮修复）。
+
+    encounter_id 原样拼进落盘路径，传 "../../../x" 就能把文件写到 uploads 之外。
+    """
+    from app.api.v1.ai_voice_records import _SAFE_ID_RE
+
+    for bad in ["../../../../tmp/pwn", "abc/../../x", "..", "a/b", "x\y"]:
+        assert not _SAFE_ID_RE.fullmatch(bad), f"路径穿越值未被拦截：{bad}"
+    # 正常 UUID 必须放行
+    assert _SAFE_ID_RE.fullmatch("e3b0c442-98fc-1c14-9afb-4c8996fb9242")
