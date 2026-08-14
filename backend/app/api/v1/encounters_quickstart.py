@@ -146,7 +146,8 @@ async def _quick_start_inner(data, db, current_user):
         patient["id"], current_user.id, visit_type=data.visit_type
     )
     if existing:
-        # 续接时也查上次已签发病历供参考（排除当前续接的接诊本身）
+        # 续接时也查上次已签发病历供参考（排除当前续接的接诊本身）。
+        # 过滤条件同新建分支，理由见下方注释。
         resume_prev_stmt = (
             select(RecordVersion.content)
             .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
@@ -154,6 +155,8 @@ async def _quick_start_inner(data, db, current_user):
             .where(
                 EncounterModel.patient_id == patient["id"],
                 EncounterModel.id != existing.id,
+                EncounterModel.visit_type == existing.visit_type,
+                MedicalRecord.status == "submitted",
                 RecordVersion.content.isnot(None),
             )
             .order_by(desc(RecordVersion.created_at))
@@ -227,7 +230,14 @@ async def _quick_start_inner(data, db, current_user):
                 }.items() if v
             }
 
-        # 取最近一次签发病历版本的全文，供生成时参考
+        # 取最近一次**已签发**病历版本的全文，供生成时参考。
+        #
+        # 三个过滤条件缺一不可（2026-08-14 第六轮审计修复）：原查询只按患者过滤，
+        # 于是带进来的可能是——
+        #   · 未签发的草稿（别人写了一半的东西被当成"上次病历"参考）
+        #   · 门诊病历（住院接诊却带入门诊内容）
+        #   · 其他医生的病历
+        # 注释一直写着"最近一次签发病历"，但代码里从来没有这个条件。
         record_stmt = (
             select(RecordVersion.content)
             .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
@@ -235,6 +245,10 @@ async def _quick_start_inner(data, db, current_user):
             .where(
                 EncounterModel.patient_id == patient["id"],
                 EncounterModel.id != encounter.id,
+                # 只参考同类型接诊：住院不带门诊内容，反之亦然
+                EncounterModel.visit_type == data.visit_type,
+                # 只参考已签发的正式病历，不带任何人的草稿
+                MedicalRecord.status == "submitted",
                 RecordVersion.content.isnot(None),
             )
             .order_by(desc(RecordVersion.created_at))

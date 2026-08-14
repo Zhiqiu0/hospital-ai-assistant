@@ -220,3 +220,65 @@ async def test_ward_keeps_discharged_pending_record(async_db):
     assert e2.id not in ids, "出院记录已签发的接诊不该继续占着病区列表"
     got = next(i for i in items if i["encounter_id"] == e1.id)
     assert got["pending_discharge_record"] is True
+
+
+@pytest.mark.asyncio
+async def test_previous_record_excludes_draft_and_cross_type(async_db):
+    """带入的「上次病历」必须是已签发 + 同接诊类型（2026-08-14 第六轮审计修复）。
+
+    原查询只按患者过滤，于是带进来的可能是别人未签发的草稿，或者住院接诊
+    带入了门诊病历。注释一直写着「最近一次签发病历」，代码里从来没有这个条件。
+    """
+    from sqlalchemy import desc, select
+
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord, RecordVersion
+    from app.models.patient import Patient
+
+    doc = User(username="PF1", password_hash="x", real_name="医生", role="doctor")
+    pat = Patient(name="复诊患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+
+    # ① 门诊已签发（跨类型，不该被住院接诊带入）
+    e_out = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="outpatient",
+                      status="completed")
+    # ② 住院未签发草稿（不该被带入）
+    e_draft = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                        status="in_progress")
+    # ③ 住院已签发（这才是应该带入的）
+    e_ok = Encounter(patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+                     status="completed")
+    async_db.add_all([e_out, e_draft, e_ok])
+    await async_db.flush()
+
+    for enc, status, text in [
+        (e_out, "submitted", "门诊病历正文"),
+        (e_draft, "draft", "别人的草稿"),
+        (e_ok, "submitted", "住院已签发正文"),
+    ]:
+        rec = MedicalRecord(encounter_id=enc.id, record_type="admission_note",
+                            status=status, current_version=1)
+        async_db.add(rec)
+        await async_db.flush()
+        async_db.add(RecordVersion(medical_record_id=rec.id, version_no=1,
+                                   content={"text": text}, source="doctor_signed"))
+    await async_db.commit()
+
+    # 模拟 quick-start 里带入上次病历的查询（住院、排除当前接诊）
+    row = (await async_db.execute(
+        select(RecordVersion.content)
+        .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
+        .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+        .where(
+            Encounter.patient_id == pat.id,
+            Encounter.visit_type == "inpatient",
+            MedicalRecord.status == "submitted",
+            RecordVersion.content.isnot(None),
+        )
+        .order_by(desc(RecordVersion.created_at))
+        .limit(1)
+    )).scalar_one_or_none()
+
+    text = (row or {}).get("text")
+    assert text == "住院已签发正文", f"带入了不该带的内容：{text}"
