@@ -103,10 +103,29 @@ def safe_format(template: str, **kwargs) -> str:
         template: 含 {placeholder} 的 prompt 字符串（模板内字面花括号写 {{}}）。
         **kwargs: 填充占位符的键值对。
 
+    2026-08-14 第七轮审计修复：**它此前并不 safe**。
+      模板来源是 get_active_prompt——即管理员在「提示词管理」页自己写的内容。
+      只要里面出现一个未提供的占位符（如 {patient_name}）或一个裸的 `{`，
+      str.format 就抛 KeyError / ValueError / IndexError，而各调用点这一行都在
+      try 之外 → **整个端点恒 500**（追问建议、检查建议、诊断建议、质控、
+      批量补全六处调用全中招）。管理员改一个提示词就能让全院医生的 AI 功能瘫痪，
+      且报错信息里看不出是提示词的问题。
+      现在：格式化失败时**退回原模板**并记 warning——AI 拿到带占位符的原文
+      仍能工作（效果打折），远好过整个功能不可用。
+
     Returns:
-        格式化后的字符串。
+        格式化后的字符串；模板本身有问题时返回原模板。
     """
-    return template.format(**{k: str(v) for k, v in kwargs.items()})
+    values = {k: str(v) for k, v in kwargs.items()}
+    try:
+        return template.format(**values)
+    except (KeyError, IndexError, ValueError) as exc:
+        logger.warning(
+            "ai.safe_format: 模板格式化失败，退回原模板（多半是自定义提示词里有"
+            "未知占位符或未转义的花括号）err=%s 已提供的占位符=%s",
+            exc, sorted(values),
+        )
+        return template
 
 
 async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
@@ -213,4 +232,5 @@ async def stream_text(
         task_type,
         token_input=usage.prompt_tokens if usage else 0,
         token_output=usage.completion_tokens if usage else 0,
+        model_name=options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
     )

@@ -152,6 +152,7 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
             "supplement_batch",
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
+            model_name=opts.get("model_name"),  # 真实模型，非全局默认（审计 #7）
         )
     except Exception as exc:
         logger.error("supplement_batch: log_failed err=%s", exc)

@@ -35,6 +35,8 @@ async def log_ai_task(
     token_input: int = 0,
     token_output: int = 0,
     output_result: Optional[dict] = None,
+    model_name: Optional[str] = None,
+    prompt_version: Optional[str] = None,
 ) -> str:
     """将一次 AI 调用写入 ai_tasks 表，使用独立 DB 会话避免污染主事务。
 
@@ -48,6 +50,13 @@ async def log_ai_task(
         token_output:  本次调用消耗的输出 token 数；无法获取时传 0。
         output_result: LLM 返回的 JSON 结果。snapshot 恢复时能拿回前端，
                        让医生 logout 重登后追问/检查/诊断建议都还在。
+
+    Args 补充（2026-08-14 第七轮审计 #7）：
+        model_name: 本次实际使用的模型名。不传则回落全局默认——但凡调用方
+            拿过 get_model_options，就应该把里面的 model_name 传进来，
+            否则这条日志记的模型是假的。
+        prompt_version: 用了 DB 自定义提示词时传其版本号；走代码内置提示词
+            时留空。
 
     Returns:
         新建 AITask 记录的 UUID，供后续 save_qc_issues 关联使用。
@@ -66,7 +75,18 @@ async def log_ai_task(
             status="done",
             token_input=token_input,
             token_output=token_output,
-            model_name=llm_client.model,
+            # 实际用到的模型（2026-08-14 第七轮审计 #7）：
+            # 原先这里写死 llm_client.model —— 全局默认值。而调用本函数的
+            # 追问/检查建议、病历生成、质控**恰恰是可以按场景配模型的那几个**
+            # （get_model_options 会按 scene 返回管理员配的 model_name）。
+            # 于是管理员把质控换成 deepseek-reasoner 之后，ai_tasks 里
+            # 每一条仍记着默认模型：成本归集算错、"换模型后效果变化"没法回溯，
+            # 排查线上问题时看到的模型名根本不是真正跑的那个。
+            # 调用方传什么就记什么，没传才回落默认。
+            model_name=model_name or llm_client.model,
+            # 提示词版本：调用方用了 DB 里的自定义模板时把版本号带上，
+            # 否则保持 NULL（表示走的是代码内置提示词）。
+            prompt_version=prompt_version,
             encounter_id=encounter_id,
             medical_record_id=medical_record_id,
             output_result=output_result,

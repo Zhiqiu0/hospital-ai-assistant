@@ -199,3 +199,62 @@ async def test_activate_missing_404(svc):
     with pytest.raises(HTTPException) as exc:
         await svc.activate("no-such-id")
     assert exc.value.status_code == 404
+
+
+# ── 第七轮审计 #6：停用科室前必须做关联检查 ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_deactivate_blocked_when_active_users_remain(async_db):
+    """科室下还有在职人员时不许停用。
+
+    原先零检查：停用后那些医生的 department_id 仍指向已停用科室，他们新建的
+    接诊、HIS 推来的接诊都会落到一个**在下拉里根本选不到**的科室上，
+    医生自己也改不回来（列表里没有它），管理员那头毫无提示。
+    """
+    from fastapi import HTTPException
+    from app.models.user import User
+
+    svc = DepartmentService(async_db)
+    dept = await svc.create(DepartmentCreate(name="心内科", code="XNK"))
+    async_db.add(User(
+        username="doc_xnk", password_hash="x", real_name="李医生",
+        role="doctor", department_id=dept.id, is_active=True,
+    ))
+    await async_db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.deactivate(dept.id)
+    assert exc.value.status_code == 409
+    assert "在职人员" in exc.value.detail
+
+    await async_db.refresh(dept)
+    assert dept.is_active is True, "拦下来了却还是把科室停用了"
+
+
+@pytest.mark.asyncio
+async def test_deactivate_allowed_when_only_inactive_users(async_db):
+    """已离职的人不算占用——否则历史人员会让科室永远停不掉。"""
+    from app.models.user import User
+
+    svc = DepartmentService(async_db)
+    dept = await svc.create(DepartmentCreate(name="呼吸科", code="HXK"))
+    async_db.add(User(
+        username="doc_left", password_hash="x", real_name="离职医生",
+        role="doctor", department_id=dept.id, is_active=False,
+    ))
+    await async_db.commit()
+
+    await svc.deactivate(dept.id)
+    await async_db.refresh(dept)
+    assert dept.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_deactivate_allowed_when_empty(async_db):
+    """没人挂靠时正常停用（防过度收紧）。"""
+    svc = DepartmentService(async_db)
+    dept = await svc.create(DepartmentCreate(name="空科室", code="KKS"))
+
+    await svc.deactivate(dept.id)
+    await async_db.refresh(dept)
+    assert dept.is_active is False

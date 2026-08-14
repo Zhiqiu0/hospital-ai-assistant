@@ -60,6 +60,29 @@ export async function uploadVoiceAudio(
 }
 
 /**
+ * 只把实时 ASR 的转写文本落库（不上传音频）。
+ *
+ * 2026-08-14 第七轮审计 #26：实时 ASR 是主路径，但它识别出的文字一直只活在
+ * 浏览器 localStorage 里——归档开关关闭且已有转写文字时前端会整个跳过上传，
+ * 于是主路径下 voice_records 表一行都不写：换台电脑就没了、工作台快照的
+ * latest_voice_record 恒为空、管理端也看不到任何实时会话。
+ * 跳过**音频**上传是有意的（省磁盘），文字不该跟着一起丢。
+ */
+export async function saveVoiceTranscript(payload: {
+  encounterId: string | null
+  visitType: 'outpatient' | 'inpatient'
+  transcript: string
+  voiceRecordId?: string | null
+}): Promise<VoiceUploadResult> {
+  return (await api.post('/ai/voice-records/transcript', {
+    encounter_id: payload.encounterId,
+    visit_type: payload.visitType,
+    transcript: payload.transcript,
+    voice_record_id: payload.voiceRecordId ?? null,
+  })) as VoiceUploadResult
+}
+
+/**
  * 调 /ai/voice-structure 把口语转写整理成结构化问诊字段。
  *
  * 增量分析基线（让 LLM 只输出新增/修正字段，不要整段覆盖）：

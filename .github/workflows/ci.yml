@@ -154,3 +154,37 @@ jobs:
         run: |
           pip install pytest-timeout
           pytest tests_pg/ -v --timeout=120 --timeout-method=thread
+
+  # ── nginx 配置语法校验（2026-08-14 第七轮审计）──────────────────────────────
+  # 起因：#29 要改 frontend/nginx.conf（voice-stream 的 access_log 脱敏），
+  # 而这个文件此前**完全没有任何校验**——写错一个分号，deploy 之后整站起不来，
+  # 且要等到容器重启失败才发现。它是全站唯一入口，值得一道门禁。
+  nginx-conf:
+    name: Nginx — Config Syntax
+    runs-on: ubuntu-latest
+    container:
+      image: nginx:alpine
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 造自签证书占位
+        # nginx -t 会检查 ssl_certificate 指向的文件是否存在，
+        # CI 里没有 letsencrypt 的真证书，用自签的占同样的路径即可。
+        run: |
+          apk add --no-cache openssl >/dev/null
+          for domain in mediscribe.cn paiju.mediscribe.cn; do
+            mkdir -p "/etc/letsencrypt/live/$domain"
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -subj "/CN=$domain" \
+              -keyout "/etc/letsencrypt/live/$domain/privkey.pem" \
+              -out "/etc/letsencrypt/live/$domain/fullchain.pem" 2>/dev/null
+          done
+
+      - name: nginx -t
+        run: |
+          # nginx -t 会解析 proxy_pass 里的 upstream 主机名。CI 里没有
+          # docker-compose 网络，`backend` 解析不到会直接 emerg 退出——
+          # 那是环境缺失，不是配置语法错误。指到本机让解析通过即可。
+          echo "127.0.0.1 backend" >> /etc/hosts
+          cp frontend/nginx.conf /etc/nginx/conf.d/default.conf
+          nginx -t

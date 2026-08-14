@@ -13,13 +13,12 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.security import get_current_user
 from app.core.authz import assert_pacs_write
 from app.core.upload_limits import MAX_DICOM_BYTES, read_upload_capped
-from app.database import get_db
+from app.database import AsyncSessionLocal
 from app.models.imaging import ImagingStudy
 from app.services.ai.prompts_pacs import build_study_prompt, build_image_prompt
 # Round 5/6：PACS 业务逻辑服务包（AI 分析/帧查询/报告 ORM）
@@ -39,7 +38,6 @@ class AnalyzeRequest(BaseModel):
 async def analyze_study(
     study_id: str,
     body: AnalyzeRequest,
-    db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """从 Orthanc 拉选中帧 → 千问 VL 分析 → 写报告。
@@ -48,34 +46,53 @@ async def analyze_study(
       - 选中帧由 instance UID 标识（不再是文件名）
       - 帧数上限按 modality 自适应（CT/MR 18、X 光 4、超声 6 等）
       - 帧像素从 Orthanc WADO render 拉（已 JPEG 编码，省一次本地转码）
+
+    连接持有（2026-08-14 第七轮审计修复）：
+      本端点原先用 Depends(get_db)，也就是**整个请求周期独占一条池连接**——
+      包括从 Orthanc 拉 18 帧 CT 和最长 120 秒的千问 VL 调用。连接池是
+      pool_size=10 + max_overflow=20，几位放射科医生同时点分析，就有一批
+      连接被扣住两分钟不干活，其它所有接口（含医生写病历）跟着排队等连接。
+      现在拆成两段短事务，中间那段长外部调用**不持有任何连接**。
     """
     assert_pacs_write(current_user)
-    study = await db.get(ImagingStudy, study_id)
-    if not study:
-        raise HTTPException(404, "检查不存在")
-    if not study.study_instance_uid:
-        raise HTTPException(410, "该检查为旧版本数据，已不支持分析")
 
-    cap = analysis_service.frame_cap_for(study.modality)
+    # ── 短事务 1：只取分析需要的字段，取完立刻归还连接 ──────────────────────
+    async with AsyncSessionLocal() as db:
+        study = await db.get(ImagingStudy, study_id)
+        if not study:
+            raise HTTPException(404, "检查不存在")
+        if not study.study_instance_uid:
+            raise HTTPException(410, "该检查为旧版本数据，已不支持分析")
+        # 拷成普通值：出了 with 之后 ORM 实例就 detach 了，不能再碰它的属性
+        study_uid = study.study_instance_uid
+        modality = study.modality
+        body_part = study.body_part
+
+    cap = analysis_service.frame_cap_for(modality)
     selected = body.selected_frames[:cap]
     if not selected:
         raise HTTPException(400, "未选中任何影像帧")
 
+    # ── 长外部调用段：不持有数据库连接 ─────────────────────────────────────
     # 从 Orthanc 拉选中帧 JPEG（series 反向索引 + WADO render，搬至 analysis_service）
-    images = await analysis_service.fetch_frames_for_analysis(
-        study.study_instance_uid, selected
-    )
+    images = await analysis_service.fetch_frames_for_analysis(study_uid, selected)
     if not images:
         raise HTTPException(400, "没有可分析的影像帧")
 
     # 构建 prompt + 调千问 VL（统一走 call_qwen_vl，与单图分析共用代码路径）
-    prompt = build_study_prompt(study.modality, study.body_part)
+    prompt = build_study_prompt(modality, body_part)
     ai_result = await analysis_service.call_qwen_vl(prompt, images, max_tokens=1000)
 
-    # 保存到数据库（unique 约束保证一个 study 至多一条 report，搬至 report_service）
-    await report_service.upsert_analysis_report(
-        db, study, study_id, selected, ai_result, current_user.id
-    )
+    # ── 短事务 2：写回报告 ─────────────────────────────────────────────────
+    async with AsyncSessionLocal() as db:
+        # 重新取一次：上一段可能过了两分钟，检查有可能已被删除
+        study = await db.get(ImagingStudy, study_id)
+        if not study:
+            raise HTTPException(410, "检查已被删除，分析结果无法保存")
+        # unique 约束保证一个 study 至多一条 report（搬至 report_service）
+        await report_service.upsert_analysis_report(
+            db, study, study_id, selected, ai_result, current_user.id
+        )
 
     return {"ai_analysis": ai_result}
 

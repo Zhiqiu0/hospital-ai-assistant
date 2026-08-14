@@ -28,7 +28,11 @@ class Patient(Base, TimestampMixin):
     """患者主档表。
 
     字段说明：
-      patient_no    : HIS 系统患者编号（HIS 同步时填入，手动录入时为空）
+      patient_no    : HIS 系统患者编号。⚠️ 2026-08-14 第七轮审计：**全仓只读不写、
+                      恒为 NULL**。接诊推送（AdmitPushRequest）里没有患者编号字段，
+                      规范只带 visit_id，所以 HIS 建档时无从填起。要补齐得让厂商在
+                      推送里加该字段（改接口契约，需与厂商约定）。前端凡是展示
+                      「病案号」的地方目前都会是空，属已知现状而非 bug。
       id_card       : 居民身份证号，长度 18 位，可用于精确查重
       is_from_his   : 区分 HIS 导入患者和手动录入患者，避免双向同步冲突
       blood_type    : 血型，如 "A"/"B"/"AB"/"O"，可带 Rh 标注 "A+"/"O-"

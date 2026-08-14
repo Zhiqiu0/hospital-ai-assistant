@@ -83,7 +83,13 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     # 用 hospital_code + visit_id 双键（2026-08-11 审计修复）：visit_id 只在机构内唯一，
     # 且限定 source=admit_push，与历史其它链路数据的命名空间隔离，避免跨机构/跨链路撞号。
     # JSONB 字段的 source/hospital_code 过滤放 Python 侧做（SQLite 测试库不支持 .astext，
-    # 生产 PG 用 GIN 索引命中 visit_no 后候选很少，内存过滤开销可忽略）。
+    # 命中 visit_no 后候选很少，内存过滤开销可忽略）。
+    #
+    # 2026-08-14 第七轮审计：这里原本写的是「生产 PG 用 GIN 索引命中 visit_no」——
+    # 不成立。那个 GIN 索引建在 his_external_ref->'his_patient_no' 上，与本查询
+    # 过滤的 visit_no 裸列毫无关系，visit_no 当时**没有任何索引**，
+    # 每次患者叫号都在 advisory lock 里全表扫 encounters。
+    # 已由迁移 j20260814hotidx 补上 idx_encounters_visit_no。
     candidates = (await db.execute(
         select(Encounter).where(
             Encounter.visit_no == payload.visit_id,
@@ -220,14 +226,32 @@ async def _prefill_from_push(
         }
         profile_patch = {k: v for k, v in profile_patch.items() if v}
         if profile_patch:
-            patient = await db.get(Patient, patient_id)
+            # 行锁（2026-08-14 第七轮审计 #20）：档案是「读 JSONB → Python 合并 →
+            # 整体写回」。update_profile 早在第二轮就为此加了 with_for_update，
+            # 唯独 HIS 预填这条路径漏了——医生正在档案卡上改过敏史时 HIS 推来一条
+            # 接诊，两边各自读到旧快照、后提交的把先提交的抹掉，医生刚填的过敏史
+            # 就这么没了。process_admit 顶上的 advisory lock 只按 visit_id 串行，
+            # 挡不住"同一患者的不同就诊"或"医生手改 vs HIS 推送"。
+            patient = (await db.execute(
+                select(Patient).where(Patient.id == patient_id).with_for_update()
+            )).scalar_one_or_none()
             if patient is not None:
                 profile = dict(patient.profile or {})
                 changed = False
                 for field, value in profile_patch.items():
                     entry = dict(profile.get(field) or {})
                     existing = entry.get("value")
-                    if not existing:
+                    # ── 区分「从没填过」与「医生特意清空」（2026-08-14 审计 #19）──
+                    #
+                    # 原判断是 `if not existing`，而医生把过敏史清空时
+                    # update_profile 写进去的是 {"value": "", updated_at, updated_by}
+                    # ——一条**有医生署名**的空值，语义是"已核实，无"。
+                    # 空字符串是假值，于是下面直接用 HIS 的陈旧值填了回去，
+                    # 医生特意做的删除被无声撤销：他刚确认患者不对青霉素过敏，
+                    # HIS 那条老记录又冒回来了。
+                    # 只有**整条不存在**才算空缺；已有署名的空值走下面的差异提示。
+                    doctor_cleared = bool(entry) and entry.get("updated_at") is not None
+                    if not existing and not doctor_cleared:
                         # 我方空缺 → 直接填（复诊首次拿到 HIS 档案的常见情况）
                         profile[field] = {
                             "value": value,
@@ -236,7 +260,9 @@ async def _prefill_from_push(
                         }
                         changed = True
                         continue
-                    if existing.strip() == value:
+                    # existing 走到这里可能是 ""（医生特意清空）甚至 None，
+                    # 统一兜一层，别让一条畸形档案把整个接诊预填打挂
+                    if (existing or "").strip() == value:
                         # 两边一致：清掉可能残留的旧提示，不打扰医生
                         if entry.pop("his_pending", None) is not None:
                             profile[field] = entry
@@ -348,10 +374,36 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     try:
         create_data = PatientCreate(**fields)
     except ValidationError:
-        # 身份证/手机号校验不过（HIS 脏数据）：丢弃这两个字段重建
-        fields["id_card"] = None
-        fields["phone"] = None
-        create_data = PatientCreate(**fields)
+        # ── 脏数据降级：逐字段丢弃，不再一次性清空两个 ────────────────────────
+        #
+        # 2026-08-14 第七轮审计修复：原实现是「任一字段校验不过 → id_card 和
+        # phone 一起置 None」。可 HIS 侧最常见的脏数据是**手机号**（留的座机、
+        # 空号、7 位老号码），身份证本身好好的。一起丢的后果是这份档案落库时
+        # **一个强键都没有**，于是下次复诊 find_existing 三级查重全 miss
+        # （HIS 链路还禁用了弱键）→ 每来一次门诊就新建一份档案。
+        # 同一个人在系统里散成十几份，病历分散在各档案下，医生查不全既往史。
+        # 现在：只丢掉真正校验不过的那个字段，能留的强键必须留住。
+        for field in ("id_card", "phone"):
+            if fields[field] is None:
+                continue
+            # 单独试探这一个字段：另一个先摘掉，免得被对方的错误连累
+            probe = {**fields, "id_card": None, "phone": None, field: fields[field]}
+            try:
+                PatientCreate(**probe)
+            except ValidationError:
+                logger.warning(
+                    "his_admit: HIS 推送的 %s 未通过校验，仅丢弃该字段建档 "
+                    "visit_no=%s", field, payload.visit_id,
+                )
+                fields[field] = None
+
+        try:
+            create_data = PatientCreate(**fields)
+        except ValidationError:
+            # 走到这里说明不合格的不是这两个字段（如姓名/生日），退回原策略兜底
+            fields["id_card"] = None
+            fields["phone"] = None
+            create_data = PatientCreate(**fields)
 
     # commit=False：建患者与建接诊合并为同一事务，接诊失败不留孤儿档案
     created = await service.create(create_data, commit=False)

@@ -353,3 +353,140 @@ async def test_radiologist_cannot_write_patient_profile(async_db):
     with pytest.raises(HTTPException) as exc:
         await assert_patient_write_access(async_db, "pat-other", radio)
     assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_voice_upload_requires_encounter_ownership(async_db):
+    """语音上传必须校验接诊归属（2026-08-14 第七轮审计修复）。
+
+    该端点原先**零校验**——任何登录用户（含护士/影像科）都能带上别人的
+    encounter_id 往他的接诊里塞语音转写文本。而消费侧取 latest_voice_record 时
+    也不比对 doctor_id，那位医生刷新工作台就会看到伪造内容写进自己的语音文本框、
+    覆盖本地草稿，点「AI 整理」还会把伪造内容结构化进病历。
+    """
+    from fastapi import HTTPException
+
+    from app.core.authz import assert_encounter_access
+
+    intruder = User(username="voiceintruder", password_hash="x", real_name="闯入者",
+                    role="doctor", is_active=True)
+    async_db.add(intruder)
+    await async_db.commit()
+
+    # pat-other 的接诊不属于 intruder → 必须 403
+    with pytest.raises(HTTPException) as exc:
+        await assert_encounter_access(async_db, "enc-other", intruder)
+    assert exc.value.status_code in (403, 404)
+
+
+def test_voice_upload_rejects_path_traversal_ids():
+    """接诊 ID 走白名单，挡住路径穿越（同轮修复）。
+
+    encounter_id 原样拼进落盘路径，传 "../../../x" 就能把文件写到 uploads 之外。
+    """
+    from app.api.v1.ai_voice_records import _SAFE_ID_RE
+
+    for bad in ["../../../../tmp/pwn", "abc/../../x", "..", "a/b", "x\y"]:
+        assert not _SAFE_ID_RE.fullmatch(bad), f"路径穿越值未被拦截：{bad}"
+    # 正常 UUID 必须放行
+    assert _SAFE_ID_RE.fullmatch("e3b0c442-98fc-1c14-9afb-4c8996fb9242")
+
+
+# ── 语音转写文本落库端点（2026-08-14 第七轮审计 #26 新增）────────────────────
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_rejects_other_doctor_encounter(client_doc_me):
+    """往别人的接诊里塞转写文本 → 403。
+
+    这是第七轮给 /voice-records/upload 补归属校验时的同一条契约：消费侧
+    _encounter_snapshot 取 latest_voice_record 并不比对 doctor_id，一旦能写进去，
+    那位医生下次刷新工作台就会看到伪造内容进自己的语音框、并覆盖本地草稿，
+    点「AI 整理」还会把伪造内容结构化进病历。
+    """
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-other", "transcript": "伪造的问诊内容"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_accepts_own_encounter(client_doc_me):
+    """写自己的接诊 → 200，且真的落库（主路径原先一行都不写）。"""
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "患者主诉头痛三天"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["voice_record_id"]
+    assert body["has_audio"] is False
+    assert body["transcript"] == "患者主诉头痛三天"
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_rejects_empty(client_doc_me):
+    """空转写不建行，免得表里全是空记录。"""
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "   "},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_update_rejects_other_doctors_record(client_doc_me, async_db):
+    """带上别人的 voice_record_id 改其转写 → 403。"""
+    from app.models.voice_record import VoiceRecord
+
+    rec = VoiceRecord(
+        id="vr-other", encounter_id="enc-other", doctor_id="doc-other",
+        visit_type="outpatient", raw_transcript="别人的转写", status="transcribed",
+    )
+    async_db.add(rec)
+    await async_db.commit()
+
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "改掉", "voice_record_id": "vr-other"},
+    )
+    assert r.status_code == 403
+
+
+# ── quick-start 返回契约（2026-08-14 第七轮审计 #18 配套）────────────────────
+
+@pytest.mark.asyncio
+async def test_quick_start_returns_similar_patients_on_new_branch(client_doc_me):
+    """新建分支必须返回 similar_patients 字段。
+
+    这条是补课：加该字段时用脚本往两个 return 分支插入，结果同一个分支被插了
+    两次、另一个一次都没有（第一次替换后的新文本里含有匹配串），ruff 的
+    F601「重复键」抓到了，但当时没有任何测试覆盖返回契约。
+    """
+    r = await client_doc_me.post(
+        "/api/v1/encounters/quick-start",
+        json={"patient_name": "新患者甲", "gender": "男", "visit_type": "outpatient"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "similar_patients" in body
+    assert isinstance(body["similar_patients"], list)
+    assert body["resumed"] is False
+
+
+@pytest.mark.asyncio
+async def test_quick_start_returns_similar_patients_on_resume_branch(client_doc_me):
+    """续接分支同样要返回该字段（前端两条路径读同一个 key）。"""
+    payload = {"patient_name": "新患者乙", "gender": "女", "visit_type": "outpatient"}
+    first = await client_doc_me.post("/api/v1/encounters/quick-start", json=payload)
+    assert first.status_code == 200
+    patient_id = first.json()["patient"]["id"]
+
+    # 带 patient_id 再来一次 → 命中同一医生的进行中接诊，走续接分支
+    second = await client_doc_me.post(
+        "/api/v1/encounters/quick-start", json={**payload, "patient_id": patient_id}
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["resumed"] is True, "没走到续接分支，这条测试就没验到东西"
+    assert "similar_patients" in body

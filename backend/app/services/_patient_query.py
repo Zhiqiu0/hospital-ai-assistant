@@ -10,6 +10,7 @@ from datetime import date
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 
+from app.core.validators.identity import normalize_id_card, normalize_phone
 from app.models.patient import Patient
 from app.services.patient_cache import _BASIC_KEY, _BASIC_TTL
 from app.services.redis_cache import redis_cache
@@ -43,6 +44,21 @@ class PatientQueryMixin:
         Returns:
             找到则返回患者响应字典；未找到则返回 None。
         """
+        # ── 入参归一化（2026-08-14 第七轮审计修复）───────────────────────────
+        #
+        # 此前这里拿到什么就逐字节比什么，而**写入侧**的 PatientCreate 走的是
+        # IdCardStrict / Phone 类型别名，早就把值归一过了（末位 x→X、去空格
+        # 连字符、剥 +86）。两侧口径不一致，HIS 推来一个小写 x 的身份证就会：
+        #   ① 查重 miss（库里存的是大写 X）
+        #   ② 落到新建分支 → PatientCreate 归一成大写 X
+        #   ③ INSERT 撞上 uq_patients_id_card_active 部分唯一索引 → IntegrityError
+        #   ④ 接诊 ack 50000 —— **这个患者从此每次复诊都推不进来**，且日志里
+        #      只看得到一条唯一键冲突，看不出根因是大小写。
+        # 手机号同理（HIS 侧 "+86-138..." / "138 0013 8000" 都见过）。
+        # 归一函数本来就有，查重路径接上即可，不新增任何规则。
+        id_card = normalize_id_card(id_card)
+        phone = normalize_phone(phone)
+
         patient = None
 
         # 全部查重路径都要排除已软删患者：上次接诊取消时连档案一起清掉了，
@@ -83,6 +99,53 @@ class PatientQueryMixin:
             patient = result.scalars().first()
 
         return self._to_response(patient) if patient else None
+
+    async def find_weak_candidates(
+        self,
+        *,
+        name: str | None,
+        birth_date: date | None,
+        limit: int = 5,
+    ) -> list[dict]:
+        """按「姓名+出生日期」找可能是同一人的档案，**只供医生人工确认**。
+
+        2026-08-14 第七轮审计新增。背景：
+
+        find_existing 的第 3 级弱键匹配原本会**静默复用**同名同生日的档案。
+        手工初诊里医生只是照着新病人念了姓名和生日，系统就把他挂到了另一个
+        同名同生日的人名下——接下来 get_profile 把**那个人的过敏史、既往史
+        预填进表单**，医生看到"系统已有资料"往往不会逐条核对。
+        按别人的过敏史开药是可能致命的，而且病历也写进了错误的档案。
+
+        碰撞并不罕见：常见姓名 + 中国出生日期本身聚集（同年同月同日），
+        县级医院几万份档案里同名同生日是必然出现的。
+
+        改法沿用 find_existing 文档里已经写明、HIS 链路已经在用的那条原则——
+        **宁可产生重复档案（可事后人工合并），也绝不能把两个不同患者误合并成
+        一份**。所以弱键不再自动复用，改为把候选人交回前端，由医生看着
+        「李梅 女 1985-03-12 尾号 6023」这样的信息自己判断是不是同一个人。
+
+        Args:
+            name: 患者姓名
+            birth_date: 出生日期
+            limit: 最多返回几个候选（同名同生日超过几个的极端情况截断）
+
+        Returns:
+            候选患者响应字典列表；姓名或生日缺失时返回空列表。
+        """
+        if not name or not birth_date:
+            return []
+        result = await self.db.execute(
+            select(Patient)
+            .where(
+                Patient.name == name,
+                Patient.birth_date == birth_date,
+                Patient.is_deleted.is_(False),
+            )
+            .order_by(Patient.created_at.desc())
+            .limit(limit)
+        )
+        return [self._to_response(p) for p in result.scalars().all()]
 
     async def search(
         self,

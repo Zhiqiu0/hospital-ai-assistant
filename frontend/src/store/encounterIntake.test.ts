@@ -145,3 +145,54 @@ describe('水合不得静默回滚未保存的病历（2026-08-13 第五轮审�
     expect(useRecordStore.getState().recordContent).toBe('服务端的新内容')
   })
 })
+
+describe('水合顺序不得抵消防覆盖保护（2026-08-14 第七轮审计修复）', () => {
+  it('水合时先设类型不会清空正文，未保存内容仍受保护', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    // 医生有未落库的编辑
+    useRecordStore.setState({
+      recordContent: '主诉：头痛。现病史：医生刚打的这段还没保存……',
+      lastSavedContent: '主诉：头痛。',
+      recordType: 'outpatient',
+    })
+
+    // 服务端返回同类型的旧内容 —— 不能覆盖医生的新内容
+    applySnapshotResult({
+      active_record: {
+        content: '主诉：头痛。',
+        status: 'draft',
+        record_type: 'outpatient',
+        updated_at: '2026-08-14T10:00:00',
+      },
+    } as never)
+
+    expect(useRecordStore.getState().recordContent).toBe(
+      '主诉：头痛。现病史：医生刚打的这段还没保存……'
+    )
+  })
+
+  it('服务端换了病历类型时，类型跟着变但正文保护依然生效', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    useRecordStore.setState({
+      recordContent: '未保存的病程内容',
+      lastSavedContent: '',
+      recordType: 'admission_note',
+    })
+
+    applySnapshotResult({
+      active_record: {
+        content: '服务端旧内容',
+        status: 'draft',
+        record_type: 'course_record',
+        updated_at: '2026-08-14T10:00:00',
+      },
+    } as never)
+
+    expect(useRecordStore.getState().recordType).toBe('course_record')
+    expect(useRecordStore.getState().recordContent).toBe('未保存的病程内容')
+  })
+})

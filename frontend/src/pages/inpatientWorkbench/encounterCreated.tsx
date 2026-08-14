@@ -11,7 +11,6 @@
  * 注：原页面用 useRecordStore/useInquiryStore 的 hook 选择器取 action，
  * zustand action 引用稳定，这里等价改用 getState() 直取，行为一致。
  */
-import { App } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
@@ -27,19 +26,22 @@ import type { InquiryData } from '@/store/types'
 import api from '@/services/api'
 import { genderCode } from '@/utils/gender'
 
-/** App.useApp() 返回的 modal 实例类型（能 consume 主题 context，勿用 Modal.info 静态方法） */
-type ModalApi = ReturnType<typeof App.useApp>['modal']
+import {
+  showPendingEncountersWarning,
+  showSimilarPatientsWarning,
+  type ModalApi,
+  type PendingEncounter,
+  type SimilarPatient,
+} from '@/pages/workbench/quickStartWarnings'
 
 /** 住院 quick-start 回调载荷：基础字段从 QuickStartResult 沿用，外加业务扩展字段。 */
 export type InpatientEncounterCreatedRes = QuickStartResult & {
   resumed?: boolean
   is_first_visit?: boolean
   previous_inquiry?: Partial<InquiryData> | null
-  pending_encounters?: Array<{
-    doctor_name: string
-    visit_type: string
-    visited_at?: string
-  }>
+  pending_encounters?: PendingEncounter[]
+  // 同名同生日的已有档案（2026-08-14 第七轮审计），与门诊端同一后端端点
+  similar_patients?: SimilarPatient[]
 }
 
 // 新建住院接诊成功回调（与门诊端对齐：写 patientCache、预填稳定字段、传递上次病历）
@@ -71,36 +73,9 @@ export function handleInpatientEncounterCreated(
     const current = useInquiryStore.getState().inquiry
     useInquiryStore.getState().updateInquiryFields({ ...current, ...res.previous_inquiry })
   }
-  // 跨医生未完成接诊警示（非阻断），与门诊端一致
-  if (Array.isArray(res.pending_encounters) && res.pending_encounters.length > 0) {
-    modal.info({
-      title: '该患者尚有未完成接诊',
-      width: 480,
-      content: (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ marginBottom: 10, color: 'var(--text-3)', fontSize: 13 }}>
-            建议联系下列医生处理后再继续，避免重复就诊：
-          </div>
-          <ul style={{ paddingLeft: 18, margin: 0, fontSize: 13, lineHeight: 2 }}>
-            {res.pending_encounters.map(
-              (e: { doctor_name: string; visit_type: string; visited_at?: string }, i: number) => (
-                <li key={i}>
-                  医生 <b>{e.doctor_name}</b>（
-                  {e.visit_type === 'emergency'
-                    ? '急诊'
-                    : e.visit_type === 'inpatient'
-                      ? '住院'
-                      : '门诊'}
-                  {e.visited_at ? `，${new Date(e.visited_at).toLocaleString('zh-CN')}` : ''}）
-                </li>
-              )
-            )}
-          </ul>
-        </div>
-      ),
-      okText: '我已知悉，继续接诊',
-    })
-  }
+  // 同名同生日档案提示 + 跨医生未完成接诊警示（均为非阻断，见 quickStartWarnings）
+  showSimilarPatientsWarning(res.similar_patients ?? [], modal)
+  showPendingEncountersWarning(res.pending_encounters ?? [], modal)
   if (res.resumed) {
     message.info(`「${res.patient.name}」有未完成的住院接诊，已自动恢复`)
     // 与门诊路径一致：自动恢复时拉 snapshot 灌回 4 个 store

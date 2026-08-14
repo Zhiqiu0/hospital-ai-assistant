@@ -50,7 +50,7 @@ const EXAM_CATEGORY_COLOR: Record<string, string> = {
 
 export default function ExamSuggestionTab() {
   const inquiry = useInquiryStore(s => s.inquiry)
-  const setInquiry = useInquiryStore(s => s.setInquiry)
+  const updateInquiryFields = useInquiryStore(s => s.updateInquiryFields)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const { recordContent, setRecordContent } = useRecordStore()
   const { examSuggestions, isExamLoading, setExamSuggestions, setExamLoading } =
@@ -115,8 +115,22 @@ export default function ExamSuggestionTab() {
     //   PUT，乐观锁 ref 仍由它内部维护（避免 409 误报）。
     useRecordAutoSaveTrigger.getState().triggerFlush()
     // 2) 同步 inquiry.auxiliary_exam（保存接诊时随 inquiry PUT 上去持久化）
-    const newInquiry = { ...inquiry, auxiliary_exam: joined }
-    setInquiry(newInquiry)
+    //
+    // ── 必须用 updateInquiryFields，不能用 setInquiry（2026-08-14 第七轮审计 #33）──
+    //
+    // setInquiry 会 bump inquirySavedAt，而 useInquiryFormSync 正是以
+    // inquirySavedAt 为依赖做**全量** form.setFieldsValue(...store 里的值)。
+    // 于是医生只要在左侧问诊表单里写了字还没点保存，一点这里的「写入」：
+    //   · 表单被 store 里的旧值整个覆盖 —— 主诉/现病史/查体的在写内容全没
+    //   · 还顺手 setIsDirty(false)，连"未保存"提示都不给
+    // updateInquiryFields 只更新数据不动 inquirySavedAt，
+    // auxiliary_exam 这一个字段由 useInquiryFormSync 里专门的单字段 effect 同步。
+    //
+    // 另外从 store 现取而不用闭包里的 inquiry：这个回调可能挂在几次渲染之前的
+    // 闭包上，用旧值拼出来的 newInquiry 会把期间的其它改动一并回退。
+    const latestInquiry = useInquiryStore.getState().inquiry
+    const newInquiry = { ...latestInquiry, auxiliary_exam: joined }
+    updateInquiryFields(newInquiry)
     if (currentEncounterId) {
       // 静默 PUT，跟 LabReportTab 之前模式一致；失败不阻塞 UI（下次保存按钮还会再试）
       api.put(`/encounters/${currentEncounterId}/inquiry`, newInquiry).catch(() => {})

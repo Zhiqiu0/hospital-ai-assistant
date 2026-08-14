@@ -160,9 +160,33 @@ export function useAutoSaveDraft({
     }
   }
 
-  // 接诊切换：上一份草稿不再相关，重置所有内部状态
+  // ── 立即落盘当前待保存内容（2026-08-14 第七轮审计 #32）─────────────────────
+  //
+  // 原先只有 5 秒尾防抖这一条路：医生敲完最后一个字的 5 秒内，只要
+  // 切患者 / 退出登录 / 关标签页，这段内容就**从未被发出去过**——
+  // 连失败队列都进不去（入队发生在 performSave 失败时，而它压根没被调用）。
+  // 查房时一个患者写完直接点下一个是常态，5 秒窗口天天都在踩。
+  //
+  // 用 ref 存快照而非闭包：切接诊时 encounterId 已经变成新的了，
+  // 必须把**上一个接诊**的内容存到**上一个接诊**的 id 上。
+  const pendingRef = useRef<DraftPayload | null>(null)
+  const flushPending = () => {
+    const pending = pendingRef.current
+    pendingRef.current = null
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+    if (!pending) return
+    if (pending.content === lastSavedContentRef.current) return
+    // 失败时 performSave 内部会入 IndexedDB 队列，下次挂载时补发
+    void performSave(pending)
+  }
+
+  // 接诊切换：先把上一份草稿落盘，再重置所有内部状态
   useEffect(() => {
     if (encounterId !== lastEncounterRef.current) {
+      flushPending() // ← 必须在下面重置基线之前
       lastEncounterRef.current = encounterId
       lastSavedContentRef.current = ''
       lastUpdatedAtRef.current = null
@@ -171,7 +195,31 @@ export function useAutoSaveDraft({
       // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）
       void flushDraftQueue(performSave)
     }
+    // 只在接诊真的变化时跑。flushPending 每次渲染都会重建，但它读的全是 ref
+    // （pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounterId])
+
+  // 关标签页 / 切后台 / 卸载（含退出登录跳转）：来不及等防抖，立刻落盘。
+  // pagehide 比 beforeunload 可靠（移动端与 bfcache 都会触发）；
+  // visibilitychange→hidden 覆盖切走标签页但没关的情况。
+  useEffect(() => {
+    const onHide = () => flushPending()
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPending()
+    }
+    window.addEventListener('pagehide', onHide)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      document.removeEventListener('visibilitychange', onVisibility)
+      flushPending() // 组件卸载（路由跳走 / 退出登录）
+    }
+    // 只在挂载/卸载时装卸监听。flushPending 每次渲染都会重建，但它读的全是
+    // ref（pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值，
+    // 因此不需要跟着重新装卸——那样反而会在每次输入时反复增删事件监听。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 主防抖循环
   useEffect(() => {
@@ -180,14 +228,19 @@ export function useAutoSaveDraft({
     if (!recordContent) return
     if (recordContent === lastSavedContentRef.current) return
 
+    // 记下待保存快照，供 flushPending 在切接诊/关标签页时抢救（审计 #32）
+    pendingRef.current = {
+      encounter_id: encounterId,
+      record_type: recordType,
+      content: recordContent,
+      expected_updated_at: lastUpdatedAtRef.current,
+    }
+
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     debounceTimerRef.current = setTimeout(() => {
-      void performSave({
-        encounter_id: encounterId,
-        record_type: recordType,
-        content: recordContent,
-        expected_updated_at: lastUpdatedAtRef.current,
-      })
+      const payload = pendingRef.current
+      pendingRef.current = null
+      if (payload) void performSave(payload)
     }, DEBOUNCE_MS)
 
     return () => {
@@ -211,6 +264,7 @@ export function useAutoSaveDraft({
     if (!latestContent) return
     if (latestContent === lastSavedContentRef.current) return
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    pendingRef.current = null // 这一发已经覆盖了待保存内容，别让 flushPending 再发一次
     void performSave({
       encounter_id: encounterId,
       record_type: recordType,

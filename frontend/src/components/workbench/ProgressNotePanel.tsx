@@ -15,6 +15,7 @@ import { TimelineItem } from '@/domain/inpatient'
 import { getNoteRule } from '@/domain/inpatient'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import api from '@/services/api'
+import { useProgressNoteAutosave } from './useProgressNoteAutosave'
 
 const { TextArea } = Input
 const { Text } = Typography
@@ -41,6 +42,18 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
     // 只关心 item.id 变化（切到新条目时重置）；setState 在条目切换时是预期路径
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id])
+
+  // 草稿自动保存（2026-08-14 第七轮审计 #34）：正文原先只活在上面这个 useState
+  // 里，切换时间轴条目 / 关标签页 / 面板卸载都会无声吞掉医生已写的内容。
+  // 已签发和入院记录是只读的，不参与。
+  const { markSaved } = useProgressNoteAutosave({
+    encounterId: currentEncounterId,
+    itemId: item?.id,
+    content,
+    recordedAt,
+    disabled:
+      !item || item.type === 'medical_record' || (localStatus || item.status) === 'submitted',
+  })
 
   if (!item) {
     return (
@@ -109,6 +122,7 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
         // 用本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE 字段
         recorded_at: recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
       })
+      markSaved(content)
       message.success('已保存')
       onSaved()
     } catch {

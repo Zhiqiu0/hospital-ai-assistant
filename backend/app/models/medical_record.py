@@ -125,6 +125,16 @@ class RecordVersion(Base):
             postgresql_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
             sqlite_where=text("source = 'doctor_signed' AND ai_similarity IS NOT NULL"),
         ),
+        # 签名链链尾（2026-08-14 第七轮审计）：latest_chain_hash 每次医生签发
+        # 病历都要跑一次「按 created_at 倒序取最近一条 sign_hash 非空的版本」，
+        # 上面两个索引都不覆盖这个条件 → 签发热路径一直全表扫 + 排序。
+        # 绝大多数版本是草稿、没有 sign_hash，部分索引体积极小且精准。
+        Index(
+            "idx_record_versions_chain_tail",
+            text("created_at DESC"),
+            postgresql_where=text("sign_hash IS NOT NULL"),
+            sqlite_where=text("sign_hash IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -178,6 +188,13 @@ class QCIssue(Base):
 
     __tablename__ = "qc_issues"
 
+    # 2026-08-14 第七轮审计：本表零索引。两个外键列在 PG 里不会自动建索引，
+    # 而删除父行（ai_task / medical_record）时的外键检查要扫子表。
+    __table_args__ = (
+        Index("idx_qc_issues_task", "ai_task_id"),
+        Index("idx_qc_issues_record", "medical_record_id"),
+    )
+
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 关联 AI 任务（必填，用于追溯哪次质控产生了这条问题）
     ai_task_id: Mapped[str] = mapped_column(ForeignKey("ai_tasks.id"), nullable=False)
@@ -227,6 +244,13 @@ class AITask(Base):
     """
 
     __tablename__ = "ai_tasks"
+
+    # 2026-08-14 第七轮审计：本表零索引。工作台恢复快照（_encounter_snapshot）
+    # 每次都按 encounter_id + task_type 取最近一条，医生每开一个患者都要跑几次，
+    # 无索引即全表扫描 + 排序。ai_tasks 是随每次 AI 调用增长的大表。
+    __table_args__ = (
+        Index("idx_ai_tasks_enc_type_created", "encounter_id", "task_type", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 关联接诊（可空，部分任务没有关联接诊）

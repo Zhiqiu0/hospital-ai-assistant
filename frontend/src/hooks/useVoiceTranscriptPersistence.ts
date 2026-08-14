@@ -98,11 +98,33 @@ export function useVoiceTranscriptPersistence(
         if (cancelled) return
         const latest = snapshot?.latest_voice_record
         if (latest) {
-          if (latest.raw_transcript) setTranscript(latest.raw_transcript)
-          if (latest.transcript_summary) setSummary(latest.transcript_summary)
-          if (Array.isArray(latest.speaker_dialogue) && latest.speaker_dialogue.length > 0) {
+          // ── 不覆盖更"脏"的本地草稿（2026-08-14 第七轮审计 #22）──────────────
+          //
+          // 原先是「后端 raw_transcript 非空就无条件写进来」。问题在于**实时
+          // ASR 的文本只存在于本地**（边说边累加进 localStorage，转写过程中
+          // 并不落库），而 workspace 返回的是这个接诊**上一次**已上传的
+          // voice_record。于是医生说了十分钟、刷新一下页面，本地这十分钟就被
+          // 后端那份旧转写整个盖掉，没有任何提示。
+          //
+          // 规则与第五轮病历正文的防覆盖一致：本地非空且与后端不同时，
+          // 以本地为准——本地可能含有后端从没见过的内容，而后端那份医生随时
+          // 能重新拉到；反过来丢掉的语音内容不可再生。
+          const localIsDirty = !!draft.transcript && draft.transcript !== latest.raw_transcript
+          if (latest.raw_transcript && !localIsDirty) {
+            setTranscript(latest.raw_transcript)
+          }
+          // 摘要/分角色对话是 LLM 对 transcript 的加工结果：本地转写更新时，
+          // 后端那份是对旧文本的加工，跟着一起不覆盖，免得摘要与正文对不上。
+          if (latest.transcript_summary && !localIsDirty) setSummary(latest.transcript_summary)
+          if (
+            !localIsDirty &&
+            Array.isArray(latest.speaker_dialogue) &&
+            latest.speaker_dialogue.length > 0
+          ) {
             setSpeakerDialogue(latest.speaker_dialogue)
           }
+          // transcriptId 照常采纳：它标识后端那条 voice_record，
+          // 本地继续录的内容最终也要 PATCH 到它上面去。
           if (latest.id) setTranscriptId(latest.id)
         }
       } catch {

@@ -17,7 +17,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -31,6 +31,16 @@ class AuditLog(Base):
     """
 
     __tablename__ = "audit_logs"
+
+    # 2026-08-14 第七轮审计：本表零索引。它是全库写入最频繁的表（每次 PHI 查阅
+    # 都落一行），而管理端列表固定 ORDER BY created_at DESC 分页——无索引时
+    # 每翻一页都要全表排序，随着审计量增长会先拖垮管理端、再拖累写入。
+    # 归属校验放开后审计是唯一的追责手段，这张表必须一直可用。
+    __table_args__ = (
+        Index("idx_audit_logs_created", "created_at"),
+        # 按行为类型筛选时的复合索引（管理端 action 下拉）
+        Index("idx_audit_logs_action_created", "action", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     # 操作发生时间（数据库 now()，不依赖应用服务器时间，更准确）

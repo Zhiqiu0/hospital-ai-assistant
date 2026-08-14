@@ -87,6 +87,8 @@ async def inquiry_suggestions(
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
             output_result=result,  # snapshot 恢复时能取回，logout 重登不丢
+            # 记真实用到的模型，而不是全局默认（审计 #7）
+            model_name=model_options.get("model_name"),
         )
         return result
     except Exception as exc:
@@ -132,6 +134,7 @@ async def exam_suggestions(
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
             output_result=result,  # snapshot 恢复时能取回
+            model_name=model_options.get("model_name"),  # 审计 #7
         )
         return result
     except Exception as exc:
@@ -186,6 +189,7 @@ async def diagnosis_suggestion(
             token_input=usage.prompt_tokens if usage else 0,
             token_output=usage.completion_tokens if usage else 0,
             output_result=result,
+            model_name=model_options.get("model_name"),  # 审计 #7
         )
         return result
     except Exception as exc:

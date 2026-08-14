@@ -217,7 +217,13 @@ export function useWorkbenchBase({
         setRecordContent('')
         setFinal(false)
       } else if (snapshot.active_record) {
-        setRecordType(snapshot.active_record.record_type || defaultRecordType)
+        // 用 setRecordTypeOnly：setRecordType 会清空正文，虽然这里紧接着就
+        // setRecordContent 填回、行为上看不出差别，但依赖"清空又填回"的隐式顺序
+        // 很脆弱——encounterIntake 那条水合路径就是因为这个把防覆盖保护整个抵消掉了
+        //（2026-08-14 第七轮审计修复）。显式表达"只换类型"更安全。
+        useRecordStore
+          .getState()
+          .setRecordTypeOnly(snapshot.active_record.record_type || defaultRecordType)
         setRecordContent(snapshot.active_record.content || '')
         // 尊重该病历自身的签发状态，不再无条件放开编辑
         setFinal(

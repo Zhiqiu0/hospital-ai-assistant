@@ -8,17 +8,20 @@ AI 语音记录子路由（/api/v1/ai/voice-records/*）
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.config import settings
+from app.core.authz import assert_encounter_access
 from app.core.security import get_current_user
 from app.core.upload_limits import MAX_AUDIO_BYTES, read_upload_capped
 from app.database import get_db
@@ -30,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 接诊 ID 只允许 UUID 形态（36 位十六进制 + 连字符），杜绝路径穿越与脏值
+_SAFE_ID_RE = re.compile(r"[0-9a-fA-F-]{1,64}")
+
 
 @router.post("/voice-records/upload")
 async def upload_voice_record(
@@ -40,17 +46,41 @@ async def upload_voice_record(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """上传语音文件，可选 ASR 转写（优先使用浏览器端转写，无则调 Qwen-Audio 兜底）。"""
-    uploads_root = Path(__file__).resolve().parents[3] / "uploads"
+    """上传语音文件，可选 ASR 转写（优先使用浏览器端转写，无则调 Qwen-Audio 兜底）。
+
+    Raises:
+        HTTPException(403): 该接诊不属于当前医生。
+        HTTPException(400): encounter_id 不是合法 UUID。
+    """
+    # ① 归属校验（2026-08-14 第七轮审计修复）：本端点原先**零校验**——任何登录
+    #    用户（含护士/影像科）都能带上别人的 encounter_id 往他的接诊里塞语音转写
+    #    文本。而消费侧 _encounter_snapshot 取 latest_voice_record 时也不比对
+    #    doctor_id，那位医生下次刷新工作台就会看到伪造内容写进自己的语音文本框、
+    #    并覆盖他本地的转写草稿，点「AI 整理」还会把伪造内容结构化进病历。
+    #    全仓其它接诊维度写接口一律先 assert_encounter_access，唯独这里漏了。
+    if encounter_id:
+        await assert_encounter_access(db, encounter_id, current_user)
+
+    # ② 路径安全（同轮修复）：encounter_id 原样拼进落盘路径，
+    #    传 "../../../x" 就能把文件写到 uploads 之外。文件名虽是随机 UUID
+    #    （覆盖不了已有文件），但可在容器内任意可写目录制造文件、绕开 uploads
+    #    的备份与清理策略。这里做两道：格式白名单 + 落盘前确认仍在 uploads 内。
+    if encounter_id and not _SAFE_ID_RE.fullmatch(encounter_id):
+        raise HTTPException(status_code=400, detail="接诊 ID 格式非法")
+
+    uploads_root = (Path(__file__).resolve().parents[3] / "uploads").resolve()
     rel_dir = Path("voice_records") / (encounter_id or "no_encounter")
-    (uploads_root / rel_dir).mkdir(parents=True, exist_ok=True)
+    target_dir = (uploads_root / rel_dir).resolve()
+    if not target_dir.is_relative_to(uploads_root):
+        raise HTTPException(status_code=400, detail="非法的存储路径")
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = Path(file.filename or "recording.webm").suffix or ".webm"
     file_name = f"{generate_uuid()}{suffix}"
     rel_path = rel_dir / file_name
     # 分块读 + 超 50MB 即 413，避免超大录音吃满内存
     audio_bytes = await read_upload_capped(file, MAX_AUDIO_BYTES)
-    (uploads_root / rel_path).write_bytes(audio_bytes)
+    (target_dir / file_name).write_bytes(audio_bytes)
 
     # 浏览器端转写优先；无则 Qwen-Audio 兜底
     asr_transcript = (transcript or "").strip()
@@ -77,6 +107,79 @@ async def upload_voice_record(
         "status": record.status,
         "has_audio": True,
         "transcript": asr_transcript,
+    }
+
+
+class TranscriptSaveRequest(BaseModel):
+    """实时 ASR 转写文本落库请求（不含音频）。"""
+
+    encounter_id: Optional[str] = None
+    visit_type: Optional[str] = "outpatient"
+    transcript: str = ""
+    """已有 voice_record 时传其 id，走更新；不传则新建。"""
+    voice_record_id: Optional[str] = None
+
+
+@router.post("/voice-records/transcript")
+async def save_voice_transcript(
+    body: TranscriptSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """保存实时 ASR 的转写文本（不上传音频）。
+
+    为什么需要（2026-08-14 第七轮审计 #26）：
+      实时 ASR 是**主路径**（阿里云 Paraformer 走后端 WebSocket 代理），
+      可它识别出的文字一直只活在浏览器 localStorage 里——前端在
+      ENABLE_AUDIO_UPLOAD=false（写死的常量，生产同样生效）且已有转写文字时
+      直接跳过上传，于是主路径下 voice_records 表**一行都不会写**。后果：
+        · 医生换台电脑 / 清了浏览器数据，这次问诊的口述原文就没了
+        · 工作台快照的 latest_voice_record 恒为空，恢复逻辑形同虚设
+        · 管理端语音记录列表看不到任何实时会话
+      跳过**音频**上传是有意的（省磁盘），但文字不该跟着一起丢。
+      本端点只写文本，负载极小，不占磁盘。
+
+    Raises:
+        HTTPException(403): 该接诊不属于当前医生。
+    """
+    if body.encounter_id:
+        await assert_encounter_access(db, body.encounter_id, current_user)
+
+    text = (body.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="转写内容为空")
+
+    record: Optional[VoiceRecord] = None
+    if body.voice_record_id:
+        record = (await db.execute(
+            select(VoiceRecord).where(VoiceRecord.id == body.voice_record_id)
+        )).scalar_one_or_none()
+        # 只允许更新自己的记录，避免拿到别人的 id 就能改其转写
+        if record is not None and record.doctor_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权修改该语音记录")
+
+    if record is None:
+        record = VoiceRecord(
+            encounter_id=body.encounter_id,
+            doctor_id=current_user.id,
+            visit_type=body.visit_type or "outpatient",
+            raw_transcript=text,
+            status="transcribed",
+        )
+        db.add(record)
+    else:
+        record.raw_transcript = text
+
+    await db.commit()
+    await db.refresh(record)
+    # 工作台快照含 latest_voice_record，写入后需失效缓存
+    from app.services.encounter_service import invalidate_encounter_snapshot
+    await invalidate_encounter_snapshot(body.encounter_id)
+    return {
+        "voice_record_id": record.id,
+        "status": record.status,
+        "has_audio": False,
+        "transcript": text,
     }
 
 

@@ -79,6 +79,7 @@ export function useVoiceInputCard({
       setTranscript,
       setInterimText,
       setTranscriptId,
+      transcriptId,
     })
 
   // 拉一次性 audio token（给 <audio> 鉴权播放原始录音）
