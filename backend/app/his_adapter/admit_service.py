@@ -148,10 +148,16 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
 
     patient_id = await _find_or_create_patient(db, payload)
 
+    # 科室以**挂号科室**为准（用户 2026-08-14 决策）：规范 3.1 明确 dept_code 是
+    # 本次接诊/挂号的科室、非医生编制科室；医生跨科室坐班时两者不同。
+    department_id = await _resolve_department(
+        db, payload.dept_code, payload.dept_name, doctor.department_id
+    )
+
     encounter = Encounter(
         patient_id=patient_id,
         doctor_id=doctor.id,
-        department_id=doctor.department_id,
+        department_id=department_id,
         visit_type=_VISIT_TYPE_MAP.get((payload.visit_type or "").strip(), "outpatient"),
         visit_no=payload.visit_id,
         is_first_visit=payload.is_first_visit if payload.is_first_visit is not None else True,
@@ -294,6 +300,60 @@ async def _prefill_from_push(
         # 预填失败绝不能连累接诊建立（接诊在则医生还能自己录，接诊没了就啥都没了）
         logger.exception("his_admit.prefill_failed: encounter=%s", encounter_id)
         await db.rollback()
+
+
+async def _resolve_department(
+    db: AsyncSession, dept_code: Optional[str], dept_name: Optional[str],
+    fallback_department_id: Optional[str],
+) -> Optional[str]:
+    """把 HIS 推来的挂号科室解析成我方 department_id（2026-08-14 修复）。
+
+    为什么必须用挂号科室而不是医生编制科室：
+      规范 3.1 对 dept_code 的说明是「本次接诊/挂号的科室，**非医生编制科室**」，
+      并要求厂商去科室表取「本地ID」列（如 1230024）推给我们。但代码原先
+      直接用 doctor.department_id —— 恰恰是规范明确排除的那个。
+      本院医生存在**跨科室坐班**的情况，那时病历上的科室就是错的。
+
+    为什么按 code 自动建档而不是维护映射表：
+      附录 B 已确认「无需提供科室字典——科室编码+名称随接诊推送成对下发」。
+      既然每次推送都带着 code+name，再维护一张要人工同步的映射表只会引入
+      「HIS 加了新科室但我方没同步」的故障点。第一次见到就落一条，之后按
+      code 复用；科室名变了就跟着更新。
+
+    Args:
+        dept_code: HIS 科室编码（科室表「本地ID」列）
+        dept_name: HIS 科室名称
+        fallback_department_id: 解析不出时的兜底（医生编制科室）
+
+    Returns:
+        我方 department_id；dept_code 为空时返回兜底值。
+    """
+    from app.models.user import Department
+
+    code = (dept_code or "").strip()
+    if not code:
+        # 厂商没推科室：退回医生编制科室（总比没有强），并留痕便于联调排查
+        logger.warning(
+            "his_admit.dept: 推送未带 dept_code，回退医生编制科室 visit_no=%s", ""
+        )
+        return fallback_department_id
+
+    dept = (await db.execute(
+        select(Department).where(Department.code == code)
+    )).scalar_one_or_none()
+
+    name = (dept_name or "").strip() or f"HIS科室{code}"
+    if dept is None:
+        # 首次见到该科室：自动落一条（见上方"为什么不维护映射表"）
+        dept = Department(name=name, code=code, is_active=True)
+        db.add(dept)
+        await db.flush()
+        logger.info("his_admit.dept: 自动建科室 code=%s name=%s", code, name)
+    elif dept_name and dept.name != name:
+        # HIS 侧改了科室名，跟着更新（code 才是身份，name 只是展示）
+        logger.info("his_admit.dept: 科室名更新 code=%s %s→%s", code, dept.name, name)
+        dept.name = name
+    return dept.id
 
 
 async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
