@@ -16,15 +16,7 @@ import { useEffect, useRef, useState } from 'react'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import { startVoiceStream, type VoiceStreamHandle } from '@/services/voiceStream'
-import { uploadVoiceAudio } from '@/services/voiceTranscriptApi'
-
-// ── 录音文件归档开关 ────────────────────────────────────────────────────────
-// 关闭时不把录音归档到后端（省测试服务器磁盘，损失"播放原始录音"功能）。
-// 注意（2026-08-11 审计修复）：即便关闭归档，当实时 ASR 失败（transcriptText 为空）
-// 时仍必须上传音频走 Qwen-Audio 云端兜底转写——否则医生口述内容会静默全丢，而 UI
-// 明确承诺"停止后自动云端转写"。故真正的跳过条件见 uploadAudioBlob：关归档 且
-// 已有转写文字 才跳过；无转写文字（兜底场景，低频）无视本开关必须上传。
-const ENABLE_AUDIO_UPLOAD = false
+import { archiveAudioBlob } from '@/services/voiceAudioArchive'
 
 interface SessionProps {
   visitType: 'outpatient' | 'inpatient'
@@ -35,6 +27,8 @@ interface SessionProps {
   setTranscript: React.Dispatch<React.SetStateAction<string>>
   setInterimText: (value: string) => void
   setTranscriptId: (value: string | null) => void
+  /** 当前 voice_record id（纯文本落库时走更新，避免每次录音都新建一行） */
+  transcriptId: string | null
 }
 
 /**
@@ -48,6 +42,7 @@ export function useVoiceDialogueSession({
   setTranscript,
   setInterimText,
   setTranscriptId,
+  transcriptId,
 }: SessionProps) {
   // 实时 ASR 流句柄（含 stop 方法），录音期间存活
   const voiceStreamRef = useRef<VoiceStreamHandle | null>(null)
@@ -56,6 +51,9 @@ export function useVoiceDialogueSession({
   const mediaChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const transcriptRef = useRef('')
+  // 回调（mediaRecorder.onstop）里要读最新的 voice_record id，闭包里是旧值
+  const transcriptIdRef = useRef<string | null>(transcriptId)
+  transcriptIdRef.current = transcriptId
   // 本次录音阿里云实时 ASR 是否可用。false 则停止后走后端整段转写兜底
   const streamFallbackRef = useRef(false)
 
@@ -64,6 +62,19 @@ export function useVoiceDialogueSession({
     () => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined'
   )
   const [listening, setListening] = useState(false)
+  // ── 录音归属（2026-08-14 第七轮审计 #28）──────────────────────────────────
+  //
+  // 医生在录音过程中切到另一位患者时，原先会同时发生两件坏事：
+  //   · onFinal 里的 setTranscript 写的是**当前**组件状态 —— 于是关于甲患者
+  //     说的话，一句句落进了乙患者的转写框（跨患者 PHI 污染）
+  //   · mediaRecorder.onstop 闭包捕获的 currentEncounterId 还是**旧**接诊 ——
+  //     音频 voice_record 挂在甲，文字却进了乙，两边对不上，事后无从追溯
+  // 录音本质上属于某一位患者，跨患者继续录没有任何合法解释，
+  // 所以：记住开录时的接诊，句子只写回它；接诊一变就停止录音并归档给原患者。
+  const recordingEncounterRef = useRef<string | null>(null)
+  // 供回调内读取"此刻的"接诊 id（回调闭包里的 props 是开录那一刻的旧值）
+  const currentEncounterIdRef = useRef<string | null>(currentEncounterId)
+  currentEncounterIdRef.current = currentEncounterId
   const [uploadingAudio, setUploadingAudio] = useState(false)
 
   useEffect(() => {
@@ -125,29 +136,39 @@ export function useVoiceDialogueSession({
     streamRef.current = null
   }
 
-  /**
-   * 上传录音音频文件。
-   * - transcriptText 非空：仅归档（后端跳过整段转写）
-   * - transcriptText 为空：后端 Qwen-Audio 兜底转写（仅当实时 ASR 未成功时触发）
-   */
-  const uploadAudioBlob = async (blob: Blob, transcriptText: string) => {
-    if (!blob.size) return
-    // 归档关闭 且 已有实时转写文字 → 跳过上传（省磁盘，AI 整理用现有文本即可）。
-    // 但若无转写文字（实时 ASR 失败），必须上传走云端兜底，绝不静默丢医生口述内容。
-    if (!ENABLE_AUDIO_UPLOAD && transcriptText.trim()) return
+  // ── 切换患者时自动收尾本次录音（2026-08-14 第七轮审计 #28）─────────────────
+  //
+  // 录音属于某一位患者，跨患者继续录没有任何合法解释：继续下去，说的话会进
+  // 新患者的转写框、音频却挂在旧接诊上。这里主动停止 —— stopListening 会走
+  // 完整的收尾流程（停 ASR → 停 MediaRecorder → onstop 里把音频归档给
+  // recordingEncounterRef 记下的**原**患者），医生已经说过的内容不会丢。
+  useEffect(() => {
+    if (!listening) return
+    if (recordingEncounterRef.current === currentEncounterId) return
+    message.warning('已切换患者，本次语音录入已自动结束并归档到原患者')
+    void stopListening()
+    // stopListening 每次渲染重建，但这里只该在接诊变化时触发一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEncounterId, listening])
+
+  /** 上传录音音频文件（归档 / 兜底转写的结果处理见 voiceAudioArchive）。 */
+  const uploadAudioBlob = async (
+    blob: Blob,
+    transcriptText: string,
+    ownerEncounterId: string | null
+  ) => {
     setUploadingAudio(true)
     try {
-      const data = await uploadVoiceAudio(blob, transcriptText, {
-        encounterId: currentEncounterId,
+      await archiveAudioBlob({
+        blob,
+        transcriptText,
+        ownerEncounterId,
         visitType,
+        getExistingTranscript: () => transcriptRef.current,
+        setTranscript,
+        setTranscriptId,
+        getExistingTranscriptId: () => transcriptIdRef.current,
       })
-      if (data?.voice_record_id) setTranscriptId(data.voice_record_id)
-      if (data?.transcript && !transcriptText.trim()) {
-        setTranscript(data.transcript)
-        message.success('语音已保存，云端转写完成')
-      } else {
-        message.success('原始语音已保存')
-      }
     } catch {
       message.error('原始语音保存失败')
     } finally {
@@ -191,6 +212,9 @@ export function useVoiceDialogueSession({
     }
     try {
       streamFallbackRef.current = false
+      // 本次录音归属哪位患者，从这一刻起就钉死（审计 #28）
+      recordingEncounterRef.current = currentEncounterId
+      const owner = currentEncounterId
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
 
@@ -208,7 +232,7 @@ export function useVoiceDialogueSession({
         stopTracks()
         // 实时 ASR 可用时把已识别文本附上，后端跳过整段转写；失败时传空串触发兜底
         const transcriptForUpload = streamFallbackRef.current ? '' : transcriptRef.current
-        await uploadAudioBlob(blob, transcriptForUpload)
+        await uploadAudioBlob(blob, transcriptForUpload, owner)
       }
       mediaRecorder.start()
       mediaRecorderRef.current = mediaRecorder
@@ -218,6 +242,13 @@ export function useVoiceDialogueSession({
         const handle = await startVoiceStream(token, {
           onPartial: text => setInterimText(text),
           onFinal: text => {
+            // 归属守卫（审计 #28）：医生已经切到别的患者了，这句话是对上一位
+            // 患者说的，绝不能写进当前这位的转写框。切换本身会触发停止录音，
+            // 这里挡的是"停止流程跑完之前又飘回来一句"的窗口。
+            if (recordingEncounterRef.current !== currentEncounterIdRef.current) {
+              setInterimText('')
+              return
+            }
             // 终稿句追加到主 transcript，partial 清空等待下一句
             if (text.trim()) {
               setTranscript(prev => [prev, text.trim()].filter(Boolean).join(' '))

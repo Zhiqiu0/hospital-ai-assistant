@@ -15,6 +15,7 @@ from typing import Optional
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,6 +107,79 @@ async def upload_voice_record(
         "status": record.status,
         "has_audio": True,
         "transcript": asr_transcript,
+    }
+
+
+class TranscriptSaveRequest(BaseModel):
+    """实时 ASR 转写文本落库请求（不含音频）。"""
+
+    encounter_id: Optional[str] = None
+    visit_type: Optional[str] = "outpatient"
+    transcript: str = ""
+    """已有 voice_record 时传其 id，走更新；不传则新建。"""
+    voice_record_id: Optional[str] = None
+
+
+@router.post("/voice-records/transcript")
+async def save_voice_transcript(
+    body: TranscriptSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """保存实时 ASR 的转写文本（不上传音频）。
+
+    为什么需要（2026-08-14 第七轮审计 #26）：
+      实时 ASR 是**主路径**（阿里云 Paraformer 走后端 WebSocket 代理），
+      可它识别出的文字一直只活在浏览器 localStorage 里——前端在
+      ENABLE_AUDIO_UPLOAD=false（写死的常量，生产同样生效）且已有转写文字时
+      直接跳过上传，于是主路径下 voice_records 表**一行都不会写**。后果：
+        · 医生换台电脑 / 清了浏览器数据，这次问诊的口述原文就没了
+        · 工作台快照的 latest_voice_record 恒为空，恢复逻辑形同虚设
+        · 管理端语音记录列表看不到任何实时会话
+      跳过**音频**上传是有意的（省磁盘），但文字不该跟着一起丢。
+      本端点只写文本，负载极小，不占磁盘。
+
+    Raises:
+        HTTPException(403): 该接诊不属于当前医生。
+    """
+    if body.encounter_id:
+        await assert_encounter_access(db, body.encounter_id, current_user)
+
+    text = (body.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="转写内容为空")
+
+    record: Optional[VoiceRecord] = None
+    if body.voice_record_id:
+        record = (await db.execute(
+            select(VoiceRecord).where(VoiceRecord.id == body.voice_record_id)
+        )).scalar_one_or_none()
+        # 只允许更新自己的记录，避免拿到别人的 id 就能改其转写
+        if record is not None and record.doctor_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权修改该语音记录")
+
+    if record is None:
+        record = VoiceRecord(
+            encounter_id=body.encounter_id,
+            doctor_id=current_user.id,
+            visit_type=body.visit_type or "outpatient",
+            raw_transcript=text,
+            status="transcribed",
+        )
+        db.add(record)
+    else:
+        record.raw_transcript = text
+
+    await db.commit()
+    await db.refresh(record)
+    # 工作台快照含 latest_voice_record，写入后需失效缓存
+    from app.services.encounter_service import invalidate_encounter_snapshot
+    await invalidate_encounter_snapshot(body.encounter_id)
+    return {
+        "voice_record_id": record.id,
+        "status": record.status,
+        "has_audio": False,
+        "transcript": text,
     }
 
 

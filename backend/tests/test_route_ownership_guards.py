@@ -390,3 +390,64 @@ def test_voice_upload_rejects_path_traversal_ids():
         assert not _SAFE_ID_RE.fullmatch(bad), f"路径穿越值未被拦截：{bad}"
     # 正常 UUID 必须放行
     assert _SAFE_ID_RE.fullmatch("e3b0c442-98fc-1c14-9afb-4c8996fb9242")
+
+
+# ── 语音转写文本落库端点（2026-08-14 第七轮审计 #26 新增）────────────────────
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_rejects_other_doctor_encounter(client_doc_me):
+    """往别人的接诊里塞转写文本 → 403。
+
+    这是第七轮给 /voice-records/upload 补归属校验时的同一条契约：消费侧
+    _encounter_snapshot 取 latest_voice_record 并不比对 doctor_id，一旦能写进去，
+    那位医生下次刷新工作台就会看到伪造内容进自己的语音框、并覆盖本地草稿，
+    点「AI 整理」还会把伪造内容结构化进病历。
+    """
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-other", "transcript": "伪造的问诊内容"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_accepts_own_encounter(client_doc_me):
+    """写自己的接诊 → 200，且真的落库（主路径原先一行都不写）。"""
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "患者主诉头痛三天"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["voice_record_id"]
+    assert body["has_audio"] is False
+    assert body["transcript"] == "患者主诉头痛三天"
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_save_rejects_empty(client_doc_me):
+    """空转写不建行，免得表里全是空记录。"""
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "   "},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_voice_transcript_update_rejects_other_doctors_record(client_doc_me, async_db):
+    """带上别人的 voice_record_id 改其转写 → 403。"""
+    from app.models.voice_record import VoiceRecord
+
+    rec = VoiceRecord(
+        id="vr-other", encounter_id="enc-other", doctor_id="doc-other",
+        visit_type="outpatient", raw_transcript="别人的转写", status="transcribed",
+    )
+    async_db.add(rec)
+    await async_db.commit()
+
+    r = await client_doc_me.post(
+        "/api/v1/ai/voice-records/transcript",
+        json={"encounter_id": "enc-own", "transcript": "改掉", "voice_record_id": "vr-other"},
+    )
+    assert r.status_code == 403
