@@ -17,13 +17,32 @@ from app.models.medical_record import AITask
 
 logger = logging.getLogger(__name__)
 
-# 病历时效达标阈值（小时，法定要求）：从接诊到签发的时限。
+# 病历时效达标阈值（小时，法定要求）。
 # 门诊/急诊无强制法定时限（不纳入达标率，只统计中位耗时另议）。
+#
+# **起算点各不相同**（2026-08-14 第六轮审计修复）：原先所有类型统一用
+# `submitted_at - visited_at`（入院时刻）算，而规范里——
+#   · 入院记录 / 首次病程：从**入院**起算 ✓ 原实现正确
+#   · 出院记录：从**出院**起算。住院半个月的病人用入院时刻算必然超时，
+#     达标率被系统性压低，这个指标失去意义
+#   · 手术记录：从**术后**起算。而系统里根本没有记录手术时刻的字段，
+#     用任何现有时间点近似都是编数据——宁可不统计，也不给一个假指标。
 _TIMELINESS_HOURS = {
-    "admission_note": 24,        # 入院记录 24h
-    "first_course_record": 8,    # 首次病程 8h
-    "discharge_record": 24,      # 出院记录 24h
-    "op_record": 24,             # 手术记录 24h
+    "admission_note": 24,        # 入院记录 24h（从入院起算）
+    "first_course_record": 8,    # 首次病程 8h（从入院起算）
+    "discharge_record": 24,      # 出院记录 24h（从**出院**起算）
+}
+
+# 起算点取自接诊的哪个字段：默认入院时刻（visited_at）
+_TIMELINESS_START_FIELD = {
+    "discharge_record": "completed_at",   # 出院时刻
+}
+
+# 暂不纳入达标率的类型及原因（写在这里而不是删掉，避免下次有人"顺手补回去"）
+_TIMELINESS_EXCLUDED = {
+    # 手术记录法定要求是"术后 24 小时内"，但系统未记录手术时刻。
+    # 要纳入需先在住院模块增加手术时间字段，届时再加回 _TIMELINESS_HOURS。
+    "op_record": "系统未记录手术时刻，无法确定起算点",
 }
 
 
@@ -89,7 +108,12 @@ async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
 
     # ── 病历时效达标率（住院系已签发病历 接诊→签发 时限）──
     rec_rows = (await db.execute(
-        select(MedicalRecord.record_type, Encounter.visited_at, MedicalRecord.submitted_at)
+        select(
+            MedicalRecord.record_type,
+            Encounter.visited_at,
+            Encounter.completed_at,
+            MedicalRecord.submitted_at,
+        )
         .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
         .where(
             MedicalRecord.status == "submitted",
@@ -99,14 +123,23 @@ async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
         )
     )).all()
     tl: dict[str, dict] = {}
-    for rtype, visited_at, submitted_at in rec_rows:
+    for rtype, visited_at, completed_at, submitted_at in rec_rows:
         limit_h = _TIMELINESS_HOURS[rtype]
         t = tl.setdefault(rtype, {"total": 0, "on_time": 0, "limit_hours": limit_h})
+        # 按类型取各自的起算点（出院记录用出院时刻，其余用入院时刻）
+        start_at = (
+            completed_at
+            if _TIMELINESS_START_FIELD.get(rtype) == "completed_at"
+            else visited_at
+        )
+        # 起算点缺失（如出院记录但接诊还没办出院）→ 不计入分母，
+        # 否则会把"还没到该算的时候"误判成不达标
+        if not start_at or not submitted_at:
+            continue
         t["total"] += 1
-        if visited_at and submitted_at:
-            hours = (submitted_at - visited_at).total_seconds() / 3600
-            if hours <= limit_h:
-                t["on_time"] += 1
+        hours = (submitted_at - start_at).total_seconds() / 3600
+        if hours <= limit_h:
+            t["on_time"] += 1
     for r in tl.values():
         r["rate"] = round(r["on_time"] / r["total"], 3) if r["total"] else None
 

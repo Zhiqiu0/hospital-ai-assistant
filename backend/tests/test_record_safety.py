@@ -493,3 +493,47 @@ async def test_inpatient_second_course_record_does_not_overwrite_first(async_db)
 
     assert len(rows) == 2, f"住院第二份病程没有新建，仍然只有 {len(rows)} 份（第一份被覆盖了）"
     assert [r.record_no for r in rows] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_discharge_record_timeliness_counts_from_discharge(async_db):
+    """出院记录时效从**出院**时刻起算，不是入院（2026-08-14 第六轮审计修复）。
+
+    原先所有类型统一用 submitted_at - visited_at，住院半个月的病人出院记录必然
+    被判超时，达标率被系统性压低、指标失去意义。
+    """
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.models.user import User as U
+    from app.services.admin_stats_service import get_quality_health
+
+    doc = U(username=f"tl{uuid4().hex[:6]}", password_hash="x", real_name="医生", role="doctor")
+    pat = Patient(name="长住院患者")
+    async_db.add_all([doc, pat])
+    await async_db.flush()
+
+    now = datetime.now()
+    # 住院 15 天，出院后 2 小时签发出院记录 → 应判达标
+    enc = Encounter(
+        patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient", status="completed",
+        visited_at=now - timedelta(days=15), completed_at=now - timedelta(hours=2),
+    )
+    async_db.add(enc)
+    await async_db.flush()
+    async_db.add(MedicalRecord(
+        encounter_id=enc.id, record_type="discharge_record", status="submitted",
+        current_version=1, submitted_at=now,
+    ))
+    await async_db.commit()
+
+    res = await get_quality_health(async_db, days=30)
+    tl = res.get("timeliness") or {}
+    dr = tl.get("discharge_record")
+    assert dr is not None, f"出院记录未纳入时效统计：{tl}"
+    assert dr["on_time"] == dr["total"] == 1, (
+        f"出院后 2 小时签发却被判超时（说明还在用入院时刻起算）：{dr}"
+    )

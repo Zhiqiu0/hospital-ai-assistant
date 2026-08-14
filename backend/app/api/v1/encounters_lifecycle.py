@@ -8,6 +8,7 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import logging
+from datetime import datetime
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends, HTTPException
@@ -73,6 +74,10 @@ async def discharge_encounter(
         return {"ok": True, "already_discharged": True, "encounter_id": encounter_id}
 
     encounter.status = "completed"
+    # 记录出院时刻（2026-08-14 第六轮审计修复）：completed_at 字段一直存在但
+    # **从来没有任何地方写过**，导致出院记录的时效只能从入院时刻起算——
+    # 而规范要求的是"出院后 24 小时内完成"，住院半个月的病人必然被判超时。
+    encounter.completed_at = datetime.now()
     await db.commit()
 
     # 失效缓存：接诊列表 + 快照 + 该患者基本信息（has_active_inpatient 变了 → 在院/已出院 标签会变）
