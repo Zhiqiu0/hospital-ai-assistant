@@ -57,6 +57,15 @@ class MedicalRecord(Base, TimestampMixin):
     encounter_id: Mapped[str] = mapped_column(ForeignKey("encounters.id"), nullable=False)
     # 病历类型（见上方说明）
     record_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    # 同类型文书的序号（2026-08-14 第六轮审计修复）。
+    #
+    # 住院一次接诊天然有**多份同类型文书**：日常病程、上级查房、术后病程……
+    # 而原先定位病历只按 (encounter_id, record_type) 取最近更新的一行，
+    # 第二份病程会直接覆盖第一份——医生前一天写的病程被今天这份顶掉，
+    # 病历内容永久丢失。HIS 接口规范里早就预留了 record_no 用于区分多份文书，
+    # 但后端一直没实现（全仓 grep 只有注释提到过它）。
+    # 门急诊一次接诊一份文书，恒为 1。
+    record_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     # 病历状态："draft"（草稿）/ "final"（已出具最终版）
     status: Mapped[str] = mapped_column(String(20), default="draft")
     # 当前最新版本号（与 RecordVersion.version_no 关联）

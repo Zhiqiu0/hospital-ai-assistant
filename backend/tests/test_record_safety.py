@@ -464,3 +464,32 @@ def test_vitals_guard_covers_inpatient_course_field():
     from app.services.ai.record_gen_v2_service import _VITALS_GUARDED_FIELDS
 
     assert "physical_exam_today" in _VITALS_GUARDED_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_inpatient_second_course_record_does_not_overwrite_first(async_db):
+    """住院第二份同类型文书新起一份，不覆盖第一份（2026-08-14 第六轮审计修复）。
+
+    住院一次接诊天然有多份日常病程/查房记录。原先只按 (encounter_id, record_type)
+    取最近更新的一行来写，第二份直接覆盖第一份——医生前一天写的病程被顶掉，
+    内容永久丢失。
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import MedicalRecord
+    from app.services.medical_record_service import MedicalRecordService
+
+    eid, doc_id = await _mk_sign_encounter(async_db, visit_type="inpatient")
+    svc = MedicalRecordService(async_db)
+    await svc.quick_save(eid, "course_record", "病程一：患者诉腰痛缓解。", doc_id)
+    await svc.quick_save(eid, "course_record", "病程二：今日查房，切口愈合good。", doc_id)
+
+    rows = (await async_db.execute(
+        select(MedicalRecord).where(
+            MedicalRecord.encounter_id == eid,
+            MedicalRecord.record_type == "course_record",
+        ).order_by(MedicalRecord.record_no)
+    )).scalars().all()
+
+    assert len(rows) == 2, f"住院第二份病程没有新建，仍然只有 {len(rows)} 份（第一份被覆盖了）"
+    assert [r.record_no for r in rows] == [1, 2]
