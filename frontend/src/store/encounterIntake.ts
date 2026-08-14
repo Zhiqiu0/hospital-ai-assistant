@@ -68,6 +68,8 @@ export interface SnapshotResult extends EncounterIntakePayload {
     content?: string
     /** ISO 字符串，后端 _serialize_record 返回，用于状态条显示"X 分钟前保存" */
     updated_at?: string | null
+    /** 签发瞬间冻结的病案首页快照；未签发为 null */
+    patient_snapshot?: Record<string, unknown> | null
   } | null
   /** 最新 QC 跑出来的问题列表（logout 重登也能恢复） */
   latest_qc_issues?: QCIssue[] | null
@@ -200,6 +202,8 @@ export function applySnapshotResult(res: SnapshotResult): void {
       recordStore.setRecordContent(res.active_record.content || '')
     }
     recordStore.setFinal(res.active_record.status === 'submitted')
+    // 冻结快照跟着病历走，打印/导出时用它而不是实时患者数据
+    recordStore.setPatientSnapshot(res.active_record.patient_snapshot ?? null)
     // 把 DB 里的 updated_at 灌回 recordSavedAt——logout 重登 / 切设备时
     // 状态条立即显示"病历 X 分钟前保存"，而不是误报"草稿未保存"。
     // 本地有未保存编辑时不回灌，否则会把"本地更脏"这个事实抹掉，下次水合就覆盖了。

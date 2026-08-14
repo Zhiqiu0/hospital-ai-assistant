@@ -15,6 +15,7 @@ import { reportRecordExport } from '@/utils/exportAudit'
 import type { Patient } from '@/domain/medical'
 import { useAuthStore } from '@/store/authStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useRecordStore } from '@/store/recordStore'
 
 interface RecordEditorStatusBarProps {
   isBusy: boolean
@@ -36,6 +37,8 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
   const visitType = useActiveEncounterStore(s => s.visitType)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const visitedAt = useActiveEncounterStore(s => s.visitedAt)
+  // 已签发病历打印用签发时冻结的首页快照，不是实时患者数据
+  const patientSnapshot = useRecordStore(s => s.patientSnapshot)
   const ctx = {
     visit_type: visitType,
     // 就诊时间用接诊自己的时间，不是签发时刻（2026-08-14 第六轮审计修复）：
@@ -97,7 +100,14 @@ export default function RecordEditorStatusBar(props: RecordEditorStatusBarProps)
               method: 'print',
               is_signed: !!finalizedAt,
             })
-            printRecord(recordContent, currentPatient, recordType, finalizedAt, null, ctx)
+            printRecord(
+              recordContent,
+              currentPatient,
+              recordType,
+              finalizedAt,
+              patientSnapshot,
+              ctx
+            )
           }}
           style={{
             borderRadius: 6,

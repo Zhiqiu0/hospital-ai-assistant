@@ -68,6 +68,16 @@ interface RecordState {
    */
   lastSavedContent: string
 
+  /**
+   * 签发时冻结的病案首页快照（2026-08-14 第六轮审计修复）。
+   *
+   * 后端 workspace 快照的 active_record 里**一直有** patient_snapshot，
+   * 但编辑器打印/导出把这个参数写死成 null——于是已签发病历打印时用的是
+   * **实时患者数据**而不是冻结快照：患者签发后改了住址/电话，重新打印这份
+   * 已签发病历，首页会跟着变。而首页冻结正是 2026-05-16 加快照机制的目的。
+   */
+  patientSnapshot: Record<string, unknown> | null
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
   /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
@@ -82,6 +92,7 @@ interface RecordState {
   setRecordSavedAt: (ts: number) => void
   /** auto-save 成功时记录「已落库的正文」，供水合判断本地是否更脏 */
   markSaved: (content: string, ts: number) => void
+  setPatientSnapshot: (snap: Record<string, unknown> | null) => void
   /** 在病历末尾追加一段（带空行分隔，AI 续写流式输出用） */
   appendToRecord: (text: string) => void
   /** 重置到初始状态（切换接诊 / 登出时调用） */
@@ -95,6 +106,7 @@ export const useRecordStore = create<RecordState>()(
       recordType: 'outpatient',
       ownerEncounterId: null,
       lastSavedContent: '',
+      patientSnapshot: null,
 
       isGenerating: false,
       isPolishing: false,
@@ -126,6 +138,7 @@ export const useRecordStore = create<RecordState>()(
             finalizedAt: null,
             recordContent: '',
             lastSavedContent: '',
+            patientSnapshot: null,
             recordSavedAt: 0,
           }
         }),
@@ -140,6 +153,8 @@ export const useRecordStore = create<RecordState>()(
       setRecordSavedAt: ts => set({ recordSavedAt: ts }),
 
       markSaved: (content, ts) => set({ lastSavedContent: content, recordSavedAt: ts }),
+
+      setPatientSnapshot: snap => set({ patientSnapshot: snap }),
 
       appendToRecord: text =>
         set(state => ({
@@ -189,6 +204,7 @@ export const useRecordStore = create<RecordState>()(
         recordType: state.recordType,
         ownerEncounterId: state.ownerEncounterId,
         lastSavedContent: state.lastSavedContent,
+        patientSnapshot: state.patientSnapshot,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,
