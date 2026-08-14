@@ -587,3 +587,34 @@ async def test_reconcile_covers_late_signed_inpatient_record(async_db):
     assert enc.id in [c.id for c in cands], (
         "住院中后期签发的病历没被对账扫到——回写失败会永远不重投"
     )
+
+
+@pytest.mark.asyncio
+async def test_inpatient_each_document_has_own_submitted_at(async_db):
+    """住院每份文书有独立的签发时间，回写才能选中最新签发的那份。
+
+    第六轮审计报「住院同类型文书的 submitted_at 只写一次，导致当天签发的病程
+    回写不到 HIS」。该问题的前提是"多份文书共用一行"，而 record_no 修复后每份
+    文书是独立的行、各有自己的 submitted_at——这条测试锁住这个前提不被改回去。
+    """
+    from sqlalchemy import select
+
+    from app.models.medical_record import MedicalRecord
+    from app.services.medical_record_service import MedicalRecordService
+
+    eid, doc_id = await _mk_sign_encounter(async_db, visit_type="inpatient")
+    svc = MedicalRecordService(async_db)
+    await svc.quick_save(eid, "course_record", "病程一。", doc_id)
+    await svc.quick_save(eid, "course_record", "病程二。", doc_id)
+
+    rows = (await async_db.execute(
+        select(MedicalRecord).where(
+            MedicalRecord.encounter_id == eid,
+            MedicalRecord.record_type == "course_record",
+        ).order_by(MedicalRecord.record_no)
+    )).scalars().all()
+
+    assert len(rows) == 2
+    assert all(r.submitted_at is not None for r in rows), "有文书没有签发时间"
+    # 回写按 (已签发, submitted_at desc) 排序，能选中最新签发的那份
+    assert rows[1].submitted_at >= rows[0].submitted_at
