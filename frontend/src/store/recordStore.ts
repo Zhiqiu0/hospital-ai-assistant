@@ -78,6 +78,19 @@ interface RecordState {
    */
   patientSnapshot: Record<string, unknown> | null
 
+  /**
+   * 按病历类型暂存的草稿（2026-08-14 第七轮审计修复）。
+   *
+   * 第六轮给 setRecordType 加了「切类型时清空正文」（住院要写多份文书，
+   * 不清空会把入院记录的内容带进病程）。但那样一来——**医生写了一半的病程，
+   * 手滑切一下下拉，内容就没了，没有任何提示，切回来也不恢复**。
+   * 5 秒防抖的 auto-save 很可能还没跑过，服务端也没有。
+   *
+   * 改为：切走时把当前正文按类型存进这里，切回时自动恢复。
+   * 既不把内容混进另一份文书，也不丢东西，且不用弹窗打断医生。
+   */
+  draftsByType: Record<string, string>
+
   // ── actions ───────────────────────────────────────────────
   setRecordContent: (content: string) => void
   /** 绑定正文归属的接诊（切换接诊 / 拉取到服务端病历时调用） */
@@ -127,6 +140,7 @@ export const useRecordStore = create<RecordState>()(
       ownerEncounterId: null,
       lastSavedContent: '',
       patientSnapshot: null,
+      draftsByType: {},
 
       isGenerating: false,
       isPolishing: false,
@@ -147,6 +161,11 @@ export const useRecordStore = create<RecordState>()(
 
       setRecordType: type =>
         set(state => {
+          // 切走前先把当前正文按原类型暂存，切回来能恢复（见 draftsByType 说明）
+          const stashed = state.recordContent
+            ? { ...state.draftsByType, [state.recordType]: state.recordContent }
+            : state.draftsByType
+          const restored = stashed[type] ?? ''
           // 切换病历类型要连带重置"已签发"锁（2026-08-14 第六轮审计修复）：
           // isFinal 是**整个编辑器**的只读开关，而住院一次接诊要写入院记录、
           // 多份病程、出院小结等**多份文书**——签完第一份后 isFinal 恒为 true，
@@ -158,10 +177,12 @@ export const useRecordStore = create<RecordState>()(
             recordType: type,
             isFinal: false,
             finalizedAt: null,
-            recordContent: '',
+            // 恢复该类型此前暂存的草稿（没有则为空），不再无条件清空
+            recordContent: restored,
             lastSavedContent: '',
             patientSnapshot: null,
             recordSavedAt: 0,
+            draftsByType: stashed,
           }
         }),
 
@@ -203,6 +224,9 @@ export const useRecordStore = create<RecordState>()(
               isFinal: false,
               finalizedAt: null,
               recordSavedAt: 0,
+              // 按类型暂存的草稿同样属于上一个接诊，一并丢弃——
+              // 否则跨患者污染的口子从 draftsByType 又开了一个
+              draftsByType: {},
             })
           }
           set({ ownerEncounterId: encounterId })
@@ -223,6 +247,8 @@ export const useRecordStore = create<RecordState>()(
           isFinal: false,
           finalizedAt: null,
           recordSavedAt: 0,
+          // 按类型暂存的草稿也要清——不清会跨患者残留（PHI）
+          draftsByType: {},
         }),
     }),
     {
@@ -234,6 +260,7 @@ export const useRecordStore = create<RecordState>()(
         ownerEncounterId: state.ownerEncounterId,
         lastSavedContent: state.lastSavedContent,
         patientSnapshot: state.patientSnapshot,
+        draftsByType: state.draftsByType,
         isFinal: state.isFinal,
         finalizedAt: state.finalizedAt,
         recordSavedAt: state.recordSavedAt,

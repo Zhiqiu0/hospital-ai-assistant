@@ -154,3 +154,43 @@ describe('病历正文归属校验（2026-08-13 第五轮审计修复）', () =>
     expect(useRecordStore.getState().recordContent).toBe('')
   })
 })
+
+describe('切换病历类型不丢内容（2026-08-14 第七轮审计修复）', () => {
+  it('切走再切回，原类型的内容还在', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const st = useRecordStore.getState()
+
+    st.reset()
+    useRecordStore.setState({ recordType: 'admission_note' })
+    useRecordStore.getState().setRecordContent('入院记录：患者因腰痛入院……')
+
+    // 切到病程
+    useRecordStore.getState().setRecordType('course_record')
+    expect(useRecordStore.getState().recordContent).toBe('')
+
+    useRecordStore.getState().setRecordContent('病程：今日查房……')
+
+    // 切回入院记录 —— 原内容必须还在
+    useRecordStore.getState().setRecordType('admission_note')
+    expect(useRecordStore.getState().recordContent).toBe('入院记录：患者因腰痛入院……')
+
+    // 再切回病程 —— 病程内容也还在
+    useRecordStore.getState().setRecordType('course_record')
+    expect(useRecordStore.getState().recordContent).toBe('病程：今日查房……')
+  })
+
+  it('换患者时按类型暂存的草稿被清空（不能跨患者残留）', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+
+    useRecordStore.getState().reset()
+    useRecordStore.setState({ recordType: 'admission_note' })
+    useRecordStore.getState().setRecordContent('甲患者的入院记录')
+    useRecordStore.getState().setRecordType('course_record')
+
+    // 此时 draftsByType 里存着甲的内容
+    expect(Object.keys(useRecordStore.getState().draftsByType).length).toBeGreaterThan(0)
+
+    useRecordStore.getState().reset()
+    expect(useRecordStore.getState().draftsByType).toEqual({})
+  })
+})
