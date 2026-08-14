@@ -6,7 +6,7 @@
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
 from fastapi import APIRouter, Depends
@@ -121,7 +121,17 @@ async def usage_stats(
     ]
 
     # 近7日每日接诊趋势
-    seven_days_ago = datetime.now() - timedelta(days=7)
+    #
+    # 起点必须按**自然日**截断（2026-08-14 第六轮审计修复）：
+    # datetime.now() - timedelta(days=7) 是个带时分秒的时刻（现在 14:30 就是
+    # 7 天前的 14:30），按日期分组后——
+    #   · 最早那个桶只包含 14:30 之后的部分，数字明显偏低
+    #   · 一共出来 **8 个桶**，而标题写的是"近 7 日"
+    # 图表上会显示第一天接诊量异常低，那是统计口径造成的假象，不是真实业务波动。
+    # 取「今天往前数 6 天的 00:00」= 含今天在内正好 7 个完整自然日。
+    seven_days_ago = datetime.combine(
+        (datetime.now() - timedelta(days=6)).date(), time.min
+    )
     day_col = cast(Encounter.visited_at, Date)
     daily_result = await db.execute(
         select(day_col.label("day"), func.count().label("cnt"))
