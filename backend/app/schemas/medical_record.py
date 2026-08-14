@@ -56,6 +56,10 @@ class AutoSaveDraftRequest(BaseModel):
     record_type: str
     content: str  # 完整病历正文（前端编辑器当前值）
     expected_updated_at: Optional[datetime] = None  # 上次保存返回的 updated_at，乐观锁凭证
+    # 记录时间（临床相关时点）。住院文书用它表达"这份病程记的是哪天的事"；
+    # 门急诊当场书写不必传。与系统录入时间差得多会被标为补记，
+    # 不是可以随意改的时间线 —— 规范依据见 services/record_time.py。
+    recorded_at: Optional[datetime] = None
 
 
 class MedicalRecordResponse(BaseModel):

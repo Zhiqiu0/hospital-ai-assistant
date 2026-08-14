@@ -18,13 +18,16 @@
 """
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.authz import assert_can_write_record, assert_encounter_access
 from app.core.security import get_current_user
 from app.database import get_db
+from app.models.medical_record import MedicalRecord, RecordVersion
+from app.services.encounter_service import invalidate_encounter_snapshot
 from app.schemas.medical_record import (
     AutoSaveDraftRequest,
     MedicalRecordCreate,
@@ -69,6 +72,8 @@ async def auto_save_draft(
         content=data.content,
         user_id=current_user.id,
         expected_updated_at=data.expected_updated_at,
+        # 记录时间（临床相关时点，住院文书用；见 services/record_time.py）
+        recorded_at=data.recorded_at,
     )
 
 
@@ -245,3 +250,65 @@ async def log_record_export(
             f"{'已签发' if data.is_signed else '未签发草稿'}）"
         ),
     )
+
+
+@router.delete("/{record_id}", status_code=204)
+async def delete_empty_draft(
+    record_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """删除**空白草稿**病历（仅限误点新建的情况）。
+
+    2026-08-14 统一文书模型时新增。为什么限制得这么死：
+
+      病历是法律文件。《病历书写基本规范》要求修改须"保留原记录清楚可辨"、
+      不得掩盖或去除原字迹——写过内容的病历只能修订留痕，不能删除；
+      已签发的更不可能删。本项目原先干脆不提供任何病历删除接口，是对的。
+
+      但住院时间轴上有「新建文书」按钮，医生点错一下就多出一份空文书，
+      留着会污染时间轴与病历列表。空白草稿还不构成"病历"，删掉它没有
+      合规风险——所以这里只开这一个口子：**未签发 且 正文为空**。
+
+    Raises:
+        HTTPException(404): 病历不存在。
+        HTTPException(403): 无权操作该接诊 / 角色不可书写病历。
+        HTTPException(409): 已签发或已有正文，不允许删除（应走修订流程）。
+    """
+    assert_can_write_record(current_user)
+
+    record = await db.get(MedicalRecord, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="病历不存在")
+    await assert_encounter_access(db, record.encounter_id, current_user)
+
+    if record.status == "submitted":
+        raise HTTPException(
+            status_code=409, detail="已签发病历不可删除（如需更正请走病历修订）"
+        )
+
+    # 任一版本有正文就不算空白草稿
+    has_content = (await db.execute(
+        select(RecordVersion.id).where(
+            RecordVersion.medical_record_id == record_id,
+            RecordVersion.content.isnot(None),
+        ).limit(1)
+    )).scalar_one_or_none()
+    if has_content is not None:
+        versions = (await db.execute(
+            select(RecordVersion.content).where(
+                RecordVersion.medical_record_id == record_id
+            )
+        )).scalars().all()
+        if any((c or {}).get("text", "").strip() for c in versions if isinstance(c, dict)):
+            raise HTTPException(
+                status_code=409,
+                detail="病历已有内容，不可删除（如需作废请走病历修订流程）",
+            )
+
+    await db.execute(
+        delete(RecordVersion).where(RecordVersion.medical_record_id == record_id)
+    )
+    await db.delete(record)
+    await db.commit()
+    await invalidate_encounter_snapshot(record.encounter_id)

@@ -27,6 +27,22 @@ BASELINE_SQL = Path(__file__).parent / "alembic" / "versions" / "b20260812squash
 # 基线 DDL 里表示"这一行不是列定义"的关键字（约束/键行）
 _NON_COLUMN_TOKENS = {"PRIMARY", "FOREIGN", "UNIQUE", "CONSTRAINT", "CHECK", "EXCLUDE"}
 
+# 基线里有、但已被基线之后的迁移**删除**的表（2026-08-14 新增）
+#
+# 守卫的语义是「这个库的 schema 等于基线」，据此拒绝给缺列的库 stamp。
+# 但一张表被后续迁移删掉之后，情况反过来了：
+#   · 老库（停在基线附近）**有**这张表 → 与基线一致，本该放行
+#   · 而它的列在模型里已经没有了
+# 若不豁免，守卫会拿基线里的旧表去要求库必须有它，而删表迁移执行过的库
+# 反倒被判为"缺列"——一个刚跑完 upgrade 的健康库会被拒绝 stamp。
+# 这里显式登记这类表：它们在不在都不影响"是否可以 stamp 到基线"的判断。
+#
+# 加新条目时必须写清是哪条迁移删的，避免变成一个无人敢动的黑名单。
+_DROPPED_SINCE_BASELINE = {
+    # l20260814dropnotes：住院文书统一到 medical_records 后删除（生产 0 行）
+    "progress_notes",
+}
+
 
 def _baseline_columns() -> set[tuple[str, str]]:
     """从冻结的基线 DDL 解析出 {(表名, 列名)}。
@@ -90,7 +106,8 @@ async def _inspect() -> tuple[str | None, bool, list[str]]:
             missing = sorted(
                 f"{tbl}.{col}"
                 for tbl, col in _baseline_columns()
-                if (tbl, col) not in existing
+                # 已被后续迁移删掉的表不参与比对（见 _DROPPED_SINCE_BASELINE）
+                if tbl not in _DROPPED_SINCE_BASELINE and (tbl, col) not in existing
             )
     await engine.dispose()
     return current, has_users is not None, missing

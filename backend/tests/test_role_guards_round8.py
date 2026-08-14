@@ -104,36 +104,48 @@ async def test_非临床角色不能写病历正文(async_db, seeded, role):
         assert r.status_code == 403, f"{role} 未被角色守卫拦下（得到 {r.status_code}）"
 
 
-# ── ③ 病程记录：写 + 签发 ───────────────────────────────────────────────────
+# ── ③ 住院文书：写 + 签发（统一到正式病历后的新路径）────────────────────────
+#
+# 原先这三条测的是 /encounters/{id}/progress-notes —— 那条路已随统一文书模型
+# 删除（它没有版本/签名链/HIS 回写/质控，界面却同样显示「已签发」）。
+# 守卫语义必须跟着迁到新路径上，不能因为端点没了就把契约也丢了。
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", NON_CLINICAL)
-async def test_非临床角色不能写病程记录(async_db, seeded, role):
+async def test_非临床角色不能写住院文书草稿(async_db, seeded, role):
     """接诊挂在其名下（调岗场景），归属校验会放行，必须靠角色守卫挡住。"""
     async for ac in _client_as(async_db, "u-nurse", role):
         r = await ac.post(
-            "/api/v1/encounters/enc-nurse/progress-notes",
-            json={"note_type": "course_record", "content": "越权写的病程"},
+            "/api/v1/medical-records/auto-save-draft",
+            json={
+                "encounter_id": "enc-nurse",
+                "record_type": "course_record",
+                "content": "越权写的病程",
+            },
         )
-        assert r.status_code == 403, f"{role} 写出了署自己名的病程记录"
+        assert r.status_code == 403, f"{role} 写出了署自己名的住院文书"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", NON_CLINICAL)
-async def test_非临床角色不能签发病程记录(async_db, seeded, role):
+async def test_非临床角色不能签发住院文书(async_db, seeded, role):
     async for ac in _client_as(async_db, "u-nurse", role):
-        r = await ac.patch(
-            "/api/v1/encounters/enc-nurse/progress-notes/note-any",
-            json={"status": "submitted"},
+        r = await ac.post(
+            "/api/v1/medical-records/quick-save",
+            json={
+                "encounter_id": "enc-nurse",
+                "record_type": "course_record",
+                "content": "越权签发的病程",
+            },
         )
         assert r.status_code == 403
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", NON_CLINICAL)
-async def test_非临床角色不能删病程记录(async_db, seeded, role):
+async def test_非临床角色不能删住院文书(async_db, seeded, role):
     async for ac in _client_as(async_db, "u-nurse", role):
-        r = await ac.delete("/api/v1/encounters/enc-nurse/progress-notes/note-any")
+        r = await ac.delete("/api/v1/medical-records/rec-any")
         assert r.status_code == 403
 
 

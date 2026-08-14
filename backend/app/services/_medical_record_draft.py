@@ -49,6 +49,7 @@ class MedicalRecordDraftMixin:
         content: str,
         user_id: str,
         expected_updated_at: Optional[datetime] = None,
+        recorded_at: Optional[datetime] = None,
     ) -> dict:
         """医生编辑器输入 / auto-save 防抖触发——把当前内容覆写到 draft 版本。
 
@@ -122,6 +123,8 @@ class MedicalRecordDraftMixin:
                 current_version=1,
                 # 同类型第几份（住院多份文书的区分键，与签发路径同一算法）
                 record_no=await self._next_record_no(encounter_id, record_type),
+                # 临床相关时间；与 created_at 差得多即判为补记（见 record_time.py）
+                recorded_at=recorded_at,
             )
             self.db.add(record)
             await self.db.flush()

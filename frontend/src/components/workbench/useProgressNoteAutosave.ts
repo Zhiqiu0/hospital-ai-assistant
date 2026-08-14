@@ -24,6 +24,8 @@ const AUTOSAVE_DEBOUNCE_MS = 5000
 type Snapshot = {
   encounterId: string
   itemId: string
+  /** 病历类型：草稿接口按 (encounter_id, record_type) 定位，不是按 id */
+  recordType: string
   content: string
   recordedAt: Dayjs | null
 }
@@ -31,12 +33,14 @@ type Snapshot = {
 export function useProgressNoteAutosave(params: {
   encounterId: string | null
   itemId: string | undefined
+  /** 病历类型（course_record / senior_round …），草稿接口据此定位 */
+  recordType: string | undefined
   content: string
   recordedAt: Dayjs | null
   /** 只读（已签发/入院记录）时不自动保存 */
   disabled: boolean
 }) {
-  const { encounterId, itemId, content, recordedAt, disabled } = params
+  const { encounterId, itemId, recordType, content, recordedAt, disabled } = params
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 最近一次「已知落库」的正文：用它判断脏，避免刚水合就回写一遍
@@ -55,9 +59,15 @@ export function useProgressNoteAutosave(params: {
     if (!pending) return
     if (pending.content === savedRef.current) return
     try {
-      await api.patch(`/encounters/${pending.encounterId}/progress-notes/${pending.itemId}`, {
+      // 走正式病历的草稿保存（2026-08-14 统一文书模型）：
+      // 原先打的是 progress-notes，那张表没有版本、没有签名链、不回写 HIS、
+      // 不进任何病历列表，而界面上同样显示「已签发」。
+      await api.post('/medical-records/auto-save-draft', {
+        encounter_id: pending.encounterId,
+        record_type: pending.recordType,
         content: pending.content,
-        // 本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE
+        // 本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE。
+        // 这是"这份文书对应的诊疗时点"，与系统录入时间差得多会被标为补记。
         recorded_at: pending.recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
       })
       savedRef.current = pending.content
@@ -77,19 +87,19 @@ export function useProgressNoteAutosave(params: {
 
   // 正文变化 → 记快照 + 重置防抖
   useEffect(() => {
-    if (disabled || !encounterId || !itemId) return
+    if (disabled || !encounterId || !itemId || !recordType) return
     // 首次水合（savedRef 为空）时把当前正文当作基线，不触发一次无谓的回写
     if (savedRef.current === null) {
       savedRef.current = content
       return
     }
-    pendingRef.current = { encounterId, itemId, content, recordedAt }
+    pendingRef.current = { encounterId, itemId, recordType, content, recordedAt }
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => void flush(), AUTOSAVE_DEBOUNCE_MS)
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [content, recordedAt, encounterId, itemId, disabled, flush])
+  }, [content, recordedAt, encounterId, itemId, recordType, disabled, flush])
 
   // 卸载 / 关标签页：来不及等防抖，立刻 flush
   useEffect(() => {

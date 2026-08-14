@@ -9,6 +9,7 @@ from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.voice_record import VoiceRecord
 from app.schemas.encounter import InquirySnapshot
+from app.services.record_time import describe_record_time
 
 # 病历内容字段标签（结构化 dict 内容回传前端时按此顺序拼成可读文本）
 _RECORD_CONTENT_LABELS = {
@@ -67,6 +68,9 @@ def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -
         # 原先后端不返回 created_at → recordedAt 为空串 → 按 0 排序，
         # 草稿一律排到入院记录之前的时间轴最顶端且不显示日期。
         "created_at": record.created_at.isoformat() if record.created_at else None,
+        # 记录时间三元组（第八轮审计后按行业标准）：临床相关时间 / 系统录入时间 /
+        # 是否补记。补记必须让前端看得见——见 services/record_time.py 的规范依据。
+        **describe_record_time(record.recorded_at, record.created_at),
         "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         "content": _parse_record_content(version.content if version else None),
         # 病案首页快照：签发瞬间冻结的患者完整身份 + 接诊信息。
