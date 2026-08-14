@@ -27,7 +27,7 @@ from app.models.medical_record import MedicalRecord
 logger = logging.getLogger(__name__)
 
 RECONCILE_INTERVAL_SECONDS = 300   # 对账周期：每 5 分钟扫一次
-RECONCILE_WINDOW_DAYS = 3          # 只对账最近 3 天的接诊（更早的失败已人工介入）
+RECONCILE_WINDOW_DAYS = 3          # 只对账最近 3 天内**签发**的病历（更早的失败已人工介入）
 MAX_RECONCILE_ATTEMPTS = 5         # 自动重投上限，超过报警并停手
 SCAN_LIMIT = 200                   # 单轮最多处理条数，防一次扫太多
 LOCK_TTL_SECONDS = RECONCILE_INTERVAL_SECONDS - 30   # 270s：锁 TTL
@@ -47,16 +47,24 @@ async def _find_candidates(db: AsyncSession) -> list[Encounter]:
     """找出「已签发 + HIS 来源 + 回写未成功且未耗尽」的接诊。
 
     JSONB 明细在 Python 侧过滤（SQLite 测试库不支持 .astext；生产候选量小）。
-    先用 SQL 粗筛（HIS 来源、近窗口、有已签发病历），再 Python 精筛回写状态。
+    先用 SQL 粗筛（HIS 来源、近 N 天内**签发过**病历），再 Python 精筛回写状态。
     """
     window_start = datetime.now() - timedelta(days=RECONCILE_WINDOW_DAYS)
+
+    # 窗口卡在**病历签发时间**上，不是接诊开始时间（2026-08-14 第六轮审计修复）。
+    #
+    # 原先条件是 `Encounter.visited_at >= window_start`——接诊**开始**于 3 天内。
+    # 门急诊当天接诊当天签发，两者差不多；但住院一次接诊长达十几天，
+    # 病人第 5 天签发的病程，接诊早已在窗口外 → 对账根本扫不到它，
+    # 回写失败后**永远不重投、也不告警**，而这正是对账存在的意义。
+    # 回写该不该重投，取决于病历什么时候签发的，与接诊什么时候开始无关。
     submitted_enc_ids = select(MedicalRecord.encounter_id).where(
-        MedicalRecord.status == "submitted"
+        MedicalRecord.status == "submitted",
+        MedicalRecord.submitted_at >= window_start,
     )
     rows = (await db.execute(
         select(Encounter).where(
             Encounter.his_external_ref.isnot(None),
-            Encounter.visited_at >= window_start,
             Encounter.status != "cancelled",
             Encounter.id.in_(submitted_enc_ids),
         # LIMIT 不能加在这里（2026-08-13 第五轮审计修复）：粗筛只按"HIS 来源 +

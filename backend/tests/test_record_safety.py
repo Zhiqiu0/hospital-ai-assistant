@@ -98,8 +98,12 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
     db.add(enc)
     await db.flush()
     if submitted:
+        # submitted_at 必须给（2026-08-14）：真实签发一定会写它，而对账窗口现在
+        # 按签发时间筛（原先按接诊开始时间，住院中后期签发的会被漏掉）。
+        # 夹具不设这个字段等于造了一份现实中不存在的数据。
         db.add(MedicalRecord(encounter_id=enc.id, record_type="outpatient",
-                             status="submitted"))
+                             status="submitted",
+                             submitted_at=visited or datetime.now()))
     await db.commit()
     return enc.id
 
@@ -536,4 +540,50 @@ async def test_discharge_record_timeliness_counts_from_discharge(async_db):
     assert dr is not None, f"出院记录未纳入时效统计：{tl}"
     assert dr["on_time"] == dr["total"] == 1, (
         f"出院后 2 小时签发却被判超时（说明还在用入院时刻起算）：{dr}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_covers_late_signed_inpatient_record(async_db):
+    """住院中后期签发的病历也要能被对账扫到（2026-08-14 第六轮审计修复）。
+
+    原窗口条件是「接诊**开始**于 3 天内」。门急诊当天接诊当天签发没问题，
+    但住院一次接诊长达十几天——病人第 5 天签发的病程，接诊早已在窗口外，
+    对账根本扫不到它，回写失败后永远不重投也不告警。
+    """
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    from app.his_adapter.writeback_reconcile import _find_candidates
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.models.user import User as U
+
+    suffix = uuid4().hex[:8]
+    pat = Patient(name="长住院患者")
+    doc = U(username=f"lr{suffix}", password_hash="x", real_name="医生", role="doctor")
+    async_db.add_all([pat, doc])
+    await async_db.flush()
+
+    now = datetime.now()
+    # 接诊 10 天前开始（远在 3 天窗口外），但病历是刚刚签发的
+    enc = Encounter(
+        patient_id=pat.id, doctor_id=doc.id, visit_type="inpatient",
+        visit_no=f"V{suffix}", status="in_progress",
+        visited_at=now - timedelta(days=10),
+        his_external_ref={"source": "admit_push", "hospital_code": "H1",
+                          "writeback": {"status": "write_failed", "reconcile_attempts": 0}},
+    )
+    async_db.add(enc)
+    await async_db.flush()
+    async_db.add(MedicalRecord(
+        encounter_id=enc.id, record_type="course_record", status="submitted",
+        current_version=1, submitted_at=now - timedelta(hours=1),
+    ))
+    await async_db.commit()
+
+    cands = await _find_candidates(async_db)
+    assert enc.id in [c.id for c in cands], (
+        "住院中后期签发的病历没被对账扫到——回写失败会永远不重投"
     )
