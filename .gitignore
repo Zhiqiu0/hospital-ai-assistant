@@ -37,6 +37,10 @@ Thumbs.db
 *.log
 backend/logs/
 backend/uploads/
+# 仓库根的 uploads/ —— 2026-08-14 第八轮审计前，lab_reports_service 的
+# parents[3] 算错一层会把上传文件落到这里（本地开发时即仓库根）。
+# 路径已修，但本地/测试仍可能残留，一并忽略防误提交。
+uploads/
 backend/etc/
 # 服务器上 docker-compose 把 /app/logs 作为 bind mount 挂给 backend 容器写日志
 # 项目根的 logs/ 是运行时产物，与 backend/logs/ 区分
