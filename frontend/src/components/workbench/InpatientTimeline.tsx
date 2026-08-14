@@ -4,7 +4,7 @@
  * 展示当前住院接诊的所有文书（入院记录 + 病程记录），按时间排列。
  * 支持选中条目、新建病程记录、删除草稿。
  */
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Button, Tag, Empty, Spin, Popconfirm } from 'antd'
 import { message } from '@/services/messageBridge'
 import { PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
@@ -38,6 +38,17 @@ export default function InpatientTimeline({
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const recordContent = useRecordStore(s => s.recordContent)
   const recordType = useRecordStore(s => s.recordType)
+  // 正文/类型只在"服务端没有 active_record 时造一个本地占位条目"用得到。
+  // 把它们放进 load 的依赖数组，会让**医生每敲一个字、AI 每吐一个 chunk**
+  // 都重跑 useCallback → useEffect 重新执行 → 重发两个 GET
+  // （progress-notes + workspace）。写一段病程就是上百次无谓请求。
+  // 用 ref 读实时值，依赖只留接诊 id（2026-08-14 第六轮审计修复）。
+  const draftRef = useRef({ content: recordContent, type: recordType })
+  // 在 effect 里同步而不是渲染期直接赋值——渲染期写 ref 是 React 反模式
+  // （eslint react-hooks 规则会拦），且会让组件不按预期更新。
+  useEffect(() => {
+    draftRef.current = { content: recordContent, type: recordType }
+  }, [recordContent, recordType])
   const [items, setItems] = useState<TimelineItem[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -57,16 +68,17 @@ export default function InpatientTimeline({
 
       // 入院记录从 workspace active_record 构造
       const admissionItems: RecordLike[] = []
+      const draft = draftRef.current
       if (recordRes.active_record) {
         admissionItems.push({
           ...recordRes.active_record,
-          record_type: recordType || 'admission_note',
+          record_type: draft.type || 'admission_note',
         })
-      } else if (recordContent) {
+      } else if (draft.content) {
         admissionItems.push({
           id: 'current-admission',
-          record_type: recordType || 'admission_note',
-          content: recordContent,
+          record_type: draft.type || 'admission_note',
+          content: draft.content,
           status: 'draft',
           created_at: new Date().toISOString(),
         })
@@ -78,7 +90,7 @@ export default function InpatientTimeline({
     } finally {
       setLoading(false)
     }
-  }, [currentEncounterId, recordContent, recordType])
+  }, [currentEncounterId])
 
   useEffect(() => {
     load()
