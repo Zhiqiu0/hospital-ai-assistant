@@ -17,6 +17,7 @@ import { message } from '@/services/messageBridge'
 import { SearchOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
+import { genderCode, genderText } from '@/utils/gender'
 
 const { TextArea } = Input
 
@@ -154,10 +155,10 @@ export default function RecordsPage() {
           <Text strong>{name}</Text>
           {row.patient_gender && (
             <Tag
-              color={row.patient_gender === 'male' ? 'blue' : 'pink'}
+              color={genderCode(row.patient_gender) === 'male' ? 'blue' : 'pink'}
               style={{ fontSize: 11, margin: 0 }}
             >
-              {row.patient_gender === 'male' ? '男' : '女'}
+              {genderText(row.patient_gender, '未知')}
             </Tag>
           )}
         </Space>

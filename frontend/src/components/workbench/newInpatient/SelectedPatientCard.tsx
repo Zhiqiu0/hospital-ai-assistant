@@ -5,6 +5,7 @@
  */
 import { Avatar, Space, Tag } from 'antd'
 import type { Patient } from '@/domain/medical'
+import { genderText } from '@/utils/gender'
 
 interface Props {
   patient: Patient
@@ -31,9 +32,7 @@ export default function SelectedPatientCard({ patient }: Props) {
         <Space size={6}>
           <span style={{ fontWeight: 700, fontSize: 15, color: '#065f46' }}>{patient.name}</span>
           {patient.gender !== 'unknown' && (
-            <span style={{ fontSize: 12, color: '#059669' }}>
-              {patient.gender === 'male' ? '男' : '女'}
-            </span>
+            <span style={{ fontSize: 12, color: '#059669' }}>{genderText(patient.gender)}</span>
           )}
           {patient.age && <span style={{ fontSize: 12, color: '#059669' }}>{patient.age}岁</span>}
         </Space>

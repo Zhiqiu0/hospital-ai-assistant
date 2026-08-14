@@ -9,6 +9,7 @@ import { Button, Empty, Spin, Tag, Typography } from 'antd'
 import { PlusOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { genderText } from '@/utils/gender'
 
 const { Text } = Typography
 
@@ -191,7 +192,7 @@ export default function WardView({
                 {/* 性别/年龄/病情 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={{ fontSize: 11, color: 'var(--text-4)' }}>
-                    {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : '未知'}
+                    {genderText(p.gender, '未知')}
                     {p.age != null ? ` · ${p.age}岁` : ''}
                   </Text>
                   {p.admission_condition && (

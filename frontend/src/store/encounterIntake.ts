@@ -27,6 +27,7 @@ import type {
   InquirySuggestion,
   DiagnosisItem,
 } from './types'
+import { genderCode } from '@/utils/gender'
 
 /** quick-start 与 snapshot 共有的最小字段集合 */
 export interface EncounterIntakePayload {
@@ -94,7 +95,7 @@ function syncPatientToCache(payload: EncounterIntakePayload): void {
   cache.upsertPatient({
     id: patient.id,
     name: patient.name,
-    gender: patient.gender === 'male' || patient.gender === 'female' ? patient.gender : 'unknown',
+    gender: genderCode(patient.gender),
     age: patient.age ?? null,
     phone: patient.phone ?? null,
     birth_date: patient.birth_date ?? null,

@@ -28,6 +28,7 @@ import { Modal, Space, Tag, Button, Typography } from 'antd'
 import { FileTextOutlined, CheckOutlined, PrinterOutlined } from '@ant-design/icons'
 import PatientHeaderCard from './recordView/PatientHeaderCard'
 import { handlePrint, type ViewableRecord } from './recordView/viewableRecord'
+import { genderText } from '@/utils/gender'
 
 const { Text } = Typography
 
@@ -57,7 +58,7 @@ export default function RecordViewModal({
             <span style={{ fontWeight: 600 }}>{record.patient_name}</span>
             {record.patient_gender && record.patient_gender !== 'unknown' && (
               <Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>
-                {record.patient_gender === 'male' ? '男' : '女'}
+                {genderText(record.patient_gender)}
               </Text>
             )}
             {record.patient_age != null && (

@@ -25,6 +25,7 @@ import {
 } from '@/store/encounterIntake'
 import type { InquiryData } from '@/store/types'
 import api from '@/services/api'
+import { genderCode } from '@/utils/gender'
 
 /** App.useApp() 返回的 modal 实例类型（能 consume 主题 context，勿用 Modal.info 静态方法） */
 type ModalApi = ReturnType<typeof App.useApp>['modal']
@@ -51,10 +52,7 @@ export function handleInpatientEncounterCreated(
   applyQuickStartResult(res)
   // 后端 patient.gender 是 string | null；与 syncPatientToCache 同步规则一致——
   // 未知值统一归为 unknown，避免类型不匹配
-  const normalizedGender: Gender =
-    res.patient.gender === 'male' || res.patient.gender === 'female'
-      ? res.patient.gender
-      : 'unknown'
+  const normalizedGender: Gender = genderCode(res.patient.gender)
   const patientForActive: Patient = {
     ...res.patient,
     gender: normalizedGender,

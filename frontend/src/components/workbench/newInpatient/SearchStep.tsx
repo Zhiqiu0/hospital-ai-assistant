@@ -13,6 +13,7 @@ import { Input, Spin, Avatar, Space, Tag, Button } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { ACCENT } from './constants'
 import type { Patient } from '@/domain/medical'
+import { genderText } from '@/utils/gender'
 
 interface SearchStepProps {
   keyword: string
@@ -113,7 +114,7 @@ export default function SearchStep({
                   ) : null}
                 </Space>
                 <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                  {p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : ''}
+                  {genderText(p.gender, '')}
                   {p.age ? ` · ${p.age}岁` : ''}
                   {p.phone ? ` · ${p.phone}` : ''}
                 </div>
