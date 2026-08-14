@@ -128,7 +128,12 @@ class MedicalRecordQueryMixin:
                     content_text[:80] + "..." if len(content_text) > 80 else content_text
                 ),
                 "content": content_text,
-                # 病案首页快照：已签发病历必有，老病历可能为 None
+                # 病案首页快照：已签发病历必有，老病历可能为 None。
+                # 快照为空时前端回落到上面的 patient_name/gender/age 三个实时字段
+                # —— 它们是**无条件返回**的（不在任何 include_xxx 开关里），
+                # fallback 链在本路径成立。
+                # （2026-08-14 第六轮审计曾报"不返回 patient 兜底字段"，
+                #   核查后不成立：字段在、前端 viewableRecord.ts 也确实在消费。）
                 "patient_snapshot": record.patient_snapshot,
             }
             if include_patient_no:
