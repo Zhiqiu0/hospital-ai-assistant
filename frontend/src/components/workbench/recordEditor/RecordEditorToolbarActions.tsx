@@ -102,9 +102,12 @@ export default function RecordEditorToolbarActions(props: RecordEditorToolbarAct
   // visit_type 来自 activeEncounterStore（由父组件传入）。编辑器场景没有 snapshot，传 null。
   const user = useAuthStore(s => s.user)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
+  const visitedAt = useActiveEncounterStore(s => s.visitedAt)
   const exportCtx = {
     visit_type: visitType,
-    visit_time: finalizedAt,
+    // 就诊时间用接诊自己的时间，不是签发时刻（2026-08-14 第六轮审计修复）：
+    // 病案首页的"就诊时间"是患者什么时候来的，原先赋成 finalizedAt 直接写错。
+    visit_time: visitedAt,
     doctor_name: user?.real_name,
     department_name: user?.department_name,
   }

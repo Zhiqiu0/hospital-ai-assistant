@@ -45,6 +45,8 @@ export interface EncounterIntakePayload {
   visit_type?: string | null
   patient_reused?: boolean
   previous_record_content?: string | null
+  /** 就诊时间：病案首页的法定字段，不能拿签发时间顶替 */
+  visited_at?: string | null
 }
 
 /** quick-start 响应专用：含初诊/复诊判断、上次病历参考 */
@@ -129,6 +131,7 @@ export function applyQuickStartResult(res: QuickStartResult): void {
     isFirstVisit: !res.patient_reused,
     isPatientReused: !!res.patient_reused,
     previousRecordContent: res.previous_record_content ?? null,
+    visitedAt: res.visited_at ?? null,
   })
 }
 

@@ -179,6 +179,7 @@ export function useWorkbenchBase({
             isFirstVisit: snapshot.is_first_visit,
             isPatientReused: snapshot.is_patient_reused,
             previousRecordContent: snapshot.previous_record_content,
+            visitedAt: snapshot.visited_at,
           })
         }
         setResumeOpen(false)
@@ -195,6 +196,7 @@ export function useWorkbenchBase({
           isFirstVisit: snapshot.is_first_visit,
           isPatientReused: snapshot.is_patient_reused,
           previousRecordContent: snapshot.previous_record_content,
+          visitedAt: snapshot.visited_at,
         })
       }
       if (snapshot.inquiry) {
