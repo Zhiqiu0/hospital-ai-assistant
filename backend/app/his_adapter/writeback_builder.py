@@ -105,6 +105,18 @@ async def build_writeback_payload(
         else ("emergency" if encounter.visit_type == "emergency" else "outpatient")
     )
 
+    # ── record_no：住院多份同类型文书的区分键（2026-08-14 第八轮审计）──────────
+    #
+    # 接口规范 §2.5 白纸黑字：「回写以（visit_id + record_type + record_no）为
+    # 幂等键——该键对应的文书在 HIS 尚无则新建，已有则覆盖更新」，§3.2 请求体
+    # 也列了这个字段。第六轮的 i20260814recordno 迁移专门为此在我方库里加了
+    # record_no 并让签发时正确递增（1..15），**但回写 payload 从头到尾没带上它**。
+    # 后果：住院 15 份日常病程，每次回写的 (visit_id, record_type) 逐字相同，
+    # HIS 按规范只能认定是同一份文书被反复覆盖——我方库里 15 份都在，
+    # HIS 病案里只剩最后一天那份。而医院的**法定病案是 HIS 那一份**。
+    # 门急诊各只有一份，规范允许 record_no 可空，故仅在有值时下发。
+    record_no = getattr(record_row, "record_no", None) if record_row is not None else None
+
     record = {f: getattr(inq, f) for f in _RECORD_FIELDS if inq and getattr(inq, f, None)}
     vitals = {f: getattr(inq, f) for f in _VITALS_FIELDS if inq and getattr(inq, f, None)}
     diagnoses = _build_diagnoses(inq)
@@ -117,6 +129,9 @@ async def build_writeback_payload(
     payload: dict = {
         "visit_id": visit_id,
         "record_type": record_type,
+        # 幂等键第三段（见上方 record_no 说明）；门急诊单份文书时为 None，
+        # 规范允许可空，此时 (visit_id + record_type) 即唯一。
+        "record_no": record_no,
         "is_tcm": is_tcm,
         "status": "draft",
         "record": record,
