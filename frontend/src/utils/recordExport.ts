@@ -103,11 +103,20 @@ function pickGender(v?: string | null): string {
   return GENDER_LABEL[v] || v
 }
 
-function calcAgeFromBirth(birth?: string | null): number | null {
+/**
+ * 按**指定基准日**算年龄（缺省为今天）。
+ *
+ * 病案首页的年龄必须按"就诊那一天"算而不是打印当天（2026-08-14 第六轮审计修复）：
+ * 病案首页的语义是签发瞬间冻结的一份档案，而原实现恒用 new Date()——
+ * 签发时 40 岁的患者，两年后再打印同一份病历会显示 42 岁，
+ * 同一份已签发病历打印两次得到不同内容，与"冻结"的设计直接矛盾。
+ */
+function calcAgeFromBirth(birth?: string | null, asOf?: string | null): number | null {
   if (!birth) return null
   const d = new Date(birth)
   if (Number.isNaN(d.getTime())) return null
-  const now = new Date()
+  const base = asOf ? new Date(asOf) : new Date()
+  const now = Number.isNaN(base.getTime()) ? new Date() : base
   let age = now.getFullYear() - d.getFullYear()
   const m = now.getMonth() - d.getMonth()
   if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--
@@ -173,7 +182,10 @@ export function buildPatientHeaderHtml(
   const name = pick(s.name, p.name) || '—'
   const gender = pickGender(pick(s.gender, p.gender)) || '—'
   const birth = pick(s.birth_date, p.birth_date)
-  const age = p.age ?? calcAgeFromBirth(birth)
+  // 优先按就诊时间算（快照里冻结的那个），拿不到才回落 patient.age 实时值。
+  // 注意顺序：原先是 p.age 优先，等于永远用实时年龄、快照形同虚设。
+  const visitAt = pick(s.visit_time, c.visit_time)
+  const age = calcAgeFromBirth(birth, visitAt) ?? p.age ?? null
   const ageText = age != null ? `${age}岁` : '—'
   const patientNo = pick(s.patient_no, p.patient_no) || '—'
   const idCard = pick(s.id_card, p.id_card) || '—'
