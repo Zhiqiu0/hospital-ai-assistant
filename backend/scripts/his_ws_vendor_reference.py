@@ -44,19 +44,34 @@ def make_sign(app_id: str, timestamp: str, nonce: str, tail: str, secret: str) -
     return hmac.new(secret.encode("utf-8"), text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def signed_message(msg_type: str, payload: dict, app_id: str, secret: str) -> str:
+def signed_message(msg_type: str, payload: dict, app_id: str, secret: str,
+                   msg_id: str = None) -> str:
     """组装一条带签名的消息。⚠ 核心三步，顺序不能乱：
 
     第 1 步：payload 只序列化一次，存成字符串变量；
     第 2 步：用这个字符串拼串算签名；
     第 3 步：把同一个字符串原样拼进消息体——不要让 JSON 库再转第二次，
              否则字段顺序/空格一变，签名就对不上了（联调最常见的坑）。
+
+    ⚠ 我方是按**贵方实际发出的那串字节**验签的，不会重新序列化 payload。
+      所以「算签名用的字符串」与「消息里 payload 的字符串」必须是同一个：
+      中文转不转义（\\uXXXX）、键的顺序、有没有缩进空格，只要两处有一点不同，
+      签名一律对不上（我方回 code=40001），而公式本身并没有错——
+      这正是最难自查的一种情况。
+
+    msg_id 的用法（规范 7.4）：
+      · 每条**新**消息都要生成一个新的 msg_id；
+      · 只有「同一条消息因超时而重发」时才把上次的 msg_id 原样传进来，
+        我方据此判重、不会重复处理。
+      · 反过来，若把 msg_id 复用到另一条新消息上（例如按 visit_id 生成、
+        或整个连接写死一个），我方会先按「内容是否相同」判断：内容不同的
+        照常处理，但请不要依赖这一层兜底，正常情况下就该每条新消息一个新号。
     """
     payload_str = json.dumps(payload, ensure_ascii=False)          # 第 1 步
     timestamp = str(int(time.time() * 1000))                       # 13 位毫秒，每次现取
     nonce = uuid.uuid4().hex                                       # 每条消息现生成，绝不复用
     sign = make_sign(app_id, timestamp, nonce, payload_str, secret)  # 第 2 步
-    msg_id = f"his-{uuid.uuid4().hex[:12]}"                        # 消息唯一号，重发时不变
+    msg_id = msg_id or f"his-{uuid.uuid4().hex[:12]}"              # 新消息新号；重发传入原号
     return ('{"type": "%s", "msg_id": "%s", "app_id": "%s", "timestamp": "%s", '
             '"nonce": "%s", "sign": "%s", "payload": %s}'
             % (msg_type, msg_id, app_id, timestamp, nonce, sign, payload_str))  # 第 3 步
