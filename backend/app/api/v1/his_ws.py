@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/his", tags=["HIS对接"])
 
 
+def _real_client(websocket: WebSocket) -> str:
+    """取真实来源 IP 用于排障。
+
+    websocket.client 拿到的是 nginx 容器的内网地址（172.19.x.x），全院所有
+    连接看起来都来自同一个 IP——联调时「老师连不上」和「有人在扫端口」
+    分不出来。真实地址在 X-Forwarded-For 首段（nginx 已配置转发）。
+    """
+    xff = websocket.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    c = websocket.client
+    return f"{c.host}:{c.port}" if c else "unknown"
+
+
 @router.websocket("/ws")
 async def his_ws_endpoint(websocket: WebSocket) -> None:
     """HIS 长连接入口：握手验签不过直接拒绝，验签通过后进入消息循环。
@@ -43,7 +57,13 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         settings.his_inbound_app_secret, settings.his_sign_clock_skew_seconds,
     )
     if err is not None:
-        logger.warning("his_ws.handshake_rejected: %s client=%s", err, websocket.client)
+        # 分级：完全没带凭证 = 健康探测或端口扫描，不是故障，降到 DEBUG；
+        # 带了凭证但不对 = 真实鉴权失败，保持 WARNING。
+        # 否则 uptime-kuma 每 60 秒探一次就往 error.log 写一条，一天 1440 条，
+        # 把「error.log 只装 WARNING 以上」这个排障入口彻底淹掉。
+        probe = not q.get("app_id") and not q.get("sign")
+        log = logger.debug if probe else logger.warning
+        log("his_ws.handshake_rejected: %s client=%s", err, _real_client(websocket))
         await websocket.close(code=4401)
         return
 
@@ -57,7 +77,7 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         ttl=settings.his_sign_clock_skew_seconds + 60,
     ):
         logger.warning("his_ws.handshake_replay: nonce 重复，拒绝建连 client=%s",
-                       websocket.client)
+                       _real_client(websocket))
         await websocket.close(code=4401)
         return
 
