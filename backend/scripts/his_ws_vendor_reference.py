@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.1 第 7 章）
+"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.3 第 7 章）
 
-本文件演示贵方程序要做的全部 4 件事，可直接运行（python 3.8+，pip install websockets）：
+与 v1.3 规范一致，2026-08-15。
+
+本文件演示贵方程序要做的全部 4 件事，可直接运行
+（python 3.10+，pip install websockets；3.8/3.9 请装 websockets<14）：
   ① 签名握手建立 wss 长连接（断线自动重连）
   ② 发送 encounter_admit 接诊推送，接收我方 ack
   ③ 接收 record_writeback（病历回写→写库）与 record_refresh（通知界面刷新），回 ack
@@ -62,9 +65,19 @@ def signed_message(msg_type: str, payload: dict, app_id: str, secret: str) -> st
 # ══════════════ 业务示例数据（接诊推送，字段见规范 3.1）══════════════
 def admit_sample() -> dict:
     return {
-        "visit_id": "20260728000101",          # 就诊流水号：整个来回的关联主键
+        "visit_id": "20260514001401",          # 就诊流水号：整个来回的关联主键
+        # hospital_code 是幂等键的另一半（规范 2.5：hospital_code + visit_id），
+        # 同一次就诊的推送与回写必须与 visit_id 一起保持完全一致
         "hospital_code": "H33052300001",       # 医疗机构代码（示例值，联调时换贵方实际代码）
+        # patient_no：贵方 HIS 里对同一个人稳定不变的编号（病案号 / 患者主索引号 /
+        # 居民健康档案号均可）。选填但强烈建议——我方按
+        # 「身份证 → patient_no → 手机号+姓名」的顺序跨就诊认人，三者全缺时
+        # 同一位患者每次就诊都会新建档案，医生看不到其既往病历与过敏史（规范 3.1）
+        "patient_no": "BA20260514001",
         "patient_name": "测试患者", "gender": "female", "birth_date": "1968-05-20",
+        "id_card": "330523196805200022", "phone": "13800138000",
+        # 过敏史/既往史属患者纵向档案，跟随患者而非本次就诊；有则一并推
+        "allergy_history": "青霉素过敏", "past_history": "高血压 10 年",
         "dept_code": "1230024", "dept_name": "全科",  # 本次接诊科室的编码+名称（示例取自贵方科室表）
         # doctor_code=医生工号：我方按它把患者派到对应医生的工作台。
         # 工号未在我方注册时 ack 返回 code=40007（message 带具体工号），
@@ -80,6 +93,9 @@ def admit_sample() -> dict:
 # ══════════════ 主循环：④件事都在这里 ══════════════
 async def run_once(app_id: str, secret: str) -> None:
     # ① 握手：四个参数拼在 URL 上，tail 用固定词 "handshake"
+    # ⚠ 握手 nonce 是一次性的：下面这四行每次（重）连都必须重新执行，
+    #   不要把算好的 url 存成配置或成员变量后原样复用——那会被判为重放，
+    #   固定返回 HTTP 403，且与 appId 错、签名错的表现完全一样（规范 7.2）。
     ts = str(int(time.time() * 1000))
     nonce = uuid.uuid4().hex
     sign = make_sign(app_id, ts, nonce, "handshake", secret)
@@ -106,10 +122,30 @@ async def run_once(app_id: str, secret: str) -> None:
 
             elif mtype == "record_writeback":
                 # ③ 病历回写：payload = 完整病历字段 + visit_id（字段见规范 3.2）
-                # 贵方在这里【写数据库】：按 visit_id 定位就诊，病历存为"草稿/待确认"，
-                # 重复收到同一 visit_id 为覆盖更新（幂等，见规范 2.5）。
-                visit_id = msg["payload"].get("visit_id")
-                print(f"[←] 收到病历回写 visit_id={visit_id}，此处写库…")
+                # 贵方在这里【写数据库】，病历存为"草稿/待确认"。
+                #
+                # ⚠️ 无条件写库：本机是否接诊过该患者一律不要判断。
+                #    回写通常路由回接诊那台诊室，但来源诊室掉线时我方会改投
+                #    任意一条在线连接（写的是全院共享库，与诊室无关）。
+                #    按「是不是本机接诊的」过滤会导致该份病历彻底丢失（规范 7.2）。
+                #
+                # ⚠️ 幂等键是三段：visit_id + record_type + record_no（见规范 2.5）
+                #    · 该键对应的文书尚无 → 新建；已有 → 覆盖更新
+                #    · 住院一次就诊有多份文书（入院记录 / 多次日常病程 / 出院记录…），
+                #      必须靠 record_no 区分。若只按 visit_id 定位，
+                #      15 份日常病程会互相覆盖，最终只剩最后一天那份。
+                #    · 我方本期恒下发 record_no（门诊/急诊恒为 "1"），
+                #      请一律按三段键定位，不要为门诊做两段键的特例分支。
+                #
+                # ⚠️ 补投：连接断开后由我方对账任务重新发起的重投会使用新的
+                #    msg_id，只按 msg_id 判重会产生重复病历，务必以上面的
+                #    业务幂等键为准（规范 7.4）。
+                payload = msg["payload"]
+                visit_id = payload.get("visit_id")
+                record_type = payload.get("record_type")
+                record_no = payload.get("record_no")  # 住院多份文书的序号
+                print(f"[←] 收到病历回写 visit_id={visit_id} "
+                      f"type={record_type} no={record_no}，此处按三段键写库…")
                 await ws.send(signed_message("ack", {
                     "code": 0, "message": "success", "trace_id": uuid.uuid4().hex,
                     "data": {"record_id": "贵方落库后的病历ID"},
@@ -117,9 +153,13 @@ async def run_once(app_id: str, secret: str) -> None:
                 }, app_id, secret))
 
             elif mtype == "record_refresh":
-                # ③ 刷新通知：让诊室 HIS 界面把该就诊的病历页重新从库里加载显示
+                # ③ 刷新通知：让诊室 HIS 界面把该就诊的病历页重新从库里加载显示。
+                # target 与本次写入的 record_type 完全一致（原样透传，不做任何
+                # 加/减后缀的加工），据此定位要刷新的是哪一类文书（规范 3.3）。
                 visit_id = msg["payload"].get("visit_id")
-                print(f"[←] 收到刷新通知 visit_id={visit_id}，此处通知界面刷新…")
+                target = msg["payload"].get("target")
+                print(f"[←] 收到刷新通知 visit_id={visit_id} target={target}，"
+                      f"此处刷新该类文书的界面…")
                 await ws.send(signed_message("ack", {
                     "code": 0, "message": "success", "trace_id": uuid.uuid4().hex,
                     "data": {}, "ack_msg_id": msg["msg_id"],
@@ -127,16 +167,27 @@ async def run_once(app_id: str, secret: str) -> None:
 
 
 async def main(app_id: str, secret: str) -> None:
-    """断线自动重连：1s、2s、4s…指数退避，最大 60s（规范 7.4）。"""
+    """断线自动重连：1s、2s、4s…指数退避，最大 60s（规范 7.4）。
+
+    注意「正常关闭」也要退避：我方服务端的两条主要关闭路径（90 秒空闲超时、
+    ack 重发耗尽）都是正常关闭（close code 1000），此时 `async for` 是无异常
+    正常结束的。若只在异常分支退避，就会变成「连上→被关→立刻重连」的
+    零延迟紧循环。所以下面把两种结束方式并到同一条退避路径上。
+    """
     delay = 1
     while True:
+        started = time.time()
         try:
             await run_once(app_id, secret)
-            delay = 1
+            print(f"[!] 连接已被对端正常关闭，{delay}s 后重连")
         except Exception as exc:
             print(f"[!] 连接断开：{exc}，{delay}s 后重连")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 60)
+        # 退避复位的条件是「这次连接活够久」，而不是「连上过」：
+        # 若连上就复位，遇到「握手成功但立刻被关」的故障会退化成 1s 紧循环。
+        if time.time() - started >= 60:
+            delay = 1
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 60)
 
 
 if __name__ == "__main__":

@@ -104,18 +104,32 @@ async def _post_with_retry(
     raise last_exc  # type: ignore[misc]
 
 
+def _coerce_code(raw) -> int:
+    """把 HIS 回的 code 归一成 int，认不出按失败（-1）处理。
+
+    厂商回 "code": "0"（字符串）很常见——弱类型语言或直接透传数据库列都会这样。
+    HTTP 通道本来就做了归一，WS 通道（本期实际通道）此前是裸比较，同一个响应
+    HTTP 判成功、WS 判失败：病历其实已写进 HIS，我方却标记回写失败并交给对账
+    补投，补投用新 msg_id，只能靠厂商的业务幂等键兜住，一旦对方实现有偏差
+    HIS 病案里就多出一份。两处统一走这里。
+    """
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return -1
+
+
 def _envelope_code(resp: httpx.Response) -> tuple[int, str, dict]:
     """解析 HIS 返回的统一信封，返回 (code, message, data)；非 JSON 视为失败。"""
     try:
         body = resp.json()
     except (ValueError, json.JSONDecodeError):
         return -1, "响应非 JSON", {}
-    code = body.get("code", -1)
-    try:
-        code = int(code)
-    except (ValueError, TypeError):
-        code = -1
-    return code, str(body.get("message", "")), (body.get("data") or {})
+    return (
+        _coerce_code(body.get("code", -1)),
+        str(body.get("message", "")),
+        (body.get("data") or {}),
+    )
 
 
 async def send_writeback(
@@ -295,7 +309,7 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
             wp.MSG_WRITEBACK, payload, aid, secret, prefer_visit=payload["visit_id"])
     except ConnectionError as exc:
         return WritebackResult(ok=False, status="write_failed", message=f"WS 发送失败：{exc}")
-    code = ack.get("code", -1)
+    code = _coerce_code(ack.get("code", -1))  # 与 HTTP 通道同口径，见 _coerce_code
     if code != 0:
         return WritebackResult(
             ok=False, status="write_failed",
@@ -318,7 +332,7 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
             ok=False, status="refresh_failed",
             message=f"刷新 WS 发送失败：{exc}", his_doc_id=his_doc_id,
         )
-    if rack.get("code", -1) != 0:
+    if _coerce_code(rack.get("code", -1)) != 0:
         return WritebackResult(
             ok=False, status="refresh_failed",
             message=f"刷新 HIS 返回 code={rack.get('code')}", his_doc_id=his_doc_id,

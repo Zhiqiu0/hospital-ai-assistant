@@ -1,4 +1,4 @@
-"""HIS WebSocket 通道路由（接口规范 v1.1 第 7 章，方案 B）：/api/v1/his/ws
+"""HIS WebSocket 通道路由（接口规范 v1.3 第 7 章，方案 B）：/api/v1/his/ws
 
 职责：握手验签 → 接入连接管理器 → 消息循环（分发 ping/ack/接诊推送）→ 心跳与空闲超时。
 上行消息我方强制验签；下行（回写/刷新）由 writeback_sender 经 ws_manager 发出。

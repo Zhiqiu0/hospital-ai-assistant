@@ -150,15 +150,32 @@ class MedicalRecordSignMixin:
                 select(PatientModel).where(PatientModel.id == encounter.patient_id)
             )
             patient = patient_r.scalar_one_or_none()
-            # 一次 join 拿到医生名 + 科室名（doctor 没填科室时 dept_name 为 None，下游兜底）
             doctor_r = await self.db.execute(
-                select(UserModel.real_name, DeptModel.name)
-                .outerjoin(DeptModel, UserModel.department_id == DeptModel.id)
-                .where(UserModel.id == doctor_id)
+                select(UserModel.real_name).where(UserModel.id == doctor_id)
             )
             doctor_row = doctor_r.one_or_none()
             doctor_name = doctor_row[0] if doctor_row else None
-            dept_name = doctor_row[1] if doctor_row else None
+
+            # 科室取**本次接诊的科室**，不是医生编制科室（2026-08-14 用户决策）。
+            #
+            # 原先这里 join 的是 users.department_id —— 医生的编制科室。
+            # 但医生跨科室坐班时（本院确实存在），病历首页上的科室就是错的：
+            # 人在外科坐班，病历却写着他编制所在的内科。
+            # encounter.department_id 现在由接诊推送的挂号科室解析而来
+            # （见 his_adapter/admit_service._resolve_department），
+            # 手工建的接诊则沿用建档时选的科室——两条路都是"这次就诊的科室"。
+            # 接诊没有科室时（老数据/未填）回退医生编制科室，总比空着强。
+            dept_name = None
+            if encounter.department_id:
+                dept_name = (await self.db.execute(
+                    select(DeptModel.name).where(DeptModel.id == encounter.department_id)
+                )).scalar_one_or_none()
+            if dept_name is None:
+                dept_name = (await self.db.execute(
+                    select(DeptModel.name)
+                    .join(UserModel, UserModel.department_id == DeptModel.id)
+                    .where(UserModel.id == doctor_id)
+                )).scalar_one_or_none()
             # 患者快照同样只冻结一次：它也是 sign_hash 的输入，重写会让历史
             # 签发版本的哈希全部失效（理由同上方 submitted_at）。快照的语义本就是
             # "签发瞬间冻结"，二次签发时重新冻结反而违背它自己的设计。

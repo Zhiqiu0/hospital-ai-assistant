@@ -115,7 +115,13 @@ async def build_writeback_payload(
     # HIS 按规范只能认定是同一份文书被反复覆盖——我方库里 15 份都在，
     # HIS 病案里只剩最后一天那份。而医院的**法定病案是 HIS 那一份**。
     # 门急诊各只有一份，规范允许 record_no 可空，故仅在有值时下发。
-    record_no = getattr(record_row, "record_no", None) if record_row is not None else None
+    # 转字符串下发（2026-08-14 规范一致性核对修复）：规范 3.2 把 record_no 声明为
+    # string，而这里原样下发 Python int → JSON number。厂商用强类型 DTO
+    # （Java / C# 严格模式）反序列化会直接抛类型错误整包拒收；而它是幂等键的
+    # 一段，类型不一致直接影响病案是新建还是覆盖，不能靠对方宽松解析碰运气。
+    # 规范里 visit_id / vitals.* 一律是 string，这里跟着统一。
+    _no = getattr(record_row, "record_no", None) if record_row is not None else None
+    record_no = str(_no) if _no is not None else None
 
     record = {f: getattr(inq, f) for f in _RECORD_FIELDS if inq and getattr(inq, f, None)}
     vitals = {f: getattr(inq, f) for f in _VITALS_FIELDS if inq and getattr(inq, f, None)}
@@ -129,15 +135,13 @@ async def build_writeback_payload(
     payload: dict = {
         "visit_id": visit_id,
         "record_type": record_type,
-        # 幂等键第三段（见上方 record_no 说明）；门急诊单份文书时为 None，
-        # 规范允许可空，此时 (visit_id + record_type) 即唯一。
-        "record_no": record_no,
+        # 幂等键第三段（见上方 record_no 说明）。
         "is_tcm": is_tcm,
         "status": "draft",
         "record": record,
         "vitals": vitals,
         "diagnoses": diagnoses,
-        "full_text": full_text,
+
         "meta": {
             "source": "mediscribe_ai",
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -147,4 +151,20 @@ async def build_writeback_payload(
             "app_version": app_version,
         },
     }
+    # ── 空值一律不下发（2026-08-14 规范一致性核对修复）────────────────────
+    #
+    # 规范 2.5 白纸黑字：「字段缺省（不传）= 不更新该项；传空串("") = 清空该项」。
+    # 而原先 full_text 取不到正文时会发空串、record_no 无值时发 JSON null、
+    # meta.doctor_code 取不到时发空串——按规范语义，厂商合规实现就会把 HIS 里
+    # 已有的病历全文/医生工号**清掉**，而这恰恰是「取不到值」的异常路径，
+    # 本该是「什么都别动」。record.* / vitals.* 走的就是「空则不下发」，
+    # 唯独这几个破了规则，两处语义自相矛盾。
+    # JSON null 更是规范里没定义的第三态（厂商可能当 "null" 字符串、当 0、或 NPE）。
+    if record_no is not None:
+        payload["record_no"] = record_no
+    if full_text:
+        payload["full_text"] = full_text
+    if not payload["meta"].get("doctor_code"):
+        payload["meta"].pop("doctor_code", None)
+
     return payload

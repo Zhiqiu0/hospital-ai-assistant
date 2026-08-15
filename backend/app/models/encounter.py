@@ -44,16 +44,16 @@ class Encounter(Base, TimestampMixin):
 
     __tablename__ = "encounters"
 
-    # 与真实 DB 对齐：his_external_ref->'his_patient_no' 上的 GIN 函数索引
-    # （由 alembic c9d0e1f2a3b4 迁移建），用于「按 HIS 患者编号反查接诊」。
-    # 原 model 未声明此索引 → autogenerate 判为「需删除」。这里显式复刻。
-    # postgresql_using='gin' 仅 PostgreSQL 生效；SQLite 测试库经 create_all 时
-    # 该 kwarg 被忽略，退化为普通表达式索引（SQLite 3.45 支持 -> JSON 运算符）。
+    # 按 HIS 患者主索引号反查接诊（患者查重强键 2，见 admit_service
+    # ._find_patient_by_his_no）。2026-08-15 换索引形状：
+    # 原索引是 GIN((his_external_ref -> 'his_patient_no'))，但查询是**等值查
+    # JSON 标量**，走的是 ->> 取文本后比对，GIN 那个形状根本命中不了
+    # （GIN 服务的是整列 @> 包含查询）。等值查 JSON 标量的通行做法是在 ->>
+    # 表达式上建 btree，这里改成与查询逐字对应的形状。
     __table_args__ = (
         Index(
             "idx_encounters_his_patient_no",
-            text("(his_external_ref -> 'his_patient_no')"),
-            postgresql_using="gin",
+            text("(his_external_ref ->> 'his_patient_no')"),
         ),
         # 热路径索引（2026-08-11 病历安全）："我的接诊"/叫号队列都按
         # doctor_id + visited_at 过滤排序，原先无索引全表扫描。索引随 alembic 基线建出。

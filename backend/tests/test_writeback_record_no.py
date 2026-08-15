@@ -67,7 +67,8 @@ async def test_住院多份病程回写各带自己的record_no(async_db):
         payload = await build_writeback_payload(async_db, "enc-1")
         seen.append((payload["visit_id"], payload["record_type"], payload.get("record_no")))
 
-    assert seen[0][2] == 1 and seen[1][2] == 2 and seen[2][2] == 3, f"record_no 未下发：{seen}"
+    # 字符串形式下发（规范 3.2 声明 string；发 int 会让强类型 DTO 整包拒收）
+    assert seen[0][2] == "1" and seen[1][2] == "2" and seen[2][2] == "3", f"record_no 未下发：{seen}"
     assert len(set(seen)) == 3, f"三份病程的幂等键重复了，HIS 侧会互相覆盖：{seen}"
 
 
@@ -79,7 +80,7 @@ async def test_payload包含record_no字段(async_db):
 
     payload = await build_writeback_payload(async_db, "enc-1")
     assert "record_no" in payload, "payload 里没有 record_no 这个键"
-    assert payload["record_no"] == 1
+    assert payload["record_no"] == "1", "必须是字符串（规范声明 string）"
 
 
 @pytest.mark.asyncio
@@ -90,8 +91,8 @@ async def test_门诊单份文书record_no不影响原有行为(async_db):
 
     payload = await build_writeback_payload(async_db, "enc-1")
     assert payload["record_type"] == "outpatient"
-    # 有值就带上（我方库里 record_no 默认回填为 1），不为 None 也不报错
-    assert payload["record_no"] in (1, None)
+    # 有值就带上（我方库里 record_no 默认回填为 1）
+    assert payload["record_no"] == "1"
 
 
 # ── HTTP 回写幂等键（第八轮审计）────────────────────────────────────────────
@@ -131,3 +132,49 @@ def test_http重试链路共用同一个幂等键():
     assert set(seen_ids) == {"wb-V001-course_record-3"}, "重试时幂等键变了，HIS 无法判重"
     # nonce 必须每次都换（防重放要求），与幂等键是两回事
     assert len(set(seen_nonces)) == 3, "nonce 没有每次重新生成"
+
+
+# ── 空值语义（2026-08-14 规范一致性核对修复）────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_取不到正文时不下发full_text(async_db):
+    """规范 2.5：字段缺省=不更新，传空串=**清空该项**。
+
+    原先取不到正文会发 full_text=""，按规范厂商合规实现就会把 HIS 里已有的
+    病历全文清掉——而这恰恰是"取不到值"的异常路径，本该什么都别动。
+    record.* / vitals.* 走的就是"空则不下发"，唯独 full_text 破了规则。
+    """
+    await _seed_encounter(async_db)
+    # 只建病历行、不建版本 → 取不到正文
+    from app.models.medical_record import MedicalRecord
+    async_db.add(MedicalRecord(
+        id="rec-empty", encounter_id="enc-1", record_type="outpatient",
+        record_no=1, status="submitted", current_version=1,
+        submitted_at=datetime(2026, 8, 1, 10, 0),
+    ))
+    await async_db.flush()
+
+    payload = await build_writeback_payload(async_db, "enc-1")
+    assert "full_text" not in payload, "空正文被当成「清空指令」发给了 HIS"
+
+
+@pytest.mark.asyncio
+async def test_取不到医生工号时不下发该键(async_db):
+    """同上：空串按规范等于要求 HIS 清空该项。"""
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    from datetime import date
+
+    async_db.add(Patient(id="p9", name="李四", birth_date=date(1980, 1, 1)))
+    async_db.add(Encounter(
+        id="enc-9", patient_id="p9", doctor_id="doc-1",
+        visit_type="outpatient", status="in_progress",
+        visited_at=datetime(2026, 8, 1), visit_no="MZ9",
+        # 没有 doctor_code
+        his_external_ref={"source": "admit_push", "his_visit_no": "MZ9"},
+    ))
+    await async_db.flush()
+    await _sign_record(async_db, record_type="outpatient", record_no=1, text="正文")
+
+    payload = await build_writeback_payload(async_db, "enc-9")
+    assert "doctor_code" not in payload["meta"], "空工号被当成「清空指令」发出去了"
