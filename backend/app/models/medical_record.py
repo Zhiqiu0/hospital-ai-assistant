@@ -34,13 +34,18 @@ from app.models.base import TimestampMixin, generate_uuid
 class MedicalRecord(Base, TimestampMixin):
     """病历主表（一次接诊可有多份不同类型的病历，如门诊病历 + 转诊记录）。
 
-    record_type 可选值：
+    record_type 可选值（与《HIS 接口规范》3.2 的 record_type 枚举一一对应，
+    该值会原样回写给 HIS，也用作刷新消息的 target，改动须同步规范）：
       outpatient          : 门诊病历
+      emergency           : 急诊病历
       admission_note      : 入院记录
       first_course_record : 首次病程记录
       course_record       : 日常病程记录
+      senior_round        : 上级医师查房记录
+      pre_op_summary      : 术前小结
+      op_record           : 手术记录
+      post_op_record      : 术后首次病程
       discharge_record    : 出院记录
-      op_record           : 手术记录（及其他住院类型）
     """
 
     __tablename__ = "medical_records"
