@@ -478,7 +478,14 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     birth_date: Optional[date] = None
     if payload.birth_date:
         try:
-            birth_date = date.fromisoformat(payload.birth_date)
+            # 兼容 YYYYMMDD 紧凑写法：CSRQ 在 HIS 里常是 date/int 列，
+            # 序列化出来就是 19680520。入参容错已让它不再被拒收，但若这里
+            # 解析不了就等于静默丢掉出生日期——年龄影响用药与诊断判断，
+            # 不能默默丢。补一次紧凑格式转换即可，不放宽其它规则。
+            raw_bd = payload.birth_date.strip()
+            if len(raw_bd) == 8 and raw_bd.isdigit():
+                raw_bd = f"{raw_bd[:4]}-{raw_bd[4:6]}-{raw_bd[6:]}"
+            birth_date = date.fromisoformat(raw_bd)
         except ValueError:
             pass  # 解析不了就留空，不阻塞建档
 
