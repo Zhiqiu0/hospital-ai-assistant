@@ -52,6 +52,11 @@ def _signed_headers(body_raw: str, request_id: str) -> dict:
       HIS 无从判重。项目自己在 reconcile 与 event_bus 的注释里反复强调
       「重复回写 = 病案里出现两份病历」，发送侧却从未提供让 HIS 去重的手段。
       WS 通道用的是 msg_id，HTTP 这条对应下来就是这个头。
+
+    **规范里有意不列这个头**（2026-08-15，别当成 spec↔code 不一致再报一次）：
+    通道已定方案 B，这个头只走 HTTP 回落路径，写进规范只会让厂商读完一段话
+    发现「本期无需实现」。2.5 已约定「忽略无法识别的字段」，多发一个头无害；
+    真回落方案 A 时双方要重谈接口地址与凭证，届时再补进文档。
     """
     app_id = settings.his_writeback_app_id
     ts = str(int(time.time() * 1000))
