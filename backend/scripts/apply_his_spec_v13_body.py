@@ -1,6 +1,6 @@
 """把 23 项变更逐条应用到规范正文（v1.3）。
 
-每处改动都：① 黄色高亮 ② 前缀「▲」标记，
+每处改动都：① 淡底色标记 ② 前缀「▲」，
 让厂商翻到那一节时想漏都难（摘要页给全局，正文标记给细节）。
 
 设计：所有修改都通过「按内容定位」而不是「按索引定位」——
@@ -20,6 +20,26 @@ sys.path.insert(0, str(Path(__file__).parent))
 from his_spec_changes_v13 import CHANGES  # noqa: E402
 
 FONT = "Microsoft YaHei"
+
+
+def _mark(run):
+    """给 run 打「本次修订」标记：淡底色，而不是 Word 的荧光黄高亮。
+
+    2026-08-15 改：原先用 WD_COLOR_INDEX.YELLOW，那是荧光笔黄（#FFFF00 满饱和），
+    全文 49 处铺下来非常晃眼，读者第一眼看到的是荧光而不是内容。
+    换成字符底纹（w:shd fill），颜色取淡杏黄——仍然一眼能扫到「这段改过」，
+    但不抢正文。标记的作用是索引，不是警报。
+    """
+    from docx.oxml import OxmlElement
+    rpr = run._element.get_or_add_rPr()
+    for old in rpr.findall(qn("w:shd")):   # 幂等：同一 run 可能被多条变更改到
+        rpr.remove(old)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), "FDF3D8")        # 淡杏黄，比荧光黄柔和得多
+    rpr.append(shd)
+    return run
 
 
 def _set_font(run, *, size=None, bold=None, color=None):
@@ -49,10 +69,10 @@ _failed: list[str] = []
 # ── 基础操作 ────────────────────────────────────────────────────────────────
 
 def _mark_runs(para, *, highlight=True):
-    """给段落所有 run 打黄色高亮。"""
+    """给段落所有 run 打「本次修订」淡底色标记。"""
     for r in para.runs:
         if r.text.strip() and highlight:
-            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            _mark(r)
 
 
 def _set_text(para, text, *, mark=True):
@@ -124,7 +144,7 @@ def _append_para_after(doc, needle, text, tag):
         r._r.getparent().remove(r._r)
     run = p.add_run("▲ " + text)
     _set_font(run, size=10, bold=True, color=RED)
-    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    _mark(run)
     p.paragraph_format.line_spacing = 1.5
     _applied.append(tag)
 
@@ -148,7 +168,7 @@ def _edit_cell(tbl, row_match, col, new_text, tag, *, col_match=0):
                 r._r.getparent().remove(r._r)
             run = para.add_run("▲ " + new_text)
             _set_font(run, size=9)
-            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            _mark(run)
             _applied.append(tag)
             return True
     _failed.append(f"{tag}（表里找不到行 {row_match}）")
@@ -176,7 +196,7 @@ def _insert_row_after(tbl, after_key, values, tag, *, col_match=0):
             r._r.getparent().remove(r._r)
         run = para.add_run(("▲ " if i == 0 else "") + v)
         _set_font(run, size=9)
-        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        _mark(run)
     _applied.append(tag)
     return True
 
@@ -189,7 +209,7 @@ def _add_row(tbl, values, tag):
             r._r.getparent().remove(r._r)
         run = para.add_run(("▲ " if i == 0 else "") + v)
         _set_font(run, size=9)
-        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        _mark(run)
     _applied.append(tag)
 
 
@@ -198,8 +218,15 @@ def _add_row(tbl, values, tag):
 def main() -> None:
     doc = docx.Document(str(SRC))
     tbls = _tables(doc)
-    # 前 3 张是新插的变更摘要表，原文档的表从第 4 张开始
-    off = 3
+    # 摘要表张数会变（2026-08-15 由 A/B/C 三张减为 A/B 两张），**绝不能写死**——
+    # 写死成 3 的话，减到 2 张后所有 T(i) 会整体错位一格，改到隔壁表的单元格上，
+    # 而且未必报错（按内容定位的那几条会 _failed，按表定位的会静默改错地方）。
+    # 摘要表的表头首格恒为「位置」，原文档里没有这样的表，据此自动数。
+    off = 0
+    for _t in tbls:
+        if _t.rows[0].cells[0].text.strip() != "位置":
+            break
+        off += 1
     T = lambda i: tbls[off + i]  # noqa: E731  原文档表格编号
 
     # 【A】3.2 record_type 枚举补 3 个
@@ -475,7 +502,7 @@ def main() -> None:
                     _r._r.getparent().remove(_r._r)
                 _run = _p.add_run("▲ （本方案已取消，见本节下方说明）")
                 _set_font(_run, size=9)
-                _run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                _mark(_run)
                 _applied.append("B-5.2表格极薄Agent行")
 
     # 【A】附录 A.4 两条 ack 示例补齐签名字段。我方对 ack 强制验签，
@@ -551,7 +578,8 @@ def main() -> None:
     # 【C】扉页修订说明开头仍是「v1.2 修订：」，版本号却已是 v1.3
     _edit_para(doc, "v1.2 修订：通道定稿",
                "v1.2 修订：通道定稿",
-               "v1.3 修订：共 %d 处，逐条见文首《本次修订说明》。"
+               "v1.3 修订：共 %d 处，需贵方过目的已列在文首《本次修订说明》，"
+               "其余为口径写明、正文就地标出。"
                "（v1.2 修订：通道定稿" % len(CHANGES),
                "C-扉页版本说明")
 
