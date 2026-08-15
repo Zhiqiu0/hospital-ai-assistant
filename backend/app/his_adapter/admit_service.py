@@ -495,28 +495,39 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             pass  # 解析不了就留空，不阻塞建档
 
     service = PatientService(db)
-    # ── 强键 1：身份证（全国唯一，优先级最高）─────────────────────────────
+    # ── 三级查重，顺序：身份证 → patient_no → 手机号+姓名 ────────────────────
+    #
+    # 顺序必须与规范 3.1 及两份厂商参考实现写的完全一致（2026-08-15 修正）：
+    # 此前是整块调 find_existing（内部依次试身份证、手机号+姓名），**只有它全部
+    # 落空才轮到 patient_no**，于是病案号实际排在手机号后面，与对外文档相反。
+    # 本函数原注释写的是「把原本掉到手机号弱匹配的患者接住」——可见当初意图
+    # 就是让 patient_no 排在手机号之前，是整块调用把顺序吃掉了。
+    #
+    # 为什么 patient_no 该排在手机号+姓名之前：手机号会被回收、儿童常留家长
+    # 号码、诊室还爱填占位号，「手机号+姓名」是三个强键里最不可靠的一个；
+    # 而 patient_no 是医院自己的患者主索引，同一个人恒定、不同人不重。
+    #
     # allow_weak_match=False：HIS 全自动链路禁用「姓名+生日」弱键匹配，
     # 避免同名同生日的不同患者被误合并成一份档案（跨人病历污染是临床事故）。
-    # 只有身份证 / 手机号+姓名 强键命中才复用；否则一律新建（可事后人工合并）。
+    # 三级强键都不中就新建（可事后人工合并）。
     found = await service.find_existing(
         id_card=payload.id_card or None,
-        phone=payload.phone or None,
-        name=payload.patient_name,
-        birth_date=birth_date,
         allow_weak_match=False,
     )
     if not found:
-        # ── 强键 2：hospital_code + patient_no（院内患者主索引号）────────────
-        # 2026-08-15 补接。放在身份证之后：身份证全国唯一、强度更高，有它时
-        # 行为与此前完全一致（零回归）；只有身份证缺失时这条才生效，把原本
-        # 「掉到手机号弱匹配、再掉到新建档案」的患者接住。
-        # 必须与 hospital_code 联合——院内编号只在本院唯一，跨院会撞号。
+        # 院内患者主索引号必须与 hospital_code 联合——院内编号只在本院唯一，
+        # 跨院会撞号。
         pid = await _find_patient_by_his_no(
             db, payload.hospital_code, payload.patient_no
         )
         if pid:
             return pid
+        found = await service.find_existing(
+            phone=payload.phone or None,
+            name=payload.patient_name,
+            birth_date=birth_date,
+            allow_weak_match=False,
+        )
     if found:
         return found["id"]
 

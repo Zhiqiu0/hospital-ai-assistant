@@ -28,6 +28,16 @@ async def _make_patient(db, **over):
     return created["id"]
 
 
+async def _mk_doctor(db, username="dedup-doc"):
+    """建一个医生账号——encounters.doctor_id 非空，造既往就诊时必须有。"""
+    from app.models.user import User
+    doctor = User(username=username, password_hash="x", real_name="王医生",
+                  role="doctor", is_active=True)
+    db.add(doctor)
+    await db.flush()
+    return doctor.id
+
+
 # ── #16 查重归一化 ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -157,3 +167,84 @@ async def test_缺姓名或生日时不返回候选(async_db):
     svc = PatientService(async_db)
     assert await svc.find_weak_candidates(name="张三", birth_date=None) == []
     assert await svc.find_weak_candidates(name=None, birth_date=date(1985, 3, 12)) == []
+
+
+# ── 查重顺序：身份证 → patient_no → 手机号+姓名（2026-08-15 第十轮追加）──────
+#
+# 规范 3.1 与两份厂商参考实现都白纸黑字写着这个顺序，而代码此前是整块调
+# find_existing（内部依次试身份证、手机号+姓名），只有它全部落空才轮到
+# patient_no——病案号实际排在手机号后面，与对外文档相反。
+
+@pytest.mark.asyncio
+async def test_patient_no_优先于手机号姓名(async_db):
+    """无身份证时，病案号命中的档案优先于「手机号+姓名」命中的档案。
+
+    构造一个能区分两种顺序的场景：
+      档案 A —— 有手机号，能被「手机号+姓名」匹配到
+      档案 B —— 无手机号，但有一次带 patient_no 的既往就诊
+    推送同时带上这个手机号与该 patient_no。
+    按文档顺序应返回 B（病案号更强）；按旧实现会返回 A。
+    """
+    from app.his_adapter.admit_service import _find_or_create_patient
+    from app.his_adapter.models import AdmitPushRequest
+    from app.models.encounter import Encounter
+
+    a_id = await _make_patient(async_db, name="李四", id_card=None,
+                               phone="13900139000")
+    b_id = await _make_patient(async_db, name="李四", id_card=None, phone=None)
+    # 给 B 造一次带 patient_no 的既往就诊（查重就是从这里认出他的）
+    doc_id = await _mk_doctor(async_db)
+    async_db.add(Encounter(
+        patient_id=b_id, doctor_id=doc_id, visit_no="OLD-1", status="completed", visit_type="outpatient",
+        his_external_ref={"source": "admit_push", "hospital_code": "H1",
+                          "his_patient_no": "BA-0001", "his_visit_no": "OLD-1"},
+    ))
+    await async_db.flush()
+
+    payload = AdmitPushRequest(
+        visit_id="NEW-1", hospital_code="H1", patient_name="李四",
+        patient_no="BA-0001", phone="13900139000",
+    )
+    got = await _find_or_create_patient(async_db, payload)
+    assert got == b_id, "patient_no 应优先于「手机号+姓名」（规范 3.1 的顺序）"
+
+
+@pytest.mark.asyncio
+async def test_有身份证时行为不变(async_db):
+    """身份证仍是最高优先级——有它时命中谁与加 patient_no 之前完全一致。"""
+    from app.his_adapter.admit_service import _find_or_create_patient
+    from app.his_adapter.models import AdmitPushRequest
+    from app.models.encounter import Encounter
+
+    real_id = await _make_patient(async_db, name="王五", id_card=_ID, phone=None)
+    other_id = await _make_patient(async_db, name="王五", id_card=None, phone=None)
+    doc_id = await _mk_doctor(async_db, "dedup-doc2")
+    async_db.add(Encounter(
+        patient_id=other_id, doctor_id=doc_id, visit_no="OLD-2", status="completed", visit_type="outpatient",
+        his_external_ref={"source": "admit_push", "hospital_code": "H1",
+                          "his_patient_no": "BA-0002", "his_visit_no": "OLD-2"},
+    ))
+    await async_db.flush()
+
+    payload = AdmitPushRequest(
+        visit_id="NEW-2", hospital_code="H1", patient_name="王五",
+        id_card=_ID, patient_no="BA-0002",
+    )
+    got = await _find_or_create_patient(async_db, payload)
+    assert got == real_id, "身份证命中时不应被 patient_no 改写（零回归）"
+
+
+@pytest.mark.asyncio
+async def test_都不中时仍回落手机号姓名(async_db):
+    """patient_no 没命中时，「手机号+姓名」这级不能被跳过。"""
+    from app.his_adapter.admit_service import _find_or_create_patient
+    from app.his_adapter.models import AdmitPushRequest
+
+    a_id = await _make_patient(async_db, name="赵六", id_card=None,
+                               phone="13700137000")
+    payload = AdmitPushRequest(
+        visit_id="NEW-3", hospital_code="H1", patient_name="赵六",
+        patient_no="BA-NOT-EXIST", phone="13700137000",
+    )
+    got = await _find_or_create_patient(async_db, payload)
+    assert got == a_id, "病案号查不到时应继续用手机号+姓名，不能直接新建"
