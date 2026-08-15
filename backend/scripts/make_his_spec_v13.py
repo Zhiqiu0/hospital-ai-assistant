@@ -129,9 +129,11 @@ def main() -> None:
         anchor._p.addprevious(tbl._tbl)
         para_before(anchor, "", size=6, space_after=8)
 
+    # 必须说明 ▲ 是什么：全文 31 处三角标记，不解释的话厂商会当成排版残留或乱码。
+    # 另：实际用的是黄色高亮（w:highlight）而不是底纹（w:shd），措辞要对上。
     para_before(anchor,
                 "以下为规范正文（v1.3）。正文中对应上述条目的位置已同步修订，"
-                "并以黄色底纹标出，便于对照。",
+                "均以黄色高亮 + 句首「▲」标出，便于对照。",
                 size=10, color=GRAY, space_after=2)
     para_before(anchor, "─" * 52, size=9, color=GRAY, space_after=12)
 

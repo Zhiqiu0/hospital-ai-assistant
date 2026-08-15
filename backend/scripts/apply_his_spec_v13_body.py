@@ -16,6 +16,9 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from docx.table import Table
 
+sys.path.insert(0, str(Path(__file__).parent))
+from his_spec_changes_v13 import CHANGES  # noqa: E402
+
 FONT = "Microsoft YaHei"
 
 
@@ -54,11 +57,17 @@ def _mark_runs(para, *, highlight=True):
 
 def _set_text(para, text, *, mark=True):
     """整段替换文本，保留首个 run 的字体，并打标记。"""
+    # 前缀幂等：同一段落可能被多条变更先后改到（如附录 A.1 示例要补 3 个字段），
+    # 每次都无条件加前缀会叠成「▲ ▲ ▲ ▲」
+    if mark and text.lstrip().startswith("▲"):
+        mark_prefix = ""
+    else:
+        mark_prefix = "▲ " if mark else ""
     runs = list(para.runs)
     if not runs:
         r = para.add_run(text)
     else:
-        runs[0].text = ("▲ " if mark else "") + text
+        runs[0].text = mark_prefix + text
         for r in runs[1:]:
             r._r.getparent().remove(r._r)
     _mark_runs(para, highlight=mark)
@@ -204,18 +213,26 @@ def main() -> None:
 
     # 【A】3.1 字段表新增 patient_no —— 必须真加进字段表，
     # 光写在摘要里不够：厂商是照字段表写代码的
+    # 必填列写「否」而不是「是」：我方不传也照收（不会 40004 拒收），
+    # 与 id_card 用同一套话术。若标「是」，摘要那边写的又是「建议必填」，
+    # 两个口径对厂商是两种校验行为，必然回头来问。
     _insert_row_after(T(6), "hospital_code", [
-        "patient_no", "string", "是",
-        "患者编号 / 病案号，**同一患者跨就诊保持稳定**。我方据此把同一个人的历次"
-        "就诊归到同一份档案下；贵方取病案号 / 患者主索引号 / 居民健康档案号均可，"
-        "告知取的是哪个即可。我方仅用于档案查重，不回写",
-        "—",
+        "patient_no", "string", "否（强烈建议）",
+        "患者编号 / 病案号，同一患者跨就诊保持稳定。我方据此把同一个人的历次"
+        "就诊归到同一份档案下——不传不会被拒收，但身份证也缺时该患者每次就诊"
+        "都会新建档案，医生看不到其既往病历与过敏史。贵方取病案号 / 患者主索引号 / "
+        "居民健康档案号均可，告知取的是哪个即可。我方仅用于档案查重，不回写",
+        "BRID / 病案号对应项（贵方定，告知即可）",
     ], "A-patient_no字段")
 
     # 【A】3.3 target 说明（表 T10 第 3 列=说明）
+    # 措辞注意：不能写「无 _record 后缀」——枚举里 course_record / op_record 等
+    # 五个本来就以 _record 结尾，那样写会被理解成「要去掉后缀再填」，
+    # 反而制造本条想根治的那个故障。改为「原样透传」+ 正例。
     _edit_cell(T(10), "target", 3,
-               "刷新目标，取值与本次写入的 record_type **完全一致**"
-               "（如 outpatient / course_record），无 _record 后缀",
+               "刷新目标：把本次写入的 record_type 原样透传，不要做任何加/减"
+               "后缀的加工。例如 record_type=outpatient 时 target 就填 "
+               "outpatient；record_type=course_record 时就填 course_record",
                "A-target说明")
 
     # 【A】附录 A.3 示例去掉 _record 后缀
@@ -240,8 +257,8 @@ def main() -> None:
     _append_para_after(
         doc, "连接地址：wss://mediscribe.cn",
         "回写路由补充：常态下回写/刷新路由回接诊来源诊室；若该连接已断开或失效，"
-        "我方会改投任意一条在线连接（msg_id 不变）。因此贵方**任一客户端收到 "
-        "record_writeback 都请无条件写库**（写的是全院共享库，与诊室无关），"
+        "我方会改投任意一条在线连接（msg_id 不变）。因此贵方任一客户端收到 "
+        "record_writeback 都请无条件写库（写的是全院共享库，与诊室无关），"
         "不要按「是不是本机接诊的」过滤，否则该份病历会丢失。",
         "A-回写换线",
     )
@@ -251,8 +268,8 @@ def main() -> None:
         doc, "补发与去重：发送方对未收到 ack 的消息",
         "补发与去重（分方向）：① 上行（贵方→我方）：超时重发请保持 msg_id 不变，"
         "我方按 msg_id 幂等去重。② 下行（我方→贵方）：同一条消息的超时重发与"
-        "换线重投 msg_id 不变，但**连接断开后由我方对账任务发起的重投会使用新的 "
-        "msg_id**，故贵方判重必须以 2.5 的业务幂等键"
+        "换线重投 msg_id 不变，但连接断开后由我方对账任务发起的重投会使用新的 "
+        "msg_id，故贵方判重必须以 2.5 的业务幂等键"
         "（visit_id + record_type + record_no）为准，不能只靠 msg_id。",
         "A-补发去重",
     )
@@ -288,7 +305,7 @@ def main() -> None:
         doc, "关联主键：就诊流水号（visit_id）",
         "接入方式更正：原「诊室极薄 Agent 拉起嵌入工作台」的接入范式已下线。"
         "现为：我方收到推送后自动建档并按 doctor_code 派入对应医生的工作台；"
-        "医生在**已登录的浏览器工作台**收到叫号提示后点击进入该患者。"
+        "医生在已登录的浏览器工作台收到叫号提示后点击进入该患者。"
         "双方均无需安装任何客户端程序。",
         "B-接入方式",
     )
@@ -304,7 +321,7 @@ def main() -> None:
 
     # 【C】3.2 status 口径（表 T8 说明列）
     _edit_cell(T(8), "status", 3,
-               "写入状态。我方**恒发 draft**，即使该病历在 MediScribe 侧已由医生签发；"
+               "写入状态。我方恒发 draft，即使该病历在 MediScribe 侧已由医生签发；"
                "贵方收到后落草稿/待确认态，医生可在 HIS 端继续编辑，"
                "点确认/保存后才真实落库。final 为后续预留，本期不会下发",
                "C-status口径")
@@ -312,12 +329,15 @@ def main() -> None:
     # 【C】3.1 dept_code / id_card 说明
     _edit_cell(T(6), "dept_code", 3,
                "本次接诊/挂号的科室编码，取贵方科室表「本地ID」列（如 1230024）。"
-               "我方按此编码**自动登记并作为本次接诊的科室**（不是医生编制科室，"
+               "我方按此编码自动登记并作为本次接诊的科室（不是医生编制科室，"
                "医生跨科室坐班时以此为准），请确保同一科室取值稳定",
                "C-dept_code说明")
+    # 与新增的 patient_no 行口径必须一致，否则同一张表里两行互相打架、
+    # 厂商不知道档案查重到底靠哪个。这里把三级顺序一次讲清。
     _edit_cell(T(6), "id_card", 3,
-               "身份证号。选填，但**强烈建议推送**：我方跨就诊关联同一患者依赖"
-               "身份证或「手机号+姓名」，两者都缺时同一位患者每次就诊都会新建档案，"
+               "身份证号。选填，但强烈建议推送：我方按「身份证 → patient_no → "
+               "手机号+姓名」的顺序跨就诊认人，身份证优先级最高。"
+               "三者全缺时同一位患者每次就诊都会新建档案，"
                "医生将看不到其既往病历与过敏史",
                "C-id_card说明")
 
@@ -326,7 +346,7 @@ def main() -> None:
         doc, "关于主诉：接诊是流程起点",
         "幂等与补推说明：幂等键为 hospital_code + visit_id（请保证同一次就诊两者完全"
         "一致）；重复推送复用已有接诊，若携带新的 doctor_code 会自动改派医生。"
-        "**体征与档案字段仅在该 visit_id 首次推送时生效**，后续补推不再更新"
+        "体征与档案字段仅在该 visit_id 首次推送时生效，后续补推不再更新"
         "（避免覆盖医生已确认的内容），请在首次推送时尽量带齐。",
         "C-幂等与补推",
     )
@@ -348,18 +368,20 @@ def main() -> None:
         "重试规则（本条适用于方案 A）：",
         "C-重试规则限定",
     )
+    # 锚点用 "nonce 为一次性" 而不是 "重试规则："——上一步刚把
+    # "重试规则：" 改成了 "重试规则（本条适用于方案 A）："，原锚点已不存在
     _append_para_after(
-        doc, "重试规则：nonce 为一次性",
-        "方案 B 补充：WebSocket 通道的业务消息**不做 nonce 去重**，防重放依赖"
+        doc, "nonce 为一次性",
+        "方案 B 补充：WebSocket 通道的业务消息不做 nonce 去重，防重放依赖"
         "握手鉴权 + ±5 分钟时间戳窗口 + msg_id 幂等；重发时 timestamp/nonce/sign "
-        "重新生成而 **msg_id 保持不变**（见 7.4）。故 40006 不会出现在 WS 的 ack 中。",
+        "重新生成而 msg_id 保持不变（见 7.4）。故 40006 不会出现在 WS 的 ack 中。",
         "C-方案B重试",
     )
 
     # 【C】7.4 心跳发起方
     _rewrite_para(
         doc, "心跳：任一方每 30 秒发送",
-        "心跳：由**我方**每 30 秒下发 type=ping，贵方收到后立即回 type=pong 即可"
+        "心跳：由我方每 30 秒下发 type=ping，贵方收到后立即回 type=pong 即可"
         "（贵方无需主动发起心跳；主动发我方也会回 pong）。"
         "任一方连续 90 秒未收到任何消息即判定连接失效。",
         "C-心跳发起方",
@@ -368,7 +390,7 @@ def main() -> None:
     # 【C】第 6 章联调步骤
     _rewrite_para(
         doc, "2. 接诊推送连通：HIS 能 POST",
-        "2. 医生名单交换：贵方提供参与联调的临床医生名单（姓名 + **全部工号**，"
+        "2. 医生名单交换：贵方提供参与联调的临床医生名单（姓名 + 全部工号，"
         "含本人门诊/住院/助理等多个工号），我方完成开户并绑定后方可推送；"
         "未注册的工号推送将返回 code=40007。",
         "C-联调医生名单",
@@ -392,8 +414,8 @@ def main() -> None:
         doc, "字段语义：字段缺省（不传）= 不更新该项",
         "字段语义：字段缺省（不传）= 不更新该项；传空串（\"\"）= 清空该项。"
         "对象型字段（record / vitals / meta）与数组型字段（diagnoses）："
-        "整体缺省或为空（{} / []）均表示**不更新该组，不做清空**。"
-        "另：MediScribe 本期**不使用空串语义**——字段为空即不下发；"
+        "整体缺省或为空（{} / []）均表示不更新该组，不做清空。"
+        "另：MediScribe 本期不使用空串语义——字段为空即不下发；"
         "如需清空 HIS 中某项，请在 HIS 侧人工编辑。",
         "C-空值语义",
     )
@@ -408,12 +430,134 @@ def main() -> None:
 
     # 【C】2.1 时间格式补时区
     _edit_cell(T(1), "时间格式", 1,
-               "YYYY-MM-DD HH:mm:ss；所有时间均为**北京时间（UTC+8）**，不带时区后缀",
+               "YYYY-MM-DD HH:mm:ss；所有时间均为北京时间（UTC+8），不带时区后缀",
                "C-时区说明")
 
-    # 结尾版本号
-    _edit_para(doc, "— 本文档 v1.2，供双方评审",
-               "本文档 v1.2", "本文档 v1.3", "尾注版本号")
+    # ══ 发文前最后一轮核对补漏（2026-08-15）══════════════════════════════
+    # 以下几处是「同一件事在文档里有两种说法」或「示例与正文互相否定」。
+    # 厂商照示例做是最常见的开发方式，示例错比正文错更致命。
+
+    # 【B】3.2 诊断说明末尾还在要字典 —— 与第 4 章、附录 B 直接矛盾
+    _edit_para(doc, "诊断说明：MediScribe 当前阶段以诊断名称",
+               "（请贵方提供本院诊断字典，见附录 B）",
+               "（诊断字典无需贵方提供，见第 4 章与附录 B）",
+               "B-诊断字典残留")
+
+    # 【B】5.3 还留着「极薄 Agent 仍保留拉起工作台职责」—— 与 1.3、5.2 矛盾，
+    # 厂商读到会以为院内仍需部署我方程序，进而去申请部署位、排 IT 审批
+    _edit_para(doc, "若采用 WebSocket 通道，5.1 与 5.2 的网络要求整体简化",
+               "；我方亦无需在内网中转回写（极薄 Agent 仅保留「拉起嵌入工作台」职责，"
+               "不再承担内网转发）。",
+               "；我方亦无需在内网中转回写，院内不部署我方任何程序。",
+               "B-5.3极薄Agent残留")
+
+    # 【B】1.3 流程图第 ② 步没改过，却被整块黄色高亮盖住，看着像已改
+    _edit_para(doc, "②MediScribe 据此识别当前病人",
+               "②MediScribe 据此识别当前病人；诊室「极薄 Agent」拉起嵌入工作台",
+               "②MediScribe 自动建档并按 doctor_code 派入该医生的浏览器工作台；"
+               "医生点击叫号提示进入",
+               "B-流程图②")
+
+    # 【B】5.2 可达性表里「诊室部署极薄 Agent」那一行还在（表在上、否定在下，
+    # 厂商扫表格时只会看到表格）
+    for _t in tbls:
+        for _row in _t.rows:
+            if "极薄" in _row.cells[-1].text:
+                _c = _row.cells[-1]
+                _p = _c.paragraphs[0]
+                for _r in list(_p.runs):
+                    _r._r.getparent().remove(_r._r)
+                _run = _p.add_run("▲ （本方案已取消，见本节下方说明）")
+                _set_font(_run, size=9)
+                _run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                _applied.append("B-5.2表格极薄Agent行")
+
+    # 【A】附录 A.4 两条 ack 示例补齐签名字段。我方对 ack 强制验签，
+    # 未签名的 ack 会被静默丢弃 → 回写重发 3 次后断连 → 整份病历回写失败
+    for _old, _new in (
+        ('{ "type": "ack", "msg_id": "ms-ack-0001",\n'
+         '  "payload":',
+         '{ "type": "ack", "msg_id": "ms-ack-0001",\n'
+         '  "app_id": "mediscribe", "timestamp": "1770000000100", '
+         '"nonce": "b2c3d4", "sign": "…",\n'
+         '  "payload":'),
+        ('{ "type": "ack", "msg_id": "his-ack-0007",\n'
+         '  "payload":',
+         '{ "type": "ack", "msg_id": "his-ack-0007",\n'
+         '  "app_id": "his_wanda", "timestamp": "1770000001100", '
+         '"nonce": "e5f6a7", "sign": "…",\n'
+         '  "payload":'),
+    ):
+        _edit_para(doc, _old.split("\n")[0], _old, _new, "A-ack示例补签名")
+
+    _append_para_after(
+        doc, "【已确认】连接拓扑：WS 代码加在贵方全科客户端内",
+        "补充：来源诊室连接失效时，我方会改投任意一条在线连接，"
+        "故贵方任一客户端收到 record_writeback 均须无条件写库，"
+        "不要按「是不是本机接诊的」过滤（详见 7.2）。",
+        "A-附录B无条件写库",
+    )
+
+    # 【A】附录 A.1 示例：补 patient_no / id_card，机构码与参考实现对齐，
+    # 删掉已改为「可不填」的 agent_device_ip（示例带着等于否定正文）
+    _edit_para(doc, '"visit_id": "20260514001401"',
+               '"hospital_code": "H32050701121",',
+               '"hospital_code": "H33052300001",\n'
+               '  "patient_no": "BA20260514001",',
+               "A-A1示例补patient_no")
+    _edit_para(doc, '"visit_id": "20260514001401"',
+               '"patient_name": "测试111", "gender": "male", '
+               '"birth_date": "2000-01-01",',
+               '"patient_name": "测试111", "gender": "male", '
+               '"birth_date": "2000-01-01",\n'
+               '  "id_card": "330523200001010038", "phone": "13800138000",',
+               "A-A1示例补id_card")
+    _edit_para(doc, '"visit_id": "20260514001401"',
+               '\n  "agent_device_ip": "172.16.2.58",', "",
+               "B-A1示例删device_ip")
+
+    # 【A】7.2 握手 nonce 的一次性语义此前完全没写。把握手 URL 算好存成配置
+    # 或成员变量、断线后原样重连，是很自然的写法，结果是每次重连都被 403，
+    # 而 403 与 appId 错、签名错的表现完全一样，现场无从区分
+    _append_para_after(
+        doc, "连接地址：wss://mediscribe.cn/api/v1/his/ws",
+        "握手 nonce 为一次性，我方在时间窗内做去重：每次（重）连都必须重新生成 "
+        "timestamp / nonce / sign，不得把算好的握手 URL 缓存下来原样复用，"
+        "否则同样返回 HTTP 403，表现为「首次能连、断线后再也连不上」。"
+        "（随附的两份参考实现在 connect() 内每次现算，可直接对照。）",
+        "A-握手nonce一次性",
+    )
+
+    # 【C】第 6 章收尾还在要贵方提供「测试凭证」，但方案 B 凭证是单向的
+    _edit_para(doc, "请贵方提供：测试环境 HIS + 测试凭证",
+               "请贵方提供：测试环境 HIS + 测试凭证，先在测试环境跑通再上生产。",
+               "请贵方提供：测试环境的 HIS 客户端与测试用就诊数据；"
+               "测试凭证由我方分配（方案 B 为单向一套，贵方无需为我方分配）。"
+               "先在测试环境跑通再上生产。",
+               "C-第6章测试凭证")
+
+    # 【C】1.2 住院文书括号列举还是老四类，与补齐后的 record_type 枚举对不上
+    _edit_para(doc, "本回写接口为统一入口",
+               "住院各类文书（入院记录/病程/出院/手术）",
+               "住院各类文书（见 3.2 record_type 枚举）",
+               "C-1.2住院文书列举")
+
+    # 【C】扉页修订说明开头仍是「v1.2 修订：」，版本号却已是 v1.3
+    _edit_para(doc, "v1.2 修订：通道定稿",
+               "v1.2 修订：通道定稿",
+               "v1.3 修订：共 %d 处，逐条见文首《本次修订说明》。"
+               "（v1.2 修订：通道定稿" % len(CHANGES),
+               "C-扉页版本说明")
+
+    # 结尾版本号。注意不打 ▲：全文 ▲ 的含义是「本次规范条目修订」，
+    # 版本号变更不是 26 条中的任何一条，标了会让按 ▲ 数条目的人对不上数
+    _p_tail = _find_para(doc, "— 本文档 v1.2，供双方评审")
+    if _p_tail is not None:
+        for _r in _p_tail.runs:
+            _r.text = _r.text.replace("本文档 v1.2", "本文档 v1.3")
+        _applied.append("尾注版本号（不打▲）")
+    else:
+        _failed.append("尾注版本号")
 
     doc.save(str(SRC))
 
