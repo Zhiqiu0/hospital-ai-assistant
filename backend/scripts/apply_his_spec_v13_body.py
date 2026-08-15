@@ -12,8 +12,29 @@ from pathlib import Path
 
 import docx
 from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from docx.table import Table
+
+FONT = "Microsoft YaHei"
+
+
+def _set_font(run, *, size=None, bold=None, color=None):
+    """三属性齐设（ascii/hAnsi/eastAsia），否则中文掉回默认字体、排版发乱。"""
+    if size is not None:
+        run.font.size = Pt(size)
+    if bold is not None:
+        run.font.bold = bold
+    if color is not None:
+        run.font.color.rgb = color
+    rpr = run._element.get_or_add_rPr()
+    fonts = rpr.find(qn("w:rFonts"))
+    if fonts is None:
+        fonts = rpr.makeelement(qn("w:rFonts"), {})
+        rpr.append(fonts)
+    for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        fonts.set(qn(a), FONT)
+    return run
 
 SRC = Path("d:/Code/hospital-ai-assistant/docs/MediScribe_HIS接口规范_v1.3.docx")
 RED = RGBColor(0xC0, 0x00, 0x00)
@@ -93,11 +114,9 @@ def _append_para_after(doc, needle, text, tag):
     for r in list(p.runs):
         r._r.getparent().remove(r._r)
     run = p.add_run("▲ " + text)
-    run.font.size = Pt(10)
-    run.font.bold = True
-    run.font.color.rgb = RED
-    run.font.name = "微软雅黑"
+    _set_font(run, size=10, bold=True, color=RED)
     run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    p.paragraph_format.line_spacing = 1.5
     _applied.append(tag)
 
 
@@ -119,7 +138,7 @@ def _edit_cell(tbl, row_match, col, new_text, tag, *, col_match=0):
             for r in list(para.runs):
                 r._r.getparent().remove(r._r)
             run = para.add_run("▲ " + new_text)
-            run.font.size = Pt(9)
+            _set_font(run, size=9)
             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             _applied.append(tag)
             return True
@@ -134,7 +153,7 @@ def _add_row(tbl, values, tag):
         for r in list(para.runs):
             r._r.getparent().remove(r._r)
         run = para.add_run(("▲ " if i == 0 else "") + v)
-        run.font.size = Pt(9)
+        _set_font(run, size=9)
         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
     _applied.append(tag)
 
