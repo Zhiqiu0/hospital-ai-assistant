@@ -146,6 +146,32 @@ def _edit_cell(tbl, row_match, col, new_text, tag, *, col_match=0):
     return False
 
 
+def _insert_row_after(tbl, after_key, values, tag, *, col_match=0):
+    """在 after_key 所在行之后插入一行（新增字段要插在字段表的合理位置）。"""
+    import copy
+    target = None
+    for row in tbl.rows:
+        if row.cells[col_match].text.strip().replace("▲ ", "") == after_key:
+            target = row
+            break
+    if target is None:
+        _failed.append(f"{tag}（找不到锚点行 {after_key}）")
+        return False
+    new_tr = copy.deepcopy(target._tr)
+    target._tr.addnext(new_tr)
+    from docx.table import _Row
+    row = _Row(new_tr, tbl)
+    for i, v in enumerate(values[: len(row.cells)]):
+        para = row.cells[i].paragraphs[0]
+        for r in list(para.runs):
+            r._r.getparent().remove(r._r)
+        run = para.add_run(("▲ " if i == 0 else "") + v)
+        _set_font(run, size=9)
+        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    _applied.append(tag)
+    return True
+
+
 def _add_row(tbl, values, tag):
     row = tbl.add_row().cells
     for i, v in enumerate(values[: len(row)]):
@@ -175,6 +201,16 @@ def main() -> None:
         "op_record 手术记录 / post_op_record 术后病程。",
         "A-record_type枚举",
     )
+
+    # 【A】3.1 字段表新增 patient_no —— 必须真加进字段表，
+    # 光写在摘要里不够：厂商是照字段表写代码的
+    _insert_row_after(T(6), "hospital_code", [
+        "patient_no", "string", "是",
+        "患者编号 / 病案号，**同一患者跨就诊保持稳定**。我方据此把同一个人的历次"
+        "就诊归到同一份档案下；贵方取病案号 / 患者主索引号 / 居民健康档案号均可，"
+        "告知取的是哪个即可。我方仅用于档案查重，不回写",
+        "—",
+    ], "A-patient_no字段")
 
     # 【A】3.3 target 说明（表 T10 第 3 列=说明）
     _edit_cell(T(10), "target", 3,
