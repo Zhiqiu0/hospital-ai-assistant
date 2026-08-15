@@ -32,13 +32,17 @@ CHANGES = [
     dict(
         prio="A", loc="3.3 刷新接口 target（含附录 A.3 示例）",
         what="target 改为「把 record_type 原样透传，不做任何加/减后缀的加工」，"
-             "示例由 outpatient_record 更正为 outpatient",
-        why="我方实际下发的就是 record_type 原值。取值对不上时，"
-            "病历写入成功但刷新消息匹配不到，医生界面不会刷新。",
-        origin="初版按「页面名」的思路设想 target，门诊场景下"
-               "outpatient_record 恰好也说得通，因此未被发现；"
-               "扩展到住院文书后才暴露该拼法不成立（会拼出 course_record_record），"
-               "我方已统一为直接下发 record_type。",
+             "示例由 outpatient_record 更正为 outpatient。"
+             "本期门诊、急诊即适用，不是只影响住院",
+        why="本期门诊第一个病人就会遇到：门诊的 record_type 是 outpatient，"
+            "我方刷新消息里的 target 下发的就是 outpatient，"
+            "而不是旧版示例写的 outpatient_record（急诊同理，是 emergency）。"
+            "若贵方按旧示例匹配 outpatient_record，表现为病历已成功写入、"
+            "医生界面却始终不刷新——而两边日志都显示成功，这类问题最难查。",
+        origin="初版按「页面名」的思路设想 target，门诊下 outpatient_record "
+               "念着也通顺，所以一直没被发现；后来扩展到住院文书才暴露这个拼法"
+               "根本不成立（会拼出 course_record_record），于是统一改为直接下发 "
+               "record_type 原值。住院只是当初暴露问题的场景，门诊同样适用。",
     ),
     dict(
         prio="C", loc="2.2 公共请求头",
