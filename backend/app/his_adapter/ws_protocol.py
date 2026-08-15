@@ -45,10 +45,20 @@ ERROR_TEXT = {
 
 
 class WsEnvelope(BaseModel):
-    """WebSocket 消息信封（规范 7.3）。payload 为业务数据，字段同第 3 章接口。"""
+    """WebSocket 消息信封（规范 7.3）。payload 为业务数据，字段同第 3 章接口。
+
+    msg_id 为什么不设成必填（2026-08-15 第十轮审计）：
+      业务消息确实必须带（我方靠它判重、回 ack 也要指回它），但那条规则由路由层
+      显式检查并回 code=40004，不放在这里——因为 **ack 自己的 msg_id 我方从不使用**
+      （ack 的对应关系走 payload.ack_msg_id）。若在模型上一刀切设必填，厂商回 ack
+      时漏了它（ack 自己的 msg_id 与 ack_msg_id 是两回事，很容易只写后者），
+      整条 ack 会在解析阶段就被丢掉 → 我方等不到应答 → 10s×3 重发 → 判连接失效
+      断开 → 换线重来，而厂商日志里明明写着「我回过 ack」。这正是第九轮
+      「ack 漏签名」那条 A 类问题的同一形态，没有理由再留一个。
+    """
 
     type: str
-    msg_id: str
+    msg_id: str = ""
     app_id: str = ""
     timestamp: str = ""
     nonce: str = ""

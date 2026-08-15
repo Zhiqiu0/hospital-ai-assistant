@@ -32,15 +32,23 @@ function makeSign(appId, timestamp, nonce, tail, secret) {
 /* 组装一条带签名的消息。⚠ 核心三步，顺序不能乱：
  * 1. payload 只序列化一次，存进变量；2. 用这个字符串拼串算签名；
  * 3. 把同一个字符串原样拼进消息体——不要让 JSON 库再转第二次，
- *    否则字段顺序/空格一变签名就对不上（联调最常见的坑）。 */
-function signedMessage(type, payload, appId, secret) {
+ *    否则字段顺序/空格一变签名就对不上（联调最常见的坑）。
+ *
+ * ⚠ 我方是按**贵方实际发出的那串字节**验签的，不会重新序列化 payload。
+ *   所以「算签名用的字符串」与「消息里 payload 的字符串」必须是同一个：
+ *   中文转不转义（\uXXXX）、键的顺序、有没有缩进空格，只要两处有一点不同，
+ *   签名一律对不上（我方回 code=40001），而公式本身并没有错。
+ *
+ * msgId（规范 7.4）：每条**新**消息一个新号；只有「同一条消息因超时重发」
+ * 时才把上次的号原样传进来，我方据此判重、不重复处理。 */
+function signedMessage(type, payload, appId, secret, msgIdIn) {
   const payloadStr = JSON.stringify(payload);              // 第 1 步：只转这一次
   const timestamp = String(Date.now());                    // 13 位毫秒，每次现取
   const nonce = crypto.randomUUID().replace(/-/g, "");     // 每条消息现生成，绝不复用
   const sign = makeSign(appId, timestamp, nonce, payloadStr, secret); // 第 2 步
   // 先去掉连字符再截，与 Python 版逐字对齐（直接 slice 会截出
   // "his-6b6c1e1e-cf2" 这种中间夹连字符、只有 11 位有效随机位的值）
-  const msgId = "his-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const msgId = msgIdIn || "his-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   return `{"type": "${type}", "msg_id": "${msgId}", "app_id": "${appId}", ` +
          `"timestamp": "${timestamp}", "nonce": "${nonce}", "sign": "${sign}", ` +
          `"payload": ${payloadStr}}`;                      // 第 3 步：原样拼进去
@@ -98,9 +106,15 @@ function connect(appId, secret, retryDelay = 1000) {
     }, 90000);
   };
 
+  // 退避复位的条件是「这次连接活够久」，不是「连上过」（与 Python 版一致）：
+  // 若一 open 就把退避清回 1 秒，遇到「握手成功但立刻被关」的故障
+  // （例如我方 ack 重发耗尽主动断开）就会退化成 1 秒一次的紧循环，
+  // 既连不上又一直打我方服务。这里记下连上的时刻，close 时再判断。
+  let openedAt = 0;
+
   ws.on("open", () => {
     console.log("[✓] 握手成功，长连接已建立");
-    retryDelay = 1000; // 连上即重置退避
+    openedAt = Date.now();
     resetIdle();
     // ② 演示发一条接诊推送（实际接入：医生在 HIS 点"接诊"时触发）
     ws.send(signedMessage("encounter_admit", admitSample(), appId, secret));
@@ -165,8 +179,10 @@ function connect(appId, secret, retryDelay = 1000) {
   // 断线自动重连：1s、2s、4s…指数退避，最大 60s（规范 7.4）
   ws.on("close", () => {
     if (idleTimer) clearTimeout(idleTimer);
-    console.log(`[!] 连接断开，${retryDelay / 1000}s 后重连`);
-    setTimeout(() => connect(appId, secret, Math.min(retryDelay * 2, 60000)), retryDelay);
+    // 活够 60 秒才算「连接是好的」，退避从头开始；否则继续翻倍（见上方 openedAt）
+    const delay = openedAt && Date.now() - openedAt >= 60000 ? 1000 : retryDelay;
+    console.log(`[!] 连接断开，${delay / 1000}s 后重连`);
+    setTimeout(() => connect(appId, secret, Math.min(delay * 2, 60000)), delay);
   });
   ws.on("error", (err) => console.log(`[!] 连接错误：${err.message}`)); // close 会跟着触发
 }

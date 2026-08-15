@@ -202,3 +202,105 @@ def test_probe_handshake_not_logged_as_warning(ws_env, caplog):
                 pass
     assert [r for r in caplog.records if "handshake_rejected" in r.message], \
         "带凭证但签名错属真实鉴权失败，必须保留 WARNING"
+
+
+# ── 2026-08-15 第十轮审计（实现者视角 + 故障注入）新增回归 ────────────────────
+
+def test_ws_binary_frame_accepted(ws_env):
+    """二进制帧承载的同一条 JSON 也要收下，不能因此断连。
+
+    厂商客户端多为 C#/Java，其 WebSocket API 要显式指定 Text/Binary，
+    选成 Binary 是很常见的笔误。修复前 receive_text() 会抛 KeyError('text')，
+    被消息循环当成连接层错误 → 整条连接断开：厂商侧表现为「握手成功但一发
+    消息就断线」并无限重连，没有 ack、没有错误码，我方日志也只有一句
+    connection_error: 'text'，两边都无从定位。
+    """
+    with ws_env.websocket_connect(_handshake_url()) as ws:
+        ws.send_bytes(_admit_text(visit_id="V-BIN").encode("utf-8"))
+        env = _recv_skip_heartbeat(ws)
+        assert env.type == wp.MSG_ACK
+        assert env.payload["code"] == 0
+        assert env.payload["data"]["visit_id"] == "V-BIN"
+
+
+def _admit_text_without_msg_id(visit_id="V1") -> str:
+    """构造一条漏了信封 msg_id 的业务消息（其余字段与签名都合法）。"""
+    payload_raw = json.dumps(
+        {"visit_id": visit_id, "hospital_code": "H1", "patient_name": "张三"},
+        ensure_ascii=False)
+    ts = str(int(time.time() * 1000))
+    nonce = uuid.uuid4().hex
+    sign = compute_sign(AID, ts, nonce, payload_raw, SECRET)
+    return ('{"type": "encounter_admit", "app_id": "%s", "timestamp": "%s", '
+            '"nonce": "%s", "sign": "%s", "payload": %s}'
+            % (AID, ts, nonce, sign, payload_raw))
+
+
+def test_ws_business_msg_without_msg_id_gets_40004(ws_env):
+    """信封缺必填项的业务消息 → 明确回 40004 并点名字段，不再静默丢弃。
+
+    静默丢弃是最难定位的一类故障（第九轮「ack 漏签名」已证实）：
+    厂商日志显示「我发了」，我方毫无反应，双方都看不出问题在哪。
+    """
+    with ws_env.websocket_connect(_handshake_url()) as ws:
+        ws.send_text(_admit_text_without_msg_id())
+        env = _recv_skip_heartbeat(ws)
+        assert env.payload["code"] == 40004
+        assert "msg_id" in env.payload["message"]
+
+
+def test_ws_ack_without_own_msg_id_still_dispatched(ws_env, caplog):
+    """ack 漏了自己的 msg_id 仍要被正常分发（我方只用 payload.ack_msg_id）。
+
+    ack 自己的 msg_id 与 ack_msg_id 是两回事，厂商很容易只写后者。修复前
+    整条 ack 在信封解析处就被丢掉，我方等不到应答 → 重发 3 次 → 判连接失效
+    断开 → 换线重来，而厂商日志里明明写着「我回过 ack」。
+    这里用一个无人等待的 ack_msg_id：能走到 orphan_ack 就证明它进了分发链路，
+    而不是在解析阶段被扔掉；同时确认我方不会对 ack 回任何消息。
+    """
+    import logging
+    payload_raw = json.dumps({"code": 0, "message": "success",
+                              "ack_msg_id": "ms-nobody-waits"}, ensure_ascii=False)
+    ts = str(int(time.time() * 1000))
+    nonce = uuid.uuid4().hex
+    sign = compute_sign(AID, ts, nonce, payload_raw, SECRET)
+    ack_text = ('{"type": "ack", "app_id": "%s", "timestamp": "%s", "nonce": "%s", '
+                '"sign": "%s", "payload": %s}' % (AID, ts, nonce, sign, payload_raw))
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.his_ws"):
+        with ws_env.websocket_connect(_handshake_url()) as ws:
+            ws.send_text(ack_text)
+            ws.send_text(_admit_text(visit_id="V-AFTER-ACK"))
+            env = _recv_skip_heartbeat(ws)
+            # 若那条 ack 被回了消息，这里读到的第一条就不是业务 ack 了
+            assert env.payload["code"] == 0
+            assert env.payload["data"]["visit_id"] == "V-AFTER-ACK"
+    assert [r for r in caplog.records if "orphan_ack" in r.message], \
+        "缺 msg_id 的 ack 应进入分发链路（表现为 orphan_ack），而不是解析阶段被丢弃"
+
+
+def test_ws_reused_msg_id_with_new_patient_not_swallowed(ws_env):
+    """复用 msg_id 推**另一位患者**必须照常处理，不能当成重发静默吞掉。
+
+    规范只写了「重发请保持 msg_id 不变」，没写反面。厂商若把 msg_id 按 visit
+    生成或干脆写死，修复前第二位患者会命中 msg_id 去重分支，拿到 code=0 且
+    回显其 visit_id 的成功 ack——看着完全成功，人却根本没进系统。
+    现在去重键带 payload 内容指纹：内容相同才算重发。
+    """
+    handled: list[str] = []
+    from app.his_adapter import admit_service
+
+    async def recording_handle_admit(payload):
+        handled.append(payload.visit_id)
+        return admit_service.AdmitResult(
+            encounter_id="enc-" + payload.visit_id, patient_id="p",
+            patient_name=payload.patient_name, doctor_id="d", reused=False,
+        )
+
+    admit_service.handle_admit = recording_handle_admit  # fixture 已 monkeypatch 过
+    fixed = "his-fixed-msgid"
+    with ws_env.websocket_connect(_handshake_url()) as ws:
+        ws.send_text(_admit_text(visit_id="V-P1", msg_id=fixed))
+        assert _recv_skip_heartbeat(ws).payload["code"] == 0
+        ws.send_text(_admit_text(visit_id="V-P2", msg_id=fixed))
+        assert _recv_skip_heartbeat(ws).payload["code"] == 0
+    assert handled == ["V-P1", "V-P2"], f"第二位患者被吞掉了：{handled}"

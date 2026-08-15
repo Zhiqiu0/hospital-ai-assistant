@@ -5,6 +5,8 @@
 不挂 require_his_enabled 依赖（那是 HTTP 语义的 503），保险丝在握手处手动检查。
 """
 import asyncio
+import hashlib
+import json
 import logging
 from contextlib import suppress
 
@@ -89,7 +91,7 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         while True:
             # 空闲超时（规范 7.4）：90s 未收到任何消息判定连接失效
             raw = await asyncio.wait_for(
-                websocket.receive_text(), timeout=wp.IDLE_TIMEOUT
+                _receive_text_or_binary(websocket), timeout=wp.IDLE_TIMEOUT
             )
             await _handle_message(websocket, raw)
     except asyncio.TimeoutError:
@@ -105,6 +107,34 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
     finally:
         ping_task.cancel()
         his_ws_manager.unregister(websocket)
+
+
+async def _receive_text_or_binary(websocket: WebSocket) -> str:
+    """读一条消息并归一成文本（文本帧与二进制帧都收）。
+
+    为什么不直接用 receive_text()（2026-08-15 第十轮审计修复）：
+    它遇到二进制帧会抛 KeyError('text')，被消息循环外层当成连接层错误
+    → **整条连接被关掉**。厂商侧看到的是「握手成功，但一发消息连接就断」，
+    没有 ack、没有错误码、可自动重连于是无限循环；我方 error.log 里也只有
+    一句 `his_ws.connection_error: 'text'`，两边都无从下手。
+    而 C# 的 ClientWebSocket.SendAsync 必须显式指定 Text/Binary，
+    Java、Delphi 的封装同样容易选成二进制——这是厂商很可能踩的第一个坑。
+    同一串 UTF-8 JSON 用哪种帧承载语义完全一样，收下即可，不必为此断连。
+    """
+    message = await websocket.receive()
+    if message["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(message.get("code", 1000))
+    text = message.get("text")
+    if text is not None:
+        return text
+    payload = message.get("bytes") or b""
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        # 既不是文本帧也不是 UTF-8 字节：丢弃该帧但保住连接（返回空串走信封校验失败分支）
+        logger.warning("his_ws.non_utf8_frame: 收到非 UTF-8 编码的帧 %d 字节，已丢弃",
+                       len(payload))
+        return ""
 
 
 async def _ping_loop(websocket: WebSocket) -> None:
@@ -125,8 +155,8 @@ async def _handle_message(websocket: WebSocket, raw: str) -> None:
     aid, secret = settings.his_inbound_app_id, settings.his_inbound_app_secret
     try:
         env = wp.WsEnvelope.model_validate_json(raw)
-    except ValidationError:
-        logger.warning("his_ws.bad_envelope: 信封不合法，丢弃")  # 无 msg_id 可回 ack
+    except ValidationError as exc:
+        await _reject_bad_envelope(websocket, raw, exc, aid, secret)
         return
 
     if env.type == wp.MSG_PING:  # 厂商侧心跳 → 立即回 pong
@@ -161,12 +191,55 @@ async def _handle_message(websocket: WebSocket, raw: str) -> None:
         )
         return
 
+    # 业务消息必须带 msg_id（判重与 ack 对应都要用），缺了明确告知而不是静默丢弃。
+    # 这条检查放在路由层而不是信封模型上，见 WsEnvelope.msg_id 的说明。
+    if not env.msg_id:
+        logger.warning("his_ws.missing_msg_id: 业务消息缺 msg_id type=%s", env.type)
+        await websocket.send_text(
+            wp.build_ack("", 40004, "消息信封不合法：缺少 msg_id", aid, secret)
+        )
+        return
+
     if env.type == wp.MSG_ADMIT:
         await _handle_admit(websocket, env, aid, secret)
     else:
         await websocket.send_text(
             wp.build_ack(env.msg_id, 40004, "未知消息类型", aid, secret)
         )
+
+
+async def _reject_bad_envelope(
+    websocket: WebSocket, raw: str, exc: ValidationError, aid: str, secret: str
+) -> None:
+    """信封字段不合法：尽量回一条 40004 ack，别让厂商对着沉默排查。
+
+    2026-08-15 第十轮审计修复。原先一律静默丢弃，而信封必填项里有个
+    **msg_id**——厂商回 ack 时若漏了它（ack 自己的 msg_id 与 ack_msg_id 是两回事，
+    很容易只写后者），整条 ack 在这里就没了：我方等不到应答 → 10s×3 重发 →
+    判连接失效断开 → 换线重来，而厂商日志里明明写着「我回过 ack」。
+    第九轮审计已证实同形态的「ack 漏签名」是最难定位的一类故障。
+    回一条带原因的 40004 至少让对方在自己日志里看得见问题出在哪。
+
+    只回业务消息：对端的 ack/pong 不合法时保持沉默，避免两侧互相刷错误消息。
+    日志只记字段名不记字段值——payload 里是患者信息，不进日志文件。
+    """
+    fields = ",".join(".".join(str(x) for x in e["loc"]) for e in exc.errors()[:5])
+    salvaged_type, salvaged_id = "", ""
+    try:
+        probe = json.loads(raw)
+        if isinstance(probe, dict):
+            salvaged_type = str(probe.get("type") or "")
+            salvaged_id = str(probe.get("msg_id") or "")
+    except (ValueError, TypeError):
+        pass  # 连 JSON 都不是，下面按「未知类型」处理（不回消息）
+    logger.warning(
+        "his_ws.bad_envelope: 信封不合法 type=%s 缺失/非法字段=%s",
+        salvaged_type or "(未知)", fields or "(非 JSON 文本)",
+    )
+    if salvaged_type in ("", wp.MSG_ACK, wp.MSG_PONG):
+        return
+    await websocket.send_text(wp.build_ack(
+        salvaged_id, 40004, f"消息信封不合法：{fields}", aid, secret))
 
 
 async def _handle_admit(
@@ -180,11 +253,27 @@ async def _handle_admit(
     from app.his_adapter import admit_service
     from app.services.redis_cache import redis_cache
 
-    # 重发去重（规范 7.4）：厂商超时重发用同 msg_id，已处理过则幂等地再回成功 ack
+    # ── 重发去重（规范 7.4）：厂商超时重发用同 msg_id，已处理过则幂等地再回成功 ack ──
+    #
+    # 去重键 = msg_id + payload 内容指纹（2026-08-15 第十轮审计修复）。
+    # 原先只用 msg_id，而规范只写了「重发请保持 msg_id 不变」，没写反面
+    # ——「新消息必须用新 msg_id」。厂商若把 msg_id 按 visit 生成、或图省事写死，
+    # 后续**不同患者**的推送会在 10 分钟窗口内命中重复分支，我方回 code=0
+    # 且把新 visit_id 原样回显，看上去完全成功，患者却根本没落库（实测证实）。
+    # 加上内容指纹后：真正的超时重发（payload 逐字相同）照旧幂等；
+    # 复用了 msg_id 的**新内容**则正常处理，不再静默吞掉。
+    # 指纹取自解析后的 dict 做规范化序列化，与厂商的字节格式无关——
+    # 对方重发时哪怕重新序列化过（键序/空格不同），仍判为同一条。
+    _fingerprint = hashlib.sha256(
+        json.dumps(env.payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+    dedupe_key = f"{env.msg_id}:{_fingerprint}"
     first_time = await redis_cache.claim_nonce(
-        "his_ws_msg", env.msg_id, ttl=600
+        "his_ws_msg", dedupe_key, ttl=600
     )
     if not first_time:
+        logger.info("his_ws.duplicate_admit: msg_id=%s 内容相同，幂等回成功 ack",
+                    env.msg_id)
         await websocket.send_text(
             wp.build_ack(env.msg_id, 0, "重复消息，此前已处理", aid, secret,
                          data={"visit_id": env.payload.get("visit_id", "")})
@@ -195,7 +284,7 @@ async def _handle_admit(
     # 假成功 ack（患者其实没落库）。故所有失败分支在回错误 ack 前显式释放占位，
     # 让重发能真正重新处理（handle_admit 本身按 visit_id 幂等，重入也不会建重）。
     async def _release_and_ack(code: int, message: str) -> None:
-        await redis_cache.delete(f"nonce:his_ws_msg:{env.msg_id}")
+        await redis_cache.delete(f"nonce:his_ws_msg:{dedupe_key}")
         await websocket.send_text(wp.build_ack(env.msg_id, code, message, aid, secret))
 
     try:
@@ -239,4 +328,4 @@ async def _handle_admit(
         if not completed:
             # 被取消/进程收摊：释放去重占位，避免下次重发拿到假成功
             with suppress(Exception):
-                await redis_cache.delete(f"nonce:his_ws_msg:{env.msg_id}")
+                await redis_cache.delete(f"nonce:his_ws_msg:{dedupe_key}")

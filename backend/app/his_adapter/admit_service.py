@@ -151,7 +151,8 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     # 科室以**挂号科室**为准（用户 2026-08-14 决策）：规范 3.1 明确 dept_code 是
     # 本次接诊/挂号的科室、非医生编制科室；医生跨科室坐班时两者不同。
     department_id = await _resolve_department(
-        db, payload.dept_code, payload.dept_name, doctor.department_id
+        db, payload.dept_code, payload.dept_name, doctor.department_id,
+        visit_id=payload.visit_id,
     )
 
     encounter = Encounter(
@@ -313,7 +314,7 @@ async def _prefill_from_push(
 
 async def _resolve_department(
     db: AsyncSession, dept_code: Optional[str], dept_name: Optional[str],
-    fallback_department_id: Optional[str],
+    fallback_department_id: Optional[str], *, visit_id: str = "",
 ) -> Optional[str]:
     """把 HIS 推来的挂号科室解析成我方 department_id（2026-08-14 修复）。
 
@@ -333,6 +334,7 @@ async def _resolve_department(
         dept_code: HIS 科室编码（科室表「本地ID」列）
         dept_name: HIS 科室名称
         fallback_department_id: 解析不出时的兜底（医生编制科室）
+        visit_id: 就诊流水号，仅用于告警日志定位是哪条推送没带科室
 
     Returns:
         我方 department_id；dept_code 为空时返回兜底值。
@@ -341,9 +343,12 @@ async def _resolve_department(
 
     code = (dept_code or "").strip()
     if not code:
-        # 厂商没推科室：退回医生编制科室（总比没有强），并留痕便于联调排查
+        # 厂商没推科室：退回医生编制科室（总比没有强），并留痕便于联调排查。
+        # visit_id 必须真带上（2026-08-15 第十轮审计修复）：原先这里硬编码空串，
+        # 日志恒为 `visit_no=`，联调时知道"有推送没带科室"却查不到是哪一条。
         logger.warning(
-            "his_admit.dept: 推送未带 dept_code，回退医生编制科室 visit_no=%s", ""
+            "his_admit.dept: 推送未带 dept_code，回退医生编制科室 visit_no=%s",
+            visit_id,
         )
         return fallback_department_id
 
