@@ -23,17 +23,44 @@ router = APIRouter(prefix="/his", tags=["HIS对接"])
 
 
 def _real_client(websocket: WebSocket) -> str:
-    """取真实来源 IP 用于排障。
+    """取真实来源 IP（用于排障，也用于 IP 白名单判定）。
 
     websocket.client 拿到的是 nginx 容器的内网地址（172.19.x.x），全院所有
     连接看起来都来自同一个 IP——联调时「老师连不上」和「有人在扫端口」
-    分不出来。真实地址在 X-Forwarded-For 首段（nginx 已配置转发）。
+    分不出来。
+
+    **为什么取 X-Real-IP 而不是 X-Forwarded-For 首段**（2026-08-15 修正）：
+    nginx 这个 location 用的是 `X-Forwarded-For $proxy_add_x_forwarded_for`，
+    它把**客户端自己带来的 XFF 原样保留在前面**、再把真实地址追加到末尾。
+    也就是说 XFF 首段是攻击者可以随便写的——原实现取首段，日志里的来源 IP
+    可被伪造，若再拿它做白名单判定，白名单等于形同虚设（发个
+    `X-Forwarded-For: 医院出口IP` 就进来了）。
+    而 X-Real-IP 是 nginx 用 proxy_set_header 无条件**覆盖**写入的
+    （值为 $remote_addr），客户端伪造不了。XFF 只在没有 X-Real-IP 时兜底，
+    且取**末段**（nginx 自己追加的那一段）而不是首段。
     """
+    real = websocket.headers.get("x-real-ip", "").strip()
+    if real:
+        return real
     xff = websocket.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()  # 末段 = 最近一跳代理看到的地址
     c = websocket.client
     return f"{c.host}:{c.port}" if c else "unknown"
+
+
+def _ip_allowed(client_ip: str) -> bool:
+    """来源 IP 是否在白名单内；白名单留空即不限制（默认行为，见 config）。"""
+    import ipaddress
+
+    nets = settings.his_ws_allowed_networks()
+    if not nets:
+        return True
+    try:
+        addr = ipaddress.ip_address(client_ip.split(":")[0])
+    except ValueError:
+        return False  # 解析不出来源地址：白名单开着就按拒绝处理
+    return any(addr in net for net in nets)
 
 
 @router.websocket("/ws")
@@ -53,19 +80,30 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=4403)
         return
     q = websocket.query_params
+    # 分级日志的判据（下面 IP 白名单与验签两处共用）：完全没带凭证 = 健康探测
+    # 或端口扫描，不是故障，降到 DEBUG；带了凭证才算真实鉴权失败。
+    probe = not q.get("app_id") and not q.get("sign")
+    # IP 白名单（默认留空=不限制）：放在验签之前，来源不对就不必再算签名。
+    # 单独一条日志与验签失败区分开——否则现场只看到「连不上」，
+    # 分不清是密钥不对还是这台机器根本不在名单里。
+    client_ip = _real_client(websocket)
+    if not _ip_allowed(client_ip):
+        (logger.debug if probe else logger.warning)(
+            "his_ws.ip_rejected: 来源 IP 不在白名单内 client=%s", client_ip)
+        await websocket.close(code=4403)
+        return
     err = wp.verify_handshake(
         q.get("app_id", ""), q.get("timestamp", ""), q.get("nonce", ""),
         q.get("sign", ""), settings.his_inbound_app_id,
         settings.his_inbound_app_secret, settings.his_sign_clock_skew_seconds,
     )
     if err is not None:
-        # 分级：完全没带凭证 = 健康探测或端口扫描，不是故障，降到 DEBUG；
-        # 带了凭证但不对 = 真实鉴权失败，保持 WARNING。
+        # 分级（probe 见上）：完全没带凭证 = 健康探测或端口扫描，不是故障，
+        # 降到 DEBUG；带了凭证但不对 = 真实鉴权失败，保持 WARNING。
         # 否则 uptime-kuma 每 60 秒探一次就往 error.log 写一条，一天 1440 条，
         # 把「error.log 只装 WARNING 以上」这个排障入口彻底淹掉。
-        probe = not q.get("app_id") and not q.get("sign")
         log = logger.debug if probe else logger.warning
-        log("his_ws.handshake_rejected: %s client=%s", err, _real_client(websocket))
+        log("his_ws.handshake_rejected: %s client=%s", err, client_ip)
         await websocket.close(code=4401)
         return
 
@@ -79,13 +117,13 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         ttl=settings.his_sign_clock_skew_seconds + 60,
     ):
         logger.warning("his_ws.handshake_replay: nonce 重复，拒绝建连 client=%s",
-                       _real_client(websocket))
+                       client_ip)
         await websocket.close(code=4401)
         return
 
     await websocket.accept()
     his_ws_manager.register(websocket)  # 每台诊室客户端各一条连接，多条并存
-    logger.info("his_ws.connected: client=%s", websocket.client)
+    logger.info("his_ws.connected: client=%s", client_ip)
     ping_task = asyncio.create_task(_ping_loop(websocket))
     try:
         while True:

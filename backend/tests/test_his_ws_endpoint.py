@@ -304,3 +304,59 @@ def test_ws_reused_msg_id_with_new_patient_not_swallowed(ws_env):
         ws.send_text(_admit_text(visit_id="V-P2", msg_id=fixed))
         assert _recv_skip_heartbeat(ws).payload["code"] == 0
     assert handled == ["V-P1", "V-P2"], f"第二位患者被吞掉了：{handled}"
+
+
+# ── WS 来源 IP 白名单（2026-08-15，规范 2.2「可叠加 IP 白名单」）──────────────
+
+def test_ip_allowlist_empty_means_no_restriction(ws_env):
+    """默认留空 = 不限制：与加此功能之前行为完全一致（零回归）。"""
+    with ws_env.websocket_connect(_handshake_url()) as ws:
+        ws.send_text(_admit_text(visit_id="V-NOLIST"))
+        assert _recv_skip_heartbeat(ws).payload["code"] == 0
+
+
+def test_ip_allowlist_blocks_outsider(ws_env, monkeypatch):
+    """白名单开启后，名单外的来源在验签之前就被拒。"""
+    monkeypatch.setattr(settings, "his_ws_ip_allowlist", "203.0.113.0/29")
+    with pytest.raises(Exception):
+        with ws_env.websocket_connect(
+            _handshake_url(), headers={"X-Real-IP": "198.51.100.9"}
+        ):
+            pass
+
+
+def test_ip_allowlist_allows_listed_cidr(ws_env, monkeypatch):
+    """名单内的来源（含 CIDR 网段）正常放行。"""
+    monkeypatch.setattr(settings, "his_ws_ip_allowlist", "203.0.113.0/29,192.0.2.5")
+    for ip in ("203.0.113.3", "192.0.2.5"):
+        with ws_env.websocket_connect(
+            _handshake_url(), headers={"X-Real-IP": ip}
+        ) as ws:
+            ws.send_text(_admit_text(visit_id="V-OK-" + ip))
+            assert _recv_skip_heartbeat(ws).payload["code"] == 0
+
+
+def test_ip_allowlist_not_bypassable_via_forged_xff(ws_env, monkeypatch):
+    """伪造 X-Forwarded-For 首段不能绕过白名单。
+
+    生产 nginx 用的是 `X-Forwarded-For $proxy_add_x_forwarded_for`——客户端
+    自带的 XFF 会被原样保留在**前面**、真实地址追加在末尾。若按首段判定，
+    攻击者只要发一个 `X-Forwarded-For: <医院出口IP>` 就能长驱直入，
+    白名单形同虚设。判定必须取 nginx 无条件覆盖写入的 X-Real-IP。
+    """
+    monkeypatch.setattr(settings, "his_ws_ip_allowlist", "203.0.113.7")
+    with pytest.raises(Exception):
+        with ws_env.websocket_connect(_handshake_url(), headers={
+            "X-Forwarded-For": "203.0.113.7, 198.51.100.9",  # 首段是伪造的
+            "X-Real-IP": "198.51.100.9",                      # nginx 写的真实地址
+        }):
+            pass
+
+
+def test_ip_allowlist_malformed_config_fails_at_startup():
+    """白名单写错一个字符 = 全院连不上，必须启动期就报错而不是运行期才发现。"""
+    from app.config import Settings
+    s = Settings(his_adapter_enabled=True, his_inbound_app_id="a",
+                 his_inbound_app_secret="b", his_ws_ip_allowlist="203.0.113.7,不是IP")
+    with pytest.raises(ValueError, match="HIS_WS_IP_ALLOWLIST"):
+        s.validate_runtime()

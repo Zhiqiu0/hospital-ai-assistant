@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     his_inbound_app_secret: str = ""
     # 签名时间戳允许误差（秒），防重放，默认 5 分钟
     his_sign_clock_skew_seconds: int = 300
+    # ── WS 长连接来源 IP 白名单（规范 2.2「可在签名之上叠加 IP 白名单」）────
+    # 逗号分隔的 IP 或 CIDR，如 "203.0.113.7,203.0.113.16/29"。
+    # **留空 = 不限制**（默认），只靠签名鉴权，与加此项之前行为完全一致。
+    # 为什么值得有：凭证要写进厂商客户端、装在全院每台诊室电脑上，一旦外泄，
+    # 任何公网主机都能建连、被当成"任一在线连接"收到病历回写。白名单挡的是
+    # 这类外人（厂商本身握有全院病历，白名单对内鬼没有意义）。
+    # 为什么默认关：医院出口 IP 若不固定，配错=全院回写全断，比它防的风险更大。
+    # 联调时向信息科确认出口 IP 固定后再填。
+    his_ws_ip_allowlist: str = ""
     # ── HIS 病历回写（我方→HIS，待厂商确认后填，先占位）──────────
     his_writeback_url: str = ""           # 回写写入接口地址
     his_writeback_refresh_url: str = ""   # 触发前端刷新接口地址
@@ -136,6 +145,31 @@ class Settings(BaseSettings):
         """将逗号分隔的 allowed_origins 字符串转换为列表，供 CORS 中间件使用。"""
         return [o.strip() for o in self.allowed_origins.split(",")]
 
+    def his_ws_allowed_networks(self) -> list:
+        """把 his_ws_ip_allowlist 解析成网段列表；留空返回空列表（= 不限制）。
+
+        单个 IP 也按 /32（或 /128）网段处理，调用方只需一种判断方式。
+        条目非法直接抛 ValueError，由 validate_runtime 在启动期拦下。
+        """
+        import ipaddress
+
+        raw = (self.his_ws_ip_allowlist or "").strip()
+        if not raw:
+            return []
+        nets = []
+        for item in raw.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                nets.append(ipaddress.ip_network(item, strict=False))
+            except ValueError as exc:
+                raise ValueError(
+                    f"HIS_WS_IP_ALLOWLIST 配置项无法解析：{item!r}（{exc}）。"
+                    "应为逗号分隔的 IP 或 CIDR，如 203.0.113.7,203.0.113.16/29"
+                ) from exc
+        return nets
+
     def validate_runtime(self) -> None:
         """启动期一致性校验（2026-08-11 病历安全）：防"半配置"状态静默上线。
 
@@ -148,6 +182,10 @@ class Settings(BaseSettings):
         """
         if not self.his_adapter_enabled:
             return
+        # IP 白名单**只要填了就必须能解析**，且不分环境一律 fail-fast：
+        # 写错一个字符的后果是全院 HIS 客户端连不上（回写全断），而这类错
+        # 在运行期只表现为"厂商说连不上"，极难往配置上想。宁可启动就报错。
+        self.his_ws_allowed_networks()
         missing = [
             name for name, val in (
                 ("HIS_INBOUND_APP_ID", self.his_inbound_app_id),
