@@ -1,4 +1,9 @@
-"""生成 v1.3 变更版规范：开头插一页变更摘要。
+"""生成 v1.3 变更版规范：在文末插入《附录 C：本次修订说明》。
+
+位置（2026-08-15 定）：变更说明放**文末附录**，不放开头。
+这份文件首先是一份接口规范，不该一打开就是红色的「本次修订说明」、
+把规范标题压到第二页。封面下方保留一行路标指向附录 C
+（由 apply_his_spec_v13_body.py 写），A 类那几条要厂商动手前看的照样跑不掉。
 
 两个要点：
 
@@ -91,9 +96,20 @@ def main() -> None:
             for r in p.runs:
                 r.text = r.text.replace("v1.2", "v1.3").replace("2026-08-11", "2026-08-14")
 
-    anchor = doc.paragraphs[0]
+    # ── 变更说明放文末作附录 C（2026-08-15 调整）────────────────────────────
+    # 原先整块插在 doc.paragraphs[0] 之前，于是文件一打开是红色的「本次修订说明」，
+    # 规范标题被压到第二页——**这份东西首先应该是一份规范，不是一份变更说明**。
+    # 挪到文末，封面下方那行「▲ v1.3 修订：…」改成指路（由 apply 脚本负责），
+    # A 类要他动手前看的内容照样跑不掉。
+    anchor = None
+    for p in doc.paragraphs:
+        if "本文档 v1.2，供双方评审" in p.text:
+            anchor = p
+            break
+    if anchor is None:
+        raise SystemExit("找不到文末结束语，无法插入附录 C——请检查母本文档是否被改动")
 
-    para_before(anchor, "本次修订说明（v1.2 → v1.3）", size=15, bold=True,
+    para_before(anchor, "附录 C：本次修订说明（v1.2 → v1.3）", size=14, bold=True,
                 color=RED, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=10)
     # 定调（2026-08-15 改）：同一份清单，说法不同性质完全不同。
     # 原文是「我们发现规范与实现不一致、大多是我方没同步」——一上来就道歉，
@@ -107,7 +123,8 @@ def main() -> None:
         "老师好。在贵方动手开发之前，我方先把系统代码与本规范做了一轮逐条核对，"
         "把所有会影响贵方实现的地方一次性梳理清楚，免得开发到一半再来回改。"
         "需要请您过目的共 %d 处，列在下面两张表里：一张是请您对齐的，"
-        "一张是原要求已取消、贵方可以少做的。" % n_ab,
+        "一张是原要求已取消、贵方可以少做的。正文相应位置均已改好，"
+        "本附录只是把改动之处集中列出来便于核对，不必与正文对照着读。" % n_ab,
         size=10.5, color=DARK, space_after=4, line=1.5,
     )
     para_before(
@@ -151,20 +168,19 @@ def main() -> None:
         anchor._p.addprevious(tbl._tbl)
         para_before(anchor, "", size=6, space_after=8)
 
-    # 必须说明 ▲ 是什么：全文几十处三角标记，不解释的话厂商会当成排版残留或乱码。
-    # 措辞要跟着实现走：2026-08-15 已把荧光黄高亮换成淡底色（w:shd），这里同步改口。
-    # 另：▲ 覆盖的是全部 30 处（含没有单列成表的 C 类），措辞不能写成「上述条目」。
+    # ▲ 是什么必须有人解释，否则厂商会当成排版残留或乱码。
+    # 它现在解释在两处：封面下方那行（apply 脚本写，先被读到）与这里（附录内）。
+    # 措辞要跟着实现走——2026-08-15 已把荧光黄高亮换成淡底色（w:shd）。
     para_before(anchor,
-                "以下为规范正文（v1.3）。本次修订过的位置——包括上表两类、"
-                "以及未单独罗列的口径写明——均已在正文就地改好，"
+                "以上两类以及未单独罗列的口径写明，均已在正文对应位置就地改好，"
                 "并以淡底色 + 句首「▲」标出，便于对照。",
-                size=10, color=GRAY, space_after=2)
-    para_before(anchor, "─" * 52, size=9, color=GRAY, space_after=12)
+                size=10, color=GRAY, space_after=10)
 
     doc.save(str(OUT))
     print(f"已生成：{OUT}")
     for p in ("A", "B", "C"):
-        print(f"  {p} 类 {len([c for c in CHANGES if c['prio']==p])} 项")
+        placed = "附录 C 列表" if p in ("A", "B") else "仅正文标记"
+        print(f"  {p} 类 {len([c for c in CHANGES if c['prio']==p])} 项（{placed}）")
 
 
 if __name__ == "__main__":
