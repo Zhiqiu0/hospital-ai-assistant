@@ -383,3 +383,19 @@ async def test_id_card_still_wins_over_patient_no(async_db):
         visit_id="V-C-2", id_card="330523199001011238", patient_no="X-2",
     ))
     assert second.patient_id == first.patient_id
+
+
+@pytest.mark.asyncio
+async def test_birth_date_compact_format_not_lost(async_db):
+    """CSRQ 传 YYYYMMDD 紧凑写法时，出生日期要落库而不是被静默丢弃。
+
+    入参容错让这条推送不再被 40004 拒收，但若这里解析不了就等于丢掉出生日期，
+    而年龄影响用药与诊断判断。
+    """
+    from datetime import date
+    await _mk_doctor(async_db)
+    result = await process_admit(async_db, _payload(
+        visit_id="V-BD-1", birth_date=19680520,
+    ))
+    patient = await async_db.get(Patient, result.patient_id)
+    assert patient.birth_date == date(1968, 5, 20)
