@@ -139,7 +139,9 @@ async def his_ws_endpoint(websocket: WebSocket) -> None:
         except Exception:
             pass
     except WebSocketDisconnect:
-        logger.info("his_ws.disconnected: client=%s", websocket.client)
+        # 与 connected 用同一个口径：否则连上记的是真实诊室 IP、断开记的是
+        # nginx 容器地址（全院都一样），联调时配不成对，看不出是哪台在反复掉线
+        logger.info("his_ws.disconnected: client=%s", client_ip)
     except Exception as exc:  # 连接层意外错误：记日志后走统一清理
         logger.warning("his_ws.connection_error: %s", exc)
     finally:
