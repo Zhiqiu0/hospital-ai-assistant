@@ -331,3 +331,55 @@ async def test_prefill_still_fills_never_set_field(async_db):
 
     patient = (await async_db.execute(select(Patient))).scalars().first()
     assert (patient.profile or {})["past_history"]["value"] == "高血压 10 年"
+
+
+@pytest.mark.asyncio
+async def test_patient_no_reuses_archive_without_id_card(async_db):
+    """无身份证的患者复诊：靠 patient_no 认出是同一个人，复用同一份档案。
+
+    这是 2026-08-15 补接 patient_no 的核心价值——此前身份证与手机号都缺时，
+    同一位患者每次就诊都会新建档案，医生看不到他的既往病历与过敏史。
+    """
+    await _mk_doctor(async_db)
+    first = await process_admit(async_db, _payload(
+        visit_id="V-A-1", patient_no="BA20260001", id_card=None, phone=None,
+    ))
+    second = await process_admit(async_db, _payload(
+        visit_id="V-A-2", patient_no="BA20260001", id_card=None, phone=None,
+    ))
+    assert second.patient_id == first.patient_id, "同一 patient_no 应复用档案"
+
+    # 落库到约定的键上（生产索引就建在这个键的 ->> 表达式上）
+    enc = (await async_db.execute(
+        select(Encounter).where(Encounter.visit_no == "V-A-1")
+    )).scalar_one()
+    assert enc.his_external_ref["his_patient_no"] == "BA20260001"
+
+
+@pytest.mark.asyncio
+async def test_patient_no_scoped_by_hospital_code(async_db):
+    """院内编号只在本院唯一：机构编码不同则**不得**跨院合并成同一份档案。"""
+    await _mk_doctor(async_db)
+    a = await process_admit(async_db, _payload(
+        visit_id="V-B-1", hospital_code="H33052300957",
+        patient_no="0001", id_card=None, phone=None,
+    ))
+    b = await process_admit(async_db, _payload(
+        visit_id="V-B-2", hospital_code="H33999999999",
+        patient_no="0001", id_card=None, phone=None,
+    ))
+    assert a.patient_id != b.patient_id, "跨机构撞号绝不能合并档案"
+
+
+@pytest.mark.asyncio
+async def test_id_card_still_wins_over_patient_no(async_db):
+    """身份证优先级更高：有身份证时行为与补接 patient_no 之前完全一致（零回归）。"""
+    await _mk_doctor(async_db)
+    first = await process_admit(async_db, _payload(
+        visit_id="V-C-1", id_card="330523199001011238", patient_no="X-1",
+    ))
+    # HIS 换了个院内编号推同一个身份证 → 仍按身份证认人
+    second = await process_admit(async_db, _payload(
+        visit_id="V-C-2", id_card="330523199001011238", patient_no="X-2",
+    ))
+    assert second.patient_id == first.patient_id

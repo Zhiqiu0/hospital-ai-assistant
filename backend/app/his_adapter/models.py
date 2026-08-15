@@ -151,6 +151,12 @@ class AdmitPushRequest(BaseModel):
     visit_id: str
     hospital_code: str
     patient_name: str
+    # HIS 侧患者主索引号（病案号 / 患者主索引 / 居民健康档案号，贵方取哪个都行，
+    # 只要「同一个人历次就诊恒定不变」即可）。2026-08-15 补接：
+    # 此前我方跨就诊认人只靠 id_card 或 phone+姓名，两者都缺的患者每次就诊
+    # 都会新建档案，医生看不到他的既往病历与过敏史。院内编号是 HIS 里最稳定
+    # 的标识，收下后与 hospital_code 联合作为查重强键（见 _find_or_create_patient）。
+    patient_no: Optional[str] = None
     # 宽容接受英文 / 国标代码 / 中文，识别不了降级 unknown（见 _coerce_gender）
     gender: Literal["male", "female", "unknown"] = "unknown"
     birth_date: Optional[str] = None
@@ -180,7 +186,11 @@ class AdmitPushRequest(BaseModel):
     _norm_first_visit = field_validator("is_first_visit", mode="before")(
         _coerce_first_visit
     )
+    # birth_date / patient_no 一并纳入（2026-08-15）：规范容错段写的是「体征、
+    # 身份证、手机号**等**接受 JSON 数字」，「等」是开放承诺，白名单却漏了它们。
+    # CSRQ 在 HIS 里常是 date 列，序列化成 JSON 数字（19680520）时 pydantic
+    # 仍会 ValidationError → 整条接诊推送 40004 被拒，正是容错要根除的失败形态。
     _norm_str_fields = field_validator(
         "id_card", "phone", "visit_id", "hospital_code",
-        "dept_code", "doctor_code", mode="before",
+        "dept_code", "doctor_code", "patient_no", "birth_date", mode="before",
     )(_coerce_str)

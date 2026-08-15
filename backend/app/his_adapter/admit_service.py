@@ -158,7 +158,12 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         patient_id=patient_id,
         doctor_id=doctor.id,
         department_id=department_id,
-        visit_type=_VISIT_TYPE_MAP.get((payload.visit_type or "").strip(), "outpatient"),
+        # .lower()：厂商给 "Emergency" / "OUTPATIENT" 时原本会静默降级成门诊，
+        # 而 visit_type 决定病历类型判定与住院多份文书的 record_no 递增分支，
+        # 走错分支没有任何报错。与 _coerce_gender 的容错口径保持一致。
+        visit_type=_VISIT_TYPE_MAP.get(
+            (payload.visit_type or "").strip().lower(), "outpatient"
+        ),
         visit_no=payload.visit_id,
         is_first_visit=payload.is_first_visit if payload.is_first_visit is not None else True,
         status="in_progress",
@@ -166,6 +171,10 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         his_external_ref={
             "source": "admit_push",
             "hospital_code": payload.hospital_code,
+            # 患者主索引号：跨就诊稳定，与 hospital_code 联合作查重强键。
+            # 键名沿用 HISExternalRef 里早就定义好的 his_patient_no——生产
+            # 那个 GIN 索引本来就建在这个键上，此前因为入参不收该字段一直空转。
+            "his_patient_no": payload.patient_no,
             "his_visit_no": payload.visit_id,
             "dept_code": payload.dept_code,
             "dept_name": payload.dept_name,
@@ -426,6 +435,37 @@ async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
     return doctor
 
 
+async def _find_patient_by_his_no(
+    db: AsyncSession, hospital_code: str, patient_no: Optional[str]
+) -> Optional[str]:
+    """按「机构编码 + HIS 患者主索引号」找该患者既往就诊，命中则返回其档案 id。
+
+    用 ->> 取标量再等值比对：PG 生成 `his_external_ref ->> 'his_patient_no' = $1`
+    走 idx_encounters_his_patient_no（btree 函数索引），SQLite 测试库生成
+    JSON_EXTRACT，两边语义一致，不需要分方言写两套。
+
+    只认非取消的接诊——取消接诊时患者档案可能已被一并清掉，把它捞回来等于
+    让医生在新接诊里继续用一个底层已软删的档案。
+    """
+    if not patient_no:
+        return None
+    row = (await db.execute(
+        select(Encounter.patient_id).where(
+            Encounter.his_external_ref["his_patient_no"].as_string() == patient_no,
+            Encounter.his_external_ref["hospital_code"].as_string() == hospital_code,
+            Encounter.status != "cancelled",
+            Encounter.patient_id.isnot(None),
+        ).order_by(Encounter.created_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if not row:
+        return None
+    # 档案可能在上次接诊取消时被软删，复用前确认还活着
+    patient = await db.get(Patient, row)
+    if patient is None or patient.is_deleted:
+        return None
+    return str(row)
+
+
 async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -> str:
     """三级查重复用患者档案，查不到新建（is_from_his=True）。
 
@@ -443,6 +483,7 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             pass  # 解析不了就留空，不阻塞建档
 
     service = PatientService(db)
+    # ── 强键 1：身份证（全国唯一，优先级最高）─────────────────────────────
     # allow_weak_match=False：HIS 全自动链路禁用「姓名+生日」弱键匹配，
     # 避免同名同生日的不同患者被误合并成一份档案（跨人病历污染是临床事故）。
     # 只有身份证 / 手机号+姓名 强键命中才复用；否则一律新建（可事后人工合并）。
@@ -453,6 +494,17 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
         birth_date=birth_date,
         allow_weak_match=False,
     )
+    if not found:
+        # ── 强键 2：hospital_code + patient_no（院内患者主索引号）────────────
+        # 2026-08-15 补接。放在身份证之后：身份证全国唯一、强度更高，有它时
+        # 行为与此前完全一致（零回归）；只有身份证缺失时这条才生效，把原本
+        # 「掉到手机号弱匹配、再掉到新建档案」的患者接住。
+        # 必须与 hospital_code 联合——院内编号只在本院唯一，跨院会撞号。
+        pid = await _find_patient_by_his_no(
+            db, payload.hospital_code, payload.patient_no
+        )
+        if pid:
+            return pid
     if found:
         return found["id"]
 
