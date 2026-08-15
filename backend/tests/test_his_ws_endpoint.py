@@ -178,3 +178,27 @@ def test_ws_unknown_type_gets_40004(ws_env):
         ws.send_text(text)
         env = _recv_skip_heartbeat(ws)
         assert env.payload["code"] == 40004
+
+
+def test_probe_handshake_not_logged_as_warning(ws_env, caplog):
+    """无凭证探测（健康监控/端口扫描）不得写 WARNING 到 error.log。
+
+    uptime-kuma 对 /api/v1/his/ws 的存活探测每 60 秒一次、不带任何凭证。
+    若按 WARNING 记，一天 1440 条会把「error.log 只装 WARNING 以上」这个
+    排障入口彻底淹掉。带了凭证但不对的仍须保持 WARNING（真实鉴权失败）。
+    """
+    import logging
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.his_ws"):
+        with pytest.raises(Exception):
+            with ws_env.websocket_connect("/api/v1/his/ws"):  # 一个参数都不带
+                pass
+    assert not [r for r in caplog.records if "handshake_rejected" in r.message], \
+        "无凭证探测不应产生 WARNING"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.his_ws"):
+        with pytest.raises(Exception):
+            with ws_env.websocket_connect(_handshake_url(sign="deadbeef")):
+                pass
+    assert [r for r in caplog.records if "handshake_rejected" in r.message], \
+        "带凭证但签名错属真实鉴权失败，必须保留 WARNING"
