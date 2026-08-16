@@ -135,6 +135,31 @@ fi
 echo "[$(date)] === 备份完成 ==="
 du -sh "${DEST}"
 
+# ── 成功心跳（2026-08-16 上线前体检补）─────────────────────────────────────
+# 在此之前，备份失败**没有任何人会知道**：脚本 set -euo pipefail 会中止、
+# 上面失败分支也 exit 1，但结果只写进 /var/log/mediscribe-backup.log，
+# 而没人每天去看日志。备份连着挂一周，要等到真需要恢复的那天才发现——
+# 那正是最不能没有备份的时刻。
+#
+# 用「死人开关」而不是「失败时告警」：只在**成功**时 ping 一下，
+# 由 uptime-kuma 的 Push 监控在超时未收到时告警。这样不仅能发现"备份跑了但失败"，
+# 还能发现"cron 根本没跑""服务器关机了"这类失败时连告警代码都执行不到的情况。
+# BACKUP_HEARTBEAT_URL 未配置则整段跳过（本地/开发环境无影响）。
+# 只从 .env 里取这一个变量，不 source 整个文件——那会把 DB/OSS 密码一并带进
+# 当前 shell，而本脚本后面还要 echo 日志，没必要让密钥有机会漏出去。
+if [ -z "${BACKUP_HEARTBEAT_URL:-}" ] && [ -f "${COMPOSE_DIR}/.env" ]; then
+    BACKUP_HEARTBEAT_URL="$(sed -n 's/^BACKUP_HEARTBEAT_URL=//p' "${COMPOSE_DIR}/.env" \
+        | tail -1 | tr -d '\r' | tr -d '"' | tr -d "'")"
+fi
+if [ -n "${BACKUP_HEARTBEAT_URL:-}" ]; then
+    if curl -fsS -m 10 "${BACKUP_HEARTBEAT_URL}" -o /dev/null 2>&1; then
+        echo "[$(date)] 成功心跳已上报"
+    else
+        # 心跳发不出去不算备份失败——备份本身已经完成，不能因为通知失败就 exit 1
+        echo "[$(date)] WARN: 成功心跳上报失败（备份本身已完成）"
+    fi
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 恢复操作（手动执行）
 # ─────────────────────────────────────────────────────────────────────────────
