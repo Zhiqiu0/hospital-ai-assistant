@@ -64,6 +64,12 @@ PURGE_ORDER = [
 # departments        科室（含 HIS 推送自动建的）
 # model_configs / prompt_templates / qc_rules  模型、提示词、质控规则配置
 # revoked_tokens     登录态黑名单，与临床数据无关
+#
+# ⚠️ 开业前第二步（2026-08-17 第 13 轮审计新增）：本脚本保留 users/departments，
+#    但这两张表里还混着联调/审计留下的**测试账号与测试科室**（如种子 doctor01，
+#    口令 doctor123 明文就在仓库里，实测能登生产签病历）。清库清不掉它们。
+#    正式开业前，跑完本脚本 --execute 后，**再跑 purge_test_accounts.py --execute**
+#    把测试账号/科室清掉，并按它的口令体检把 admin 默认口令改掉。
 KEEP = ["users", "doctor_codes", "departments", "model_configs",
         "prompt_templates", "qc_rules", "revoked_tokens"]
 
