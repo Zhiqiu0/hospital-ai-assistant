@@ -40,7 +40,16 @@
     // Username / Password 由 docker-compose 注入（ORTHANC__POSTGRESQL__USERNAME /
     // ORTHANC__POSTGRESQL__PASSWORD = ${DB_USER} / ${DB_PASSWORD}），不在本文件硬编码
     "EnableSsl": false,
-    "Lock": false
+    "Lock": false,
+    // 连接池大小（2026-08-16 上线前体检修正）。
+    // 插件 7.0 起该项默认 50，而 Orthanc 会**开机就把 50 条全部建好并常驻**——
+    // 实测生产空闲时 pg_stat_activity 里 orthanc 库恒占 50 条 idle 连接，
+    // 而 PG 的 max_connections 只有 100。
+    // 后端 2 个 uvicorn worker × (pool_size 10 + max_overflow 20) 最高要 60 条，
+    // 50 + 60 = 110 > 100 → 满负荷时会撞上 "too many clients already"，
+    // 表现为全院接口一起报错（且不是 PACS 报错，是病历接口先挂）。
+    // 本院 CT/影像基本不上传，5 条足够（Orthanc 单实例、无并发检索场景）。
+    "IndexConnectionsCount": 5
   },
 
   // ───── 文件存储 ─────────────────────────────────────────
