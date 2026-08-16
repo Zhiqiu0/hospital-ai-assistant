@@ -68,12 +68,18 @@ async def lifespan(_app: FastAPI):
         logger.warning("app.startup: 回收卡死的检验单解析失败 err=%s", exc)
 
     bg_tasks = []
+    import asyncio
     if settings.his_adapter_enabled:
-        import asyncio
         from app.his_adapter.writeback_dispatch import consumer_loop
         from app.his_adapter.writeback_reconcile import reconcile_loop
         bg_tasks.append(asyncio.create_task(consumer_loop()))
         bg_tasks.append(asyncio.create_task(reconcile_loop()))
+    # AI 余额预警（2026-08-16 上线前体检）：余额耗尽是全院级单点——所有医生的
+    # 所有 AI 功能同时停摆且毫无前兆（体检当天实测余额仅够约 130 次接诊）。
+    # 只在配了 key 时起；查询失败静默降级，不影响主流程。
+    if settings.deepseek_api_key:
+        from app.services.ai.balance_monitor import balance_monitor_loop
+        bg_tasks.append(asyncio.create_task(balance_monitor_loop()))
     yield
     for t in bg_tasks:
         t.cancel()
