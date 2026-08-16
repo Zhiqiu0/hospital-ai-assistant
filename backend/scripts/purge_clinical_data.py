@@ -17,6 +17,15 @@
 用法（默认只统计不删除）：
     python scripts/purge_clinical_data.py                    # 干跑，列出将删除的行数
     python scripts/purge_clinical_data.py --execute          # 真删（还需按提示输入确认短语）
+
+在生产服务器上执行——**两条命令的 -T 不一样，别抄错**：
+    # 干跑（非交互即可）
+    ssh root@47.116.166.70 "cd /app && docker compose exec -T backend \\
+        python scripts/purge_clinical_data.py"
+    # 真删：确认短语要从键盘输入，**必须去掉 -T**，且要用带 tty 的 ssh（ssh -t）
+    ssh -t root@47.116.166.70 "cd /app && docker compose exec backend \\
+        python scripts/purge_clinical_data.py --execute"
+带着 -T 跑 --execute 会在读确认短语时直接 EOF 失败——那天手忙脚乱最容易踩这个。
 """
 import argparse
 import asyncio
