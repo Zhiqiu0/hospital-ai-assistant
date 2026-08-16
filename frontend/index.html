@@ -9,6 +9,56 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      浏览器过旧的兜底提示（2026-08-16 上线前体检补）。
+
+      为什么需要：构建产物用了 4800 多处可选链（?.），实际要求 Chrome/Edge 80+。
+      诊室电脑常是 Win7 老机器，低于该版本打开**只会是一片白屏**——控制台报语法
+      错误，而医生看到的是空白页，只会说「你们系统打不开」，我方也分不清是网络、
+      服务还是浏览器。有这段提示，排查成本从「上门看」变成「电话里一句话」。
+
+      为什么写成两段：
+        ① <script nomodule>  —— 不支持 ES module 的浏览器（Chrome < 61、IE）会执行它，
+           现代浏览器按规范直接忽略；
+        ② new Function 探测 —— 覆盖「支持 module 但不支持可选链」的 Chrome 61~79。
+           语法错误发生在**解析期**，主程序整段都不会执行，所以必须用 new Function
+           在运行期试探，才不会把这段检测脚本自己也炸掉。
+
+      本段必须全部是 ES5（var / function / 字符串拼接），不能出现任何现代语法，
+      否则它自己先解析失败，等于没写。
+    -->
+    <script nomodule>
+      window.__mediscribeUnsupported = true;
+    </script>
+    <script>
+      (function () {
+        if (!window.__mediscribeUnsupported) {
+          try {
+            // 试探可选链；解析失败会抛 SyntaxError，被这里接住
+            new Function('var o = {}; return o?.x');
+          } catch (e) {
+            window.__mediscribeUnsupported = true;
+          }
+        }
+        if (!window.__mediscribeUnsupported) return;
+        var el = document.getElementById('root');
+        if (!el) return;
+        el.innerHTML =
+          '<div style="max-width:640px;margin:80px auto;padding:32px;' +
+          'font-family:Microsoft YaHei,sans-serif;line-height:1.9;color:#333;' +
+          'border:1px solid #e5e5e5;border-radius:8px">' +
+          '<h2 style="margin:0 0 16px;color:#c00">浏览器版本过低，无法打开本系统</h2>' +
+          '<p>本系统需要 <b>Chrome 80 及以上</b>（或同版本以上的 Edge）。' +
+          '当前浏览器版本过旧，无法正常显示页面。</p>' +
+          '<p style="margin-top:16px">请改用较新的 Chrome 或 Edge 打开：' +
+          '<br/><b>https://mediscribe.cn</b></p>' +
+          '<p style="margin-top:16px;color:#888;font-size:13px">' +
+          '若这台电脑无法升级浏览器，请联系医院信息科处理。</p>' +
+          '</div>';
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
