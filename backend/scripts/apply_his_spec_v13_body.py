@@ -745,16 +745,25 @@ def main() -> None:
     else:
         _failed.append("尾注版本号")
 
-    doc.save(str(SRC))
-
-    print(f"已应用 {len(_applied)} 项：")
-    for t in _applied:
-        print("   ✓", t)
+    # 有任何一条没命中就**不保存**（2026-08-15 第十二轮审计修复）。
+    # 原先无论成败都 doc.save，于是重跑一次本脚本会：25 条因内容已被改过而
+    # 未命中、另外 30 多条在已改过的文本上再改一遍，然后**把这份改坏的文档
+    # 覆盖写回**——正确版本当场丢失。我今天就是这么踩的（误读了 `cmd | grep`
+    # 的退出码，以为失败又重跑了一次）。
+    # 未命中意味着文档处于未知状态，此时保存比不保存危险得多：
+    # 重新生成只要跑一遍 make，而覆盖掉的正确版本是找不回来的。
     if _failed:
-        print(f"\n⚠ 未命中 {len(_failed)} 项（需人工确认）：")
+        print(f"⚠ 有 {len(_failed)} 项未命中，**文档未保存**（保持原样）：")
         for t in _failed:
             print("   ✗", t)
-    sys.exit(1 if _failed else 0)
+        print("\n请先跑 make_his_spec_v13.py 从 v1.2 母本重新生成，再跑本脚本；"
+              "\n若是母本或条目文案改动导致的定位失败，修好后再重跑。")
+        sys.exit(1)
+
+    doc.save(str(SRC))
+    print(f"已应用 {len(_applied)} 项，文档已保存。")
+    for t in _applied:
+        print("   ✓", t)
 
 
 if __name__ == "__main__":
