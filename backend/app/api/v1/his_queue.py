@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, is_token_revoked, oauth2_scheme
 from app.database import get_db
 from app.his_adapter.depends import require_his_enabled
 from app.his_adapter.event_bus import his_event_bus
@@ -87,13 +87,26 @@ async def today_queue(
     return {"items": items}
 
 
-async def _still_authorized(user_id: str) -> bool:
-    """SSE 长连接的周期性重校验：账号仍激活、且未在本连接建立后改过密码。
+async def _still_authorized(user_id: str, jti: str | None, iat: int | None) -> bool:
+    """SSE 长连接的周期性重校验：账号仍激活、token 未被吊销、且未在本连接建立后改过密码。
 
     用独立会话查（请求会话在流式响应期间的生命周期不适合长期持有）。
     任何异常都判**通过**：这是保活路径，查库抖动不该把医生的叫号连接踢掉——
     真正的安全边界在每个业务请求的 get_current_user 上，这里是加固不是主防线。
+
+    2026-08-17 第 15 轮审计修复：原实现只查 is_active / must_change_password，
+    **漏了吊销与改密水印**——而这恰恰是本函数注释里声称要堵的两个场景。
+    实测：建好 SSE 后登出（token 已进 revoked_tokens、普通请求已 401），这条
+    长连接跨过 25 秒重校验点仍照发 ping 存活，继续把患者叫号 PHI 推给对面。
+    「账号疑似泄露 → 登出/信息科重置密码」这套标准处置对已建立的 SSE 形同虚设。
+    这里补齐两道，判定口径与 get_current_user 完全一致：
+      · 吊销：jti 在黑名单（登出写入）→ 踢。复用 is_token_revoked（同一真源）。
+      · 水印：token 的 iat 早于最后改密时刻 → 踢（医生自助改密后旧连接也要断）。
+        时区口径同 get_current_user：iat（UTC 纪元秒）转 naive 本地再比 naive 的
+        password_changed_at；老 token 无 iat 一并视为过期。
     """
+    from datetime import datetime
+
     from app.database import AsyncSessionLocal
     from app.models.user import User as UserModel
 
@@ -102,6 +115,14 @@ async def _still_authorized(user_id: str) -> bool:
             user = await db.get(UserModel, user_id)
             if user is None or not user.is_active or user.must_change_password:
                 return False
+            # 吊销（登出）：与 get_current_user 同款检查，杀掉已吊销 token 的存量长连接
+            if await is_token_revoked(db, jti):
+                return False
+            # 改密水印：签发早于最后改密时刻的 token 一并失效
+            changed_at = getattr(user, "password_changed_at", None)
+            if changed_at is not None:
+                if iat is None or datetime.fromtimestamp(iat) < changed_at:
+                    return False
             return True
     except Exception:
         logger.warning("his_queue.stream: 重校验查库失败，本轮放行 user_id=%s", user_id)
@@ -111,6 +132,7 @@ async def _still_authorized(user_id: str) -> bool:
 @router.post("/stream")
 async def queue_stream(
     current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme),
 ) -> StreamingResponse:
     """SSE 事件流：订阅本医生的事件频道，实时推送叫号与回写结果。
 
@@ -121,6 +143,22 @@ async def queue_stream(
       {"type": "writeback_result", ...} 病历回写结果
     """
     channel = f"his:doctor:{current_user.id}"
+
+    # 建连时取出本 token 的 jti / iat，交给心跳里的周期性重校验用（2026-08-17
+    # 第 15 轮审计修复）。get_current_user 已验过签名有效期，这里只是把声明取出来，
+    # 解析失败也不阻断建连（重校验拿不到 jti 就只退化到查账号状态，不比原来更差）。
+    _jti: str | None = None
+    _iat: int | None = None
+    try:
+        from jose import jwt
+
+        from app.config import settings
+
+        _claims = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        _jti = _claims.get("jti")
+        _iat = _claims.get("iat")
+    except Exception:
+        logger.warning("his_queue.stream: 取 token 声明失败，重校验将只查账号状态")
 
     from app.his_adapter.event_bus import PUMP_DEAD_SENTINEL
 
@@ -138,7 +176,7 @@ async def queue_stream(
                     # 甚至医生已登出，这条长连接照样把患者姓名/就诊信息推给对面。
                     # token 有效期 30 天，长连接可以挂一整天，等于鉴权形同虚设。
                     # 每 25 秒查一次库对 SSE 来说开销可忽略（每医生每 25 秒一次）。
-                    if not await _still_authorized(current_user.id):
+                    if not await _still_authorized(current_user.id, _jti, _iat):
                         logger.info(
                             "his_queue.stream: 账号状态已变更，结束 SSE channel=%s", channel
                         )

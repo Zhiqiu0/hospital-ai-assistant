@@ -186,6 +186,31 @@ def verify_token_str(token: str) -> str:
     return user_id
 
 
+async def is_token_revoked(db: AsyncSession, jti: Optional[str]) -> bool:
+    """查某个 token 的 jti 是否已被吊销（登出 / 改密时写入黑名单）。
+
+    判定口径与 get_current_user 内联的吊销检查完全一致：先查 Redis 黑名单
+    （命中即吊销），未命中再查 DB 兜底（应对 Redis 重启后仍存活的旧 jti）。
+    抽成独立函数，供 **SSE 等长连接的周期性重校验** 复用——get_current_user
+    只在建连那一次跑，长连接建立后 token 被吊销它是发现不了的，需要这个函数
+    在心跳里补查（见 his_queue._still_authorized）。
+
+    Args:
+        db: 调用方自备的会话（长连接场景不宜复用请求会话）。
+        jti: token 的 JWT ID；为空（老 token 无 jti）时视为未吊销。
+
+    Returns:
+        True=已吊销，False=未吊销。
+    """
+    if not jti:
+        return False
+    from app.services.redis_cache import redis_cache
+    if await redis_cache.get_bytes(f"auth:revoked:{jti}") is not None:
+        return True
+    from app.models.revoked_token import RevokedToken
+    return (await db.get(RevokedToken, jti)) is not None
+
+
 async def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
@@ -220,6 +245,9 @@ async def get_current_user(
     # 检查 token 是否已被吊销：先查 Redis 黑名单（每个 API 请求都走这里，
     # DB 查询是性能瓶颈），未命中再 fallback 查 DB（应对 Redis 重启后还存活的旧 jti）。
     # 登出时双写 Redis + DB，DB 作为权威存档兼容审计与 Redis 不可用场景。
+    # 注意：判定口径与 is_token_revoked() 保持一致——那是给 SSE 长连接周期性
+    # 重校验复用的同款检查（本函数只在建连时跑一次），改吊销键名/逻辑要一起动。
+    # 这里多一段 Redis 回填是热路径优化，长连接侧无此需求，故未直接复用本段。
     jti = payload.get("jti")
     if jti:
         from app.services.redis_cache import redis_cache

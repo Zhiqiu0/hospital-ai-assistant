@@ -126,3 +126,76 @@ async def test_quick_save_normal_encounter_no_writeback(client_ctx, async_db, mo
     assert res.status_code == 200
     assert res.json()["his_writeback"] is None
     assert called == []
+
+
+# ── SSE 长连接周期性重校验（2026-08-17 第 15 轮审计修复）─────────────────────────
+# 背景：_still_authorized 原先只查 is_active / must_change_password，漏了吊销与
+# 改密水印——建好 SSE 后登出，token 已进 revoked_tokens、普通请求已 401，但这条
+# 长连接跨过 25 秒重校验点仍存活，继续推患者叫号 PHI。以下锁死补齐后的四条判定。
+
+class _FakeSessionCtx:
+    """把 _still_authorized 内部的 AsyncSessionLocal() 指向测试的 async_db。
+
+    _still_authorized 用 `async with AsyncSessionLocal() as db` 开独立会话，
+    而测试的 async_db 是另一个内存引擎；不打补丁的话它开的新会话查不到测试数据，
+    会走 except 分支 fail-open 放行——那样连基线测试都是"假通过"，测不到真逻辑。
+    """
+
+    def __init__(self, session):
+        self._s = session
+
+    async def __aenter__(self):
+        return self._s
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _point_sessionlocal_at(monkeypatch, session):
+    # _still_authorized 是函数内 `from app.database import AsyncSessionLocal`，
+    # 调用时才查名字，故打 app.database.AsyncSessionLocal 即可生效。
+    monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: _FakeSessionCtx(session))
+
+
+@pytest.mark.asyncio
+async def test_sse_reauth_passes_for_active_user(async_db, monkeypatch):
+    """基线：账号在用、token 未吊销、无水印 → 重校验通过。"""
+    from app.api.v1.his_queue import _still_authorized
+    _point_sessionlocal_at(monkeypatch, async_db)
+    doctor = await _mk_doctor(async_db, username="reauth_ok")
+    assert await _still_authorized(doctor.id, jti="jti-alive", iat=1_900_000_000) is True
+
+
+@pytest.mark.asyncio
+async def test_sse_reauth_kicks_revoked_token(async_db, monkeypatch):
+    """登出/吊销：jti 在 revoked_tokens → 重校验失败，SSE 应被踢。"""
+    from app.api.v1.his_queue import _still_authorized
+    from app.models.revoked_token import RevokedToken
+    _point_sessionlocal_at(monkeypatch, async_db)
+    doctor = await _mk_doctor(async_db, username="reauth_revoked")
+    async_db.add(RevokedToken(jti="jti-revoked", expires_at=datetime(2999, 1, 1)))
+    await async_db.commit()
+    assert await _still_authorized(doctor.id, jti="jti-revoked", iat=1_900_000_000) is False
+
+
+@pytest.mark.asyncio
+async def test_sse_reauth_kicks_token_before_password_change(async_db, monkeypatch):
+    """改密水印：token 的 iat 早于 password_changed_at → 重校验失败。"""
+    from app.api.v1.his_queue import _still_authorized
+    _point_sessionlocal_at(monkeypatch, async_db)
+    doctor = await _mk_doctor(async_db, username="reauth_watermark")
+    doctor.password_changed_at = datetime.now()
+    await async_db.commit()
+    # iat=1（1970 年）远早于刚才的改密时刻 → 应被踢
+    assert await _still_authorized(doctor.id, jti="jti-old", iat=1) is False
+
+
+@pytest.mark.asyncio
+async def test_sse_reauth_kicks_deactivated_user(async_db, monkeypatch):
+    """停用账号：既有行为不回归——仍应踢。"""
+    from app.api.v1.his_queue import _still_authorized
+    _point_sessionlocal_at(monkeypatch, async_db)
+    doctor = await _mk_doctor(async_db, username="reauth_inactive")
+    doctor.is_active = False
+    await async_db.commit()
+    assert await _still_authorized(doctor.id, jti="jti-any", iat=1_900_000_000) is False
