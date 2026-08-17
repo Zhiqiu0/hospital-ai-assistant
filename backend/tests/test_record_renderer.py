@@ -418,6 +418,7 @@ FULL_ADMISSION = {
     "religion_belief": "无",
     "physical_exam_vitals": "T:36.8℃ P:100次/分 R:22次/分 BP:90/60mmHg",
     "physical_exam_text": "心率 100，律齐，未及杂音",
+    "specialist_exam": "胸骨中段压痛，无胸廓畸形",
     "auxiliary_exam": "心电图 ST 抬高",
     "admission_diagnosis": "急性心肌梗死",
 }
@@ -429,10 +430,16 @@ class TestAdmissionNoteRenderer:
         for h in [
             "【主诉】", "【现病史】", "【既往史】", "【个人史】",
             "【婚育史】", "【家族史】", "【病史陈述者】",
-            "【专项评估】", "【体格检查】", "【辅助检查（入院前）】",
+            "【专项评估】", "【体格检查】", "【专科检查】", "【辅助检查（入院前）】",
             "【入院诊断】",
         ]:
             assert h in out, f"入院记录缺章节 {h}"
+
+    def test_specialist_exam_is_own_section_after_physical_exam(self):
+        """专科检查独立成节且紧跟体格检查（医院模板"体格检查（二）"，2026-08-18）。"""
+        out = render_admission_note(FULL_ADMISSION, patient_gender="男")
+        assert out.index("【体格检查】") < out.index("【专科检查】") < out.index("【辅助检查（入院前）】")
+        assert "胸骨中段压痛" in out
 
     def test_male_omits_menstrual_history(self):
         out = render_admission_note(FULL_ADMISSION, patient_gender="男")
@@ -482,3 +489,24 @@ class TestInpatientRoutesSmokeBatch:
         assert expected_marker in out, f"{record_type} 渲染缺关键字 {expected_marker!r}"
         # 全空数据 → 占位符（除非该 record_type 有静态文字段）
         assert PLACEHOLDER in out or "____" in out
+
+
+# ─── 首次病程 5 章节（2026-08-18 对照濮氏甲级病历补齐） ─────────────────
+
+
+class TestFirstCourseRenderer:
+    def test_five_sections_in_hospital_order(self):
+        """病例特点 → 初步诊断 → 中医辨证依据 → 拟诊讨论 → 诊疗计划，顺序对齐医院模板。"""
+        from app.services.ai._render_course import render_first_course_record
+
+        out = render_first_course_record({
+            "case_summary": "75 岁女性，外伤后前胸痛",
+            "preliminary_diagnosis": "中医诊断：骨折病（气滞血瘀证）\n西医诊断：1.胸骨体骨折",
+            "tcm_syndrome_analysis": "外伤致气血运行不畅，不通则痛，舌红苔薄，脉弦涩，辨为骨折病，气滞血瘀证",
+            "diagnosis_discussion": "CT 示胸骨体骨折；鉴别肋骨骨折",
+            "treatment_plan": "胸带固定，活血化瘀",
+        })
+        headers = ["【病例特点】", "【初步诊断】", "【中医辨证依据】", "【拟诊讨论】", "【诊疗计划】"]
+        positions = [out.index(h) for h in headers]
+        assert positions == sorted(positions), out
+        assert "西医诊断：1.胸骨体骨折" in out
