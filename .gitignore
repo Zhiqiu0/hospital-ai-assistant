@@ -56,3 +56,6 @@ backend/etc/
 *.png
 dialog_snap.md
 actions-snapshot.md
+
+# 医生使用指南 PDF 构建中间产物（build_doctor_guide_pdf.py 生成）
+docs/guide/_*.html

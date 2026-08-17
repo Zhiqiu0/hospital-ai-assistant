@@ -1,7 +1,7 @@
 /**
- * MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（Node.js 版，配套《接口规范》v1.3 第 7 章）
+ * MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（Node.js 版，配套《接口规范》v1.4 第 7 章）
  *
- * 与 v1.3 规范一致，2026-08-15。
+ * 与 v1.4 单通道规范一致，2026-08-17。
  *
  * 与 Python 版（his_ws_vendor_reference.py）功能完全一致，演示贵方要做的全部 4 件事：
  *   ① 签名握手建立 wss 长连接（断线自动重连）

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.3 第 7 章）
+"""MediScribe × HIS 对接 · 厂商侧 WebSocket 参考实现（配套《接口规范》v1.4 第 7 章）
 
-与 v1.3 规范一致，2026-08-15。
+与 v1.4 单通道规范一致，2026-08-17。
 
 本文件演示贵方程序要做的全部 4 件事，可直接运行
 （python 3.10+，pip install websockets；3.8/3.9 请装 websockets<14）：
