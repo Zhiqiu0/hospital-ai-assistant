@@ -179,7 +179,7 @@ def render_admission_note(
 ) -> str:
     """渲染住院入院记录文本。
 
-    含 11 个章节 + 专项评估 7 子行 + 体格检查"T:"生命体征行。
+    含 12 个章节（2026-08-18 加【专科检查】）+ 专项评估 7 子行 + 体格检查"T:"生命体征行。
     月经史章节仅女性患者输出（与 prompt 契约一致）。
     """
     parts: list[str] = []
@@ -213,6 +213,9 @@ def render_admission_note(
         _v(data, "physical_exam_text"),
     ]
     parts.append(_section("【体格检查】", "\n".join(pe_lines)))
+    # 专科检查独立成节（= 医院模板"体格检查（二）"，2026-08-18）：
+    # 骨伤/手外病历的核心体征单独一节，医生一眼能看到、质控能定位。
+    parts.append(_section("【专科检查】", _v(data, "specialist_exam")))
 
     parts.append(_section("【辅助检查（入院前）】", _v(data, "auxiliary_exam")))
     parts.append(_section("【入院诊断】", _v(data, "admission_diagnosis")))

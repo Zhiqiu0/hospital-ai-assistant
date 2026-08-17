@@ -5,11 +5,15 @@
  * 时间戳染色 / 仍准确按钮的可见性逻辑都封装在这里，主面板只管传 fieldsMeta + 触发回调。
  *
  * 从 PatientProfileCard.tsx 拆出（Audit Round 4 M6）。
+ *
+ * 常用句式标签（2026-08-18）：输入框下方一排小标签，点一下把标准否认句式追加进正文，
+ * 句式表在 profilePhrases.ts；医生自己点的才算医生确认，AI 不替他补。
  */
-import { Button, Input, Space } from 'antd'
-import { CheckOutlined } from '@ant-design/icons'
+import { Button, Input, Space, Tag } from 'antd'
+import { CheckOutlined, PlusOutlined } from '@ant-design/icons'
 import type { FieldConfig } from './staleness'
 import { getStaleness } from './staleness'
+import { PROFILE_PHRASES, appendPhrase } from './profilePhrases'
 
 const { TextArea } = Input
 
@@ -41,6 +45,8 @@ export default function PatientProfileField(props: PatientProfileFieldProps) {
   const { hisPendingValue, resolving, onResolveHis } = props
   const stale = getStaleness(fieldUpdatedAt, field.staleAfterDays ?? 180)
   const hasValue = !!value?.trim()
+  // 该字段配置了的常用句式；已在正文里的不再显示，避免重复点
+  const phrases = (PROFILE_PHRASES[field.key] ?? []).filter(p => !(value || '').includes(p.text))
 
   return (
     <div style={{ marginBottom: 10 }}>
@@ -147,6 +153,22 @@ export default function PatientProfileField(props: PatientProfileFieldProps) {
           placeholder={field.placeholder}
           style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
         />
+      )}
+      {/* 常用句式：点标签追加标准句式（不覆盖已有内容） */}
+      {phrases.length > 0 && (
+        <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {phrases.map(p => (
+            <Tag
+              key={p.label}
+              icon={<PlusOutlined />}
+              onClick={() => onChange(appendPhrase(value, p.text))}
+              title={p.text}
+              style={{ cursor: 'pointer', fontSize: 11, margin: 0, userSelect: 'none' }}
+            >
+              {p.label}
+            </Tag>
+          ))}
+        </div>
       )}
     </div>
   )

@@ -21,11 +21,17 @@ from app.services.ai._render_common import (
 
 
 def render_first_course_record(data: dict, **_extra) -> str:
-    """首次病程记录：3 章节 + 首行标题。"""
+    """首次病程记录：5 章节 + 首行标题。
+
+    章节顺序对齐中西医结合医院模板（2026-08-18 对照濮氏甲级病历）：
+    病例特点 → 初步诊断（中西医）→ 中医辨证依据 → 拟诊讨论（西医依据+鉴别）→ 诊疗计划。
+    """
     return _render_bracketed_sections(
         data,
         [
             ("case_summary", "【病例特点】"),
+            ("preliminary_diagnosis", "【初步诊断】"),
+            ("tcm_syndrome_analysis", "【中医辨证依据】"),
             ("diagnosis_discussion", "【拟诊讨论】"),
             ("treatment_plan", "【诊疗计划】"),
         ],
