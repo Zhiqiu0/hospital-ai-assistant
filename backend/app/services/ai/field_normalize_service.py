@@ -48,8 +48,8 @@ async def run_normalize_fields(db: AsyncSession, fields: dict[str, str]) -> dict
     )
 
     try:
-        model_options = await get_model_options(db, "generate")
-        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
+        model_options = get_model_options("generate")
+        # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务（若有）、
         # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
         await db.commit()
         content = await llm_client.chat(

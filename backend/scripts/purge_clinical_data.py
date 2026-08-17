@@ -62,7 +62,7 @@ PURGE_ORDER = [
 # 明确**不删**的表，写在这里是为了让"没删什么"同样一目了然：
 # users / doctor_codes 医生账号与工号绑定（联调时刚开的户，删了要重来）
 # departments        科室（含 HIS 推送自动建的）
-# model_configs / prompt_templates / qc_rules  模型、提示词、质控规则配置
+# qc_rules           医保/关键词质控规则配置
 # revoked_tokens     登录态黑名单，与临床数据无关
 #
 # ⚠️ 开业前第二步（2026-08-17 第 13 轮审计新增）：本脚本保留 users/departments，
@@ -70,8 +70,7 @@ PURGE_ORDER = [
 #    口令 doctor123 明文就在仓库里，实测能登生产签病历）。清库清不掉它们。
 #    正式开业前，跑完本脚本 --execute 后，**再跑 purge_test_accounts.py --execute**
 #    把测试账号/科室清掉，并按它的口令体检把 admin 默认口令改掉。
-KEEP = ["users", "doctor_codes", "departments", "model_configs",
-        "prompt_templates", "qc_rules", "revoked_tokens"]
+KEEP = ["users", "doctor_codes", "departments", "qc_rules", "revoked_tokens"]
 
 CONFIRM_PHRASE = "确认清空临床数据"
 

@@ -4,8 +4,10 @@
  * 管理员专用后台的外层 Shell，包含左侧导航菜单和内容区路由：
  *
  * 菜单项（对应 /admin/* 子路由）：
- *   概览、用户管理、科室管理、病历管理、质控规则、
- *   AI提示词、模型配置、语音记录、Token用量、操作日志、统计报表
+ *   概览、用户管理、科室管理、病历管理、质控评分标准（只读）、
+ *   语音记录、Token用量、操作日志、统计报表
+ *   （2026-08-18 撤掉「Prompt 管理」「模型配置」两页：提示词与模型参数
+ *   归代码维护，医院管理员无需也不该在后台改）
  *
  * 权限控制：
  *   App.tsx 中 PrivateRoute 已拦截非 admin 角色，
@@ -20,7 +22,6 @@ import {
   UserOutlined,
   ApartmentOutlined,
   SafetyOutlined,
-  RobotOutlined,
   BarChartOutlined,
   HomeOutlined,
   LogoutOutlined,
@@ -41,13 +42,11 @@ import OverviewPage from './OverviewPage'
 import UsersPage from './UsersPage'
 import DepartmentsPage from './DepartmentsPage'
 import QCRulesPage from './QCRulesPage'
-import PromptsPage from './PromptsPage'
 import StatsPage from './StatsPage'
 import RecordsPage from './RecordsPage'
 import TokenUsagePage from './TokenUsagePage'
 import PatientsPage from './PatientsPage'
 import AuditLogsPage from './AuditLogsPage'
-import ModelConfigsPage from './ModelConfigsPage'
 import VoiceRecordsPage from './VoiceRecordsPage'
 
 const { Sider, Content } = Layout
@@ -80,9 +79,7 @@ export default function AdminLayout() {
     { key: '/admin', icon: <HomeOutlined />, label: '系统概览' },
     { key: '/admin/users', icon: <UserOutlined />, label: '用户管理' },
     { key: '/admin/departments', icon: <ApartmentOutlined />, label: '科室管理' },
-    { key: '/admin/qc-rules', icon: <SafetyOutlined />, label: '质控规则' },
-    { key: '/admin/prompts', icon: <RobotOutlined />, label: 'Prompt 管理' },
-    { key: '/admin/model-configs', icon: <RobotOutlined />, label: '模型配置' },
+    { key: '/admin/qc-rules', icon: <SafetyOutlined />, label: '质控评分标准' },
     { key: '/admin/stats', icon: <BarChartOutlined />, label: '数据统计' },
     { key: '/admin/records', icon: <FileTextOutlined />, label: '病历管理' },
     { key: '/admin/patients', icon: <TeamOutlined />, label: '患者档案' },
@@ -249,8 +246,6 @@ export default function AdminLayout() {
             <Route path="/users" element={<UsersPage />} />
             <Route path="/departments" element={<DepartmentsPage />} />
             <Route path="/qc-rules" element={<QCRulesPage />} />
-            <Route path="/prompts" element={<PromptsPage />} />
-            <Route path="/model-configs" element={<ModelConfigsPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/patients" element={<PatientsPage />} />

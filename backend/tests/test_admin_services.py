@@ -1,7 +1,8 @@
 """
-管理后台 service 单元测试（Round 5 下沉的两个模块）：
+管理后台 service 单元测试：
   - app/services/admin_record_service.py   全院病历列表分页 / 管理员修订
-  - app/services/prompt_template_service.py Prompt 模板 CRUD 与缓存失效
+  （prompt_template_service 的用例已随该模块删除——2026-08-18 撤掉后台
+   Prompt 管理 / 模型配置两页，提示词与模型参数归代码维护）
 
 覆盖范围：
   AdminRecordService：
@@ -9,17 +10,12 @@
       content 预览截断 / 患者 fallback 字段
     - revise_record：404 / 版本号递增 + 新 RecordVersion(source=admin_revise) /
       审计日志调用（含修订理由）/ snapshot 缓存失效调用 / 连续修订继续递增
-  PromptTemplateService：
-    - list 按创建时间倒序
-    - create 默认 version=v1 + 失效对应 scene 缓存
-    - update 局部更新 + 失效缓存 / 404
-    - delete + 失效缓存 / 404
 
 mock 策略（最小化）：
   - DB 全部走内存 SQLite 真实 ORM。
-  - log_action / invalidate_encounter_snapshot / invalidate_active_prompt
-    用 monkeypatch 替换为"记录调用参数"的桩——这三个分别写独立审计会话、
-    删 Redis key，测试里只需断言"被正确调用"，真实现已有各自的测试/降级逻辑。
+  - log_action / invalidate_encounter_snapshot 用 monkeypatch 替换为
+    "记录调用参数"的桩——它们分别写独立审计会话、删 Redis key，测试里只需
+    断言"被正确调用"，真实现已有各自的测试/降级逻辑。
 """
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -29,16 +25,12 @@ import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models.config import PromptTemplate
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.patient import Patient
 from app.models.user import User
-from app.schemas.config import PromptTemplateCreate, PromptTemplateUpdate
 from app.services import admin_record_service as ars_mod
-from app.services import prompt_template_service as pts_mod
 from app.services.admin_record_service import AdminRecordService
-from app.services.prompt_template_service import PromptTemplateService
 
 
 # ── 公共 fixtures ─────────────────────────────────────────────────────────────
@@ -243,159 +235,3 @@ async def test_revise_twice_keeps_incrementing(async_db, seed, capture_revise_si
         select(RecordVersion).where(RecordVersion.medical_record_id == rec.id)
     )).scalars().all())
     assert count == 3  # 初始 1 版 + 修订 2 版，旧版永久保留
-
-
-# ── PromptTemplateService ─────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def capture_prompt_invalidation(monkeypatch):
-    """把激活模板缓存失效替换为记录桩，返回收到的 scene 列表。"""
-    scenes = []
-
-    async def _fake_invalidate(scene=None):
-        scenes.append(scene)
-
-    monkeypatch.setattr(pts_mod, "invalidate_active_prompt", _fake_invalidate)
-    return scenes
-
-
-@pytest.mark.asyncio
-async def test_prompt_create_defaults_and_invalidates(async_db, capture_prompt_invalidation):
-    """create：version 未传默认 v1，写库后失效该 scene 的缓存。"""
-    svc = PromptTemplateService(async_db)
-    tpl = await svc.create(PromptTemplateCreate(
-        name="质控模板", scene="qc", content="你是质控助手", version=None))
-    assert tpl.version == "v1"
-    assert tpl.is_active is True  # 模型默认值
-    assert capture_prompt_invalidation == ["qc"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_list_ordered_by_created_desc(async_db):
-    """list_templates 按创建时间倒序（最新的排最前）。"""
-    async_db.add_all([
-        PromptTemplate(name="旧模板", scene="qc", content="v1 内容",
-                       created_at=datetime(2026, 6, 1, 8, 0)),
-        PromptTemplate(name="新模板", scene="qc", content="v2 内容",
-                       created_at=datetime(2026, 6, 2, 8, 0)),
-    ])
-    await async_db.commit()
-    templates = await PromptTemplateService(async_db).list_templates()
-    assert [t.name for t in templates] == ["新模板", "旧模板"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_update_partial_and_invalidates(async_db, capture_prompt_invalidation):
-    """update：只更新非 None 字段（其余保留），写库后失效缓存。"""
-    svc = PromptTemplateService(async_db)
-    tpl = await svc.create(PromptTemplateCreate(
-        name="问诊模板", scene="inquiry", content="原内容"))
-    capture_prompt_invalidation.clear()  # 只关心 update 触发的失效
-
-    updated = await svc.update(tpl.id, PromptTemplateUpdate(
-        content="新内容", is_active=False))
-    assert updated.content == "新内容"
-    assert updated.is_active is False
-    assert updated.name == "问诊模板"  # 未传字段不动
-    assert capture_prompt_invalidation == ["inquiry"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_update_missing_404(async_db, capture_prompt_invalidation):
-    """更新不存在的模板 → 404，不触发缓存失效。"""
-    with pytest.raises(HTTPException) as exc:
-        await PromptTemplateService(async_db).update(
-            "no-such-id", PromptTemplateUpdate(content="x"))
-    assert exc.value.status_code == 404
-    assert capture_prompt_invalidation == []
-
-
-@pytest.mark.asyncio
-async def test_prompt_delete_and_invalidates(async_db, capture_prompt_invalidation):
-    """delete：记录被物理删除，按被删模板的 scene 失效缓存。"""
-    svc = PromptTemplateService(async_db)
-    tpl = await svc.create(PromptTemplateCreate(
-        name="检查模板", scene="exam", content="内容"))
-    capture_prompt_invalidation.clear()
-
-    await svc.delete(tpl.id)
-    remaining = (await async_db.execute(
-        select(PromptTemplate).where(PromptTemplate.id == tpl.id)
-    )).scalar_one_or_none()
-    assert remaining is None
-    assert capture_prompt_invalidation == ["exam"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_delete_missing_404(async_db, capture_prompt_invalidation):
-    """删除不存在的模板 → 404，不触发缓存失效。"""
-    with pytest.raises(HTTPException) as exc:
-        await PromptTemplateService(async_db).delete("no-such-id")
-    assert exc.value.status_code == 404
-    assert capture_prompt_invalidation == []
-
-
-# ── ModelConfigService（与 PromptTemplateService 同模块）──────────────────────
-
-
-@pytest.fixture
-def capture_model_invalidation(monkeypatch):
-    """把模型配置缓存失效替换为记录桩，返回收到的 scene 列表。"""
-    scenes = []
-
-    async def _fake_invalidate(scene=None):
-        scenes.append(scene)
-
-    monkeypatch.setattr(pts_mod, "invalidate_model_options", _fake_invalidate)
-    return scenes
-
-
-@pytest.mark.asyncio
-async def test_model_config_list_seeds_defaults(async_db):
-    """首次访问列表自动 seed 全部默认场景（管理后台总能看到完整清单）。"""
-    from app.services.prompt_template_service import SCENE_DEFAULTS, ModelConfigService
-
-    configs = await ModelConfigService(async_db).list_configs()
-    assert {c["scene"] for c in configs} == {item["scene"] for item in SCENE_DEFAULTS}
-    # 默认参数与代码约定一致
-    gen = next(c for c in configs if c["scene"] == "generate")
-    assert gen["model_name"] == "deepseek-chat"
-    assert gen["temperature"] == 0.3
-    assert gen["max_tokens"] == 4096
-    assert gen["is_active"] is True
-
-
-@pytest.mark.asyncio
-async def test_model_config_update_existing_and_invalidates(async_db, capture_model_invalidation):
-    """update 已有场景：参数覆盖生效、description=None 保留旧值、失效缓存。"""
-    from app.services.prompt_template_service import ModelConfigService
-
-    svc = ModelConfigService(async_db)
-    await svc.list_configs()  # 先 seed 默认行（带默认 description）
-    result = await svc.update(
-        "qc", model_name="deepseek-reasoner", temperature=0.1,
-        max_tokens=8192, is_active=False, description=None)
-    assert result == {"message": "保存成功", "scene": "qc"}
-    assert capture_model_invalidation == ["qc"]
-
-    qc = next(c for c in await svc.list_configs() if c["scene"] == "qc")
-    assert qc["model_name"] == "deepseek-reasoner"
-    assert qc["temperature"] == 0.1
-    assert qc["max_tokens"] == 8192
-    assert qc["is_active"] is False
-    assert qc["description"] == "质控分析（AI 检查病历质量）"  # None 不覆盖旧值
-
-
-@pytest.mark.asyncio
-async def test_model_config_update_creates_new_scene(async_db, capture_model_invalidation):
-    """update 未知场景：自动新建配置行（upsert 语义），同样失效缓存。"""
-    from app.services.prompt_template_service import ModelConfigService
-
-    svc = ModelConfigService(async_db)
-    await svc.update(
-        "suggestions", model_name="qwen-max", temperature=0.5,
-        max_tokens=2048, is_active=True, description="建议类任务")
-    assert capture_model_invalidation == ["suggestions"]
-    scenes = {c["scene"] for c in await svc.list_configs()}
-    assert "suggestions" in scenes

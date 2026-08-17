@@ -70,38 +70,8 @@ async def init():
         # 统一负责，qc_rules 表改为承载 admin 后台管理的关键词/医保规则（按需在 UI 添加），
         # 不再需要硬编码默认规则。故此段删除，全新库种子恢复正常。
 
-        # 插入默认 Prompt 模板
-        await session.execute(text("""
-            INSERT INTO prompt_templates (id, name, scene, content, version, is_active, created_at, updated_at) VALUES
-            (gen_random_uuid(), '门诊病历生成-标准版', 'generate',
-            '你是一名专业的临床病历书写助手。根据以下问诊信息，生成标准化的门诊病历草稿。
-
-问诊信息：
-主诉：{chief_complaint}
-现病史：{history_present_illness}
-既往史：{past_history}
-过敏史：{allergy_history}
-个人史：{personal_history}
-体格检查：{physical_exam}
-初步印象：{initial_impression}
-
-请生成规范的病历文本，包含【主诉】【现病史】【既往史】【个人史及过敏史】【体格检查】【初步诊断】各节。
-要求：口语转书面医学语言，时间线清晰，符合医疗文书规范，禁止编造未提及的症状。',
-            'v1', true, NOW(), NOW()),
-            (gen_random_uuid(), '病历润色-标准版', 'polish',
-            '你是临床病历规范化专家。请对以下病历内容进行润色：
-1. 将口语转换为书面医学语言
-2. 消除重复和冗余内容
-3. 优化时间顺序，使叙述逻辑清晰
-4. 保持医学术语的准确性
-5. 禁止添加原文未提及的内容
-
-原始病历：
-{content}
-
-请直接输出润色后的病历文本，格式与原文保持一致。',
-            'v1', true, NOW(), NOW())
-        """))
+        # 注：原「默认 Prompt 模板」种子已移除（2026-08-18）——提示词归代码维护，
+        # prompt_templates 表已随 alembic 迁移删除。
 
         await session.commit()
         print("[OK] 默认数据插入完成")

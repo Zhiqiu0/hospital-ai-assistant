@@ -2,9 +2,10 @@
 配置类模型（app/models/config.py）
 
 包含：
-  QCRule         — 质控规则（DB 驱动，规则引擎从此表读取）
-  ModelConfig    — AI 场景模型配置
-  PromptTemplate — 自定义 Prompt 模板
+  QCRule — 质控规则（DB 驱动，规则引擎从此表读取）
+
+历史：ModelConfig / PromptTemplate 两模型已删（2026-08-18）——模型参数与提示词
+归代码维护，admin 后台不再暴露；表由 alembic 迁移 drop。
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
@@ -75,29 +76,3 @@ class QCRule(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-
-class ModelConfig(Base, TimestampMixin):
-    """AI 场景模型配置（按场景覆盖全局默认模型参数）。"""
-
-    __tablename__ = "model_configs"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    scene: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
-    model_name: Mapped[str] = mapped_column(String(100), nullable=False, default="deepseek-chat")
-    temperature: Mapped[float] = mapped_column(default=0.3)
-    max_tokens: Mapped[int] = mapped_column(default=4096)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-
-
-class PromptTemplate(Base, TimestampMixin):
-    """自定义 Prompt 模板（激活后覆盖代码内置默认 prompt）。"""
-
-    __tablename__ = "prompt_templates"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    scene: Mapped[Optional[str]] = mapped_column(String(50))
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    version: Mapped[str] = mapped_column(String(20), default="v1")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

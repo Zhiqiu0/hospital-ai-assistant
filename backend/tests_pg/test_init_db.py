@@ -54,7 +54,7 @@ async def test_init_creates_tables_and_seeds(init_engine):
     await init_db.init()
 
     # 业务表由 alembic 基线建出（init_db 不再负责建表）
-    for tbl in ("users", "departments", "patients", "qc_rules", "prompt_templates"):
+    for tbl in ("users", "departments", "patients", "qc_rules"):
         assert await _table_exists(engine, tbl), f"alembic 基线后表 {tbl} 未建出"
 
     # 种子落库（不再整批回滚）

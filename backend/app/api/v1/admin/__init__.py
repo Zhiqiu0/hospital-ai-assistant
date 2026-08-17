@@ -15,8 +15,6 @@ from app.core.audit_dep import audit_admin_action
 from app.api.v1.admin import (
     audit_logs,
     departments,
-    model_configs,
-    prompts,
     records,
     rubrics,
     stats,
@@ -32,10 +30,10 @@ router.include_router(users.router, prefix="/users", tags=["管理-用户"])
 router.include_router(departments.router, prefix="/departments", tags=["管理-科室"])
 # 注：/qc-rules 旧只读端点已删（2026-08-12）——前端 QCRulesPage 早已切到 /rubrics，
 # 该端点零调用；qc_rules 表仍被医保规则引擎使用（rule_engine/insurance_rules），表不删。
+# 注：/prompts、/model-configs 两组端点已删（2026-08-18）——提示词与模型参数归代码维护，
+# 后台不再暴露；对应 prompt_templates / model_configs 表随 alembic 迁移一并删除。
 router.include_router(rubrics.router, prefix="/rubrics", tags=["管理-法定评分标准"])
-router.include_router(prompts.router, prefix="/prompts", tags=["管理-Prompt"])
 router.include_router(stats.router, prefix="/stats", tags=["管理-统计"])
 router.include_router(records.router, prefix="/records", tags=["管理-病历"])
 router.include_router(audit_logs.router, prefix="/audit-logs", tags=["管理-审计日志"])
-router.include_router(model_configs.router, prefix="/model-configs", tags=["管理-模型配置"])
 router.include_router(voice_records.router, prefix="/voice-records", tags=["管理-语音记录"])

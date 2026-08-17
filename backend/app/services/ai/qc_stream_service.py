@@ -88,7 +88,7 @@ async def run_quick_qc_stream(
     # 标准段从当前 record_type 对应的法定评分表运行时生成（2026-08-12 双真相源
     # 收口）——LLM 建议口径与规则引擎实际扣分口径永远同源。
     from app.services.ai._qc_prompt_gen import build_qc_standard_block
-    model_options = await get_model_options(db, "qc")
+    model_options = get_model_options("qc")
     record_type_label = RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历")
     llm_prompt = safe_format(
         QC_PROMPT,
@@ -125,8 +125,8 @@ async def run_quick_qc_stream(
 
         must_fix_count = len(rule_issues) + len(insurance_tagged)
 
-        # 连接池护栏：本 session 的两处只读（get_model_options + check_insurance_risk）
-        # 已取完，下面 await llm_task 会等最长 270s。先 commit 把 asyncpg 连接还回池。
+        # 连接池护栏：本 session 的只读（check_insurance_risk）已取完，
+        # 下面 await llm_task 会等最长 270s。先 commit 把 asyncpg 连接还回池。
         await db.commit()
 
         yield {

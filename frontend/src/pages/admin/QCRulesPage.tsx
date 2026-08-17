@@ -162,8 +162,10 @@ export default function QCRulesPage() {
                     </Text>
                   </div>
                 ))}
+                {/* 无细则的大项（如门诊「基本要求」）：引擎不扣分、默认记满分。
+                    给管理员看的是人话，不是"数据未接入"这种开发者口径 */}
                 {row.item.deduction_rules.length === 0 && row.item.veto_rules.length === 0 && (
-                  <Text type="secondary">（暂无明细规则——数据未接入或该项无扣分细则）</Text>
+                  <Text type="secondary">本项暂无自动扣分细则，质控时默认记满分</Text>
                 )}
               </Space>
             ),
@@ -195,12 +197,12 @@ export default function QCRulesPage() {
             description={
               <Space direction="vertical" size={4}>
                 <Text>
-                  本评分标准已迁移到代码常量（{rubric.name} {rubric.version}），按浙江省卫健委
-                  PDF 1:1 映射，**不再支持在线编辑**——修改须走代码 PR review + 法律合规复核。
+                  本评分标准（{rubric.name} {rubric.version}）按浙江省卫健委发布的评分表 1:1 录入，
+                  <Text strong>不支持在线编辑</Text>——法定标准如有更新，由系统维护方升级后生效。
                 </Text>
                 <Text type="secondary">
-                  总分：{rubric.total_points} 分 ·{' '}
-                  评分对象：{rubric.record_scope === 'single' ? '单份病历' : '整个接诊（多文档综合）'}
+                  总分：{rubric.total_points} 分 · 评分对象：
+                  {rubric.record_scope === 'single' ? '单份病历' : '整个接诊（多文档综合）'}
                 </Text>
                 <Text type="secondary">
                   等级判定：
@@ -243,12 +245,7 @@ export default function QCRulesPage() {
       ) : summaries.length === 0 ? (
         <Empty description="暂无注册的评分标准" />
       ) : (
-        <Tabs
-          activeKey={activeKey}
-          onChange={setActiveKey}
-          items={tabs}
-          destroyOnHidden
-        />
+        <Tabs activeKey={activeKey} onChange={setActiveKey} items={tabs} destroyOnHidden />
       )}
     </div>
   )
