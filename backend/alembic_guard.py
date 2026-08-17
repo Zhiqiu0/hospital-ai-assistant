@@ -41,6 +41,10 @@ _NON_COLUMN_TOKENS = {"PRIMARY", "FOREIGN", "UNIQUE", "CONSTRAINT", "CHECK", "EX
 _DROPPED_SINCE_BASELINE = {
     # l20260814dropnotes：住院文书统一到 medical_records 后删除（生产 0 行）
     "progress_notes",
+    # n20260818dropaicfg：撤掉后台「模型配置」「Prompt 管理」两页后删除，
+    # 模型参数与提示词归代码维护（生产仅默认/不生效的种子行）
+    "model_configs",
+    "prompt_templates",
 }
 
 
