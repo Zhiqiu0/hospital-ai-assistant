@@ -81,6 +81,24 @@ def _sub(doc, anchor, old, new, tag):
     applied.append(tag)
 
 
+def _cell_sub(tbl, row_key, col, old, new, tag, *, key_col=0):
+    """表格某格内子串替换（合并 run 后替换），保留该格其余内容。"""
+    for row in tbl.rows:
+        if row.cells[key_col].text.strip().replace("▲ ", "").startswith(row_key):
+            para = row.cells[col].paragraphs[0]
+            full = "".join(r.text for r in para.runs)
+            if old not in full:
+                failed.append(f"{tag}｜格内找不到子串：{old[:16]}")
+                return
+            runs = list(para.runs)
+            runs[0].text = full.replace(old, new)
+            for r in runs[1:]:
+                r._r.getparent().remove(r._r)
+            applied.append(tag)
+            return
+    failed.append(f"{tag}｜表里找不到行：{row_key}")
+
+
 def _strip_http(doc, needle, tag):
     """去掉附录 A 示例里的「POST url / Headers: X-…」外壳，只留从第一个 { 起的业务 JSON。
 
@@ -151,11 +169,14 @@ def _row_delete(tbl, row_key, tag, *, key_col=0):
 def main() -> int:
     doc = docx.Document(str(SRC))
 
-    # ── 版本号 v1.3 → v1.4（标题/页脚/摘要处）────────────────────────────────
+    # ── 版本号 v1.3 → v1.4 + 日期更到发文当天（标题/页脚/摘要处）──────────────
     for p in doc.paragraphs:
         if "v1.3" in p.text and ("版本" in p.text or "接口规范" in p.text or "评审" in p.text):
             for r in p.runs:
                 r.text = r.text.replace("v1.3", "v1.4")
+        if "版本 v1.4" in p.text and "2026-08-14" in p.text:
+            for r in p.runs:
+                r.text = r.text.replace("2026-08-14", "2026-08-17")
 
     # ── 正文单通道改写 ────────────────────────────────────────────────────────
     R = [
@@ -291,6 +312,14 @@ def main() -> int:
     # 附录 C 标题
     _rewrite(doc, "附录 C：本次修订说明（v1.2 → v1.3）",
              "附录 C：本次修订说明（v1.2 → v1.4）", "附C 标题")
+
+    # ── 签名口径一致性（发厂商前终审抓出，签名是最致命处，必须全文统一）──────────
+    # 7.2 握手待签串写的是 appId（驼峰），而代码/参考实现/2.2 全是 app_id（下划线），
+    # 且同段 query 参数已写 app_id——同段自相矛盾。统一成 app_id。
+    _sub(doc, "握手时在 URL query 携带 app_id",
+         "待签串 = appId + timestamp + nonce", "待签串 = app_id + timestamp + nonce", "7.2 待签串app_id")
+    # 7.3 sign 说明引用的「请求body原文」是方案 A 的 HTTP 老措辞，而 2.2 已改为「报文原文」。
+    _cell_sub(tbls[13], "sign", 2, "「请求body原文」", "「报文原文」", "T13 报文原文", key_col=0)
 
     # 7.2 里残留的「方案 B 下仅需一套凭证」（单通道无需再点出方案 B）
     _sub(doc, "消息由我方自动路由回该就诊接诊推送的来源连接",
