@@ -62,9 +62,7 @@ const NAV_ITEMS = [
   { label: '用户管理', path: '/admin/users', color: '#2563eb', bg: '#eff6ff' },
   { label: '科室管理', path: '/admin/departments', color: '#059669', bg: '#f0fdf4' },
   { label: '患者档案', path: '/admin/patients', color: '#0891b2', bg: '#ecfeff' },
-  { label: '质控规则', path: '/admin/qc-rules', color: '#d97706', bg: '#fffbeb' },
-  { label: 'Prompt 管理', path: '/admin/prompts', color: '#7c3aed', bg: '#f5f3ff' },
-  { label: '模型配置', path: '/admin/model-configs', color: '#0f766e', bg: '#ecfeff' },
+  { label: '质控评分标准', path: '/admin/qc-rules', color: '#d97706', bg: '#fffbeb' },
   { label: '数据统计', path: '/admin/stats', color: 'var(--text-3)', bg: 'var(--surface-2)' },
   { label: '操作日志', path: '/admin/audit-logs', color: '#7c3aed', bg: '#f5f3ff' },
 ]
@@ -171,7 +169,9 @@ export default function OverviewPage() {
 
       {/* Quick nav */}
       <Card
-        title={<span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>快速导航</span>}
+        title={
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>快速导航</span>
+        }
         style={{ borderRadius: 10 }}
         styles={{ body: { padding: '16px 20px' } }}
       >

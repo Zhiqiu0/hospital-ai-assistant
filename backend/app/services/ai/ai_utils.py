@@ -3,8 +3,10 @@ AI 路由层共享工具函数（app/services/ai/ai_utils.py）
 
 包含：
   - safe_format          : 安全格式化 prompt 模板
-  - get_active_prompt    : 读取 DB 中激活的 prompt 模板
   - stream_text          : LLM 文本 → SSE 流生成器
+
+历史：get_active_prompt（从 prompt_templates 表读管理员自定义提示词）已删
+（2026-08-18）——提示词归代码 prompts_*.py 唯一维护，后台不再可改。
 """
 
 # ── 标准库 ────────────────────────────────────────────────────────────────────
@@ -12,22 +14,12 @@ import json
 import logging
 from typing import Optional
 
-# ── 第三方库 ──────────────────────────────────────────────────────────────────
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.models.config import PromptTemplate
 from app.services.ai.llm_client import llm_client
 from app.services.ai.task_logger import log_ai_task
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
-
-# Prompt 模板缓存 key 前缀，按 scene 维度。admin 写模板后调
-# invalidate_active_prompt 失效。
-_PROMPT_CACHE_KEY = "ai:prompt:{scene}"
-_PROMPT_CACHE_TTL = 60
 
 
 def sse_event(event_type: str, **fields) -> str:
@@ -104,7 +96,8 @@ def safe_format(template: str, **kwargs) -> str:
         **kwargs: 填充占位符的键值对。
 
     2026-08-14 第七轮审计修复：**它此前并不 safe**。
-      模板来源是 get_active_prompt——即管理员在「提示词管理」页自己写的内容。
+      模板来源当时是 get_active_prompt——即管理员在「提示词管理」页自己写的内容
+      （该页与 DB 模板已于 2026-08-18 撤掉，模板现全部来自代码，但保护逻辑保留）。
       只要里面出现一个未提供的占位符（如 {patient_name}）或一个裸的 `{`，
       str.format 就抛 KeyError / ValueError / IndexError，而各调用点这一行都在
       try 之外 → **整个端点恒 500**（追问建议、检查建议、诊断建议、质控、
@@ -126,51 +119,6 @@ def safe_format(template: str, **kwargs) -> str:
             exc, sorted(values),
         )
         return template
-
-
-async def get_active_prompt(db: AsyncSession, scene: str) -> Optional[str]:
-    """从数据库读取指定场景的激活 prompt 模板内容（带 Redis 缓存）。
-
-    Args:
-        db: 异步数据库会话。
-        scene: prompt 场景标识（如 'generate'、'qc'、'polish'）。
-
-    Returns:
-        激活模板的内容字符串，不存在时返回 None（调用方使用内置默认值）。
-
-    缓存：
-      Redis 60 秒 TTL；admin 修改 PromptTemplate 后调用
-      invalidate_active_prompt(scene) 主动失效。
-      "无模板"（None）也缓存为 {"none": True} 避免穿透打 DB。
-    """
-    cache_key = _PROMPT_CACHE_KEY.format(scene=scene)
-    cached = await redis_cache.get_json(cache_key)
-    if cached is not None:
-        # 用占位对象表示"明确无模板"，区分缓存未命中与"DB 中确实没有"
-        return None if cached.get("none") else cached.get("content")
-
-    result = await db.execute(
-        select(PromptTemplate)
-        .where(PromptTemplate.scene == scene, PromptTemplate.is_active.is_(True))
-        .order_by(PromptTemplate.created_at.desc())
-        .limit(1)
-    )
-    tpl = result.scalar_one_or_none()
-    content = tpl.content if tpl else None
-    await redis_cache.set_json(
-        cache_key,
-        {"content": content} if content else {"none": True},
-        ttl=_PROMPT_CACHE_TTL,
-    )
-    return content
-
-
-async def invalidate_active_prompt(scene: str | None = None) -> None:
-    """admin 修改 PromptTemplate 后调用，立即让所有进程看到新模板。"""
-    if scene:
-        await redis_cache.delete(_PROMPT_CACHE_KEY.format(scene=scene))
-    else:
-        await redis_cache.delete_prefix("ai:prompt:")
 
 
 async def stream_with_lock(generator, lock_key: str, lock_token: str):

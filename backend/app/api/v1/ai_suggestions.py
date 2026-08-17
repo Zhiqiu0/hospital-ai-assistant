@@ -22,7 +22,7 @@ from app.schemas.ai_request import (
     ExamSuggestionsRequest,
     InquirySuggestionsRequest,
 )
-from app.services.ai.ai_utils import get_active_prompt, safe_format
+from app.services.ai.ai_utils import safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
@@ -47,10 +47,9 @@ async def inquiry_suggestions(
     from app.core.request_context import bind_encounter_context
     bind_encounter_context(encounter_id=req.encounter_id)
 
-    db_prompt = await get_active_prompt(db, "inquiry")
-    template = db_prompt or INQUIRY_SUGGESTIONS_PROMPT
+    # 提示词只用代码内置版本（DB 自定义模板已于 2026-08-18 撤掉）
     prompt = safe_format(
-        template,
+        INQUIRY_SUGGESTIONS_PROMPT,
         chief_complaint=req.chief_complaint or "未填写",
         history=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "暂未填写",
@@ -70,10 +69,10 @@ async def inquiry_suggestions(
         {"role": "user", "content": prompt},
     ]
     try:
-        model_options = await get_model_options(db, "inquiry")
-        # 连接池护栏：本请求两处只读（get_active_prompt + get_model_options）已取完，
-        # 进入最长 270s 的 LLM 调用前先 commit 结束只读事务、把 asyncpg 连接还回池，
-        # 避免长 await 期间白占一条池连接。log_ai_task 用独立会话，不受影响。
+        model_options = get_model_options("inquiry")
+        # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务
+        # （若有）、把 asyncpg 连接还回池，避免长 await 期间白占一条池连接。
+        # log_ai_task 用独立会话，不受影响。
         await db.commit()
         result = await llm_client.chat_json_stream(
             messages,
@@ -107,20 +106,18 @@ async def exam_suggestions(
     from app.core.request_context import bind_encounter_context
     bind_encounter_context(encounter_id=req.encounter_id)
 
-    db_prompt = await get_active_prompt(db, "exam")
-    template = db_prompt or EXAM_SUGGESTIONS_PROMPT
     prompt = safe_format(
-        template,
+        EXAM_SUGGESTIONS_PROMPT,
         chief_complaint=req.chief_complaint or "未填写",
         history_present_illness=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "未填写",
         department=req.department or "未知",
     )
     try:
-        model_options = await get_model_options(db, "exam")
-        # 连接池护栏：本请求两处只读（get_active_prompt + get_model_options）已取完，
-        # 进入最长 270s 的 LLM 调用前先 commit 结束只读事务、把连接还回池，
-        # 避免长 await 期间白占一条池连接。log_ai_task 用独立会话，不受影响。
+        model_options = get_model_options("exam")
+        # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务
+        # （若有）、把连接还回池，避免长 await 期间白占一条池连接。
+        # log_ai_task 用独立会话，不受影响。
         await db.commit()
         result = await llm_client.chat_json_stream(
             [{"role": "user", "content": prompt}],
@@ -173,8 +170,8 @@ async def diagnosis_suggestion(
         {"role": "user", "content": prompt},
     ]
     try:
-        model_options = await get_model_options(db, "inquiry")
-        # 连接池护栏：模型配置已读完，进入最长 270s 的 LLM 调用前先 commit 结束
+        model_options = get_model_options("inquiry")
+        # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务（若有）、
         # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
         await db.commit()
         result = await llm_client.chat_json_stream(

@@ -138,10 +138,10 @@ async def quick_continue(
         record_type_label=RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历"),
         composed_physical_exam=composed_physical_exam,
     )
-    model_options = await get_model_options(db, "generate")
+    model_options = get_model_options("generate")
     # 连接池护栏：下面 stream_text 全程只调 LLM、不碰 db，但本请求的 db session 会
-    # 一直活到流式响应发完。若不 commit，get_model_options 借的这条连接会被整段
-    # LLM 流（最长 270s）占用。先 commit 结束只读事务、把连接还回池。
+    # 一直活到流式响应发完。先 commit 结束本请求此前的只读事务（若有）、把连接还回池，
+    # 避免整段 LLM 流（最长 270s）白占一条池连接。
     await db.commit()
     lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "continue")
     return StreamingResponse(

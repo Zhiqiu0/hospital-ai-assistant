@@ -4,17 +4,14 @@ AI 建议反馈服务单元测试（app/services/ai_feedback_service.py）
 覆盖范围：
   - submit_feedback 入参校验：verdict / suggestion_category 白名单 → 400
   - 反馈写入主路径：记录落库 + doctor_id / verdict / comment 正确
-  - prompt_version 解析三态：
-      有激活模板 → 取模板 version
-      无激活模板（或模板被停用）→ fallback 'hardcoded'
-      diagnosis 类别（无对应 prompt scene）→ None
-  - model_name 解析：有激活 ModelConfig(scene=suggestions) → 取其 model_name；
-    没有 → fallback settings.deepseek_model
+  - 生成链路标签（2026-08-18 起提示词/模型参数归代码维护，标签常量推导）：
+      inquiry / exam 类别 → prompt_scene 对应、prompt_version 'hardcoded'
+      diagnosis 类别（无对应 prompt scene）→ scene / version 都为 None
+      model_name 恒为全局默认 settings.deepseek_model
 
 说明：data 入参只被服务按属性读取，用 SimpleNamespace 模拟 FeedbackIn
 请求体（避免为单元测试引入整条 API 路由依赖链）。
 """
-from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +20,6 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.models.ai_feedback import AISuggestionFeedback
-from app.models.config import ModelConfig, PromptTemplate
 from app.services.ai_feedback_service import AIFeedbackService
 
 
@@ -73,11 +69,11 @@ async def test_invalid_category_rejected(async_db):
 
 
 @pytest.mark.asyncio
-async def test_feedback_written_with_hardcoded_fallback(async_db):
-    """无激活 prompt 模板时：写入成功，prompt_version 回退 'hardcoded'。
+async def test_feedback_written_with_code_prompt_labels(async_db):
+    """写入成功，并打上代码内置提示词的标签：prompt_version 'hardcoded'、默认模型。
 
-    这是"代码硬编码 prompt 时期"的标签，未来做 prompt 优化时
-    据此把旧反馈和可配置模板时期的反馈分层，避免数据污染。
+    'hardcoded' 沿用历史数据的口径，未来做 prompt 优化时据此按版本分层，
+    避免数据污染。
     """
     svc = AIFeedbackService(async_db)
     result = await svc.submit_feedback(
@@ -89,34 +85,13 @@ async def test_feedback_written_with_hardcoded_fallback(async_db):
     assert fb.verdict == "useless"
     assert fb.comment == "追问太宽泛"
     assert fb.prompt_scene == "inquiry"
-    assert fb.prompt_version == "hardcoded"  # DB 无 active 模板 → fallback
-    # DB 无 ModelConfig(scene=suggestions) → 回退全局默认模型
-    assert fb.model_name == settings.deepseek_model
+    assert fb.prompt_version == "hardcoded"  # 提示词全部代码内置
+    assert fb.model_name == settings.deepseek_model  # 全局默认模型
 
 
 @pytest.mark.asyncio
-async def test_feedback_uses_active_prompt_version(async_db):
-    """有激活模板时取其 version；多版本取 created_at 最新的。"""
-    async_db.add_all([
-        PromptTemplate(name="问诊v3", scene="inquiry", content="...", version="v3",
-                       is_active=True, created_at=datetime(2026, 6, 1, 8, 0)),
-        PromptTemplate(name="问诊v7", scene="inquiry", content="...", version="v7",
-                       is_active=True, created_at=datetime(2026, 6, 5, 8, 0)),
-    ])
-    await async_db.commit()
-
-    result = await AIFeedbackService(async_db).submit_feedback(_payload(), _doctor())
-    fb = await async_db.get(AISuggestionFeedback, result["id"])
-    assert fb.prompt_version == "v7"
-
-
-@pytest.mark.asyncio
-async def test_inactive_prompt_falls_back_to_hardcoded(async_db):
-    """模板存在但被停用（is_active=False）→ 视为无模板，仍回退 'hardcoded'。"""
-    async_db.add(PromptTemplate(name="停用模板", scene="exam", content="...",
-                                version="v9", is_active=False))
-    await async_db.commit()
-
+async def test_exam_category_labels(async_db):
+    """exam 类别：prompt_scene 'exam'、version 'hardcoded'。"""
     result = await AIFeedbackService(async_db).submit_feedback(
         _payload(suggestion_category="exam"), _doctor())
     fb = await async_db.get(AISuggestionFeedback, result["id"])
@@ -132,29 +107,5 @@ async def test_diagnosis_category_has_no_prompt_scene(async_db):
     fb = await async_db.get(AISuggestionFeedback, result["id"])
     assert fb.prompt_scene is None
     assert fb.prompt_version is None
-    # 模型名仍要解析（diagnosis 也映射到 suggestions 模型场景，无配置则回退默认）
-    assert fb.model_name == settings.deepseek_model
-
-
-@pytest.mark.asyncio
-async def test_model_name_from_active_model_config(async_db):
-    """存在激活的 ModelConfig(scene=suggestions) 时优先取其 model_name。"""
-    async_db.add(ModelConfig(scene="suggestions", model_name="qwen-max",
-                             is_active=True))
-    await async_db.commit()
-
-    result = await AIFeedbackService(async_db).submit_feedback(_payload(), _doctor())
-    fb = await async_db.get(AISuggestionFeedback, result["id"])
-    assert fb.model_name == "qwen-max"
-
-
-@pytest.mark.asyncio
-async def test_inactive_model_config_falls_back_to_default(async_db):
-    """ModelConfig 被停用 → 回退 settings.deepseek_model（保证标签永不为空）。"""
-    async_db.add(ModelConfig(scene="suggestions", model_name="qwen-max",
-                             is_active=False))
-    await async_db.commit()
-
-    result = await AIFeedbackService(async_db).submit_feedback(_payload(), _doctor())
-    fb = await async_db.get(AISuggestionFeedback, result["id"])
+    # 模型名仍要打标（全局默认模型），保证标签永不为空
     assert fb.model_name == settings.deepseek_model

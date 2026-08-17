@@ -2,10 +2,12 @@
 初始化配置数据（seed_config.py）
 
 执行内容：
-  1. 清空并重新插入质控规则（qc_rules）
+  1. 按 rule_code 幂等 upsert 质控规则（qc_rules）
      - 完整性规则：依据《浙江省住院病历质量检查评分表（2021版）》
      - 医保风险规则：基于常见医保违规关键词
-  2. 仅在 prompt_templates 表为空时插入默认 Prompt 模板
+
+历史：原第 2 步「插入默认 Prompt 模板」已删（2026-08-18）——提示词归代码维护，
+prompt_templates 表随 alembic 迁移一并删除。
 
 用法：
   cd backend
@@ -20,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
@@ -683,54 +685,10 @@ QC_RULES: list[dict] = [
     },
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 默认 Prompt 模板种子数据
-# ─────────────────────────────────────────────────────────────────────────────
-
-PROMPT_TEMPLATES: list[dict] = [
-    {
-        "name": "门诊病历生成-标准版",
-        "scene": "generate",
-        "content": (
-            "你是一名专业的临床病历书写助手。根据问诊信息生成标准化门诊病历。"
-            "要求：口语转书面医学语言，时间线清晰，符合医疗文书规范，禁止编造未提及内容。"
-        ),
-        "version": "v1",
-    },
-    {
-        "name": "病历润色-标准版",
-        "scene": "polish",
-        "content": (
-            "你是临床病历规范化专家。对病历进行润色：口语转书面语，消除重复，优化逻辑，"
-            "保持术语准确。禁止添加未提及内容。"
-        ),
-        "version": "v1",
-    },
-    {
-        "name": "追问建议-标准版",
-        "scene": "inquiry",
-        "content": (
-            "你是临床问诊助手。根据问诊信息给出3-5条追问建议，帮助医生补充关键信息。"
-            "关注危险信号、病程特征、伴随症状。"
-        ),
-        "version": "v1",
-    },
-    {
-        "name": "AI质控-标准版",
-        "scene": "qc",
-        "content": (
-            "你是临床病历质控专家。检查病历完整性、规范性和逻辑性，"
-            "找出缺漏和不规范之处，按高中低危分级输出。"
-        ),
-        "version": "v1",
-    },
-]
-
-
 async def seed() -> None:
     """执行种子数据初始化。"""
     # 需要在本地导入，避免顶层循环导入
-    from app.models.config import QCRule, PromptTemplate  # noqa
+    from app.models.config import QCRule  # noqa
 
     async with AsyncSession(engine) as session:
 
@@ -784,22 +742,6 @@ async def seed() -> None:
             f"[OK] 质控规则 upsert：新增 {created} 条、更新 {updated} 条、"
             f"删除 {len(removed)} 条（保留库中 is_active 开关）"
         )
-
-        # ── 2. Prompt 模板：仅在表为空时插入 ────────────────────────────────
-        r = await session.execute(text("SELECT COUNT(*) FROM prompt_templates"))
-        if r.scalar() == 0:
-            for tmpl in PROMPT_TEMPLATES:
-                obj = PromptTemplate(
-                    name=tmpl["name"],
-                    scene=tmpl.get("scene"),
-                    content=tmpl["content"],
-                    version=tmpl.get("version", "v1"),
-                    is_active=True,
-                )
-                session.add(obj)
-            print(f"[OK] 插入 {len(PROMPT_TEMPLATES)} 条默认 Prompt 模板")
-        else:
-            print("[SKIP] prompt_templates 已有数据，跳过")
 
         await session.commit()
         print("[完成] 种子数据初始化完毕")

@@ -75,7 +75,7 @@ async def test_outpatient_happy_path(monkeypatch, async_db):
     async def fake_chat_json_stream(*args, **kwargs):
         return fake_result
 
-    async def fake_get_model_options(*args, **kwargs):
+    def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
 
     monkeypatch.setattr(v2_service.llm_client, "chat_json_stream", fake_chat_json_stream)
@@ -108,7 +108,7 @@ async def test_llm_exception_emits_error_event(monkeypatch, async_db):
     async def fake_chat_json_stream(*args, **kwargs):
         raise RuntimeError("LLM timeout")
 
-    async def fake_get_model_options(*args, **kwargs):
+    def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
 
     monkeypatch.setattr(v2_service.llm_client, "chat_json_stream", fake_chat_json_stream)
@@ -148,7 +148,7 @@ async def test_render_failure_emits_error(monkeypatch, async_db):
     async def fake_chat_json_stream(*args, **kwargs):
         return {"chief_complaint": "x"}
 
-    async def fake_get_model_options(*args, **kwargs):
+    def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
 
     monkeypatch.setattr(v2_service.llm_client, "chat_json_stream", fake_chat_json_stream)
@@ -187,7 +187,7 @@ async def test_emergency_happy_path(monkeypatch, async_db):
     async def fake_chat_json_stream(*args, **kwargs):
         return fake_result
 
-    async def fake_get_model_options(*args, **kwargs):
+    def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
 
     monkeypatch.setattr(v2_service.llm_client, "chat_json_stream", fake_chat_json_stream)

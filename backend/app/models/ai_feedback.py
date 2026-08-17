@@ -16,9 +16,9 @@ AI 建议反馈模型（models/ai_feedback.py）
   - suggestion_text：被反馈的建议文本（冗余存储，避免 AI 原始响应未落库时无从回溯）
   - verdict：useful / useless
   - comment：医生留言（可选，文字反馈价值 >> 二元）
-  - prompt_version：生成该建议时使用的 prompt 模板版本（从 prompt_templates.version 取）
-  - prompt_scene：prompt 的 scene（对应 prompt_templates.scene）
-  - model_name：生成该建议的模型名（从 model_configs 或实际调用响应取）
+  - prompt_version：生成该建议时使用的提示词版本（现提示词全部代码内置，记 'hardcoded'）
+  - prompt_scene：提示词的 scene（inquiry / exam；diagnosis 暂无对应为 None）
+  - model_name：生成该建议的模型名（全局默认模型 settings.deepseek_model）
 """
 
 from datetime import datetime

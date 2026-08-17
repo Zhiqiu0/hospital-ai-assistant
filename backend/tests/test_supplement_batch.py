@@ -63,7 +63,7 @@ async def test_happy_path_returns_filtered_items(monkeypatch):
             {"field_name": "舌象", "value": "重复应跳过"},      # 同名去重
         ]}
     monkeypatch.setattr(svc.llm_client, "chat_json_stream", fake_chat)
-    monkeypatch.setattr(svc, "get_model_options", AsyncMock(return_value={
+    monkeypatch.setattr(svc, "get_model_options", lambda scene: ({
         "temperature": 0.7, "max_tokens": 1000, "model_name": "test"
     }))
     monkeypatch.setattr(svc, "log_ai_task", AsyncMock())
@@ -71,8 +71,7 @@ async def test_happy_path_returns_filtered_items(monkeypatch):
     svc.llm_client._last_usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
 
     # db 传 AsyncMock：service 在调 LLM 前会 await db.commit() 释放连接池连接，
-    # 需要一个可 await 的 commit（旧测试传 None 是因当时 db 仅被已 mock 的
-    # get_model_options 使用）。
+    # 需要一个可 await 的 commit。
     result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
     assert "items" in result
     items = result["items"]
@@ -89,7 +88,7 @@ async def test_llm_exception_returns_error_not_raises(monkeypatch):
     async def fake_chat(*_a, **_kw):
         raise RuntimeError("LLM down")
     monkeypatch.setattr(svc.llm_client, "chat_json_stream", fake_chat)
-    monkeypatch.setattr(svc, "get_model_options", AsyncMock(return_value={
+    monkeypatch.setattr(svc, "get_model_options", lambda scene: ({
         "temperature": 0.7, "max_tokens": 1000, "model_name": "test"
     }))
 
@@ -104,7 +103,7 @@ async def test_llm_returns_non_list_items_is_safe(monkeypatch):
     async def fake_chat(*_a, **_kw):
         return {"items": "not a list"}
     monkeypatch.setattr(svc.llm_client, "chat_json_stream", fake_chat)
-    monkeypatch.setattr(svc, "get_model_options", AsyncMock(return_value={
+    monkeypatch.setattr(svc, "get_model_options", lambda scene: ({
         "temperature": 0.7, "max_tokens": 1000, "model_name": "test"
     }))
     monkeypatch.setattr(svc, "log_ai_task", AsyncMock())
@@ -123,7 +122,7 @@ async def test_value_empty_or_non_string_dropped(monkeypatch):
             {"field_name": "脉象", "value": 123},          # 数字 → 丢
         ]}
     monkeypatch.setattr(svc.llm_client, "chat_json_stream", fake_chat)
-    monkeypatch.setattr(svc, "get_model_options", AsyncMock(return_value={
+    monkeypatch.setattr(svc, "get_model_options", lambda scene: ({
         "temperature": 0.7, "max_tokens": 1000, "model_name": "test"
     }))
     monkeypatch.setattr(svc, "log_ai_task", AsyncMock())
