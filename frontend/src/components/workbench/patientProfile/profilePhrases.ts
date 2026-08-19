@@ -10,6 +10,10 @@
  *
  * 句式文本按医院病历原文整理，与浙江省病历书写规范一致。
  * key 与 PROFILE_FIELDS 的 key 一致；没配的字段就不显示标签。
+ *
+ * INQUIRY_PHRASES（2026-08-19 对照濮氏门诊病历补）：问诊字段（现病史）的常用句式，
+ * 机制同上——医院门诊模板现病史末尾固定带流行病学筛查句和一般情况句，
+ * 属医生须确认的事实，AI 不能自动写，故同样做成一键插入。
  */
 
 /** 单条常用句式：label 是标签上的短名，text 是插入正文的完整句子 */
@@ -52,6 +56,17 @@ export const PROFILE_PHRASES: Record<string, ProfilePhrase[]> = {
   marital_history: [
     { label: '已婚子女体健', text: '适龄结婚，否认近亲结婚，配偶及子女均体健，家庭关系和睦。' },
     { label: '未婚', text: '未婚未育。' },
+  ],
+}
+
+/** 问诊字段（每次接诊重填）的常用句式：现病史 */
+export const INQUIRY_PHRASES: Record<string, ProfilePhrase[]> = {
+  history_present_illness: [
+    { label: '否认发热接触', text: '否认"发热患者"接触史。' },
+    {
+      label: '一般情况可',
+      text: '自发病以来，神志清，精神可，纳食可，睡眠可，二便调。',
+    },
   ],
 }
 

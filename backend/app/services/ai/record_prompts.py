@@ -77,6 +77,7 @@ def _build_request_block(req: Any, *, include_tcm: bool) -> str:
         f"既往史：{coalesce_field(getattr(req, 'past_history', None))}",
         f"过敏史：{coalesce_field(getattr(req, 'allergy_history', None))}",
         f"个人史：{coalesce_field(getattr(req, 'personal_history', None))}",
+        f"家族史：{coalesce_field(getattr(req, 'family_history', None))}",
         f"体格检查（合并生命体征）：{composed_physical_exam or PLACEHOLDER}",
         f"辅助检查：{coalesce_field(getattr(req, 'auxiliary_exam', None))}",
     ]
@@ -107,6 +108,22 @@ def _build_request_block(req: Any, *, include_tcm: bool) -> str:
     return "\n".join(lines)
 
 
+# ─── 门诊书写风格约束（2026-08-19 对照濮氏门诊病历补，与住院 INPATIENT_STYLE_RULES 同理） ───
+#
+# 用医院真实门诊病历跑生成链路发现：医生口语速记会原样落进病历（"精神还行/
+# 家里没遗传病"），既往史甚至被压缩成一个"否认"（丢信息比口语更糟）。
+# 与 TRUTHFULNESS_RULES 的边界：本块只管"怎么写"，事实增删仍由真实性规则禁止。
+OUTPATIENT_STYLE_RULES = """━━━ 门诊病历书写风格（与上方真实性约束同时遵守） ━━━
+1. 现病史/既往史/个人史/家族史/望诊/闻诊/其余阳性体征/复诊建议/注意事项等叙述性字段：
+   把医生的口语速记整理成规范医学书面语，例如
+   "撞到左胸"→"撞伤左侧胸部"、"有点肿"→"局部轻度肿胀"、"精神还行"→"精神尚可"、
+   "家里没遗传病没传染病"→"否认家族遗传性疾病及传染病史"、"不舒服随时来"→"不适随诊"。
+   只换表述、补全句式，**不得增加医生未提及的症状体征否认项，也不得删减医生提供的信息**
+   （如医生说"身体一般，没做过手术没输过血"，应写"既往体质一般，否认手术史、输血史"，
+   而不是压缩成"否认"）。
+2. 主诉/诊断/舌象/脉象/治则治法/处理意见（药名剂量用法）仍严格照抄，不改写。"""
+
+
 # ─── Prompt 构造入口 ────────────────────────────────────────────────
 
 
@@ -123,7 +140,9 @@ def build_outpatient_prompt(req: Any) -> str:
 请只输出 JSON 对象，key 严格匹配下列字段（不增不减），value 全为字符串：
 {schema_block}
 
-{TRUTHFULNESS_RULES}"""
+{TRUTHFULNESS_RULES}
+
+{OUTPATIENT_STYLE_RULES}"""
 
 
 def build_emergency_prompt(req: Any) -> str:

@@ -46,12 +46,14 @@ FULL_OUTPATIENT = {
     "past_history": "糖尿病病史。",
     "allergy_history": "否认药物及食物过敏史。",
     "personal_history": "无吸烟史，偶饮酒。",
+    "family_history": "否认家族遗传性疾病及传染病史。",
     "physical_exam_vitals": "T:36.5℃ P:78次/分 R:18次/分 BP:120/80mmHg",
     "tcm_inspection": "神志清楚，面色略红，体形中等",
     "tcm_auscultation": "语声清晰，无异常气味",
     "tongue_coating": "舌淡红，苔薄白",
     "pulse_condition": "脉弦",
     "physical_exam_text": "心肺听诊未见异常，腹软无压痛",
+    "tcm_syndrome_analysis": "风寒外束，营卫不和，故见头痛恶寒；舌淡红苔薄白，脉弦，均为风寒束表之征",
     "auxiliary_exam": "血常规未见异常",
     "tcm_disease_diagnosis": "感冒",
     "tcm_syndrome_diagnosis": "风寒束表证",
@@ -74,6 +76,7 @@ class TestSchemas:
         required = {
             "chief_complaint", "history_present_illness",
             "past_history", "allergy_history", "personal_history",
+            "family_history", "tcm_syndrome_analysis",
             "physical_exam_vitals",
             "tcm_inspection", "tcm_auscultation",
             "tongue_coating", "pulse_condition",
@@ -113,21 +116,32 @@ class TestMergeTcmDiagnosis:
 
 
 class TestOutpatientSections:
+    # 11 章节（2026-08-19 对照濮氏门诊病历加【家族史】【辨证分析】），顺序对齐医院模板
+    _HEADERS_IN_ORDER = [
+        "【主诉】",
+        "【现病史】",
+        "【既往史】",
+        "【过敏史】",
+        "【个人史】",
+        "【家族史】",
+        "【体格检查】",
+        "【辨证分析】",
+        "【辅助检查】",
+        "【诊断】",
+        "【治疗意见及措施】",
+    ]
+
     def test_all_required_headers_present(self):
-        """渲染必含 prompt 契约的 9 个章节标题（与 test_prompt_contract 一致）。"""
+        """渲染必含契约的 11 个章节标题。"""
         out = render_outpatient(FULL_OUTPATIENT)
-        for header in [
-            "【主诉】",
-            "【现病史】",
-            "【既往史】",
-            "【过敏史】",
-            "【个人史】",
-            "【体格检查】",
-            "【辅助检查】",
-            "【诊断】",
-            "【治疗意见及措施】",
-        ]:
+        for header in self._HEADERS_IN_ORDER:
             assert header in out, f"渲染输出缺少章节标题：{header}"
+
+    def test_headers_in_hospital_order(self):
+        """章节顺序对齐医院门诊模板（家族史在个人史后、辨证分析在四诊后辅检前）。"""
+        out = render_outpatient(FULL_OUTPATIENT)
+        positions = [out.index(h) for h in self._HEADERS_IN_ORDER]
+        assert positions == sorted(positions), positions
 
     def test_no_independent_tcm_diagnosis_sections(self):
         """中医四诊 / 中医诊断 / 西医诊断 等绝不能成为独立章节（必须是子行）。"""
