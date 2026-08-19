@@ -12,6 +12,9 @@ LLM 只输出 JSON 字段值，由 record_renderer 按统一模板拼成展示�
 
 仅服务于 record_type ∈ NEW_ARCH_RECORD_TYPES（阶段 2: 门诊+急诊；
 阶段 3 扩展到住院 + 病程类）；其他类型仍走旧 PROMPT_MAP 文本路径。
+
+⚠️ 改动本文件的提示词后，务必手动跑两个评测（调真 LLM，几分钱几分钟）：
+   scripts/eval_cc_rewrite.py（主诉）+ scripts/eval_record_generation.py（整份病历）
 """
 from __future__ import annotations
 

@@ -3,6 +3,9 @@
 从 record_prompts.py 拆出（2026-08-11 超标文件拆分）：本文件承载住院系
 9 个 record_type（入院记录 + 7 类病程 + 出院）的 prompt 组装；
 门诊/急诊与公共入口仍在 record_prompts.py，经 INPATIENT_TITLES 分发到这里。
+
+⚠️ 改动本文件的提示词后，务必手动跑两个评测（调真 LLM，几分钱几分钟）：
+   scripts/eval_cc_rewrite.py（主诉）+ scripts/eval_record_generation.py（整份病历）
 """
 from typing import Any
 

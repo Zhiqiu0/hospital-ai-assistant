@@ -3,6 +3,9 @@
 从 record_prompts.py 拆出（2026-08-11 超标文件拆分：310 行 → 门诊急诊主文件
 + 住院病程 record_prompts_inpatient.py + 本共享件），供两侧共同引用，
 避免主文件与住院文件互相导入成环。
+
+⚠️ 改动本文件的提示词后，务必手动跑两个评测（调真 LLM，几分钱几分钟）：
+   scripts/eval_cc_rewrite.py（主诉）+ scripts/eval_record_generation.py（整份病历）
 """
 from typing import Mapping
 
