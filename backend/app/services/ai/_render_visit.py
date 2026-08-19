@@ -37,7 +37,8 @@ def render_outpatient(
 
     输出严格符合契约：
       - 【体格检查】首行是 'T:...' 生命体征
-      - 中医四诊 4 行用 '望诊：' / '闻诊：' / '切诊·舌象：' / '切诊·脉象：' 子行
+      - 中医四诊 4 行用 '望诊：' / '闻诊：' / '切诊·舌象：' / '切诊·脉象：' 子行，
+        四诊之后是【辨证分析】整段（2026-08-19 对照濮氏门诊病历加）
       - 【诊断】用 '中医诊断：X — Y' / '西医诊断：xxx' 子行
       - 【治疗意见及措施】用 '治则治法：' / '处理意见：' / '复诊建议：' / '注意事项：' 子行
     """
@@ -55,6 +56,8 @@ def render_outpatient(
     parts.append(_section("【既往史】", _v(data, "past_history")))
     parts.append(_section("【过敏史】", _v(data, "allergy_history")))
     parts.append(_section("【个人史】", _v(data, "personal_history")))
+    # 家族史（2026-08-19 对照濮氏门诊病历补齐）：医院门诊模板有此栏
+    parts.append(_section("【家族史】", _v(data, "family_history")))
 
     # 体格检查 — 多行子结构
     pe_lines = [
@@ -66,6 +69,9 @@ def render_outpatient(
         _subline("其余阳性体征：", _v(data, "physical_exam_text")),
     ]
     parts.append(_section("【体格检查】", "\n".join(pe_lines)))
+    # 辨证分析（2026-08-19）：医院门诊模板四诊后接辨证分析一整段，
+    # 位置对齐医院（体格检查/四诊 之后、辅助检查 之前）
+    parts.append(_section("【辨证分析】", _v(data, "tcm_syndrome_analysis")))
 
     # 辅助检查 — 章节级，无内容写"暂无"（与 prompt 契约一致，不写占位符）
     aux = data.get("auxiliary_exam")

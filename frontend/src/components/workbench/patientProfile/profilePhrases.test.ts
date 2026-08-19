@@ -5,7 +5,7 @@
  * 每个配置字段的 key 都在档案字段表里（防拼错 key 导致标签永远不显示）。
  */
 import { describe, it, expect } from 'vitest'
-import { PROFILE_PHRASES, appendPhrase } from './profilePhrases'
+import { INQUIRY_PHRASES, PROFILE_PHRASES, appendPhrase } from './profilePhrases'
 import { PROFILE_FIELDS } from './staleness'
 
 describe('appendPhrase', () => {
@@ -46,5 +46,15 @@ describe('PROFILE_PHRASES 配置', () => {
       for (const p of list)
         expect(p.text.trim().length, `${key}/${p.label} 文本为空`).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('INQUIRY_PHRASES 配置', () => {
+  it('现病史句式存在且文本非空、标签唯一', () => {
+    const list = INQUIRY_PHRASES.history_present_illness
+    expect(list.length).toBeGreaterThan(0)
+    const labels = list.map(p => p.label)
+    expect(new Set(labels).size).toBe(labels.length)
+    for (const p of list) expect(p.text.trim().length).toBeGreaterThan(0)
   })
 })

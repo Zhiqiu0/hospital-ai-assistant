@@ -195,7 +195,7 @@ export default function InquiryPanel() {
 
           <InquiryTimeFields inquiry={inquiry} updateInquiryFields={updateInquiryFields} />
 
-          <InquiryBasicFields isFirstVisit={isFirstVisit} />
+          <InquiryBasicFields isFirstVisit={isFirstVisit} onAppendPhrase={() => setIsDirty(true)} />
 
           {/* 既往史/过敏史/个人史/月经史 已迁移至 PatientProfileCard（跟随患者纵向档案） */}
 

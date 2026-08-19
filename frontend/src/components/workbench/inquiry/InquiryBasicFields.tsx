@@ -2,8 +2,13 @@
  * 问诊基础字段（components/workbench/inquiry/InquiryBasicFields.tsx）
  *
  * 内容：主诉 + 现病史。复诊时现病史顶部加黄色 banner 提示必填症状变化。
+ * 现病史下方有常用句式标签（2026-08-19）：一键追加"否认发热接触/一般情况"等
+ * 模板句——医生点击即确认，AI 不代写；追加走 form.setFieldsValue，
+ * 保存/生成读取的是表单值所以能带上，脏标记由 onAppendPhrase 回调补打。
  */
-import { Form, Input } from 'antd'
+import { Form, Input, Tag } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
+import { INQUIRY_PHRASES, appendPhrase } from '../patientProfile/profilePhrases'
 
 const { TextArea } = Input
 
@@ -19,9 +24,22 @@ const fs: React.CSSProperties = { marginBottom: 10 }
 
 interface InquiryBasicFieldsProps {
   isFirstVisit: boolean
+  /** 句式追加后回调（父组件用来打 isDirty——setFieldsValue 不触发 onValuesChange） */
+  onAppendPhrase?: () => void
 }
 
-export default function InquiryBasicFields({ isFirstVisit }: InquiryBasicFieldsProps) {
+export default function InquiryBasicFields({
+  isFirstVisit,
+  onAppendPhrase,
+}: InquiryBasicFieldsProps) {
+  const form = Form.useFormInstance()
+  const hpiPhrases = INQUIRY_PHRASES.history_present_illness ?? []
+  const appendHpiPhrase = (text: string) => {
+    const cur = (form.getFieldValue('history_present_illness') as string) || ''
+    if (cur.includes(text)) return
+    form.setFieldsValue({ history_present_illness: appendPhrase(cur, text) })
+    onAppendPhrase?.()
+  }
   return (
     <>
       <Form.Item
@@ -90,6 +108,20 @@ export default function InquiryBasicFields({ isFirstVisit }: InquiryBasicFieldsP
           style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
         />
       </Form.Item>
+      {/* 现病史常用句式：点标签追加（不覆盖已有内容） */}
+      <div style={{ marginTop: -6, marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {hpiPhrases.map(p => (
+          <Tag
+            key={p.label}
+            icon={<PlusOutlined />}
+            onClick={() => appendHpiPhrase(p.text)}
+            title={p.text}
+            style={{ cursor: 'pointer', fontSize: 11, margin: 0, userSelect: 'none' }}
+          >
+            {p.label}
+          </Tag>
+        ))}
+      </div>
     </>
   )
 }
