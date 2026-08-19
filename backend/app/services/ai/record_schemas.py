@@ -48,6 +48,15 @@ def coalesce_field(value, default: str = PLACEHOLDER) -> str:
     if not isinstance(value, (str, int, float)):
         return default
     text = str(value).strip()
+    # 剥掉 LLM 偶发的整段包裹引号（主诉改写试验中出现过 "“胃痛反复发作”"）：
+    # 仅当首尾是成对引号、且剥掉后内部不再含同款引号时才剥一层，
+    # 避免误伤正文里的合法引用（如 否认"发热患者"接触史）
+    for lq, rq in (("\u201c", "\u201d"), ('"', '"'), ("\u2018", "\u2019")):
+        if len(text) > 2 and text.startswith(lq) and text.endswith(rq):
+            inner = text[1:-1]
+            if lq not in inner and rq not in inner:
+                text = inner.strip()
+            break
     return text if text else default
 
 
@@ -94,7 +103,7 @@ RECORD_TYPE_LABELS: dict[str, str] = {
 # 所以 schema 里把生命体征 / 中医四诊 / 其余阳性体征拆成独立 key，
 # 各自独立填值，让 LLM 一字段一格。
 OUTPATIENT_SCHEMA: dict[str, str] = {
-    "chief_complaint": "主诉（症状/体征+持续时间，20 字以内，原则上不用诊断名称）",
+    "chief_complaint": "主诉（把医生口语规范化为医学书面语，如'胸口'→'胸部'、'拉肚子'→'腹泻'；症状/部位/侧别/持续时间/数值必须与医生录入完全一致：没写侧别绝不添加左右、模糊时间写'10天余/数天/3-4天'禁止编精确数、'39度'等数值必须保留；不得把症状改成诊断名，医生原文是诊断名的复诊主诉照抄；20 字以内）",
     "history_present_illness": "现病史（口语转书面医学语言，含起病/演变/诊治经过/一般情况）",
     "past_history": "既往史（既往病史/手术史/长期用药史/育龄期女性月经史；空写'否认'）",
     "allergy_history": "过敏史（食物/药物过敏；空写'否认药物及食物过敏史'）",
