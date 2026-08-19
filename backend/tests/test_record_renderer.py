@@ -18,6 +18,7 @@ from app.services.ai.record_renderer import (
     render_record,
 )
 from app.services.ai.record_schemas import (
+    coalesce_field,
     OUTPATIENT_SCHEMA,
     PLACEHOLDER,
     get_schema,
@@ -91,6 +92,29 @@ class TestSchemas:
     def test_get_schema_unknown_falls_back(self):
         """未注册 record_type → 退回门诊 schema（避免上游崩溃）。"""
         assert get_schema("unknown_type") is OUTPATIENT_SCHEMA
+
+
+# ─── coalesce_field 包裹引号清洗（2026-08-19 主诉 AI 改写配套） ─────
+
+
+class TestCoalesceQuoteStrip:
+    """LLM 偶发把整段值包在引号里（主诉改写试验实测出现过），
+    coalesce_field 负责剥一层；内部含同款引号（合法引用）绝不误剥。"""
+
+    def test_strips_wrapping_cn_quotes(self):
+        assert coalesce_field("\u201c胃痛反复发作\u201d") == "胃痛反复发作"
+
+    def test_strips_wrapping_ascii_quotes(self):
+        assert coalesce_field('"腹痛2天"') == "腹痛2天"
+
+    def test_keeps_inner_quotes_untouched(self):
+        assert coalesce_field('否认"发热患者"接触史。') == '否认"发热患者"接触史。'
+
+    def test_no_strip_when_inner_has_same_quote(self):
+        assert coalesce_field('"左"手"痛"') == '"左"手"痛"'
+
+    def test_len_guard(self):
+        assert coalesce_field('""') == '""'
 
 
 # ─── 中医诊断合并行 helper ──────────────────────────────────────────

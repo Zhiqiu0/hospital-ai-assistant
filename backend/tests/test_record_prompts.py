@@ -171,3 +171,23 @@ class TestBuildRecordPrompt:
         """白名单外的 record_type 调进来应抛 ValueError（让路由层尽快发现 bug）。"""
         with pytest.raises(ValueError):
             build_record_prompt("unknown_xxx", _mock_outpatient_req())
+
+# ─── 主诉窄口子改写规则（2026-08-19） ────────────────────────────────
+
+
+class TestChiefComplaintRewriteRule:
+    """主诉从"照抄"放开为"仅用词规范化"：规则必须同时出现在门诊与住院 prompt，
+    且旧的五项照抄名单（含主诉）必须已经拆掉。"""
+
+    def test_rule_in_outpatient_prompt(self):
+        from types import SimpleNamespace
+        from app.services.ai.record_prompts import build_outpatient_prompt
+        p = build_outpatient_prompt(SimpleNamespace(chief_complaint="x"))
+        assert "3a. 主诉" in p and "禁止编成精确数字" in p and "绝不能出现左/右" in p
+        assert "主诉/诊断/舌象" not in p  # 旧五项名单已拆
+
+    def test_rule_in_inpatient_prompt(self):
+        from types import SimpleNamespace
+        from app.services.ai.record_prompts_inpatient import build_inpatient_prompt
+        p = build_inpatient_prompt("admission_note", SimpleNamespace(chief_complaint="x"))
+        assert "3a. 主诉" in p
