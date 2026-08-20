@@ -238,6 +238,20 @@ def test_chief_complaint_without_duration_triggers_deduction():
     assert "OP-CHIEF-COMPLAINT-02" in codes
 
 
+def test_chief_complaint_duration_exempt_on_revisit():
+    """复诊豁免（2026-08-20）：PDF 原文"复诊可用诊断代替"——复诊的诊断式主诉
+    （"痛风复查"）没有持续时间不扣分；同一份病历按初诊评则仍扣。"""
+    record = _build_full_record().replace("反复头痛 3 天", "痛风、高脂血症治疗后复查")
+    revisit_ctx = build_context(
+        record, **_DEFAULT_PATIENT_KWARGS, is_first_visit=False, inquiry=_full_inquiry())
+    codes = {d.rule_code for d in score(ZJ_OUTPATIENT_EMERGENCY_V2023, revisit_ctx).deductions}
+    assert "OP-CHIEF-COMPLAINT-02" not in codes
+    first_ctx = build_context(
+        record, **_DEFAULT_PATIENT_KWARGS, is_first_visit=True, inquiry=_full_inquiry())
+    codes = {d.rule_code for d in score(ZJ_OUTPATIENT_EMERGENCY_V2023, first_ctx).deductions}
+    assert "OP-CHIEF-COMPLAINT-02" in codes
+
+
 # 现病史 ────────────────────────────────────────────────────────
 
 

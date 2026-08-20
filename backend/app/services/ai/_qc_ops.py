@@ -107,6 +107,8 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         patient_name=getattr(req, "patient_name", "") or "",
         patient_gender=getattr(req, "patient_gender", "") or "",
         patient_age=getattr(req, "patient_age", "") or "",
+        # 复诊豁免透传（2026-08-20）：不传则主诉持续时间等规则恒按初诊从严
+        is_first_visit=req.is_first_visit if req.is_first_visit is not None else True,
         inquiry=extract_inquiry_dict(req),
     )
     report = score(rubric, ctx)

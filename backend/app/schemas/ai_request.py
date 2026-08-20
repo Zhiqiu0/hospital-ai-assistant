@@ -350,6 +350,9 @@ class GradeScoreRequest(BaseModel):
 
     content: str = ""
     record_type: Optional[str] = "admission_note"
+    # 是否初诊：主诉持续时间等规则的复诊豁免依赖它（2026-08-20 补，
+    # quick-qc 请求本来就带，评分端点此前漏了 → 复诊调评分恒按初诊从严）
+    is_first_visit: Optional[bool] = True
 
     # 住院问诊字段（供规则引擎使用）
     chief_complaint: Optional[str] = ""

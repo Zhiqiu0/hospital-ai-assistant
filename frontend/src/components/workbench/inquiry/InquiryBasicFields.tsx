@@ -8,7 +8,11 @@
  */
 import { Form, Input, Tag } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { INQUIRY_PHRASES, appendPhrase } from '../patientProfile/profilePhrases'
+import {
+  INQUIRY_PHRASES,
+  REVISIT_HPI_PHRASES,
+  appendPhrase,
+} from '../patientProfile/profilePhrases'
 
 const { TextArea } = Input
 
@@ -33,7 +37,11 @@ export default function InquiryBasicFields({
   onAppendPhrase,
 }: InquiryBasicFieldsProps) {
   const form = Form.useFormInstance()
-  const hpiPhrases = INQUIRY_PHRASES.history_present_illness ?? []
+  // 复诊追加"病史同前/较前好转"等专用句式（医院真实复诊的高频写法），初诊不显示
+  const hpiPhrases = [
+    ...(isFirstVisit ? [] : REVISIT_HPI_PHRASES),
+    ...(INQUIRY_PHRASES.history_present_illness ?? []),
+  ]
   const appendHpiPhrase = (text: string) => {
     const cur = (form.getFieldValue('history_present_illness') as string) || ''
     if (cur.includes(text)) return

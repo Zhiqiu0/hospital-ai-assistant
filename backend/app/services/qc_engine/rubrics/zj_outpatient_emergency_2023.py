@@ -66,7 +66,14 @@ def _missing_chief_complaint(ctx: RecordContext) -> bool:
 
 
 def _missing_chief_complaint_duration(ctx: RecordContext) -> bool:
-    """主诉持续时间未记录——含"天/周/月/年/小时"等时间单位关键词即视为有。"""
+    """主诉持续时间未记录——含"天/周/月/年/小时"等时间单位关键词即视为有。
+
+    复诊豁免（2026-08-20 对照真实复诊病历修）：PDF 原文"初诊记录主要症状、
+    体征及持续时间；**复诊可用诊断代替**"——复诊主诉是"痛风复查"这类
+    诊断式写法，本就没有持续时间，此前未实现豁免导致复诊恒误扣 2 分。
+    """
+    if not ctx.encounter_meta.is_first_visit:
+        return False  # 复诊可用诊断代替，不要求持续时间
     if not ctx.section("主诉").is_filled():
         return False  # 主诉本身缺由别的规则报，不重复扣
     cc = ctx.section("主诉").normalized
