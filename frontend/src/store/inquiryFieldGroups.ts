@@ -202,6 +202,8 @@ export type InpatientInquiry = Pick<
 const OUTPATIENT_KEYS = [
   ...META_FIELDS,
   ...COMMON_FIELDS,
+  // 法定"育龄女性无月经史扣5分"（2026-08-20 补，门急诊共用）
+  'menstrual_history',
   ...VITAL_FIELDS,
   ...AUXILIARY_FIELDS,
   ...TCM_FOUR_DIAG_FIELDS,
@@ -212,6 +214,7 @@ const OUTPATIENT_KEYS = [
 const EMERGENCY_KEYS = [
   ...META_FIELDS,
   ...COMMON_FIELDS,
+  'menstrual_history',
   ...VITAL_FIELDS,
   ...AUXILIARY_FIELDS,
   ...EMERGENCY_FIELDS,

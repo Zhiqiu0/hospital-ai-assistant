@@ -353,6 +353,11 @@ class GradeScoreRequest(BaseModel):
     # 是否初诊：主诉持续时间等规则的复诊豁免依赖它（2026-08-20 补，
     # quick-qc 请求本来就带，评分端点此前漏了 → 复诊调评分恒按初诊从严）
     is_first_visit: Optional[bool] = True
+    # 患者元信息（2026-08-20 补）：性别/年龄类规则（育龄女性月经史等）依赖，
+    # 此前字段缺失导致这些规则在评分端点永远不触发（_qc_ops 只能 getattr 兜底空串）
+    patient_name: Optional[str] = ""
+    patient_gender: Optional[str] = ""
+    patient_age: Optional[str] = ""
 
     # 住院问诊字段（供规则引擎使用）
     chief_complaint: Optional[str] = ""

@@ -47,6 +47,7 @@ FULL_OUTPATIENT = {
     "past_history": "糖尿病病史。",
     "allergy_history": "否认药物及食物过敏史。",
     "personal_history": "无吸烟史，偶饮酒。",
+    "menstrual_history": "15岁初潮，周期28-30天，经量中等，无痛经。",
     "family_history": "否认家族遗传性疾病及传染病史。",
     "physical_exam_vitals": "T:36.5℃ P:78次/分 R:18次/分 BP:120/80mmHg",
     "tcm_inspection": "神志清楚，面色略红，体形中等",
@@ -77,7 +78,7 @@ class TestSchemas:
         required = {
             "chief_complaint", "history_present_illness",
             "past_history", "allergy_history", "personal_history",
-            "family_history", "tcm_syndrome_analysis",
+            "family_history", "menstrual_history", "tcm_syndrome_analysis",
             "physical_exam_vitals",
             "tcm_inspection", "tcm_auscultation",
             "tongue_coating", "pulse_condition",
@@ -166,6 +167,17 @@ class TestOutpatientSections:
         out = render_outpatient(FULL_OUTPATIENT)
         positions = [out.index(h) for h in self._HEADERS_IN_ORDER]
         assert positions == sorted(positions), positions
+
+    def test_female_includes_menstrual_between_personal_and_family(self):
+        """女性患者渲染【月经史】（法定"育龄女性无月经史扣5"，2026-08-20 补），
+        位置在个人史与家族史之间（镜像住院入院记录顺序）。"""
+        out = render_outpatient(FULL_OUTPATIENT, patient_gender="女")
+        assert out.index("【个人史】") < out.index("【月经史】") < out.index("【家族史】")
+        assert "15岁初潮" in out
+
+    def test_male_omits_menstrual_history(self):
+        out = render_outpatient(FULL_OUTPATIENT, patient_gender="男")
+        assert "【月经史】" not in out
 
     def test_no_independent_tcm_diagnosis_sections(self):
         """中医四诊 / 中医诊断 / 西医诊断 等绝不能成为独立章节（必须是子行）。"""
