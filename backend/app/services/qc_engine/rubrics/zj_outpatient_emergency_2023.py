@@ -91,7 +91,13 @@ def _missing_present_illness_treatment(ctx: RecordContext) -> bool:
     s = ctx.section("现病史")
     if not s.is_filled():
         return False  # 缺现病史本身由别的规则报
-    keywords = ("治疗", "服药", "就诊", "检查", "用药", "未治", "未予", "未行")
+    # 2026-08-20 第三轮走查：真实病历写"自行服用布洛芬"被误报缺诊治经过——
+    # 补齐"服用/口服/自服/输液"等同义表述，语义仍是 PDF 的"诊治经过"，不是放宽
+    keywords = (
+        "治疗", "服药", "就诊", "检查", "用药",
+        "服用", "口服", "自服", "输液",
+        "未治", "未予", "未行",
+    )
     return not any(s.contains(kw) for kw in keywords)
 
 

@@ -56,12 +56,16 @@ export function parseGeneratedSectionsToInquiry(content: string): Record<string,
         result.history_present_illness = text
         break
       case '体格检查': {
-        // 滤掉望/闻/切诊（含舌脉象）行，剩下的部分认为是普通体检文字
+        // 滤掉望/闻/切诊（含舌脉象）行，剩下的部分认为是普通体检文字。
+        // 体征行（后端 normalize_vitals_line 保证以 "T:" 起头）也要滤——体温脉搏
+        // 血压属于独立体征字段，不滤会把整行数值串进 physical_exam 造成重复
+        // （2026-08-20 第三轮走查在生产 PUT 请求体里实锤）
         const filteredLines = text.split('\n').filter(line => {
           const trimmed = line.trim()
           return (
             !trimmed.match(/^(望诊|闻诊|切诊[··]?舌象|切诊[··]?脉象|舌象|脉象)[：:]/u) &&
-            !trimmed.match(/^其余阳性体征[：:]/u)
+            !trimmed.match(/^其余阳性体征[：:]/u) &&
+            !trimmed.match(/^T[：:]/u)
           )
         })
         const physicalLine = text.split('\n').find(l => l.trim().match(/^其余阳性体征[：:]/u))
