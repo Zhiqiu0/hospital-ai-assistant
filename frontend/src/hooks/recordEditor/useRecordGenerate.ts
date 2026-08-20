@@ -104,7 +104,10 @@ export function useRecordGenerate(shared: RecordEditorShared) {
 
   const handleGenerate = async () => {
     if (!inquiry.chief_complaint) {
-      message.warning('请先填写并保存主诉')
+      // 生成读的是「已保存」的问诊——医生常见状态是表单填了但没点保存，
+      // 文案必须把两步都说清（2026-08-20 复诊走查：只提示"填写"时医生看着
+      // 已填的主诉一头雾水）
+      message.warning('请先在左侧填写主诉并点击「保存问诊」（生成使用已保存的内容）')
       return
     }
     // 历史遗留：自由文本时代为防 LLM 幻觉编造舌象/脉象/证候诊断，这里加了个

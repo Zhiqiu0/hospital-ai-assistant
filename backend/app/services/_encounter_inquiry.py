@@ -15,6 +15,9 @@ from app.services.encounter_cache import invalidate_encounter_snapshot
 #     前端用 DatePicker（需 dayjs 对象），把上次的字符串塞进去会让 antd DatePicker
 #     崩溃（date.isValid is not a function）。故此列表只含纯文本字段。
 _SYNC_COPY_FIELDS = [
+    # onset_time（2026-08-20 复诊走查补）：复诊是同一病程，病发时间延续上次；
+    # 此前不在清单里 → 复诊必填的病发时间恒空，保存被校验拦住
+    "onset_time",
     "chief_complaint", "history_present_illness", "past_history",
     "allergy_history", "personal_history", "current_medications", "history_informant",
     "family_history", "marital_history", "menstrual_history", "physical_exam",
