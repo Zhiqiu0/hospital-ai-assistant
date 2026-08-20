@@ -23,6 +23,9 @@ export const INQUIRY_FORM_FIELDS = [
   'treatment_method',
   'treatment_plan',
   'followup_advice',
+  // 月经史（2026-08-20 法定标准补齐）：门急诊评分表"育龄女性无月经史扣5分"，
+  // 此前仅住院收集；门急诊女性患者在 InquiryBasicFields 显示输入框
+  'menstrual_history',
   'precautions',
   'observation_notes',
   'patient_disposition',

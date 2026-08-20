@@ -28,6 +28,7 @@ def render_outpatient(
     *,
     visit_time: Optional[str] = None,
     onset_time: Optional[str] = None,
+    patient_gender: Optional[str] = None,
     **_extra,
 ) -> str:
     """渲染门诊病历文本。
@@ -56,6 +57,9 @@ def render_outpatient(
     parts.append(_section("【既往史】", _v(data, "past_history")))
     parts.append(_section("【过敏史】", _v(data, "allergy_history")))
     parts.append(_section("【个人史】", _v(data, "personal_history")))
+    # 月经史（2026-08-20 法定标准对照补齐）：育龄女性缺月经史扣5分，仅女性渲染
+    if (patient_gender or "").strip() in {"女", "female"}:
+        parts.append(_section("【月经史】", _v(data, "menstrual_history")))
     # 家族史（2026-08-19 对照濮氏门诊病历补齐）：医院门诊模板有此栏
     parts.append(_section("【家族史】", _v(data, "family_history")))
 

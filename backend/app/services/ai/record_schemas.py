@@ -110,6 +110,10 @@ OUTPATIENT_SCHEMA: dict[str, str] = {
     "personal_history": "个人史（生活习惯/烟酒/职业暴露等）",
     # 家族史（2026-08-19 对照濮氏门诊病历补齐）：医院门诊模板有家族史栏，
     # 患者档案本就存有该字段并随请求下发，此前门诊生成没用上
+    # 月经史（2026-08-20 法定标准对照补齐）：门急诊评分表"育龄期女性无月经史
+    # 扣5分"，医院门诊模板反而没有此栏（真实病历会被扣）——以法定标准为纲。
+    # 仅女性渲染（renderer 按 patient_gender 判），男性患者该字段照常输出但不渲染。
+    "menstrual_history": "月经史（仅女性：初潮/周期/经量/末次月经或绝经情况；照抄医生录入整理书面化，未录入写 [未填写，需补充]）",
     "family_history": "家族史（直系亲属重要疾病史；照抄医生录入，空写 [未填写，需补充]）",
     "physical_exam_vitals": (
         "生命体征行（按 'T:36.5℃ P:78次/分 R:18次/分 BP:120/80mmHg' 一整行格式输出，"
@@ -144,7 +148,8 @@ OUTPATIENT_SCHEMA: dict[str, str] = {
 EMERGENCY_SCHEMA: dict[str, str] = {
     "chief_complaint": "主诉",
     "history_present_illness": "现病史（①起病时间/诱因/主要症状及演变 ②院前处置经过 ③一般情况）",
-    "past_history": "既往史（无则写'否认'）",
+    # 急诊从简不设独立月经史章节；法定"育龄女性无月经史扣5"认既往史内含"经"即可
+    "past_history": "既往史（育龄期女性附月经史一句；无则写'否认'）",
     "allergy_history": "过敏史（无则写'否认药物及食物过敏史'）",
     "physical_exam_vitals": (
         "生命体征行（'T:36.5℃ P:78次/分 R:18次/分 BP:120/80mmHg' 一整行；"

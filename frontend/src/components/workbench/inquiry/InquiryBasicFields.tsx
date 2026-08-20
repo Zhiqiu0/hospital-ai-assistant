@@ -28,15 +28,19 @@ const fs: React.CSSProperties = { marginBottom: 10 }
 
 interface InquiryBasicFieldsProps {
   isFirstVisit: boolean
+  /** 患者性别：女性才显示月经史输入（法定"育龄女性无月经史扣5分"，2026-08-20） */
+  patientGender?: string | null
   /** 句式追加后回调（父组件用来打 isDirty——setFieldsValue 不触发 onValuesChange） */
   onAppendPhrase?: () => void
 }
 
 export default function InquiryBasicFields({
   isFirstVisit,
+  patientGender,
   onAppendPhrase,
 }: InquiryBasicFieldsProps) {
   const form = Form.useFormInstance()
+  const isFemale = (patientGender || '').trim() === '女' || patientGender === 'female'
   // 复诊追加"病史同前/较前好转"等专用句式（医院真实复诊的高频写法），初诊不显示
   const hpiPhrases = [
     ...(isFirstVisit ? [] : REVISIT_HPI_PHRASES),
@@ -130,6 +134,20 @@ export default function InquiryBasicFields({
           </Tag>
         ))}
       </div>
+      {/* 月经史：仅女性显示（法定评分"育龄女性无月经史扣5分"，2026-08-20） */}
+      {isFemale && (
+        <Form.Item
+          style={fs}
+          name="menstrual_history"
+          label={<span style={labelStyle}>月经史</span>}
+        >
+          <TextArea
+            rows={1}
+            placeholder="初潮年龄、周期、经量、末次月经；绝经填「XX岁绝经」"
+            style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+          />
+        </Form.Item>
+      )}
     </>
   )
 }
