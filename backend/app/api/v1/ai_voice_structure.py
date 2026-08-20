@@ -24,7 +24,6 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import (
     strip_unsubstantiated_vital_values,
-    strip_unsubstantiated_vitals,
 )
 from app.services.ai.prompts import (
     VOICE_STRUCTURE_PROMPT_INPATIENT,
@@ -148,24 +147,14 @@ async def voice_structure(
                 )
             result["inquiry"] = inquiry_result
 
-        # draft_record 是含【体格检查】章节的**病历草稿全文**，直接显示进编辑区。
-        # 它是文本，走文本版守卫（同一条红线的另一个出口，同样原先没挂）。
-        draft = result.get("draft_record")
-        if isinstance(draft, str) and draft:
-            cleaned_draft = strip_unsubstantiated_vitals(draft, transcript)
-            if cleaned_draft != draft:
-                logger.warning(
-                    "voice.structure: 病历草稿里剔除了无出处的体征数值 transcript_id=%s",
-                    req.transcript_id,
-                )
-                result["draft_record"] = cleaned_draft
+        # 注：draft_record（LLM 病历草稿）已删（2026-08-20）——前端从未消费，
+        # 病历文本统一走 render_record；响应键保留空串兼容旧客户端。
 
         if voice_record:
             voice_record.raw_transcript = transcript
             voice_record.transcript_summary = result.get("transcript_summary", "")
             voice_record.speaker_dialogue = json.dumps(result.get("speaker_dialogue", []), ensure_ascii=False)
             voice_record.structured_inquiry = json.dumps(result.get("inquiry", {}), ensure_ascii=False)
-            voice_record.draft_record = result.get("draft_record", "")
             voice_record.status = "structured"
             await db.commit()
             # 语音结构化结果会被工作台快照引用，失效缓存
@@ -178,7 +167,7 @@ async def voice_structure(
             "transcript_summary": result.get("transcript_summary", ""),
             "speaker_dialogue": result.get("speaker_dialogue", []),
             "inquiry": result.get("inquiry", {}),
-            "draft_record": result.get("draft_record", ""),
+            "draft_record": "",
         }
     except Exception as exc:
         logger.exception("voice.structure: failed err=%s", exc)
