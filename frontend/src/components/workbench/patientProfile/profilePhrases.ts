@@ -70,6 +70,15 @@ export const INQUIRY_PHRASES: Record<string, ProfilePhrase[]> = {
   ],
 }
 
+/** 复诊专用的现病史句式（2026-08-20 对照濮氏真实复诊病历）：
+ * 医院复诊现病史的高频写法就是"病史同前"+变化一句，仅复诊时显示。 */
+export const REVISIT_HPI_PHRASES: ProfilePhrase[] = [
+  { label: '病史同前', text: '病史同前。' },
+  { label: '较前好转', text: '经治疗后症状较前好转。' },
+  { label: '无明显变化', text: '经治疗后症状无明显变化。' },
+  { label: '较前加重', text: '症状较前加重。' },
+]
+
 /**
  * 把句式追加到现有内容后面：空则直接用；已有内容且末尾没标点则先补"，"再接。
  * 已包含同一句式时原样返回（防重复点击叠加）。

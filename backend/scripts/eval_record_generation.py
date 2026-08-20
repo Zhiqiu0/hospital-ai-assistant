@@ -83,6 +83,39 @@ FABRICATED_TCM = ["痛有定处", "固定不移", "入夜尤甚", "无放射痛"
 # 口语残留（叙述性字段必须书面化；不含主诉——主诉规范化由 eval_cc_rewrite 专测）
 COLLOQUIAL = ["痛得厉害", "1儿2女", "家里没", "别咳嗽", "不舒服随时来", "吃饭大小便", "有点肿", "没青紫"]
 
+# ── 病例 3：39 岁男性痛风复诊（门诊复诊，改编自濮氏真实复诊病历）──────
+# 考察点（2026-08-20 修复项）：①previous_record 沿用（既往史/过敏史从上次病历带出）
+# ②现病史"病史同前"式衔接 ③"开了药"不得具体化成"中药/西药"
+# ④复诊诊断式主诉不因"无持续时间"被扣（法定"复诊可用诊断代替"豁免）
+GOUT_REVISIT_PREV = """【主诉】
+左足踇趾肿痛反复发作3年，加重1日
+
+【现病史】
+患者3年前出现左足踇趾反复肿痛，曾在外院就诊，诊断为痛风，对症治疗后好转，1日前饮酒后加重，今来我院要求进一步检查。
+
+【既往史】
+既往体质健康，否认心脑血管、肝、肾、内分泌重大疾病史，否认传染病史，否认外伤、手术、输血史。
+
+【过敏史】
+未发现
+
+【诊断】
+西医诊断：混合性高脂血症，痛风"""
+
+GOUT_REVISIT = dict(
+    patient_name="患者", patient_gender="男", patient_age="39",
+    is_first_visit=False, visit_time="2026-08-12 09:10",
+    chief_complaint="痛风、高脂血症治疗后来复查",
+    history_present_illness="病史同前，上次开了药吃了，症状比之前好转，今天来复查血。",
+    physical_exam="神清，精神一般，心肺听诊没什么问题",
+    temperature="36.6", pulse="78", respiration="19", bp_systolic="125", bp_diastolic="80",
+    auxiliary_exam="今日开单复查：肝功能、血脂、肾功能、血常规、血糖",
+    western_diagnosis="痛风，混合性高脂血症",
+    treatment_plan="开检查单复查",
+    followup_advice="7日复诊，不适随诊",
+    previous_record=GOUT_REVISIT_PREV,
+)
+
 # (名字, record_type, 录入, 最低分, 扣分码白名单, 必须出现, 禁止出现)
 CASES = [
     ("住院入院记录·速记", "admission_note", FRACTURE_TERSE, 96,
@@ -101,6 +134,13 @@ CASES = [
      ["【家族史】", "【辨证分析】", "T:36.8", "135/82", "骨折病 — 气滞血瘀证",
       "醋氯芬酸分散片", "第4-5肋"],
      COLLOQUIAL + FABRICATED_TCM),
+    # 复诊：四诊/中医诊断医生未录（对照医院真实复诊现状），相应扣分属如实反映 → 白名单
+    ("门诊复诊·痛风复查", "outpatient", GOUT_REVISIT, 74,
+     {"OP-PHYSICAL-EXAM-01", "OP-PHYSICAL-EXAM-02", "OP-PHYSICAL-EXAM-03",
+      "OP-PHYSICAL-EXAM-04", "OP-DIAGNOSIS-01", "OP-TREATMENT-02"},
+     ["病史同前", "好转", "既往体质健康", "痛风", "125/80"],
+     # 中药/西药/输液 = 药物具体化编造；OP-CHIEF-COMPLAINT-02 在白名单外，出现即报
+     ["中药", "西药", "输液", "上次开了药"]),
 ]
 
 
@@ -115,7 +155,9 @@ async def run_case(name, record_type, payload, min_score, allowed, must, banned)
     )
     text = render_record(record_type, result, visit_time=req.visit_time,
                          onset_time=req.onset_time, patient_gender=req.patient_gender)
-    score = await run_grade_score(None, GradeScoreRequest(content=text, record_type=record_type))
+    score = await run_grade_score(None, GradeScoreRequest(
+        content=text, record_type=record_type,
+        is_first_visit=payload.get("is_first_visit", True)))
 
     problems: list[str] = []
     codes = {i.get("rule_code") for i in score["issues"]} - ARTIFACT_CODES

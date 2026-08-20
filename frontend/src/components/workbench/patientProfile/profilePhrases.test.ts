@@ -5,7 +5,12 @@
  * 每个配置字段的 key 都在档案字段表里（防拼错 key 导致标签永远不显示）。
  */
 import { describe, it, expect } from 'vitest'
-import { INQUIRY_PHRASES, PROFILE_PHRASES, appendPhrase } from './profilePhrases'
+import {
+  INQUIRY_PHRASES,
+  PROFILE_PHRASES,
+  REVISIT_HPI_PHRASES,
+  appendPhrase,
+} from './profilePhrases'
 import { PROFILE_FIELDS } from './staleness'
 
 describe('appendPhrase', () => {
@@ -56,5 +61,15 @@ describe('INQUIRY_PHRASES 配置', () => {
     const labels = list.map(p => p.label)
     expect(new Set(labels).size).toBe(labels.length)
     for (const p of list) expect(p.text.trim().length).toBeGreaterThan(0)
+  })
+})
+
+describe('REVISIT_HPI_PHRASES 配置', () => {
+  it('复诊句式非空、标签唯一、含病史同前', () => {
+    expect(REVISIT_HPI_PHRASES.length).toBeGreaterThan(0)
+    const labels = REVISIT_HPI_PHRASES.map(p => p.label)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(REVISIT_HPI_PHRASES.some(p => p.text.includes('病史同前'))).toBe(true)
+    for (const p of REVISIT_HPI_PHRASES) expect(p.text.trim().length).toBeGreaterThan(0)
   })
 })
