@@ -55,6 +55,9 @@ export default function EmergencySection() {
         style={fs}
         name="patient_disposition"
         label={<span style={labelStyle}>患者去向</span>}
+        // 空串会被 Select 当成"已选中一个空白项"渲染（显示空白且挡住点击），
+        // 归一成 undefined 让 placeholder 正常显示（2026-08-20 第二轮走查）
+        getValueProps={v => ({ value: v || undefined })}
       >
         <Select placeholder="选择患者去向" style={{ borderRadius: 6, fontSize: 13 }}>
           <Select.Option value="回家观察">回家观察</Select.Option>

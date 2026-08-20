@@ -46,9 +46,9 @@ VOICE_STRUCTURE_PROMPT_OUTPATIENT = """你是一名临床门诊病历助手。�
     {{"speaker": "uncertain", "text": "无法确定归属的话"}}
   ],
   "inquiry": {{
-    "chief_complaint": "主诉",
+    "chief_complaint": "主诉（症状/部位/侧别/持续时间必须与对话完全一致：说了'左边'必须保留'左'，模糊时间写'10天余/数天'不精确化，没说侧别不添加）",
     "history_present_illness": "现病史（基线已有内容时：只写基线没有的新增事实，禁止重复基线原文）",
-    "past_history": "既往史（既往疾病、手术、外伤、传染病、输血、预防接种；基线已有内容时只写新增，禁止重复）",
+    "past_history": "既往史（既往疾病、手术、外伤、传染病、输血、预防接种——'破伤风好多年没打了'→'破伤风预防接种史不详'；基线已有内容时只写新增，禁止重复）",
     "allergy_history": "过敏史（药物/食物过敏；无填「否认药物及食物过敏史」）",
     "personal_history": "个人史（吸烟、饮酒、职业、生活习惯、毒物接触；不含婚育/月经/家族/用药/宗教）",
     "marital_history": "婚育史（婚姻状况、配偶健康、生育次数/情况；与个人史区分）",
@@ -72,13 +72,15 @@ VOICE_STRUCTURE_PROMPT_OUTPATIENT = """你是一名临床门诊病历助手。�
     "tongue_coating": "舌象（舌质+舌苔，如：舌淡红苔薄白）",
     "pulse_condition": "脉象（如：脉弦细）",
     "auxiliary_exam": "辅助检查及结果（CT/X光/MRI/化验/心电图等，含院外已做的；未提及留空）",
-    "western_diagnosis": "西医诊断",
+    "western_diagnosis": "西医诊断（**仅当医生明确说出诊断**（'诊断是…/考虑…/是个…'）才填；医生只描述伤情/体征（'一道裂伤/没伤到骨头'）不算下诊断，留空——描述进体格检查，不得升格成诊断术语）",
     "tcm_disease_diagnosis": "中医疾病诊断（如：眩晕病）",
     "tcm_syndrome_diagnosis": "中医证候诊断（如：肝阳上亢证）",
     "treatment_method": "治则治法（如：平肝潜阳）",
     "treatment_plan": "处理意见（用药/治疗方案；医生只说'开点药'时写'予药物治疗'，**禁止**因中医语境推断为'中药/汤剂'或任何具体药名——说了什么记什么）",
     "followup_advice": "复诊建议",
     "precautions": "注意事项（活动/饮食/用药/观察要点等叮嘱）",
+    "observation_notes": "留观记录（急诊留观的观察内容；非留观场景留空）",
+    "patient_disposition": "患者去向（急诊专用，只能从五选一：回家观察/留院观察/收入住院/转院/手术室；示例：'留观半小时没事就可以回家'→'留院观察'（当前动作）；对话未提及去向则留空）",
     "initial_impression": "初步印象（补充）"
   }}
 }}
@@ -165,7 +167,7 @@ VOICE_STRUCTURE_PROMPT_INPATIENT = """你是一名住院病历助手。请根据
     {{"speaker": "uncertain", "text": "无法确定归属的话"}}
   ],
   "inquiry": {{
-    "chief_complaint": "主诉",
+    "chief_complaint": "主诉（症状/部位/侧别/持续时间必须与对话完全一致：说了'左边'必须保留'左'，模糊时间写'10天余/数天'不精确化，没说侧别不添加）",
     "history_present_illness": "现病史（基线已有内容时：只写基线没有的新增事实，禁止重复基线原文）",
     "past_history": "既往史（基线已有内容时只写新增，禁止重复）",
     "allergy_history": "过敏史",

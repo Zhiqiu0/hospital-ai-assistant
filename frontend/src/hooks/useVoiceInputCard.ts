@@ -14,7 +14,7 @@
  *     → hooks/useVoiceDialogueSession.ts
  *   - 本 hook 主体保留：状态聚合 + UI 操作回调（AI 整理/清空/插入病历）
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { App } from 'antd'
 import { message } from '@/services/messageBridge'
 import { InquiryData } from '@/store/types'
@@ -48,6 +48,13 @@ export function useVoiceInputCard({
   // App.useApp() 的 modal 实例能 consume 主题 context；不要用 Modal.confirm 静态方法
   const { modal } = App.useApp()
   const isRecordMode = !!onApplyToRecord
+  // 整理是长耗时请求：点击时可能未锁定、结果到达时已锁定（医生整理后马上保存
+  // 生成，2026-08-20 第二轮走查实锤晚到补丁写进了只读表单）。用 ref 存最新
+  // 回调，落地时按"到达时"的模式分流，而不是用点击时捕获的闭包值。
+  const onApplyToRecordRef = useRef(onApplyToRecord)
+  useEffect(() => {
+    onApplyToRecordRef.current = onApplyToRecord
+  }, [onApplyToRecord])
   const inquiry = useInquiryStore(s => s.inquiry)
   // 病历草稿全文：续录场景下优先作为 LLM 增量分析的"已知信息基线"，因为它含医生手改
   const recordContent = useRecordStore(s => s.recordContent)
@@ -151,10 +158,12 @@ export function useVoiceInputCard({
         // 避免整段覆盖把医生在病历里的手改冲掉。草稿为空时后端会回退到 existingInquiry。
         existingRecord: recordContent || undefined,
       })
+      // 到达时重新判定模式：锁定后一律走"预览+插入病历"，绝不直写表单
+      const recordModeNow = !!onApplyToRecordRef.current
       const filteredPatch = filterPatch((data?.inquiry || {}) as Partial<InquiryData>)
       // 追记模式下对 vital_signs 嵌套子字段做基线去重——LLM 对嵌套子字段层级
       // 增量约束遵守得不严，常把基线已有的体温/脉搏等数值重复输出，前端兜底剔除
-      const dedupedPatch = isRecordMode
+      const dedupedPatch = recordModeNow
         ? (dedupeVitalSignsAgainstRecord(
             filteredPatch as Record<string, unknown>,
             recordContent
@@ -164,7 +173,7 @@ export function useVoiceInputCard({
       setSpeakerDialogue(Array.isArray(data?.speaker_dialogue) ? data.speaker_dialogue : [])
       setTranscriptId(data?.transcript_id || transcriptId)
       setLastAnalyzedTranscript(fullTranscript)
-      if (isRecordMode) {
+      if (recordModeNow) {
         setPendingPatch(dedupedPatch)
         message.success('AI 整理完成，请确认下方内容后点击「插入病历」')
       } else {

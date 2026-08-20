@@ -74,8 +74,9 @@ export default function InquiryPhysicalExam({ isEmergency }: InquiryPhysicalExam
         />
       </Form.Item>
 
-      {/* 中医四诊 */}
-      <TcmSection />
+      {/* 中医四诊：急诊不显示——法定标准急诊豁免四诊、急诊病历模板也无四诊字段，
+          显示"舌象*"必填星号纯属误导（2026-08-20 第二轮走查） */}
+      {!isEmergency && <TcmSection />}
       {/* 辅助检查字段已迁出此面板，由右侧「检查建议」Tab 通过"写入/已写入"按钮
           直接管理病历【辅助检查】章节，避免一字段多源（手输 + AI 建议 + OCR + 影像）冲突 */}
     </CollapsibleSection>

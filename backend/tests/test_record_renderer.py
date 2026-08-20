@@ -95,6 +95,30 @@ class TestSchemas:
         assert get_schema("unknown_type") is OUTPATIENT_SCHEMA
 
 
+# ─── 生命体征行归一（2026-08-20 第二轮走查配套） ─────────────────────
+
+
+class TestVitalsLineNormalization:
+    """急诊只测 P/BP 时 LLM 输出的体征行不以 T: 起头，QC 解析器（按行首 T: 识别
+    【生命体征】）看不见整行 → 误报"急诊无生命体征记录"。渲染层确定性补 T:[未测]。"""
+
+    def test_missing_t_gets_prefixed(self):
+        from app.services.ai._render_common import normalize_vitals_line
+        assert normalize_vitals_line("P:92次/分 BP:128/78mmHg") == "T:[未测] P:92次/分 BP:128/78mmHg"
+
+    def test_normal_and_placeholder_untouched(self):
+        from app.services.ai._render_common import normalize_vitals_line
+        assert normalize_vitals_line("T:36.5℃ P:78次/分") == "T:36.5℃ P:78次/分"
+        assert normalize_vitals_line("[未填写，需补充]") == "[未填写，需补充]"
+        assert normalize_vitals_line("") == ""
+
+    def test_emergency_render_applies_normalization(self):
+        from app.services.ai._render_visit import render_emergency
+        out = render_emergency({"chief_complaint": "x",
+                                "physical_exam_vitals": "P:92次/分 BP:128/78mmHg"})
+        assert "T:[未测] P:92次/分" in out
+
+
 # ─── coalesce_field 包裹引号清洗（2026-08-19 主诉 AI 改写配套） ─────
 
 
