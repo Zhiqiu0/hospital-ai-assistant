@@ -52,7 +52,9 @@ export function useVoiceInputCard({
   // 生成，2026-08-20 第二轮走查实锤晚到补丁写进了只读表单）。用 ref 存最新
   // 回调，落地时按"到达时"的模式分流，而不是用点击时捕获的闭包值。
   const onApplyToRecordRef = useRef(onApplyToRecord)
-  onApplyToRecordRef.current = onApplyToRecord
+  useEffect(() => {
+    onApplyToRecordRef.current = onApplyToRecord
+  }, [onApplyToRecord])
   const inquiry = useInquiryStore(s => s.inquiry)
   // 病历草稿全文：续录场景下优先作为 LLM 增量分析的"已知信息基线"，因为它含医生手改
   const recordContent = useRecordStore(s => s.recordContent)
