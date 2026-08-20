@@ -274,6 +274,23 @@ def test_present_illness_without_treatment_keyword_triggers_deduction():
     assert "OP-PRESENT-ILLNESS-02" in codes
 
 
+def test_present_illness_treatment_synonyms_not_flagged():
+    """诊治经过同义表述（服用/口服/自服/输液）不误报 -02。
+
+    2026-08-20 第三轮走查：真实病历写"自行服用布洛芬"被误报缺诊治经过——
+    旧关键词表只有"服药"没有"服用"。逐个同义词验证防回归。
+    """
+    for phrase in ("自行服用布洛芬效果不佳", "口服头孢后无好转", "自服藿香正气水", "社区卫生院输液两天"):
+        record = _build_full_record().replace(
+            "患者 3 天前无明显诱因出现头部胀痛，伴轻度恶心，无呕吐发热。曾自行服用对乙酰氨基酚片治疗，效果不佳。今为求中医诊治来院就诊。发病以来精神尚可，食欲一般，睡眠欠佳，二便正常。",
+            f"患者 3 天前出现头痛，{phrase}。",
+        )
+        ctx = build_context(record, **_DEFAULT_PATIENT_KWARGS, inquiry=_full_inquiry())
+        rep = score(ZJ_OUTPATIENT_EMERGENCY_V2023, ctx)
+        codes = {d.rule_code for d in rep.deductions}
+        assert "OP-PRESENT-ILLNESS-02" not in codes, phrase
+
+
 # 既往史 ────────────────────────────────────────────────────────
 
 
