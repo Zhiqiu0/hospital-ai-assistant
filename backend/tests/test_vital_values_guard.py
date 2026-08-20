@@ -104,3 +104,23 @@ def test_非字典输入不炸():
 def test_边界口述形态(spoken, value, should_keep):
     kept, _ = strip_unsubstantiated_vital_values({"temperature": value}, spoken)
     assert ("temperature" in kept) is should_keep
+
+def test_spoken_decimal_forms_substantiate():
+    """口语小数（36度8/36点8）算有出处（2026-08-20 生产端到端冒烟发现的误剔）。"""
+    kept, dropped = strip_unsubstantiated_vital_values(
+        {"temperature": "36.8", "bp_systolic": "135", "bp_diastolic": "82"},
+        "体温36度8，血压135的82",
+    )
+    assert kept.get("temperature") == "36.8"
+    assert kept.get("bp_systolic") == "135" and kept.get("bp_diastolic") == "82"
+    assert dropped == []
+    kept, _ = strip_unsubstantiated_vital_values({"temperature": "36.8"}, "36点8")
+    assert kept.get("temperature") == "36.8"
+
+
+def test_fabricated_value_still_dropped_with_spoken_decimals():
+    """归一只增不减：原文没有的数值（99）照样剔除。"""
+    kept, dropped = strip_unsubstantiated_vital_values(
+        {"temperature": "36.8", "spo2": "99"}, "体温36度8")
+    assert kept.get("temperature") == "36.8"
+    assert dropped == ["spo2"]

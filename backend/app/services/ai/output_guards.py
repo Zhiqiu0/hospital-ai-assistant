@@ -33,8 +33,18 @@ _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
 def _extract_numbers(text: str) -> set[str]:
-    """提取文本中所有数字串（含小数），作为"有出处数值"的字面集合。"""
-    return set(_NUM_RE.findall(text or ""))
+    """提取文本中所有数字串（含小数），作为"有出处数值"的字面集合。
+
+    口语小数归一（2026-08-20 生产端到端冒烟发现）：医生口述"体温36度8/36点8"，
+    转写原文没有字面"36.8"，LLM 规范化输出的 36.8 会被误判无出处而剔除
+    （血压"135的82"反而能活，因为是两个独立整数）。把"数字度/点数字"归一成
+    小数形式一并加入集合——只增不减，真编造的数值（原文完全没有）仍会被剔。
+    """
+    text = text or ""
+    numbers = set(_NUM_RE.findall(text))
+    for m in re.finditer(r"(\d+)[度点](\d+)", text):
+        numbers.add(f"{m.group(1)}.{m.group(2)}")
+    return numbers
 
 
 def strip_unsubstantiated_vitals(value: str, source_text: str) -> str:
