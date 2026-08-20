@@ -47,8 +47,8 @@ VOICE_STRUCTURE_PROMPT_OUTPATIENT = """你是一名临床门诊病历助手。�
   ],
   "inquiry": {{
     "chief_complaint": "主诉",
-    "history_present_illness": "现病史",
-    "past_history": "既往史（既往疾病、手术、外伤、传染病、输血、预防接种）",
+    "history_present_illness": "现病史（基线已有内容时：只写基线没有的新增事实，禁止重复基线原文）",
+    "past_history": "既往史（既往疾病、手术、外伤、传染病、输血、预防接种；基线已有内容时只写新增，禁止重复）",
     "allergy_history": "过敏史（药物/食物过敏；无填「否认药物及食物过敏史」）",
     "personal_history": "个人史（吸烟、饮酒、职业、生活习惯、毒物接触；不含婚育/月经/家族/用药/宗教）",
     "marital_history": "婚育史（婚姻状况、配偶健康、生育次数/情况；与个人史区分）",
@@ -76,7 +76,7 @@ VOICE_STRUCTURE_PROMPT_OUTPATIENT = """你是一名临床门诊病历助手。�
     "tcm_disease_diagnosis": "中医疾病诊断（如：眩晕病）",
     "tcm_syndrome_diagnosis": "中医证候诊断（如：肝阳上亢证）",
     "treatment_method": "治则治法（如：平肝潜阳）",
-    "treatment_plan": "处理意见（用药/治疗方案）",
+    "treatment_plan": "处理意见（用药/治疗方案；医生只说'开点药'时写'予药物治疗'，**禁止**因中医语境推断为'中药/汤剂'或任何具体药名——说了什么记什么）",
     "followup_advice": "复诊建议",
     "precautions": "注意事项（活动/饮食/用药/观察要点等叮嘱）",
     "initial_impression": "初步印象（补充）"
@@ -166,8 +166,8 @@ VOICE_STRUCTURE_PROMPT_INPATIENT = """你是一名住院病历助手。请根据
   ],
   "inquiry": {{
     "chief_complaint": "主诉",
-    "history_present_illness": "现病史",
-    "past_history": "既往史",
+    "history_present_illness": "现病史（基线已有内容时：只写基线没有的新增事实，禁止重复基线原文）",
+    "past_history": "既往史（基线已有内容时只写新增，禁止重复）",
     "allergy_history": "过敏史",
     "personal_history": "个人史",
     "physical_exam": "体格检查文字描述（心肺听诊/腹部触诊等，禁止含体温/脉搏/血压/血氧/身高体重等数值）",
