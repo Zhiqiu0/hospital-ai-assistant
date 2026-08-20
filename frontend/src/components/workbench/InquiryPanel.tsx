@@ -15,7 +15,8 @@
  *   InquirySaveBar      → 保存 + 转住院
  */
 import { Form, Divider, ConfigProvider, Button } from 'antd'
-import { useState } from 'react'
+import dayjs from 'dayjs'
+import { useEffect, useRef, useState } from 'react'
 import { HistoryOutlined } from '@ant-design/icons'
 import { message } from '@/services/messageBridge'
 import api from '@/services/api'
@@ -71,9 +72,25 @@ export default function InquiryPanel() {
 
   const encounterId = useActiveEncounterStore(s => s.encounterId)
   const [syncing, setSyncing] = useState(false)
+  // 复诊自动同步只跑一次/接诊（走查发现医生不知道点「同步上次病历」，
+  // 病发时间等必填全空 → 保存被校验拦住）
+  const autoSyncedEncounterRef = useRef<string | null>(null)
+
+  // 复诊自动同步的"延续性事实"子集（2026-08-20 生产走查）：只带同一病程的
+  // 病发时间 + 诊断/治则 + 月经史——这些延续是医学事实；舌脉/体检/主诉等
+  // "当次所见"绝不自动带（手动按钮仍是全清单，医生主动点击并核对）。
+  const AUTO_SYNC_FIELDS = [
+    'onset_time',
+    'menstrual_history',
+    'western_diagnosis',
+    'tcm_disease_diagnosis',
+    'tcm_syndrome_diagnosis',
+    'treatment_method',
+  ]
 
   // 一键同步上次病历：拉该患者上次接诊的文字病历（体征不带回，需本次重新测量）
-  const handleSyncPrevious = async () => {
+  // onlyFields 传入时只同步该子集（复诊自动同步用），不传为医生手动的全清单
+  const handleSyncPrevious = async (onlyFields?: string[]) => {
     if (!encounterId) return
     setSyncing(true)
     try {
@@ -92,8 +109,13 @@ export default function InquiryPanel() {
       const current = form.getFieldsValue()
       const patch: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(res.fields)) {
+        if (onlyFields && !onlyFields.includes(key)) continue
         const cur = current[key]
-        if (cur === undefined || cur === null || cur === '') patch[key] = value
+        if (cur === undefined || cur === null || cur === '') {
+          // onset_time 是 DatePicker 字段：后端给字符串，落表单前必须转 dayjs
+          // （直接塞字符串 antd 会崩——test_previous_record 里记录过这个约束）
+          patch[key] = key === 'onset_time' ? dayjs(String(value)) : value
+        }
       }
       if (Object.keys(patch).length === 0) {
         message.info('当前问诊项均已填写，无需同步')
@@ -103,13 +125,30 @@ export default function InquiryPanel() {
       form.setFieldsValue(nextValues)
       updateInquiryFields(buildInquiryData(nextValues) as unknown as InquiryData)
       setIsDirty(true)
-      message.success('已同步上次病历（仅补空白项），请核对并重新测量体征后保存')
+      message.success(
+        onlyFields
+          ? '已带入上次的诊断/病发时间等延续信息（仅补空白项），请核对'
+          : '已同步上次病历（仅补空白项），请核对并重新测量体征后保存'
+      )
     } catch {
       message.error('同步失败，请重试')
     } finally {
       setSyncing(false)
     }
   }
+
+  // 复诊开始后自动带入延续性字段：延迟 800ms 避开 workspace 快照恢复的写入窗口，
+  // handleSyncPrevious 自带指针守卫 + 只补空白，晚到/重复都无害
+  useEffect(() => {
+    if (isFirstVisit || !encounterId || isInputLocked) return
+    if (autoSyncedEncounterRef.current === encounterId) return
+    autoSyncedEncounterRef.current = encounterId
+    const timer = setTimeout(() => {
+      handleSyncPrevious(AUTO_SYNC_FIELDS)
+    }, 800)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [encounterId, isFirstVisit, isInputLocked])
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -132,7 +171,7 @@ export default function InquiryPanel() {
             size="small"
             icon={<HistoryOutlined />}
             loading={syncing}
-            onClick={handleSyncPrevious}
+            onClick={() => handleSyncPrevious()}
           >
             同步上次病历
           </Button>
@@ -173,7 +212,7 @@ export default function InquiryPanel() {
           )}
 
           {/* 患者档案卡片（既往/过敏/个人/家族/月经/婚育/用药/宗教 8 字段，纵向跟随患者） */}
-          <PatientProfileCard />
+          <PatientProfileCard locked={isInputLocked} />
 
           {/* R1 sprint F-1：既往影像报告卡片，0 条时不渲染 */}
           <ImagingReportsCard patientId={currentPatient?.id} />
@@ -198,6 +237,7 @@ export default function InquiryPanel() {
           <InquiryBasicFields
             isFirstVisit={isFirstVisit}
             patientGender={currentPatient?.gender}
+            locked={isInputLocked}
             onAppendPhrase={() => setIsDirty(true)}
           />
 

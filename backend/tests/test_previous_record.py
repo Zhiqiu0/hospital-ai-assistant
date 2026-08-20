@@ -44,9 +44,11 @@ async def test_previous_record_copies_text_not_vitals(async_db):
     # 体征数值绝不带回
     for vital in ("temperature", "bp_systolic", "bp_diastolic", "pulse"):
         assert vital not in f
-    # 时间字段绝不带回（前端 DatePicker 需 dayjs 对象，塞字符串会崩）
-    for t in ("visit_time", "onset_time"):
-        assert t not in f
+    # 就诊时间绝不带回（本次是新就诊）；onset_time 自 2026-08-20 起带回——
+    # 复诊是同一病程，病发时间延续（前端 handleSyncPrevious 落表单前转 dayjs，
+    # 不再有"DatePicker 塞字符串会崩"的问题）
+    assert "visit_time" not in f
+    assert f["onset_time"] == "2026-05-20 08:00"
     # 空字段不带回
     assert "menstrual_history" not in f
 

@@ -44,7 +44,13 @@ interface ProfileConfirmResponse extends PatientProfile {
   fields_meta?: Record<string, ProfileFieldMeta> | null
 }
 
-export default function PatientProfileCard() {
+interface PatientProfileCardProps {
+  /** 输入锁定：锁定时字段由 Form disabled 级联变灰，但句式标签是 Tag
+   *  不受级联控制，需显式隐藏（2026-08-20 走查修） */
+  locked?: boolean
+}
+
+export default function PatientProfileCard({ locked }: PatientProfileCardProps) {
   // 1.6.3：保存动作迁到 InquiryPanel/InpatientInquiryPanel 底部统一按钮，
   // 卡片本身只负责字段编辑与折叠态展示
   const { patientId, form, setField, isDirty, updatedAt, hasAnyProfileContent, fieldsMeta } =
@@ -169,6 +175,7 @@ export default function PatientProfileCard() {
               hisPendingValue={fieldsMeta?.[f.key]?.his_pending_value}
               resolving={resolvingField === f.key}
               onResolveHis={handleResolveHis}
+              locked={locked}
             />
           ))}
           {/* 1.6.3：保存按钮已合并到 InquiryPanel 底部"保存"按钮，

@@ -38,15 +38,19 @@ interface PatientProfileFieldProps {
   resolving?: boolean
   /** 裁决回调：adopt=true 采纳 HIS 值，false 保留本地值 */
   onResolveHis?: (key: string, adopt: boolean) => void
+  /** 输入锁定：字段由 Form disabled 级联变灰，但句式 Tag 不受级联，需显式隐藏 */
+  locked?: boolean
 }
 
 export default function PatientProfileField(props: PatientProfileFieldProps) {
   const { field, value, onChange, fieldUpdatedAt, confirming, onConfirm } = props
-  const { hisPendingValue, resolving, onResolveHis } = props
+  const { hisPendingValue, resolving, onResolveHis, locked } = props
   const stale = getStaleness(fieldUpdatedAt, field.staleAfterDays ?? 180)
   const hasValue = !!value?.trim()
-  // 该字段配置了的常用句式；已在正文里的不再显示，避免重复点
-  const phrases = (PROFILE_PHRASES[field.key] ?? []).filter(p => !(value || '').includes(p.text))
+  // 该字段配置了的常用句式；已在正文里的不再显示，避免重复点；锁定时全部隐藏
+  const phrases = locked
+    ? []
+    : (PROFILE_PHRASES[field.key] ?? []).filter(p => !(value || '').includes(p.text))
 
   return (
     <div style={{ marginBottom: 10 }}>

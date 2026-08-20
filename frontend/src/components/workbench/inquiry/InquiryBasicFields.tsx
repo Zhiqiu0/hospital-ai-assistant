@@ -28,6 +28,9 @@ const fs: React.CSSProperties = { marginBottom: 10 }
 
 interface InquiryBasicFieldsProps {
   isFirstVisit: boolean
+  /** 输入锁定（病历已生成）：锁定时隐藏句式标签——Tag 不是表单控件，
+   *  Form disabled 级联管不到它，不隐藏会出现"只读框旁的标签还能改值" */
+  locked?: boolean
   /** 患者性别：女性才显示月经史输入（法定"育龄女性无月经史扣5分"，2026-08-20） */
   patientGender?: string | null
   /** 句式追加后回调（父组件用来打 isDirty——setFieldsValue 不触发 onValuesChange） */
@@ -37,15 +40,18 @@ interface InquiryBasicFieldsProps {
 export default function InquiryBasicFields({
   isFirstVisit,
   patientGender,
+  locked,
   onAppendPhrase,
 }: InquiryBasicFieldsProps) {
   const form = Form.useFormInstance()
   const isFemale = (patientGender || '').trim() === '女' || patientGender === 'female'
+  // 已插入的句式不再显示标签（与患者档案卡行为一致），用 useWatch 感知当前值
+  const hpiValue = (Form.useWatch('history_present_illness', form) as string) || ''
   // 复诊追加"病史同前/较前好转"等专用句式（医院真实复诊的高频写法），初诊不显示
   const hpiPhrases = [
     ...(isFirstVisit ? [] : REVISIT_HPI_PHRASES),
     ...(INQUIRY_PHRASES.history_present_illness ?? []),
-  ]
+  ].filter(p => !hpiValue.includes(p.text))
   const appendHpiPhrase = (text: string) => {
     const cur = (form.getFieldValue('history_present_illness') as string) || ''
     if (cur.includes(text)) return
@@ -120,20 +126,22 @@ export default function InquiryBasicFields({
           style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
         />
       </Form.Item>
-      {/* 现病史常用句式：点标签追加（不覆盖已有内容） */}
-      <div style={{ marginTop: -6, marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {hpiPhrases.map(p => (
-          <Tag
-            key={p.label}
-            icon={<PlusOutlined />}
-            onClick={() => appendHpiPhrase(p.text)}
-            title={p.text}
-            style={{ cursor: 'pointer', fontSize: 11, margin: 0, userSelect: 'none' }}
-          >
-            {p.label}
-          </Tag>
-        ))}
-      </div>
+      {/* 现病史常用句式：点标签追加（不覆盖已有内容）；锁定时隐藏 */}
+      {!locked && hpiPhrases.length > 0 && (
+        <div style={{ marginTop: -6, marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {hpiPhrases.map(p => (
+            <Tag
+              key={p.label}
+              icon={<PlusOutlined />}
+              onClick={() => appendHpiPhrase(p.text)}
+              title={p.text}
+              style={{ cursor: 'pointer', fontSize: 11, margin: 0, userSelect: 'none' }}
+            >
+              {p.label}
+            </Tag>
+          ))}
+        </div>
+      )}
       {/* 月经史：仅女性显示（法定评分"育龄女性无月经史扣5分"，2026-08-20） */}
       {isFemale && (
         <Form.Item
