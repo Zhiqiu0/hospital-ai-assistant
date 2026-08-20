@@ -21,6 +21,20 @@ def _v(data: dict, key: str, default: str = PLACEHOLDER) -> str:
     return coalesce_field(data.get(key), default)
 
 
+def normalize_vitals_line(value: str) -> str:
+    """生命体征行归一：非空且缺 "T:" 前缀时补 "T:[未测] "。
+
+    契约要求体征行以 T: 起头（QC 解析器按行首 "T:" 识别【生命体征】子行），
+    LLM 在急诊只测了 P/BP 时会输出 "P:92次/分 BP:128/78mmHg"——行首不是 T:
+    → 质控看不见整行 → 误报"急诊无生命体征记录"（2026-08-20 第二轮走查实锤）。
+    缺项写 [未测] 本就是真实性规则 4 的契约写法，这里做确定性兜底。
+    """
+    v = (value or "").strip()
+    if not v or v.startswith("[") or v.startswith("T:"):
+        return value
+    return f"T:[未测] {v}"
+
+
 def _section(header: str, body: str) -> str:
     """章节级拼装：'【XXX】\\n{body}'，body 已是规范化文本。"""
     return f"{header}\n{body}"

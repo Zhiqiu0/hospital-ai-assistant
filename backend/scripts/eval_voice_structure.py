@@ -91,6 +91,15 @@ T3 = """医生：老人家，哪里不舒服？
 医生：体温36度3，血压151的72，心率101。"""
 
 
+# ── 病例 4：急诊·切割伤（去向/留观路由 + 伤情描述不升格成诊断） ──
+T4 = """医生：怎么了？
+患者：大夫，我一个小时前切菜切到左手食指了，血止不住。
+医生：左手食指指腹一道裂伤，大概两公分，还在渗血，没伤到骨头。
+医生：破伤风多久没打了？
+患者：记不清了，好多年了。
+医生：量个血压，128的78，脉搏92。给你清创缝合，打破伤风，留观半小时没事就可以回家，三天后换药。"""
+
+
 def _vital(inq: dict, key: str) -> str:
     return str(((inq.get("vital_signs") or {}).get(key)) or "").strip()
 
@@ -238,6 +247,17 @@ async def main() -> None:
         ["【月经史】", "绝经", "【婚育史】", "T:36.3", "151/72", "高血压",
          "· 疼痛评估（NRS评分）：7"],
         ["中药", "西药"]))
+
+    inq = await structure(VOICE_STRUCTURE_PROMPT_OUTPATIENT, T4, "", "男", "41")
+    results.append(check("急诊·切割伤（去向/诊断纪律）", inq, [
+        ("患者去向路由", lambda q: str(q.get("patient_disposition")) == "留院观察"),
+        ("留观记录路由", lambda q: "留观" in str(q.get("observation_notes"))),
+        ("伤情描述不升格成诊断", lambda q: str(q.get("western_diagnosis") or "").strip() == ""),
+        ("体检文字含裂伤", lambda q: "裂伤" in str(q.get("physical_exam"))),
+        ("血压路由", lambda q: _vital(q, "bp_systolic") == "128" and _vital(q, "bp_diastolic") == "78"),
+        ("主诉保留侧别", lambda q: "左" in str(q.get("chief_complaint"))),
+        ("接种史进既往史", lambda q: "破伤风" in str(q.get("past_history")) or "接种" in str(q.get("past_history"))),
+    ]))
 
     print(f"\n{sum(results)}/{len(results)} 通过")
     sys.exit(0 if all(results) else 1)

@@ -14,6 +14,7 @@ from typing import Optional
 
 from app.services.ai._render_common import (
     _merge_tcm_diagnosis,
+    normalize_vitals_line,
     _section,
     _subline,
     _v,
@@ -65,7 +66,7 @@ def render_outpatient(
 
     # 体格检查 — 多行子结构
     pe_lines = [
-        _v(data, "physical_exam_vitals"),  # 生命体征行（已是 'T:...' 格式）
+        normalize_vitals_line(_v(data, "physical_exam_vitals")),  # 生命体征行（已是 'T:...' 格式）
         _subline("望诊：", _v(data, "tcm_inspection")),
         _subline("闻诊：", _v(data, "tcm_auscultation")),
         _subline("切诊·舌象：", _v(data, "tongue_coating")),
@@ -142,7 +143,7 @@ def render_emergency(
 
     # 体格检查 — 生命体征行 + 重点体征行
     pe_lines = [
-        _v(data, "physical_exam_vitals"),
+        normalize_vitals_line(_v(data, "physical_exam_vitals")),
         _subline("重点体征：", _v(data, "physical_exam_text")),
     ]
     parts.append(_section("【体格检查】", "\n".join(pe_lines)))
@@ -219,7 +220,7 @@ def render_admission_note(
 
     # 体格检查 — 生命体征行 + 文字描述
     pe_lines = [
-        _v(data, "physical_exam_vitals"),
+        normalize_vitals_line(_v(data, "physical_exam_vitals")),
         _v(data, "physical_exam_text"),
     ]
     parts.append(_section("【体格检查】", "\n".join(pe_lines)))
