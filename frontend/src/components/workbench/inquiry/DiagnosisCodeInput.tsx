@@ -10,6 +10,7 @@
  */
 import { useRef, useState } from 'react'
 import { AutoComplete } from 'antd'
+import { SearchOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
 export interface CodeOption {
@@ -99,13 +100,16 @@ export default function DiagnosisCodeInput({
         const item = (option as { item: CodeOption }).item
         onChange(item.name, item.code, item.code_type)
       }}
-      // 已配码时输入框右侧微标提示（title 提示完整编码）
+      // 右侧图标（2026-08-22 用户反馈）：默认的下拉三角会让人误以为
+      // 点开有备选列表——换成放大镜明示"输入联想搜索"；已配码时显示绿色✓码
       suffixIcon={
         code ? (
           <span title={`已配码 ${code}`} style={{ fontSize: 10, color: '#16a34a' }}>
             ✓码
           </span>
-        ) : undefined
+        ) : (
+          <SearchOutlined style={{ color: 'var(--text-4, #bfbfbf)', fontSize: 12 }} />
+        )
       }
     />
   )
