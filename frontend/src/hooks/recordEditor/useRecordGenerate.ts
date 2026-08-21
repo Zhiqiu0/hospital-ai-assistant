@@ -16,6 +16,7 @@ import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
+import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
 import {
   isCourseRecordType,
   pickInquiryByRecordType,
@@ -88,6 +89,17 @@ export function useRecordGenerate(shared: RecordEditorShared) {
         },
         {
           onChunk: text => setRecordContent(useRecordStore.getState().recordContent + text),
+          // done 事件携带后端 save_ai_draft 落库时间——同步 auto-save 乐观锁基线，
+          // 否则生成后下一次 auto-save 拿旧基线必假 409（2026-08-21 第四轮走查）
+          onEvent: ev => {
+            if (ev.type === 'done' && ev.saved_updated_at) {
+              // 指针守卫同 SSE 结束后那次：流落到别的患者上时不动基线
+              if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
+              useRecordAutoSaveTrigger
+                .getState()
+                .syncBaseline(ev.saved_updated_at, useRecordStore.getState().recordContent)
+            }
+          },
         }
       )
       // 指针守卫：流刚好在切患者瞬间正常结束时，runSSE 未必来得及 abort，

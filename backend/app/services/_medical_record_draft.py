@@ -268,7 +268,16 @@ class MedicalRecordDraftMixin:
         record.current_version = new_version_no
         record.status = "editing"
         await self.db.commit()
+        # commit 后 ORM 属性过期，异步访问会炸（MissingGreenlet）——refresh 后再读
+        await self.db.refresh(record)
 
         from app.services.encounter_service import invalidate_encounter_snapshot
         await invalidate_encounter_snapshot(encounter_id)
-        return {"record_id": record.id, "version_no": new_version_no, "saved": True}
+        return {
+            "record_id": record.id,
+            "version_no": new_version_no,
+            "saved": True,
+            # 前端 auto-save 乐观锁基线同步用（2026-08-21 第四轮走查：生成落库后
+            # 前端基线不知道这次写入，下一次 auto-save 必假 409）
+            "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        }

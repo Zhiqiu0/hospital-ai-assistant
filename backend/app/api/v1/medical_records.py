@@ -130,6 +130,51 @@ async def quick_save_record(
     return {"ok": True, "record_id": record.id, "his_writeback": his_writeback}
 
 
+@router.get("/draft-by-type")
+async def get_draft_by_type(
+    encounter_id: str = Query(...),
+    record_type: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """按 (接诊, 文书类型) 查最新一份病历草稿/签发内容。
+
+    2026-08-21 第四轮走查：住院切文书类型时前端只认本地缓存，服务端明明有该
+    类型的草稿却显示空编辑器——医生会以为入院记录丢了，甚至重写一份覆盖。
+    workspace 快照只回 active_record（updated_at 最新的一行），拿不到指定类型。
+
+    返回 {"exists": false} 而非 404：切到还没写过的文书类型是常态，不该在
+    浏览器 console 留一条红色 404。
+    """
+    # 归属校验口径与 auto_save_draft 相同：只能读自己接诊下的草稿
+    await assert_encounter_access(db, encounter_id, current_user)
+    row = (await db.execute(
+        select(MedicalRecord)
+        .where(
+            MedicalRecord.encounter_id == encounter_id,
+            MedicalRecord.record_type == record_type,
+        )
+        .order_by(MedicalRecord.updated_at.desc())
+    )).scalars().first()
+    if row is None:
+        return {"exists": False}
+    version = (await db.execute(
+        select(RecordVersion).where(
+            RecordVersion.medical_record_id == row.id,
+            RecordVersion.version_no == row.current_version,
+        )
+    )).scalar_one_or_none()
+    content = (version.content or {}).get("text", "") if version else ""
+    return {
+        "exists": True,
+        "record_id": row.id,
+        "status": row.status,
+        "content": content,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "submitted_at": row.submitted_at.isoformat() if getattr(row, "submitted_at", None) else None,
+    }
+
+
 @router.get("/by-patient/{patient_id}")
 async def list_by_patient(
     patient_id: str,

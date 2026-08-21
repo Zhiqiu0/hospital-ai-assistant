@@ -138,11 +138,16 @@ async def _log_and_save_draft(
     *,
     save_draft: bool,
     model_name: str | None = None,
-) -> None:
+) -> str | None:
     """写 ai_tasks 审计 + 可选自动落 draft 病历。
 
     save_draft=True 时仅 generate 路径调用（覆盖式更新草稿）。supplement / polish
     也是更新草稿的——只要 encounter 存在就更新，让医生退出再进来能看到最新草稿。
+
+    Returns:
+        草稿落库后的 updated_at ISO 字符串（未落库/失败时 None）——done 事件带给
+        前端同步 auto-save 乐观锁基线（2026-08-21 第四轮走查：生成落库后前端
+        基线不知道这次写入，下一次 auto-save 必假 409）。
     """
     usage = llm_client._last_usage
     try:
@@ -156,21 +161,23 @@ async def _log_and_save_draft(
         logger.error("log_ai_task_failed task=%s err=%s", task_type, exc)
 
     if not save_draft:
-        return
+        return None
     encounter_id = get_encounter_id()
     user_id = get_user_id()
     if encounter_id and user_id and user_id != "-":
         try:
             from app.services.medical_record_service import MedicalRecordService
-            await MedicalRecordService(db).save_ai_draft(
+            saved = await MedicalRecordService(db).save_ai_draft(
                 encounter_id=encounter_id,
                 record_type=record_type,
                 content=record_text,
                 user_id=user_id,
             )
+            return saved.get("updated_at")
         except Exception as exc:
             # 草稿保存失败不阻断主流程——前端仍能拿到 chunk
             logger.error("save_ai_draft_failed encounter=%s err=%s", encounter_id, exc)
+    return None
 
 
 async def _stream_json_pipeline(
@@ -241,7 +248,7 @@ async def _stream_json_pipeline(
     )
 
     # 4. 审计 + 可选保存草稿
-    await _log_and_save_draft(
+    saved_updated_at = await _log_and_save_draft(
         task_type, record_type, record_text, db,
         save_draft=save_draft, model_name=opts.get("model_name"),
     )
@@ -252,7 +259,11 @@ async def _stream_json_pipeline(
     for i in range(0, len(record_text), chunk_size):
         yield sse_event("chunk", text=record_text[i : i + chunk_size])
         await asyncio.sleep(delay)
-    yield sse_event("done")
+    # done 事件携带草稿落库时间，前端据此同步 auto-save 乐观锁基线（防生成后假 409）
+    if saved_updated_at:
+        yield sse_event("done", saved_updated_at=saved_updated_at)
+    else:
+        yield sse_event("done")
 
 
 # ─── 三个对外入口（路由层调用） ────────────────────────────────────

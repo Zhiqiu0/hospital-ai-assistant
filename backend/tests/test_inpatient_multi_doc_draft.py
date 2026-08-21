@@ -168,3 +168,23 @@ async def test_出院超过保留期才移出列表(async_db):
 
     rows = await list_active_ward(async_db, "doc-1")
     assert not any(r["encounter_id"] == "enc-old" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_save_ai_draft返回落库时间供前端同步乐观锁基线(async_db):
+    """2026-08-21 第四轮走查：AI 生成落库后前端 auto-save 基线不知道这次写入，
+    下一次保存拿旧基线必假 409。done 事件带 updated_at 的前提是这里返回它。"""
+    await _seed(async_db)
+    svc = MedicalRecordService(async_db)
+
+    res = await svc.save_ai_draft("enc-1", "course_record", "AI 生成的病程", "doc-1")
+    assert res["saved"] is True
+    assert res.get("updated_at"), "save_ai_draft 必须返回落库 updated_at"
+    # 前端拿这个基线做下一次 auto-save 的乐观锁凭证，必须通过校验（不假 409）
+    from datetime import datetime as _dt
+    baseline = _dt.fromisoformat(res["updated_at"])
+    res2 = await svc.auto_save_draft(
+        "enc-1", "course_record", "医生接着改了一句", "doc-1",
+        expected_updated_at=baseline,
+    )
+    assert res2["record_id"], "带 save_ai_draft 返回的基线保存被误判为冲突"

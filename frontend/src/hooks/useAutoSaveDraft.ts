@@ -257,6 +257,30 @@ export function useAutoSaveDraft({
     }
   }, [recordContent, encounterId, recordType, isFinal])
 
+  // ── 服务端基线同步信号（2026-08-21 第四轮走查）──────────────────────────
+  // AI 生成完成时后端已落库（save_ai_draft），done 事件带回 updated_at。
+  // 这里把乐观锁基线 + 已保存内容一起对齐：生成内容不再被防抖重复上传，
+  // 医生后续编辑带正确基线，不再假 409。
+  const baselineSignal = useRecordAutoSaveTrigger(s => s.baselineSignal)
+  const lastBaselineSignalRef = useRef(baselineSignal)
+  useEffect(() => {
+    if (baselineSignal === lastBaselineSignalRef.current) return
+    lastBaselineSignalRef.current = baselineSignal
+    const payload = useRecordAutoSaveTrigger.getState().baselinePayload
+    if (!payload) return
+    lastUpdatedAtRef.current = payload.updatedAt
+    lastSavedContentRef.current = payload.content
+    // 流式生成期间防抖排下的待发快照携带旧基线且内容已在服务端——作废
+    pendingRef.current = null
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+    // 同步 recordStore 的"已落库"标记，水合的 localIsDirty 判断与状态条同时受益
+    useRecordStore.getState().markSaved(payload.content, Date.now())
+    setSavingState('saved')
+  }, [baselineSignal])
+
   // ── 强制 flush 信号：外部（如 ExamSuggestionTab 写入按钮）希望立即落盘 ─────
   // 防抖跳过等待，直接 performSave 当前 recordContent。乐观锁 ref 仍由本 hook
   // 维护，外部不需要也不能动，避免 409 误报。详见 recordAutoSaveTrigger.ts。

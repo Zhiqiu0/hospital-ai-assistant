@@ -27,9 +27,26 @@ interface State {
   /** 单调递增的信号；外部递增即触发 useAutoSaveDraft 立即落盘当前 recordContent */
   forceFlushSignal: number
   triggerFlush: () => void
+  /**
+   * 服务端草稿基线同步（2026-08-21 第四轮走查）：
+   *   AI 生成完成时后端已把全文落库（save_ai_draft），done 事件带回落库
+   *   updated_at。若不同步给 useAutoSaveDraft，它的乐观锁基线仍是生成前的旧值，
+   *   下一次 auto-save 必假 409（"病历已被其他设备修改"误报）。
+   *   信号携带 {updatedAt, content}：hook 收到后把两个基线 ref 一起对齐。
+   */
+  baselineSignal: number
+  baselinePayload: { updatedAt: string; content: string } | null
+  syncBaseline: (updatedAt: string, content: string) => void
 }
 
 export const useRecordAutoSaveTrigger = create<State>(set => ({
   forceFlushSignal: 0,
   triggerFlush: () => set(s => ({ forceFlushSignal: s.forceFlushSignal + 1 })),
+  baselineSignal: 0,
+  baselinePayload: null,
+  syncBaseline: (updatedAt, content) =>
+    set(s => ({
+      baselineSignal: s.baselineSignal + 1,
+      baselinePayload: { updatedAt, content },
+    })),
 }))

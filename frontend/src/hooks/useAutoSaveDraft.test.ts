@@ -153,6 +153,36 @@ describe('useAutoSaveDraft 的抢救落盘', () => {
     expect(saved[1].expected_updated_at).toBeNull()
   })
 
+  it('生成完成同步基线后：相同内容不重发，后续编辑带落库基线（不假409）', async () => {
+    const { useRecordAutoSaveTrigger } = await import('@/store/recordAutoSaveTrigger')
+    const inpatient = { ...base, recordType: 'course_record' }
+    const { rerender } = renderHook(props => useAutoSaveDraft(props), {
+      initialProps: { ...inpatient },
+    })
+    // AI 流式生成把内容写进编辑器（防抖开始计时）……
+    rerender({ ...inpatient, recordContent: 'AI 生成的病程全文' })
+    // ……done 事件带回 save_ai_draft 的落库时间，同步基线
+    await act(async () => {
+      useRecordAutoSaveTrigger.getState().syncBaseline('2026-08-21T13:00:00', 'AI 生成的病程全文')
+    })
+    // 防抖到期：内容与已落库基线相同 → 不应重发
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+    })
+    expect(savedPayloads()).toHaveLength(0)
+
+    // 医生接着编辑 → 发出的请求必须带落库基线（旧基线会被后端判假 409）
+    rerender({ ...inpatient, recordContent: 'AI 生成的病程全文，医生补了一句' })
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+    })
+    const saved = postMock.mock.calls
+      .filter(c => c[0] === '/medical-records/auto-save-draft')
+      .map(c => c[1] as { expected_updated_at: string | null })
+    expect(saved).toHaveLength(1)
+    expect(saved[0].expected_updated_at).toBe('2026-08-21T13:00:00')
+  })
+
   it('切文书类型时防抖中的旧类型内容被抢救落盘，不丢也不错行', async () => {
     const inpatient = { ...base, recordType: 'admission_note' }
     const { rerender } = renderHook(props => useAutoSaveDraft(props), {
