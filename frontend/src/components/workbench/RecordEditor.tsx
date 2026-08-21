@@ -18,6 +18,7 @@ import RecordEditorStatusBar from './recordEditor/RecordEditorStatusBar'
 import { locateFieldInRecord } from './qcFieldMaps'
 import { useRecordEditor } from '@/hooks/useRecordEditor'
 import { useAutoSaveDraft } from '@/hooks/useAutoSaveDraft'
+import { useDraftByTypeLoader } from '@/hooks/useDraftByTypeLoader'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 
@@ -63,6 +64,11 @@ export default function RecordEditor() {
     recordContent,
     isFinal,
   })
+
+  // 切文书类型且编辑器为空时，从服务端拉该 (接诊, 类型) 的草稿——
+  // 住院多文书场景服务端有草稿而本地缓存为空时，医生不再看到"空编辑器"
+  //（2026-08-21 第四轮走查）
+  useDraftByTypeLoader(currentEncounterId, recordType)
 
   // ── AI 写入字段池：跳转 + 点击/编辑触发 removeField ──────────────
   // 治本路线（2026-05-24）：逐条修复 / 批量补全写入病历后，把字段名加进
