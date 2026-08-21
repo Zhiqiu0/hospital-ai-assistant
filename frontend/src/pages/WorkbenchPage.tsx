@@ -96,6 +96,27 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
     if (!currentEncounterId) resetAllWorkbench()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 住院残留守卫（2026-08-21 第四轮走查实锤）：转住院后 activeEncounter 持久化了
+  // visitType='inpatient'，医生下次打开系统 RootRedirect 按 systemType（登录时的
+  // 部门选择）回到门诊页，门诊工作台会把住院接诊当"接诊中"渲染——问诊表、病历
+  // 类型、质控口径全部串台，还能对住院接诊点"取消接诊"。
+  // 不变量：门诊/急诊工作台绝不渲染住院接诊。发现即清空本地工作台（后端数据
+  // 不受影响，住院患者在住院工作台病区列表随时找得回）。
+  // 实现要点：
+  //   - 必须响应式订阅 visitType 而非挂载时读一次——persist 恢复晚于挂载 effect，
+  //     挂载瞬间读到的是初始值（下方"切换门诊/急诊"effect 的覆写失效即同一时序）。
+  //   - 用 setTimeout(0)+cleanup 避开"正在转住院"的合法瞬间：转住院会同步
+  //     navigate('/inpatient')，本组件随之卸载并清掉定时器，不会误清刚建的住院接诊。
+  const activeVisitType = useActiveEncounterStore(s => s.visitType)
+  useEffect(() => {
+    if (activeVisitType !== 'inpatient') return
+    const timer = setTimeout(() => {
+      resetAllWorkbench()
+      message.info('住院患者请在住院工作台继续管理，已重置本工作台')
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [activeVisitType])
+
   // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）
   // 否则 PatientProfileCard 会因 cache 为空而显示空白
   useEnsureSnapshotHydrated()
@@ -104,6 +125,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   useEffect(() => {
     const defaultType = isEmergency ? 'emergency' : 'outpatient'
     const { visitType, isFirstVisit } = useActiveEncounterStore.getState()
+    // 住院残留不在这里覆写成门诊——那会把住院接诊伪装成门诊接诊，让上方守卫
+    // 失明；交给守卫整体清空（2026-08-21 第四轮走查）
+    if (visitType === 'inpatient') return
     if (visitType !== defaultType) {
       setVisitMeta(isFirstVisit, defaultType)
     }

@@ -184,12 +184,6 @@ export function applySnapshotResult(res: SnapshotResult): void {
   // record：当前活跃病历的内容
   if (res.active_record) {
     const recordStore = useRecordStore.getState()
-    if (res.active_record.record_type) {
-      // 用 setRecordTypeOnly 而不是 setRecordType（2026-08-14 第七轮审计修复）：
-      // 后者会清空正文，而下面第 200 行正要靠 recordContent 判断「本地是否更脏」——
-      // 先清空就让 localIsDirty 恒为 false，第五轮加的防覆盖保护被整个抵消。
-      recordStore.setRecordTypeOnly(res.active_record.record_type)
-    }
 
     // ⚠️ 不无条件覆盖本地正文（2026-08-13 第五轮审计修复）
     // auto-save 是 5 秒防抖的，医生打完一段话立刻刷新页面（或断网重连触发水合）时，
@@ -204,6 +198,15 @@ export function applySnapshotResult(res: SnapshotResult): void {
     const localIsDirty = !!localContent && localContent !== recordStore.lastSavedContent
 
     if (!localIsDirty) {
+      // 类型与正文必须原子换（2026-08-21 第四轮走查）：原先类型无条件跟服务端、
+      // 正文按 localIsDirty 保留本地——住院多文书场景会拼出"类型=首程、正文=
+      // 入院记录"的错配（auto-save 再把错配内容写进首程行）。本地干净→类型+正文
+      // 整体用服务端；本地脏→类型+正文整体保持本地，等 auto-save 落库后下次水合
+      // 自然一致。用 setRecordTypeOnly：setRecordType 会经 draftsByType 换正文，
+      // 与这里的原子语义冲突（2026-08-14 第七轮审计修复的约束仍然成立）。
+      if (res.active_record.record_type) {
+        recordStore.setRecordTypeOnly(res.active_record.record_type)
+      }
       recordStore.setRecordContent(res.active_record.content || '')
     }
     // 传后端真实签发时间，否则刷新页面会把签发时刻改成"现在"

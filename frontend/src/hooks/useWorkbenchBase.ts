@@ -131,7 +131,13 @@ export function useWorkbenchBase({
     try {
       const data = (await api.get('/encounters/my')) as ResumeEncounterItem[] | null
       const list: ResumeEncounterItem[] = data || []
-      setResumeList(visitTypeFilter ? list.filter(e => e.visit_type === visitTypeFilter) : list)
+      // 未指定过滤（门诊/急诊页）时也要排除住院接诊——门诊工作台绝不渲染住院
+      // 接诊（不变量，2026-08-21 第四轮走查）；住院接诊在住院工作台病区列表续接
+      setResumeList(
+        visitTypeFilter
+          ? list.filter(e => e.visit_type === visitTypeFilter)
+          : list.filter(e => e.visit_type !== 'inpatient')
+      )
     } catch {
       message.error('加载进行中接诊失败')
     } finally {

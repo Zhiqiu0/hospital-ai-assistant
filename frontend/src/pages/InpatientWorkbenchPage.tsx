@@ -18,7 +18,6 @@ import { useState, useEffect } from 'react'
 import { App, Layout, Button, Empty } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
-import { useRecordStore } from '@/store/recordStore'
 import {
   useActiveEncounterStore,
   useCurrentPatient,
@@ -64,13 +63,12 @@ export default function InpatientWorkbenchPage() {
   const { user } = useAuthStore()
   const currentPatient = useCurrentPatient()
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
-  const setRecordType = useRecordStore(s => s.setRecordType)
 
-  useEffect(() => {
-    setRecordType('admission_note')
-    // setRecordType 来自 zustand store，引用稳定；只需挂载时设置一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // 2026-08-21 第四轮走查删除「挂载时 setRecordType('admission_note')」：
+  // 它会经 draftsByType 把正文换成入院记录草稿，随后水合又按服务端 active_record
+  // 把类型改回真实类型——两者打架产生"类型=首程、正文=入院记录"的错配实锤。
+  // 刷新场景交给 persist（延续医生上次写到的文书）+ 水合（服务端权威）恢复；
+  // 新建/续接场景 useWorkbenchBase 的 defaultRecordType='admission_note' 已兜底。
 
   // 刷新页面后从后端 snapshot 回填 patientCache（patient + patient_profile）
   // 否则 PatientProfileCard 会因 cache 为空而显示空白

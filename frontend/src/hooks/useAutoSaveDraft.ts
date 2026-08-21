@@ -110,23 +110,14 @@ export function useAutoSaveDraft({
         void removeDraftByKey(payload.encounter_id, payload.record_type)
         if (payload.encounter_id === lastEncounterRef.current) {
           setSavingState('conflict')
-          // 基线重取（2026-08-13 第二轮审计修复）：原实现只提示不刷新基线，
-          // 于是每 5 秒都拿同一个过期 expected_updated_at 再撞 409——医生后续
-          // 输入永久不落库、提示反复弹，属"编辑静默丢失"级别的事故。
-          // 这里重取服务端最新 updated_at 作为新基线，让后续编辑能继续保存
-          // （后写覆盖，符合"医生正在写就该存下来"的预期），并明确告知医生。
-          void api
-            .get(`/encounters/${payload.encounter_id}/workspace`)
-            .then(snap => {
-              const s = snap as { active_record?: { updated_at?: string | null } } | null
-              // 期间可能已切接诊，只回填仍是当前接诊的基线
-              if (payload.encounter_id !== lastEncounterRef.current) return
-              lastUpdatedAtRef.current = s?.active_record?.updated_at ?? null
-              message.warning('病历已被其他设备修改；已同步最新版本，你的后续编辑将继续保存')
-            })
-            .catch(() => {
-              message.warning('病历已被其他设备修改，请刷新后重试')
-            })
+          // 基线重置（2026-08-13 第二轮审计修复；2026-08-21 第四轮简化）：只提示
+          // 不刷新基线会每 5 秒拿同一个过期 expected 反复撞 409——医生后续输入
+          // 永久不落库。原实现重取 workspace.active_record.updated_at 当新基线，
+          // 但 active_record 是"最近更新的那行"，住院多文书下不一定是当前正在写的
+          // 类型，基线仍会错行。直接置 null 等价且永远正确：下次保存不带
+          // expected → 后端跳过乐观锁校验 → 后写覆盖（医生正在写就该存下来）。
+          lastUpdatedAtRef.current = null
+          message.warning('病历已被其他设备修改，你的后续编辑将继续保存并覆盖')
         }
         return false
       }
@@ -199,6 +190,24 @@ export function useAutoSaveDraft({
     // （pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounterId])
+
+  // 文书类型切换（2026-08-21 第四轮走查）：后端草稿按 (encounter, record_type)
+  // 分行存，乐观锁基线 lastUpdatedAtRef 却是单值——住院切文书后拿旧类型行的
+  // updated_at 去校验新类型的行，必产生假 409（"病历已被其他设备修改"误报）。
+  // 处理与切接诊同构：先把旧类型的 pending 用旧基线落盘，再清基线（新类型首发
+  // 不带 expected_updated_at → 后端跳过乐观锁校验，安全 UPSERT）。
+  const lastRecordTypeRef = useRef<string>(recordType)
+  useEffect(() => {
+    if (recordType !== lastRecordTypeRef.current) {
+      flushPending() // pending 快照里存的是旧类型 + 旧基线，落对行
+      lastRecordTypeRef.current = recordType
+      lastSavedContentRef.current = ''
+      lastUpdatedAtRef.current = null
+      setSavingState('idle')
+    }
+    // flushPending 读的全是 ref，闭包新旧无碍（同上）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordType])
 
   // 关标签页 / 切后台 / 卸载（含退出登录跳转）：来不及等防抖，立刻落盘。
   // pagehide 比 beforeunload 可靠（移动端与 bfcache 都会触发）；

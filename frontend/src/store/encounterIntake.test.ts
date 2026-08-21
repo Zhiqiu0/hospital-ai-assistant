@@ -173,7 +173,11 @@ describe('水合顺序不得抵消防覆盖保护（2026-08-14 第七轮审计�
     )
   })
 
-  it('服务端换了病历类型时，类型跟着变但正文保护依然生效', async () => {
+  it('本地有未保存编辑时，类型与正文整体保持本地（原子，不产生错配）', async () => {
+    // 2026-08-21 第四轮走查推翻旧语义：原断言"类型跟服务端、正文保本地"在住院
+    // 多文书场景拼出"类型=首程、正文=入院记录"的错配，auto-save 随即把错配内容
+    // 写进错误的文书行——比丢正文更危险。现语义：本地脏→类型+正文都保持本地；
+    // 本地干净→类型+正文整体用服务端。
     const { useRecordStore } = await import('@/store/recordStore')
     const { applySnapshotResult } = await import('@/store/encounterIntake')
 
@@ -192,7 +196,30 @@ describe('水合顺序不得抵消防覆盖保护（2026-08-14 第七轮审计�
       },
     } as never)
 
-    expect(useRecordStore.getState().recordType).toBe('course_record')
+    expect(useRecordStore.getState().recordType).toBe('admission_note')
     expect(useRecordStore.getState().recordContent).toBe('未保存的病程内容')
+  })
+
+  it('本地干净时，类型与正文整体切到服务端 active_record', async () => {
+    const { useRecordStore } = await import('@/store/recordStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    useRecordStore.setState({
+      recordContent: '已落库的入院记录',
+      lastSavedContent: '已落库的入院记录',
+      recordType: 'admission_note',
+    })
+
+    applySnapshotResult({
+      active_record: {
+        content: '服务端首程内容',
+        status: 'draft',
+        record_type: 'first_course_record',
+        updated_at: '2026-08-21T10:00:00',
+      },
+    } as never)
+
+    expect(useRecordStore.getState().recordType).toBe('first_course_record')
+    expect(useRecordStore.getState().recordContent).toBe('服务端首程内容')
   })
 })

@@ -119,4 +119,56 @@ describe('useAutoSaveDraft 的抢救落盘', () => {
 
     expect(savedPayloads()).toHaveLength(0)
   })
+
+  // ── 文书类型切换（2026-08-21 第四轮走查）─────────────────────────────
+  // 后端草稿按 (encounter, record_type) 分行，乐观锁基线必须跟着类型走；
+  // 旧实现基线是单值，住院切文书后拿旧类型行的 updated_at 校验新类型的行 → 假 409
+  it('切文书类型时：旧类型草稿用旧基线落对行，新类型首发不带过期基线', async () => {
+    const inpatient = { ...base, recordType: 'admission_note' }
+    const { rerender } = renderHook(props => useAutoSaveDraft(props), {
+      initialProps: { ...inpatient },
+    })
+    // 写入院记录并等防抖落库（拿到 updated_at 基线）
+    rerender({ ...inpatient, recordContent: '入院记录正文' })
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+    })
+    // 切到首程接着写，再落库
+    rerender({ ...inpatient, recordType: 'first_course_record', recordContent: '首程正文' })
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+    })
+
+    const saved = postMock.mock.calls
+      .filter(c => c[0] === '/medical-records/auto-save-draft')
+      .map(
+        c => c[1] as { record_type: string; content: string; expected_updated_at: string | null }
+      )
+    expect(saved).toHaveLength(2)
+    expect(saved[0].record_type).toBe('admission_note')
+    expect(saved[0].content).toBe('入院记录正文')
+    // 首程首发绝不能带入院记录行的 updated_at 当乐观锁（那会假 409）
+    expect(saved[1].record_type).toBe('first_course_record')
+    expect(saved[1].content).toBe('首程正文')
+    expect(saved[1].expected_updated_at).toBeNull()
+  })
+
+  it('切文书类型时防抖中的旧类型内容被抢救落盘，不丢也不错行', async () => {
+    const inpatient = { ...base, recordType: 'admission_note' }
+    const { rerender } = renderHook(props => useAutoSaveDraft(props), {
+      initialProps: { ...inpatient },
+    })
+    // 写了入院记录，5 秒防抖没到就切到日常病程
+    rerender({ ...inpatient, recordContent: '还没落库的入院内容' })
+    await act(async () => {
+      rerender({ ...inpatient, recordType: 'course_record', recordContent: '' })
+    })
+
+    const saved = postMock.mock.calls
+      .filter(c => c[0] === '/medical-records/auto-save-draft')
+      .map(c => c[1] as { record_type: string; content: string })
+    expect(saved).toHaveLength(1)
+    expect(saved[0].record_type).toBe('admission_note')
+    expect(saved[0].content).toBe('还没落库的入院内容')
+  })
 })
