@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, ai_feedback, sentry_tunnel, his, his_queue, his_ws
+from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, ai_feedback, sentry_tunnel, his, his_queue, his_ws, diagnosis_codes
 from app.api.v1.admin import router as admin_router
 
 router = APIRouter()
@@ -11,6 +11,8 @@ router.include_router(ai_voice_stream.router, prefix="/ai", tags=["AI生成"])
 router.include_router(patients.router, prefix="/patients", tags=["患者"])
 router.include_router(encounters.router, prefix="/encounters", tags=["就诊"])
 router.include_router(medical_records.router, prefix="/medical-records", tags=["病历"])
+# 诊断编码字典检索（2026-08-21 阶段2 编码化）
+router.include_router(diagnosis_codes.router, prefix="/diagnosis-codes", tags=["编码字典"])
 # 注：/qc-issues PATCH 死端点已删（2026-08-12 清理）——前端 issue 状态全在 qcStore
 # 前端态维护，该端点零调用且不校验问题归属（越权面），质控主路径见 /ai/quick-qc。
 router.include_router(pacs.router, prefix="/pacs", tags=["PACS影像"])

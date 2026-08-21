@@ -69,11 +69,42 @@ def render_diagnosis_projection(items: list[DiagnosisItemIn]) -> dict[str, str]:
     }
 
 
+# 条目类别 → 字典 code_type（HIS 回写侧 TCD_* 统一映射为 "GB95"，见 writeback_builder）
+CATEGORY_TO_CODE_TYPE = {
+    "western": "ICD10",
+    "tcm_disease": "TCD_DIS",
+    "tcm_syndrome": "TCD_SYN",
+}
+
+
 class DiagnosisService:
     """诊断条目 CRUD（依赖注入 AsyncSession）。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _auto_fill_codes(self, items: list[DiagnosisItemIn]) -> None:
+        """名称精确匹配字典补码（原地修改 items；确定性匹配，配不上留空）。"""
+        from app.models.encounter import DiagnosisCode
+
+        pending = [i for i in items if not i.code and i.name]
+        if not pending:
+            return
+        names = {i.name for i in pending}
+        rows = (await self.db.execute(
+            select(DiagnosisCode.code, DiagnosisCode.name, DiagnosisCode.code_type)
+            .where(DiagnosisCode.name.in_(names))
+        )).all()
+        # (code_type, name) → code；同名多码（极少）不补，避免猜错
+        by_key: dict[tuple[str, str], list[str]] = {}
+        for code, name, ctype in rows:
+            by_key.setdefault((ctype, name), []).append(code)
+        for item in pending:
+            expect_type = CATEGORY_TO_CODE_TYPE.get(item.category)
+            codes = by_key.get((expect_type, item.name), [])
+            if len(codes) == 1:
+                item.code = codes[0]
+                item.code_type = expect_type
 
     async def list_by_encounter(self, encounter_id: str) -> list[Diagnosis]:
         """拉取接诊全部诊断条目：主诊断优先，组内按 sort_order。"""
@@ -103,6 +134,12 @@ class DiagnosisService:
             # 自动补主：第一条西医（无西医则整体第一条）——与 HIS 回写既有规则一致
             fallback = next((i for i in items if i.category == "western"), items[0])
             fallback.is_primary = True
+
+        # ── 确定性自动补码（2026-08-21 阶段2）────────────────────────
+        # 无编码的条目按「名称精确匹配字典」补 code/code_type——只做确定性
+        # 匹配（同名即同码），配不上留空给医生在选择器里选；绝不做模糊猜码
+        #（编错码比不编码危害大，医保拒付追责口径是"谁填报谁负责"）。
+        await self._auto_fill_codes(items)
 
         # ── 删旧插新（整组替换，避免逐条 diff 的一致性坑）────────────
         await self.db.execute(delete(Diagnosis).where(Diagnosis.encounter_id == encounter_id))

@@ -9,7 +9,8 @@
  * 保存问诊时由 composeDiagnosisItems 与中医文本字段合成完整列表 PUT 后端。
  * 中医疾病/证候仍是单条文本输入（各至多一条），不在本组件内。
  */
-import { Button, Input, Radio, Select, Tooltip } from 'antd'
+import { Button, Radio, Select, Tooltip } from 'antd'
+import DiagnosisCodeInput from './DiagnosisCodeInput'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import {
   useDiagnosisEntriesStore,
@@ -78,13 +79,23 @@ export default function WesternDiagnosisEditor({
               style={{ marginRight: 0 }}
             />
           </Tooltip>
-          <Input
-            value={entry.name}
-            disabled={disabled}
-            placeholder={entry.is_primary ? '主要诊断，如：高血压3级（极高危）' : '其他诊断/合并症'}
-            onChange={e => update(idx, { name: e.target.value })}
-            style={{ borderRadius: 6, fontSize: 13, flex: 1 }}
-          />
+          {/* 编码联想（2026-08-21 阶段2）：选中候选自动带 ICD-10 医保码；
+              手输自由文本码清空，保存时后端按名精确匹配兜底补码 */}
+          <div style={{ flex: 1 }}>
+            <DiagnosisCodeInput
+              codeType="ICD10"
+              value={entry.name}
+              code={entry.code}
+              disabled={disabled}
+              placeholder={
+                entry.is_primary ? '主要诊断，如：高血压3级（极高危）' : '其他诊断/合并症'
+              }
+              onChange={(name, code, codeTypeValue) =>
+                update(idx, { name, code, code_type: codeTypeValue })
+              }
+              style={{ borderRadius: 6, fontSize: 13 }}
+            />
+          </div>
           {showAdmissionCondition && (
             <Select
               value={entry.admission_condition || undefined}

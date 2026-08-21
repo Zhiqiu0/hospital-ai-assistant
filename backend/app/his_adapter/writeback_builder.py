@@ -40,11 +40,43 @@ def _parse_record_text(content: Any) -> str:
     return ""
 
 
-def _build_diagnoses(inq: Optional[InquiryInput]) -> list[dict]:
-    """从三个诊断文本字段拼成 diagnoses[]；第一个非空诊断标主诊断。"""
+# 字典 code_type → 接口规范 v1.4 的 code_type 枚举（ICD10 / GB95）。
+# TCD_DIS/TCD_SYN 是我方字典的细分（GB/T 15657-2021 的 A 码/B 码），
+# 规范侧统一叫 GB95（国标已升级 2021 版，具体口径联调时与厂商确认）。
+_CODE_TYPE_TO_SPEC = {"ICD10": "ICD10", "TCD_DIS": "GB95", "TCD_SYN": "GB95"}
+
+
+async def _build_diagnoses(db: AsyncSession, encounter_id: str, inq: Optional[InquiryInput]) -> list[dict]:
+    """构建 diagnoses[] 数组。
+
+    2026-08-21 阶段2 切结构化源：优先从 diagnoses 条目表读（医生显式标注的
+    主诊断 + 多条目 + 编码），兑现规范表11"编码能力后续迭代补充"的承诺——
+    code/code_type/is_primary 槽位 v1.4 本就预留，HIS 侧零改造。
+    条目为空时回落旧文本三字段拼装（兼容存量/异常路径），行为与切换前一致。
+    """
+    from app.models.encounter import Diagnosis
+
+    rows = (await db.execute(
+        select(Diagnosis)
+        .where(Diagnosis.encounter_id == encounter_id)
+        .order_by(Diagnosis.is_primary.desc(), Diagnosis.sort_order, Diagnosis.created_at)
+    )).scalars().all()
+    if rows:
+        out = []
+        for d in rows:
+            item: dict = {"name": d.name, "is_primary": d.is_primary, "category": d.category}
+            if d.code:
+                item["code"] = d.code
+                spec_type = _CODE_TYPE_TO_SPEC.get(d.code_type or "")
+                if spec_type:
+                    item["code_type"] = spec_type
+            out.append(item)
+        return out
+
+    # ── 回落：旧文本三字段（第一个非空标主诊断，与历史行为逐字一致）──
     if inq is None:
         return []
-    out: list[dict] = []
+    out = []
     if inq.western_diagnosis:
         out.append({"name": inq.western_diagnosis, "is_primary": True, "category": "western"})
     if inq.tcm_disease_diagnosis:
@@ -125,7 +157,7 @@ async def build_writeback_payload(
 
     record = {f: getattr(inq, f) for f in _RECORD_FIELDS if inq and getattr(inq, f, None)}
     vitals = {f: getattr(inq, f) for f in _VITALS_FIELDS if inq and getattr(inq, f, None)}
-    diagnoses = _build_diagnoses(inq)
+    diagnoses = await _build_diagnoses(db, encounter_id, inq)
     is_tcm = bool(
         inq and (inq.tcm_disease_diagnosis or inq.tcm_syndrome_diagnosis
                  or inq.tongue_coating or inq.pulse_condition
