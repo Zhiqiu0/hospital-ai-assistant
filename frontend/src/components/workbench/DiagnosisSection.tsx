@@ -1,10 +1,12 @@
 /**
  * 诊断区块（DiagnosisSection.tsx）
- * 中医疾病诊断、中医证候诊断、西医诊断、初步印象四项。
+ * 中医疾病诊断、中医证候诊断（各至多一条，文本输入）+ 西医诊断条目编辑器
+ * （2026-08-21 阶段1b 结构化：可多条、主诊断显式勾选）+ 初步印象。
  * 必须渲染在 Ant Design Form 上下文内。
  */
 import { Form, Input } from 'antd'
 import { BulbOutlined } from '@ant-design/icons'
+import WesternDiagnosisEditor from './inquiry/WesternDiagnosisEditor'
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
@@ -25,7 +27,7 @@ const sectionHeaderStyle: React.CSSProperties = {
 
 const fs: React.CSSProperties = { marginBottom: 10 }
 
-export default function DiagnosisSection() {
+export default function DiagnosisSection({ locked = false }: { locked?: boolean }) {
   return (
     <>
       <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -61,16 +63,13 @@ export default function DiagnosisSection() {
           />
         </Form.Item>
 
-        <Form.Item
-          style={{ marginBottom: 4 }}
-          name="western_diagnosis"
-          label={<span style={labelStyle}>西医诊断</span>}
-        >
-          <Input
-            placeholder="如：高血压3级（极高危），2型糖尿病"
-            style={{ borderRadius: 6, fontSize: 13 }}
-          />
-        </Form.Item>
+        {/* 西医诊断：条目编辑器（结构化权威，2026-08-21 阶段1b）。
+            旧 western_diagnosis 文本字段仍在 store/表单值里（投影），但不再
+            直接编辑——保存时由条目合成投影回填 */}
+        <div style={{ marginBottom: 4 }}>
+          <span style={labelStyle}>西医诊断</span>
+          <WesternDiagnosisEditor disabled={locked} />
+        </div>
       </div>
 
       <Form.Item

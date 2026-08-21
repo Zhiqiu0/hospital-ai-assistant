@@ -48,10 +48,24 @@ def render_diagnosis_projection(items: list[DiagnosisItemIn]) -> dict[str, str]:
         western_text = western[0].name
     else:
         western_text = ""
+
+    # 住院入院诊断合成行（admission_diagnosis 是住院问诊/渲染的输入源）：
+    # 与走查实测的真实书写格式一致（"中医诊断：X — Y\n西医诊断：..."）。
+    # 门诊接诊该列本就不消费，写入无副作用——投影函数不感知 visit_type，保持纯函数
+    from app.services.ai._render_common import _merge_tcm_diagnosis
+
+    admission_parts: list[str] = []
+    if tcm_d or tcm_s:
+        merged = _merge_tcm_diagnosis(tcm_d.name if tcm_d else "", tcm_s.name if tcm_s else "")
+        admission_parts.append(f"中医诊断：{merged}")
+    if western_text:
+        admission_parts.append(f"西医诊断：{western_text}")
+
     return {
         "western_diagnosis": western_text,
         "tcm_disease_diagnosis": tcm_d.name if tcm_d else "",
         "tcm_syndrome_diagnosis": tcm_s.name if tcm_s else "",
+        "admission_diagnosis": "\n".join(admission_parts),
     }
 
 

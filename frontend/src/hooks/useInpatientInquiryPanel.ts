@@ -15,6 +15,12 @@ import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
 import { applyVoiceToRecordWithFeedback } from '@/utils/inquiryUtils'
+import { useDiagnosisEntriesStore, selectWestern } from '@/store/diagnosisEntriesStore'
+import {
+  composeDiagnosisItems,
+  parseAdmissionDiagnosisText,
+  renderDiagnosisProjection,
+} from '@/domain/medical/diagnosisProjection'
 import {
   buildInpatientInquiryData,
   diffInpatientChangedFields,
@@ -100,12 +106,70 @@ export function useInpatientInquiryPanel() {
 
     // 本次接诊字段：profile 8 字段已迁出，由 PatientProfileCard 单独 PUT
     const inquiryData = buildInpatientInquiryData(values)
+
+    // ── 诊断条目合成（2026-08-21 阶段1b 结构化）──────────────────────
+    // 西医条目（store）+ 中医病/证（表单文本）；条目与文本都空而旧
+    // admission_diagnosis 文本非空时（AI 生成回填/存量数据）先解析初始化。
+    let westernEntries = selectWestern(useDiagnosisEntriesStore.getState().entries)
+    let tcmDiseaseText = (values.tcm_disease_diagnosis as string) || ''
+    let tcmSyndromeText = (values.tcm_syndrome_diagnosis as string) || ''
+    // 旧文本来源是 store（表单已无 admission_diagnosis 输入框）：AI 生成
+    // 反解回填 / workspace 恢复的存量文本都落在 inquiry store 里
+    const legacyText = inquiry.admission_diagnosis || inquiry.initial_impression || ''
+    if (westernEntries.length === 0 && !tcmDiseaseText && !tcmSyndromeText && legacyText) {
+      const parsed = parseAdmissionDiagnosisText(legacyText)
+      tcmDiseaseText = parsed.tcmDisease
+      tcmSyndromeText = parsed.tcmSyndrome
+      if (parsed.western) {
+        westernEntries = [
+          { category: 'western', name: parsed.western, is_primary: true, sort_order: 0 },
+        ]
+      }
+      form.setFieldsValue({
+        tcm_disease_diagnosis: tcmDiseaseText,
+        tcm_syndrome_diagnosis: tcmSyndromeText,
+      })
+    }
+    const diagnosisItems = composeDiagnosisItems(westernEntries, {
+      tcmDisease: tcmDiseaseText,
+      tcmSyndrome: tcmSyndromeText,
+    })
+    // 入院诊断必填（原 TextArea 的 required 校验挪到这里：至少一条诊断）
+    if (diagnosisItems.length === 0) {
+      message.warning('请至少填写一条入院诊断')
+      setSaving(false)
+      return
+    }
+    useDiagnosisEntriesStore.getState().setEntries(diagnosisItems)
+    // 投影合成 admission_diagnosis（渲染/生成链路的输入源）与三个诊断文本字段
+    const projection = renderDiagnosisProjection(diagnosisItems)
+    inquiryData.admission_diagnosis = projection.admission_diagnosis
+    inquiryData.tcm_disease_diagnosis = projection.tcm_disease_diagnosis
+    inquiryData.tcm_syndrome_diagnosis = projection.tcm_syndrome_diagnosis
+    inquiryData.western_diagnosis = projection.western_diagnosis
+    // initial_impression 兼容旧字段的语义保持（此前 = admission_diagnosis 文本）
+    inquiryData.initial_impression = projection.admission_diagnosis
+
     const changedFields = diffInpatientChangedFields(inquiryData, inquiry)
 
     // InpatientInquiryData 是 InquiryData 子集（字段名/类型对齐），用 unknown 桥接
     setInquiry({ ...inquiry, ...inquiryData } as unknown as InquiryData)
     if (currentEncounterId) {
       api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
+      // 诊断条目落库（结构化权威源；后端做主诊断唯一校验 + 权威投影双写）
+      api
+        .put(`/encounters/${currentEncounterId}/diagnoses`, {
+          items: diagnosisItems.map(i => ({
+            category: i.category,
+            name: i.name,
+            code: i.code || null,
+            code_type: i.code_type || null,
+            is_primary: i.is_primary,
+            admission_condition: i.admission_condition || null,
+            sort_order: i.sort_order,
+          })),
+        })
+        .catch(() => {})
     }
 
     // 把已改动的字段同步到右侧病历对应章节（profile 字段章节由 PatientProfileCard 维护）

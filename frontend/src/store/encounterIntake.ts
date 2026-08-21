@@ -28,6 +28,7 @@ import type {
   DiagnosisItem,
 } from './types'
 import { genderCode } from '@/utils/gender'
+import { useDiagnosisEntriesStore, type DiagnosisEntry } from '@/store/diagnosisEntriesStore'
 
 /** quick-start 与 snapshot 共有的最小字段集合 */
 export interface EncounterIntakePayload {
@@ -60,6 +61,8 @@ export interface QuickStartResult extends EncounterIntakePayload {
 export interface SnapshotResult extends EncounterIntakePayload {
   /** 接诊问诊数据（医生填的字段） */
   inquiry?: Partial<InquiryData> | null
+  /** 诊断条目（结构化权威源，2026-08-21 阶段1b）——恢复时整组灌 diagnosisEntriesStore */
+  diagnoses?: DiagnosisEntry[] | null
   /** 当前活跃病历的最新版本（含 content 文本） */
   active_record?: {
     record_id?: string
@@ -179,6 +182,11 @@ export function applySnapshotResult(res: SnapshotResult): void {
     // 让类型转换是受控的：缺失字段保持 undefined，下游字段访问全部走 `?? ''`
     // 兜底（store 内部所有字段都是 string | undefined）。
     useInquiryStore.getState().updateInquiryFields(res.inquiry as unknown as InquiryData)
+  }
+
+  // 诊断条目：结构化权威源整组覆盖（2026-08-21 阶段1b）
+  if (Array.isArray(res.diagnoses)) {
+    useDiagnosisEntriesStore.getState().setEntries(res.diagnoses)
   }
 
   // record：当前活跃病历的内容
