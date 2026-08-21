@@ -122,6 +122,10 @@ export default function LoginPage() {
         navigate('/admin')
       } else if (res.user.role === 'radiologist') {
         navigate('/pacs')
+      } else if (res.user.role === 'qc_officer') {
+        // 科室质控员 → 复核工作台（2026-08-21 阶段4/5；整体E2E抓到登录
+        // 落医生工作台的分流缺口——质控员在那里连接诊都建不了）
+        navigate('/qc')
       } else {
         navigate(selectedSystem === 'inpatient' ? '/inpatient' : '/workbench')
       }
