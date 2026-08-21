@@ -81,7 +81,9 @@ export default function WesternDiagnosisEditor({
           </Tooltip>
           {/* 编码联想（2026-08-21 阶段2）：选中候选自动带 ICD-10 医保码；
               手输自由文本码清空，保存时后端按名精确匹配兜底补码 */}
-          <div style={{ flex: 1 }}>
+          {/* minWidth:0 让 flex 子项可收缩——缺它时 AutoComplete 撑出容器右边界，
+              focus 蓝框被卡片裁切（2026-08-22 用户实测截图） */}
+          <div style={{ flex: 1, minWidth: 0 }}>
             <DiagnosisCodeInput
               codeType="ICD10"
               value={entry.name}

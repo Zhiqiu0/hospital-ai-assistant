@@ -10,7 +10,7 @@
 别名（中医"可选词"）与名称同权重命中。字典是公开标准数据，登录即可查。
 """
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -37,6 +37,9 @@ async def search_codes(
     if not term:
         return []
     lowered = term.lower()
+    # 编码匹配忽略点号（2026-08-22 用户实测）：国标码带层级点（A01.01.02），
+    # 医生记不住点在哪——"a010102"应与"a01.01.02"同样命中
+    code_term = term.upper().replace(".", "")
 
     rows = (await db.execute(
         select(DiagnosisCode)
@@ -46,7 +49,7 @@ async def search_codes(
                 DiagnosisCode.name.contains(term),
                 DiagnosisCode.aliases.contains(term),
                 DiagnosisCode.pinyin_initial.startswith(lowered),
-                DiagnosisCode.code.startswith(term.upper()),
+                func.replace(DiagnosisCode.code, ".", "").startswith(code_term),
             ),
         )
         # 短名靠前（"高血压"排在"高血压性心脏病…"前），同长按编码稳定排序
@@ -63,7 +66,7 @@ async def search_codes(
         elif r.pinyin_initial and r.pinyin_initial.startswith(lowered):
             group = 2
         else:
-            group = 3
+            group = 3  # 编码命中（含去点匹配）排最后
         return (group, len(r.name), r.code)
 
     ranked = sorted(rows, key=rank)[:limit]
