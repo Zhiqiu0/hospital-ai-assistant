@@ -137,6 +137,12 @@ async def test_search_code_prefix_ignores_dots(client):
     """编码检索忽略点号（2026-08-22 用户实测）：a010102 与 a01.01.02 同样命中。"""
     r = await client.get("/api/v1/diagnosis-codes/search?q=b0402010402&code_type=TCD_SYN")
     assert any(i["code"] == "B04.02.01.04.02.01" for i in r.json()), "去点编码应命中"
+    # 大小写不敏感（2026-08-22 终验实锤）：ICD 医保码含小写 x（I10.x09），
+    # 输入 i10x09/I10X09 都必须命中——旧实现只 upper 输入导致含 x 码段永不命中
+    r = await client.get("/api/v1/diagnosis-codes/search?q=i10x09&code_type=ICD10")
+    assert any(i["code"] == "I10.x09" for i in r.json()), "小写x码段去点应命中"
+    r = await client.get("/api/v1/diagnosis-codes/search?q=I10.X09&code_type=ICD10")
+    assert any(i["code"] == "I10.x09" for i in r.json()), "大写X带点也应命中"
     # 带点写法照常可用
     r = await client.get("/api/v1/diagnosis-codes/search?q=B04.02&code_type=TCD_SYN")
     assert any(i["code"].startswith("B04.02") for i in r.json())
