@@ -107,7 +107,7 @@ export const RECORD_TYPES: Record<RecordTypeKey, RecordTypeMeta> = {
     scenes: ['inpatient'],
     promptKey: 'discharge_record',
     singleton: true,
-    whenHint: '办理出院时',
+    whenHint: '出院后 24 小时内完成',
   },
 }
 

@@ -96,6 +96,92 @@ async def log_ai_task(
     return task_id
 
 
+async def _locate_medical_record(
+    db, encounter_id: Optional[str], record_type: Optional[str]
+) -> Optional[str]:
+    """按 (接诊, 文书类型) 定位实际被质控的那份病历 id（找不到返回 None）。
+
+    ── 定位到**实际被质控的那一份**（2026-08-14 第八轮审计修复）────────
+    原先只按 encounter_id 取「最近创建的那份病历」。门急诊一次接诊一份病历时
+    这恰好总是对的，住院一律错：住院第 20 天医生把编辑器切回入院记录跑质控，
+    落库时却取到最近新建的第 15 份日常病程——入院记录的质控问题被写进了
+    病程记录。调用方本来就有 record_type（_select_rubric 用它选评分表），
+    按类型定位即可。2026-08-21 阶段0 抽成共享函数供 save_qc_issues /
+    save_qc_report 复用。
+    """
+    if not encounter_id:
+        return None
+    stmt = select(MedicalRecord).where(MedicalRecord.encounter_id == encounter_id)
+    if record_type:
+        stmt = stmt.where(MedicalRecord.record_type == record_type)
+    # 同类型有多份时取最近更新的那份（医生正在写的就是它）
+    rec = (await db.execute(
+        stmt.order_by(MedicalRecord.updated_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if rec is None and record_type:
+        # 该类型还没建过病历行（纯草稿态跑质控）：退回原口径兜底，
+        # 总比完全不关联强
+        rec = (await db.execute(
+            select(MedicalRecord)
+            .where(MedicalRecord.encounter_id == encounter_id)
+            .order_by(MedicalRecord.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+    return rec.id if rec else None
+
+
+async def save_qc_report(
+    report_dict: dict,
+    deductions: list[dict],
+    rubric_key: str,
+    encounter_id: Optional[str] = None,
+    record_type: Optional[str] = None,
+) -> None:
+    """把一次法定评分的权威结果落 qc_reports 表（2026-08-21 阶段0 新增）。
+
+    在规则引擎评分完成的瞬间调用——不等 LLM、与 LLM 成败无关，
+    治掉"LLM 一挂整次质控零痕迹 + 评分从不落库"两个缺陷。
+
+    Args:
+        report_dict: ScoreReport.to_dict() 的结果（取 score/grade/passed）。
+        deductions:  法定扣分明细快照 [{rule_code,item_name,target_field,points,is_veto,description}]。
+        rubric_key:  评分标准标识（如 "zj_inpatient_2021"）。
+        encounter_id / record_type: 定位接诊与文书；同时用于冗余科室/医生快照。
+    """
+    from app.models.encounter import Encounter
+    from app.models.medical_record import QCReport
+
+    async with AsyncSessionLocal() as db:
+        medical_record_id = await _locate_medical_record(db, encounter_id, record_type)
+        department_id: Optional[str] = None
+        doctor_id: Optional[str] = None
+        if encounter_id:
+            enc = (await db.execute(
+                select(Encounter.department_id, Encounter.doctor_id)
+                .where(Encounter.id == encounter_id)
+            )).first()
+            if enc:
+                department_id, doctor_id = enc.department_id, enc.doctor_id
+
+        db.add(QCReport(
+            encounter_id=encounter_id,
+            medical_record_id=medical_record_id,
+            record_type=record_type or "outpatient",
+            rubric_key=rubric_key,
+            score=float(report_dict.get("score") or 0),
+            grade=str(report_dict.get("grade") or ""),
+            passed=bool(report_dict.get("passed")),
+            deductions=deductions,
+            department_id=department_id,
+            doctor_id=doctor_id,
+        ))
+        try:
+            await db.commit()
+        except Exception as exc:
+            # 落库失败不影响前端实时展示（SSE 已把结果推给医生）
+            logger.error("qc_report.save: commit_failed err=%s", exc)
+
+
 async def save_qc_issues(
     task_id: str,
     issues: list[dict],
@@ -125,41 +211,7 @@ async def save_qc_issues(
 
     async with AsyncSessionLocal() as db:
         # 尝试通过 encounter_id 找到最新病历，建立关联（可选，找不到不阻塞）
-        medical_record_id: Optional[str] = None
-        if encounter_id:
-            # ── 定位到**实际被质控的那一份**（2026-08-14 第八轮审计修复）────────
-            #
-            # 原先只按 encounter_id 取「最近创建的那份病历」。门急诊一次接诊
-            # 一份病历时这恰好总是对的，住院一律错：住院第 20 天医生把编辑器
-            # 切回入院记录跑质控（前端按 record_type 正确选了住院评分表），
-            # 落库时却取到最近新建的第 15 份日常病程——入院记录的质控问题
-            # 被写进了病程记录的 qc_issues。
-            # 影响面：按病历追溯质控历史、admin 质控统计，以及工作台恢复时
-            # 按 encounter 取「最新一次 QC」——医生打开任一文书，看到的都是
-            # 上一次给别的文书跑的质控结果。
-            # 调用方本来就有 record_type（_select_rubric 就是用它选评分表的），
-            # 传下来按类型定位即可。
-            stmt = select(MedicalRecord).where(
-                MedicalRecord.encounter_id == encounter_id
-            )
-            if record_type:
-                stmt = stmt.where(MedicalRecord.record_type == record_type)
-            # 同类型有多份时取最近更新的那份（医生正在写的就是它）
-            result = await db.execute(
-                stmt.order_by(MedicalRecord.updated_at.desc()).limit(1)
-            )
-            rec = result.scalar_one_or_none()
-            if rec is None and record_type:
-                # 该类型还没建过病历行（纯草稿态跑质控）：退回原口径兜底，
-                # 总比完全不关联强
-                rec = (await db.execute(
-                    select(MedicalRecord)
-                    .where(MedicalRecord.encounter_id == encounter_id)
-                    .order_by(MedicalRecord.created_at.desc())
-                    .limit(1)
-                )).scalar_one_or_none()
-            if rec:
-                medical_record_id = rec.id
+        medical_record_id = await _locate_medical_record(db, encounter_id, record_type)
 
         for issue in issues:
             # BUG FIX: 原代码用 issue_type 是否存在来推断 source，
@@ -170,12 +222,17 @@ async def save_qc_issues(
             qc = QCIssue(
                 ai_task_id=task_id,
                 medical_record_id=medical_record_id,
-                issue_type=issue.get("issue_type") or "quality",
+                # 法定规则扣分默认归 "rubric" 类（2026-08-21 阶段0）：此前不带
+                # issue_type 的规则扣分全兜底成 "quality"，与 LLM 质量建议混桶，
+                # admin 统计的"问题类型分布"因此失真
+                issue_type=issue.get("issue_type") or ("rubric" if source == "rule" else "quality"),
                 risk_level=issue.get("risk_level") or "medium",
                 field_name=issue.get("field_name"),
                 issue_description=issue.get("issue_description") or "",
                 suggestion=issue.get("suggestion"),
                 source=source,
+                # 法定扣分条款代码（LLM 建议无此值）——统计"最高频扣分条款"用
+                rule_code=issue.get("rule_code"),
             )
             db.add(qc)
 

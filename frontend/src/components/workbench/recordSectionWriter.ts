@@ -103,50 +103,12 @@ function writeLineInSection(
   )
 }
 
-/**
- * 中医诊断合并行 split / merge 工具——与后端
- * `_split_tcm_diagnosis` (completeness_rules.py) +
- * `_merge_tcm_diagnosis`  (record_renderer.py) 完全对齐：
- *
- *   "X — Y"  → disease=X  syndrome=Y
- *   "X(Y)"   → disease=X  syndrome=Y
- *   "X"      → disease=X  syndrome=""
- *
- * 在前端复刻这套拆/合逻辑是为了治本一个生产 bug（2026-05-02）：
- *   tcm_disease_diagnosis 与 tcm_syndrome_diagnosis 共用同一个【中医诊断】合并行，
- *   QC「逐条修复」按字段写回时整段章节替换 → 冲掉另一半 → 再次质控仍报缺。
- *   修法：写入前从合并行拆出另一半，merge 后再写整行。
- */
-const TCM_DIAG_PLACEHOLDER = '[未填写，需补充]'
-
-export function splitTcmDiagnosis(merged: string): { disease: string; syndrome: string } {
-  const text = (merged || '').trim()
-  if (!text || text === TCM_DIAG_PLACEHOLDER) return { disease: '', syndrome: '' }
-  // X — Y / X – Y / X——Y（em / en / ASCII dash 都接受，与后端一致）
-  let m = text.match(/^(.+?)\s*[—–-]+\s*(.+)$/)
-  if (m) {
-    const d = m[1].trim()
-    const s = m[2].trim()
-    return {
-      disease: d === TCM_DIAG_PLACEHOLDER ? '' : d,
-      syndrome: s === TCM_DIAG_PLACEHOLDER ? '' : s,
-    }
-  }
-  // X（Y） / X(Y)
-  m = text.match(/^(.+?)\s*[（(]\s*(.+?)\s*[）)]\s*$/)
-  if (m) return { disease: m[1].trim(), syndrome: m[2].trim() }
-  // 单值 → 全部视作疾病诊断（与后端 _split_tcm_diagnosis 一致）
-  return { disease: text, syndrome: '' }
-}
-
-export function mergeTcmDiagnosis(disease: string, syndrome: string): string {
-  const hasD = !!disease && disease !== TCM_DIAG_PLACEHOLDER
-  const hasS = !!syndrome && syndrome !== TCM_DIAG_PLACEHOLDER
-  if (hasD && hasS) return `${disease} — ${syndrome}`
-  if (hasD) return disease
-  if (hasS) return `${TCM_DIAG_PLACEHOLDER} — ${syndrome}`
-  return TCM_DIAG_PLACEHOLDER
-}
+// 中医诊断合并行 拆/合 逻辑已收口到 domain/medical/tcmDiagnosis.ts
+// （2026-08-21 阶段0：此前本地实现与后端有半角连字符误切、括号优先级相反两处漂移），
+// 这里 re-export 维持既有 import 路径不变；前端复刻这套逻辑的动机见该模块头注释
+// （2026-05-02 生产 bug：逐条修复整段替换冲掉合并行的另一半）。
+export { splitTcmDiagnosis, mergeTcmDiagnosis } from '@/domain/medical/tcmDiagnosis'
+import { splitTcmDiagnosis, mergeTcmDiagnosis } from '@/domain/medical/tcmDiagnosis'
 
 /** 读取病历当前【中医诊断】合并行内容；若无独立章节则尝试从【诊断】里"中医诊断：xxx"行抽。 */
 function readTcmDiagnosisBody(content: string): string {

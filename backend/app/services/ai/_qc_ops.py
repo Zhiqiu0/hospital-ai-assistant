@@ -18,13 +18,13 @@ from app.schemas.ai_request import (
     QCFixRequest,
     extract_inquiry_dict,
 )
-from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric
+from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric, get_rubric_key
 from app.services.ai.ai_utils import safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts import QC_FIX_PROMPT
-from app.services.ai.task_logger import log_ai_task
+from app.services.ai.task_logger import log_ai_task, save_qc_report
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.scorer import score
 
@@ -110,6 +110,26 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
     )
     report = score(rubric, ctx)
     issues = _deductions_to_issues(report)
+
+    # 评分权威落库（2026-08-21 阶段0）：与 quick_qc_stream 同口径写 qc_reports——
+    # 本端点此前完全不落库，"出具最终病历前的最后一次评分"恰是最该留痕的一次
+    await save_qc_report(
+        report.to_dict(),
+        deductions=[
+            {
+                "rule_code": d.rule_code,
+                "item_name": d.item_name,
+                "target_field": d.target_field,
+                "points": d.points,
+                "is_veto": d.is_veto,
+                "description": d.description,
+            }
+            for d in report.deductions
+        ],
+        rubric_key=get_rubric_key(rubric),
+        encounter_id=getattr(req, "encounter_id", None),
+        record_type=req.record_type,
+    )
 
     logger.info(
         "ai.qc_grade: done score=%s grade=%s deductions=%d",
