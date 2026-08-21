@@ -141,3 +141,41 @@ async def test_empty_replace_clears_and_projects_empty(client, async_db):
         .order_by(InquiryInput.version.desc()).limit(1)
     )).scalar_one()
     assert inq.western_diagnosis == ""
+
+
+@pytest.mark.asyncio
+async def test_freeze_after_outpatient_sign(client, async_db):
+    """门急诊病历签发后诊断条目冻结（2026-08-21 整体复验抓漏）。
+
+    前端编辑器锁定只是体验层，防线必须在服务端——签发后 API 直改诊断
+    会让 HIS 回写内容偏离医生签发版。
+    """
+    r = await client.put("/api/v1/encounters/enc-1/diagnoses", json={"items": [
+        {"category": "western", "name": "高血压病", "is_primary": True},
+    ]})
+    assert r.status_code == 200
+    # 签发（enc-1 是住院——本用例需要门诊接诊，另建）
+    from app.models.encounter import Encounter
+    from datetime import datetime as _dt
+    async_db.add(Encounter(
+        id="enc-op", patient_id="p1", doctor_id="doc-me", visit_type="outpatient",
+        status="in_progress", visited_at=_dt(2026, 8, 21),
+    ))
+    await async_db.commit()
+    r = await client.put("/api/v1/encounters/enc-op/diagnoses", json={"items": [
+        {"category": "western", "name": "急性上呼吸道感染", "is_primary": True},
+    ]})
+    assert r.status_code == 200
+    from app.services.medical_record_service import MedicalRecordService
+    await MedicalRecordService(async_db).quick_save(
+        encounter_id="enc-op", record_type="outpatient",
+        content="【主诉】\n咳嗽", doctor_id="doc-me",
+    )
+    r = await client.put("/api/v1/encounters/enc-op/diagnoses", json={"items": []})
+    assert r.status_code == 403, "签发后诊断必须冻结"
+    # 住院接诊未出院仍可改（多文书持续录入）
+    r = await client.put("/api/v1/encounters/enc-1/diagnoses", json={"items": [
+        {"category": "western", "name": "高血压病", "is_primary": True,
+         "admission_condition": "有"},
+    ]})
+    assert r.status_code == 200, "住院未出院应可继续修改"

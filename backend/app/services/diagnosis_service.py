@@ -122,6 +122,30 @@ class DiagnosisService:
         added_by: str | None = None,
     ) -> list[Diagnosis]:
         """整组替换写入（删旧插新，同一事务）+ 校验 + 文本投影双写。"""
+        # ── 签发冻结守卫（2026-08-21 整体复验抓漏）────────────────────
+        # 诊断条目是病历/病案首页的法定内容，冻结口径与病历编辑
+        # （auto_save_draft 的 403）同源：
+        #   门急诊：一次接诊一份病历，已签发即冻结（前端编辑器已锁，
+        #           但防线必须在服务端——API 直改会让 HIS 回写内容偏离签发版）
+        #   住院：多文书持续录入，出院（encounter completed）后冻结
+        from app.models.encounter import Encounter
+        from app.models.medical_record import MedicalRecord
+
+        enc = await self.db.get(Encounter, encounter_id)
+        if enc is not None:
+            if enc.visit_type == "inpatient":
+                if enc.status == "completed":
+                    raise HTTPException(status_code=403, detail="已出院，诊断条目不可再修改")
+            else:
+                signed = (await self.db.execute(
+                    select(MedicalRecord.id).where(
+                        MedicalRecord.encounter_id == encounter_id,
+                        MedicalRecord.status == "submitted",
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if signed is not None:
+                    raise HTTPException(status_code=403, detail="病历已签发，诊断条目不可再修改")
+
         # ── 业务校验 ────────────────────────────────────────────────
         for cat in ("tcm_disease", "tcm_syndrome"):
             if sum(1 for i in items if i.category == cat) > 1:
