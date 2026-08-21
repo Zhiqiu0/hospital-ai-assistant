@@ -207,6 +207,31 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         </div>
       )}
 
+      {/* 占位符提醒（2026-08-22 签发终稿体面性）：法定不扣分的非必填占位
+          （"[未填写，需补充]"/"未详，待补充询问"）留在正式病历里不专业——
+          提醒不阻断，医生知情后仍可签发 */}
+      {(() => {
+        const n =
+          (recordContent.match(/\[未填写，需补充\]/g) || []).length +
+          (recordContent.match(/未详，待补充询问/g) || []).length
+        return n > 0 ? (
+          <div
+            style={{
+              background: '#fffbe6',
+              border: '1px solid #ffe58f',
+              borderRadius: 6,
+              padding: '6px 12px',
+              margin: '12px 0 0',
+              fontSize: 12,
+              color: '#874d00',
+            }}
+          >
+            ⚠️ 病历中还有 {n} 处占位内容（"[未填写，需补充]" / "未详，待补充询问"），
+            签发后将原样保留在正式病历里——建议先补齐或删除后再签发。
+          </div>
+        ) : null
+      })()}
+
       {/* Record preview */}
       <div
         style={{

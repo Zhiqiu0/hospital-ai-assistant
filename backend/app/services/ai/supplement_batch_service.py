@@ -55,6 +55,44 @@ def _render_issues_block(qc_issues: list) -> tuple[str, int]:
     return "\n".join(lines), len(lines)
 
 
+# 病历子行前缀全集（与前端 compoundSectionWriter.COMPOUND_SECTION_PREFIXES 同源）。
+# 用于剥离 LLM 串写：value 里混入**其他字段**的前缀段落时截断——
+# 2026-08-22 生产实锤：补全给"治则治法"返回了带 处理意见/复诊建议/注意事项
+# 四段前缀的整段文本，前端行级写入后整章重复且与独立行自相矛盾。
+_KNOWN_LINE_PREFIXES = (
+    "治则治法：", "处理意见：", "复诊建议：", "注意事项：",
+    "望诊：", "闻诊：", "切诊·舌象：", "切诊·脉象：", "舌象：", "脉象：",
+    "其余阳性体征：",
+)
+# 字段名 → 自身前缀（截断时豁免自己；LLM 常把"治则治法：xxx"连前缀一起返）
+_FIELD_OWN_PREFIX = {
+    "治则治法": "治则治法：", "处理意见": "处理意见：",
+    "复诊建议": "复诊建议：", "注意事项": "注意事项：",
+    "望诊": "望诊：", "闻诊": "闻诊：",
+    "舌象": "舌象：", "脉象": "脉象：",
+}
+
+
+def _strip_foreign_prefixes(field_name: str, value: str) -> str:
+    """截断 value 中混入的异己字段前缀段落（确定性守卫，不靠 LLM 自觉）。
+
+    "治则治法：平肝潜阳。处理意见：完善CT。复诊建议：1周复诊。"
+      （field_name=治则治法）→ "治则治法：平肝潜阳。"
+    自身前缀不截；找到最早出现的异己前缀位置，取其之前的部分。
+    """
+    own = _FIELD_OWN_PREFIX.get(field_name, "")
+    cut = len(value)
+    for prefix in _KNOWN_LINE_PREFIXES:
+        if prefix == own:
+            continue
+        # 全角/半角冒号都认
+        for variant in (prefix, prefix.replace("：", ":")):
+            idx = value.find(variant)
+            if idx > 0 and idx < cut:
+                cut = idx
+    return value[:cut].strip().rstrip("；;")
+
+
 def _validate_items(raw: Any, allowed_fields: set[str]) -> list[dict]:
     """校验 LLM 返回的 items 结构 + 字段名白名单。
 
@@ -82,7 +120,11 @@ def _validate_items(raw: Any, allowed_fields: set[str]) -> list[dict]:
         if not isinstance(value, str) or not value.strip():
             continue
         seen.add(field_name)
-        out.append({"field_name": field_name, "value": value.strip()})
+        # 异己前缀截断（2026-08-22 串写实锤守卫）
+        cleaned = _strip_foreign_prefixes(field_name, value.strip())
+        if not cleaned:
+            continue
+        out.append({"field_name": field_name, "value": cleaned})
     return out
 
 

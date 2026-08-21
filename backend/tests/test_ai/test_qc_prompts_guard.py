@@ -33,3 +33,19 @@ def test_fix_prompts_keep_treatment_keyword_cheatsheet():
     """关键词速查表仍在（与质控规则 OP-PRESENT-ILLNESS-02 对齐，缺了修复后仍扣分）。"""
     for prompt in (QC_FIX_PROMPT, QC_FIX_BATCH_PROMPT):
         assert "治疗" in prompt and "服药" in prompt
+
+
+def test_strip_foreign_prefixes_truncates_llm_run_on():
+    """LLM 串写守卫（2026-08-22 生产实锤）：value 混入其他字段前缀段落时截断。
+
+    实锤样本：补全给"治则治法"返回整段四前缀文本（句号分隔，前端旧拆行
+    守卫只认分号拆不开），写入后整章重复且与独立行自相矛盾。
+    """
+    from app.services.ai.supplement_batch_service import _strip_foreign_prefixes
+
+    run_on = "治则治法：平肝潜阳，熄风止痛。处理意见：完善头颅CT检查。复诊建议：建议1周后复诊。注意事项：避免劳累。"
+    assert _strip_foreign_prefixes("治则治法", run_on) == "治则治法：平肝潜阳，熄风止痛。"
+    # 自身前缀不截、纯净内容原样通过
+    assert _strip_foreign_prefixes("治则治法", "平肝潜阳，熄风止痛") == "平肝潜阳，熄风止痛"
+    # 半角冒号变体也认
+    assert _strip_foreign_prefixes("望诊", "神清。闻诊:语声清晰") == "神清。"

@@ -51,12 +51,23 @@ function splitFixLines(fixText: string, prefixes: string[]): string[] {
   for (const rawLine of fixText.split('\n')) {
     const line = rawLine.trim()
     if (!line) continue
-    // 统计该行包含几个前缀；≥2 个时按分号拆段，让每个前缀独立成行
-    const hits = prefixes.filter(p => normColon(line).includes(normColon(p)))
-    if (hits.length >= 2) {
-      for (const seg of line.split(/[；;]/)) {
-        const s = seg.trim()
-        if (s) out.push(s)
+    // 一行含 ≥2 个前缀时按**前缀出现位置**切段（2026-08-22 生产实锤修正：
+    // 旧实现按分号拆，而 LLM 串写用的是句号——"治则治法：…。处理意见：…。"
+    // 拆不开就整行塞进单字段，整章重复且与独立行自相矛盾。按前缀位置切
+    // 对分隔标点零依赖，也不会误伤字段内容里正常的句号/分号）
+    const normLine = normColon(line)
+    const positions = prefixes
+      .map(p => normLine.indexOf(normColon(p)))
+      .filter(i => i >= 0)
+      .sort((a, b) => a - b)
+    if (positions.length >= 2) {
+      for (let i = 0; i < positions.length; i++) {
+        const end = i + 1 < positions.length ? positions[i + 1] : line.length
+        const seg = line
+          .slice(positions[i], end)
+          .trim()
+          .replace(/[。；;，,]$/u, '')
+        if (seg) out.push(seg)
       }
     } else {
       out.push(line)
