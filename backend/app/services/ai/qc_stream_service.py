@@ -33,6 +33,7 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import QC_PROMPT, RECORD_TYPE_LABELS
 from app.services.ai.task_logger import log_ai_task, save_qc_issues, save_qc_report
+from app.services.ai._qc_frontpage import check_diagnosis_hints, load_front_page
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.scorer import score
 from app.services.rule_engine.insurance_rules import check_insurance_risk
@@ -74,6 +75,9 @@ async def run_quick_qc_stream(
 
     # 选 Rubric + 构造上下文（FHIR 三资源分层）
     rubric = _select_rubric(req.record_type)
+    # 病案首页结构化数据预取（2026-08-21 阶段3）：法定"病案首页 10 分"的数据源；
+    # 无 encounter 上下文时返回未加载态，首页规则整体跳过
+    front_page = await load_front_page(db, req.encounter_id)
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
@@ -83,6 +87,7 @@ async def run_quick_qc_stream(
         patient_gender=req.patient_gender or "",
         patient_age=req.patient_age or "",
         inquiry=extract_inquiry_dict(req),
+        front_page=front_page,
     )
 
     # 并行启动 LLM 质量建议（输出 issues[] 列表；不参与总分）。
@@ -123,6 +128,12 @@ async def run_quick_qc_stream(
         # 医保风险规则保留（商保审计层，不在浙江省评分标准内但作为附加 issue 显示）
         insurance_issues = await check_insurance_risk(req.content, db)
         insurance_tagged = [{**i, "source": "rule"} for i in insurance_issues]
+
+        # 出院诊断完整性交叉提示（2026-08-21 阶段3，提示级不扣分）：
+        # 住院期间文书出现过而当前条目缺失的诊断名——合并症漏填预警
+        insurance_tagged += await check_diagnosis_hints(
+            db, req.encounter_id, req.record_type, front_page.diagnoses
+        )
 
         must_fix_count = len(rule_issues) + len(insurance_tagged)
 

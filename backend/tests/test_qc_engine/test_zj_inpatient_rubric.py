@@ -66,12 +66,23 @@ def test_inpatient_has_veto_rules():
 
 
 def test_inpatient_placeholder_items_have_no_rules():
-    """5 个占位 RubricItem（病案首页/知情同意/会诊/医嘱/书写要求）暂不评分——
-    deduction_rules 必须为空 tuple，避免误扣分。"""
-    placeholder_names = {"病案首页", "知情同意书", "会诊记录", "医嘱单", "书写基本要求"}
+    """占位 RubricItem（知情同意/会诊/医嘱/书写要求）暂不评分——
+    deduction_rules 必须为空 tuple，避免误扣分。
+
+    2026-08-21 阶段3：病案首页已实装（结构化判定子集），移出占位集合。"""
+    placeholder_names = {"知情同意书", "会诊记录", "医嘱单", "书写基本要求"}
     for it in ZJ_INPATIENT_V2021.items:
         if it.name in placeholder_names:
             assert it.deduction_rules == (), f"{it.name} 是占位项不该有规则"
+
+
+def test_frontpage_item_implemented():
+    """病案首页 10 分已实装：4 条漏填规则 + 2 条单项否决（阶段3）。"""
+    fp = next(it for it in ZJ_INPATIENT_V2021.items if it.name == "病案首页")
+    assert len(fp.deduction_rules) == 4
+    assert len(fp.veto_rules) == 2
+    assert {r.code for r in fp.deduction_rules} == {"IP-FP-01", "IP-FP-02", "IP-FP-03", "IP-FP-04"}
+    assert {v.code for v in fp.veto_rules} == {"IP-FP-VETO-01", "IP-FP-VETO-02"}
 
 
 # ─── 2. 入院记录区规则（record_type='admission_note'） ───────────────
