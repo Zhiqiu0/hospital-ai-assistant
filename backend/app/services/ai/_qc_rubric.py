@@ -60,6 +60,16 @@ def _select_rubric(record_type: str | None) -> Rubric:
     return ZJ_OUTPATIENT_EMERGENCY_V2023
 
 
+def get_rubric_key(rubric: Rubric) -> str:
+    """评分表对象 → 机器可读标识（qc_reports.rubric_key 落库用，2026-08-21 阶段0）。
+
+    与 admin/rubrics._RUBRIC_REGISTRY 的 key 保持同一命名，看板/后台共用一套标识。
+    """
+    if rubric is ZJ_INPATIENT_V2021:
+        return "zj_inpatient_2021"
+    return "zj_outpatient_emergency_2023"
+
+
 def _deductions_to_issues(report: ScoreReport) -> list[dict]:
     """ScoreReport 扣分列表 → 前端 qcIssues 兼容结构。
 

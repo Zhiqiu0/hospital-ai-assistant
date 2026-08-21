@@ -350,6 +350,9 @@ class GradeScoreRequest(BaseModel):
 
     content: str = ""
     record_type: Optional[str] = "admission_note"
+    # 接诊 ID（2026-08-21 阶段0 补）：评分结果落 qc_reports 表需要接诊上下文
+    # （关联文书 + 冗余科室/医生快照）；不传则评分照常，只是落库无接诊关联
+    encounter_id: Optional[str] = None
     # 是否初诊：主诉持续时间等规则的复诊豁免依赖它（2026-08-20 补，
     # quick-qc 请求本来就带，评分端点此前漏了 → 复诊调评分恒按初诊从严）
     is_first_visit: Optional[bool] = True

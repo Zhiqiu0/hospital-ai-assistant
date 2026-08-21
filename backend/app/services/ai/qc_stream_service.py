@@ -32,7 +32,7 @@ from app.services.ai.ai_utils import safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import QC_PROMPT, RECORD_TYPE_LABELS
-from app.services.ai.task_logger import log_ai_task, save_qc_issues
+from app.services.ai.task_logger import log_ai_task, save_qc_issues, save_qc_report
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.scorer import score
 from app.services.rule_engine.insurance_rules import check_insurance_risk
@@ -42,6 +42,7 @@ from app.services.ai._qc_rubric import (  # noqa: F401
     _INPATIENT_RECORD_TYPES,
     _deductions_to_issues,
     _select_rubric,
+    get_rubric_key,
 )
 from app.services.ai._qc_ops import run_grade_score, run_qc_fix  # noqa: F401
 
@@ -139,6 +140,27 @@ async def run_quick_qc_stream(
             # 完整评分报告供前端 PDF 四列扣分明细使用
             "score_report": report.to_dict(),
         }
+
+        # 评分权威落库（2026-08-21 阶段0）：规则引擎评分一出即写 qc_reports，
+        # 不等 LLM、与 LLM 成败无关——此前评分只走 SSE 不落库，且 qc_issues
+        # 依赖 LLM 成功，LLM 一挂整次质控零痕迹，看板在库里无数可统计
+        await save_qc_report(
+            report.to_dict(),
+            deductions=[
+                {
+                    "rule_code": d.rule_code,
+                    "item_name": d.item_name,
+                    "target_field": d.target_field,
+                    "points": d.points,
+                    "is_veto": d.is_veto,
+                    "description": d.description,
+                }
+                for d in report.deductions
+            ],
+            rubric_key=get_rubric_key(rubric),
+            encounter_id=req.encounter_id,
+            record_type=req.record_type,
+        )
 
         try:
             # usage 随结果一起从子任务上下文带回（见 _llm_with_usage）

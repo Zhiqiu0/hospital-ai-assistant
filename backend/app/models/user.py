@@ -5,11 +5,13 @@
   departments : 科室表，支持父子层级（parent_id 自引用）
   users       : 系统用户表（医生、护士、管理员等）
 
-角色说明（User.role 字段）：
+角色说明（User.role 字段；集合唯一权威在 core/authz.py ALL_ROLES，2026-08-21 阶段0 收口）：
   - super_admin    : 超级管理员，可管理所有医院数据
   - hospital_admin : 医院管理员，管理本院数据
   - dept_admin     : 科室管理员，管理本科室数据
   - doctor         : 普通医生，只能访问自己的接诊记录
+  - nurse          : 护士（无病历书写/签发权，authz.RECORD_WRITE_ROLES 不含）
+  - radiologist    : 影像科医生（PACS 工作台，authz.PACS_WRITE_ROLES）
 """
 
 from datetime import datetime

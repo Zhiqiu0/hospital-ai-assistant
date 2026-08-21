@@ -5,6 +5,7 @@
  * buildTreatmentText / 章节正则替换 4 段逻辑，与 AI/state 编排混在一起。
  */
 import type { Dayjs } from 'dayjs'
+import { mergeTcmDiagnosis } from '@/domain/medical/tcmDiagnosis'
 
 /** 门诊问诊"本次接诊"字段集合（不含 PatientProfile 纵向字段） */
 export const INQUIRY_FORM_FIELDS = [
@@ -71,9 +72,9 @@ export function buildInquiryData(values: Record<string, unknown>): Record<string
 export function buildDiagnosisText(d: Record<string, string>): string {
   const parts: string[] = []
   if (d.tcm_disease_diagnosis || d.tcm_syndrome_diagnosis) {
-    parts.push(
-      `中医诊断：${d.tcm_disease_diagnosis || '待明确'} — ${d.tcm_syndrome_diagnosis || '待明确'}`
-    )
+    // 合并行走统一契约（2026-08-21 阶段0 收口）：此前这里缺项写"待明确"，
+    // 而质控只认"[未填写，需补充]"为未填——"待明确"会骗过质控的已填判定
+    parts.push(`中医诊断：${mergeTcmDiagnosis(d.tcm_disease_diagnosis, d.tcm_syndrome_diagnosis)}`)
   }
   if (d.western_diagnosis) parts.push(`西医诊断：${d.western_diagnosis}`)
   return parts.join('\n')

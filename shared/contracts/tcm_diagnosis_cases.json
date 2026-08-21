@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "中医诊断合并行 拆分/合并 契约用例表（2026-08-21 阶段0 收口，前后端对拍的单一真相）。",
+    "消费方：backend/tests/test_tcm_diagnosis_contract.py + frontend/src/domain/medical/tcmDiagnosis.test.ts",
+    "两端测试都直接读本文件——改契约只改这里，哪端没跟上哪端的 CI 红。",
+    "契约要点（以后端渲染/QC 为权威）：",
+    "  1. 合并分隔符恒为 ' — '（em-dash 前后空格）；缺项占位符恒为 '[未填写，需补充]'（禁用'待明确'等变体，会骗过质控的已填判定）",
+    "  2. 拆分优先级：尾部括号 → 全角破折号（——/—/–）→ 单值视为疾病",
+    "  3. 半角连字符 '-' 绝不作为拆分符（保护 COVID-19、EB-病毒感染 等含连字符的诊断名）",
+    "  4. 占位符输入一律拆成空（占位符不是内容）"
+  ],
+  "split_cases": [
+    { "input": "感冒 — 风寒束表证", "disease": "感冒", "syndrome": "风寒束表证", "note": "标准渲染格式" },
+    { "input": "感冒—风寒束表证", "disease": "感冒", "syndrome": "风寒束表证", "note": "em-dash 无空格" },
+    { "input": "感冒——风寒束表证", "disease": "感冒", "syndrome": "风寒束表证", "note": "双横线" },
+    { "input": "感冒 – 风寒束表证", "disease": "感冒", "syndrome": "风寒束表证", "note": "en-dash" },
+    { "input": "感冒（风寒束表证）", "disease": "感冒", "syndrome": "风寒束表证", "note": "全角括号" },
+    { "input": "感冒(风寒束表证)", "disease": "感冒", "syndrome": "风寒束表证", "note": "半角括号" },
+    { "input": "眩晕病（肝阳上亢证）。", "disease": "眩晕病", "syndrome": "肝阳上亢证", "note": "尾随句号剥离" },
+    { "input": "COVID-19后咳嗽", "disease": "COVID-19后咳嗽", "syndrome": "", "note": "半角连字符不拆——整体视为疾病名" },
+    { "input": "感冒", "disease": "感冒", "syndrome": "", "note": "单值=疾病，证候留空让质控报缺" },
+    { "input": "", "disease": "", "syndrome": "", "note": "空输入" },
+    { "input": "[未填写，需补充]", "disease": "", "syndrome": "", "note": "占位符不是内容" },
+    { "input": "感冒 — 风寒束表证（兼气虚）", "disease": "感冒 — 风寒束表证", "syndrome": "兼气虚", "note": "尾部括号优先于破折号（既有后端行为，勿改）" },
+    { "input": "[未填写，需补充] — 风寒束表证", "disease": "", "syndrome": "风寒束表证", "note": "merge 产物回拆——占位符位转空，round-trip 语义一致" }
+  ],
+  "merge_cases": [
+    { "disease": "感冒", "syndrome": "风寒束表证", "merged": "感冒 — 风寒束表证", "note": "标准合并" },
+    { "disease": "感冒", "syndrome": "", "merged": "感冒", "note": "仅疾病——不补占位符，让证候规则报缺" },
+    { "disease": "", "syndrome": "风寒束表证", "merged": "[未填写，需补充] — 风寒束表证", "note": "仅证候——疾病位补占位符" },
+    { "disease": "", "syndrome": "", "merged": "[未填写，需补充]", "note": "全空" },
+    { "disease": "[未填写，需补充]", "syndrome": "风寒束表证", "merged": "[未填写，需补充] — 风寒束表证", "note": "占位符输入按空处理" }
+  ]
+}

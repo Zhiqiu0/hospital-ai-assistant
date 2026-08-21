@@ -27,23 +27,13 @@ logger = logging.getLogger(__name__)
 #     达标率被系统性压低，这个指标失去意义
 #   · 手术记录：从**术后**起算。而系统里根本没有记录手术时刻的字段，
 #     用任何现有时间点近似都是编数据——宁可不统计，也不给一个假指标。
-_TIMELINESS_HOURS = {
-    "admission_note": 24,        # 入院记录 24h（从入院起算）
-    "first_course_record": 8,    # 首次病程 8h（从入院起算）
-    "discharge_record": 24,      # 出院记录 24h（从**出院**起算）
-}
-
-# 起算点取自接诊的哪个字段：默认入院时刻（visited_at）
-_TIMELINESS_START_FIELD = {
-    "discharge_record": "completed_at",   # 出院时刻
-}
-
-# 暂不纳入达标率的类型及原因（写在这里而不是删掉，避免下次有人"顺手补回去"）
-_TIMELINESS_EXCLUDED = {
-    # 手术记录法定要求是"术后 24 小时内"，但系统未记录手术时刻。
-    # 要纳入需先在住院模块增加手术时间字段，届时再加回 _TIMELINESS_HOURS。
-    "op_record": "系统未记录手术时刻，无法确定起算点",
-}
+# 时限规则收口到唯一真相源（2026-08-21 阶段0）：与工作台时效卡
+# （inpatient_compliance）共享 services/record_deadlines.py，两处天然同口径
+from app.services.record_deadlines import (  # noqa: E402
+    DEADLINE_EXCLUDED as _TIMELINESS_EXCLUDED,  # noqa: F401  说明性引用，保留原名
+    DEADLINE_HOURS as _TIMELINESS_HOURS,
+    DEADLINE_START_FIELD as _TIMELINESS_START_FIELD,
+)
 
 
 async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:

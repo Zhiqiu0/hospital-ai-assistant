@@ -316,11 +316,15 @@ def _is_password_change_path(request: Optional[Request]) -> bool:
 async def require_admin(current_user=Depends(get_current_user)):
     """FastAPI 依赖：要求当前用户具有管理员角色。
 
-    允许角色：super_admin、hospital_admin、dept_admin。
+    允许角色：authz.ADMIN_ROLES（super_admin/hospital_admin/dept_admin）。
+    2026-08-21 阶段0 收口：此前这里硬编码字符串元组、不引用 ADMIN_ROLES——
+    两处角色集合一旦漂移会出现"authz 层放行、admin 路由层拒绝"的半通状态。
 
     Raises:
         HTTPException 403: 当前用户角色不满足要求。
     """
-    if current_user.role not in ("super_admin", "hospital_admin", "dept_admin"):
+    from app.core.authz import ADMIN_ROLES
+
+    if current_user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return current_user

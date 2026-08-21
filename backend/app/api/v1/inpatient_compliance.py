@@ -21,21 +21,9 @@ from app.models.medical_record import MedicalRecord
 router = APIRouter()
 
 
-# 各类住院文书的书写时限规范（小时）
-_COMPLIANCE_RULES = [
-    {
-        "record_type": "admission_note",
-        "label": "入院记录",
-        "deadline_hours": 24,
-        "required": True,
-    },
-    {
-        "record_type": "first_course_record",
-        "label": "首次病程记录",
-        "deadline_hours": 8,
-        "required": True,
-    },
-]
+# 时限规则收口到唯一真相源（2026-08-21 阶段0）：此前本表与后台统计
+# admin_stats_service 各写一份，已经漂移（后台有出院记录 24h、这里没有）
+from app.services.record_deadlines import RECORD_DEADLINES as _COMPLIANCE_RULES  # noqa: E402
 
 
 @router.get("/encounters/{encounter_id}/compliance")
@@ -57,7 +45,6 @@ async def get_compliance(
     if not enc:
         raise HTTPException(status_code=404, detail="接诊不存在")
 
-    admission_time = enc.visited_at or datetime.now()
     now = datetime.now()
 
     # 查询该接诊**已签发**的文书及其签发时刻
@@ -87,7 +74,18 @@ async def get_compliance(
 
     items = []
     for rule in _COMPLIANCE_RULES:
-        deadline = admission_time + timedelta(hours=rule["deadline_hours"])
+        # 起算点按类型区分（2026-08-21 阶段0）：入院记录/首程从入院（visited_at）
+        # 起算，出院记录从出院（completed_at）起算。出院时刻为 NULL（还没办出院）
+        # 时该文书整条不显示——绝不能拿 now() 兜底，那会让住院中的病人从挂上
+        # 规则那一刻就"永久超时"（admin_stats 第六轮审计修过同一个坑）
+        start_time = getattr(enc, rule["start_field"], None)
+        if start_time is None:
+            if rule["start_field"] == "visited_at":
+                # 入院时刻理论上必有；缺失时保守用当前时刻起算（维持原兜底）
+                start_time = now
+            else:
+                continue
+        deadline = start_time + timedelta(hours=rule["deadline_hours"])
         done_at = existing.get(rule["record_type"])
         remaining_seconds = (deadline - now).total_seconds()
 
@@ -118,6 +116,6 @@ async def get_compliance(
 
     return {
         "encounter_id": encounter_id,
-        "admission_time": admission_time.isoformat(),
+        "admission_time": (enc.visited_at or now).isoformat(),
         "items": items,
     }

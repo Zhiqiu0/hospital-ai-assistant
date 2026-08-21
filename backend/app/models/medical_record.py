@@ -23,7 +23,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import UniqueConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, UniqueConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -244,6 +244,10 @@ class QCIssue(Base):
     status: Mapped[str] = mapped_column(String(20), default="open")
     # 问题来源："rule"（规则引擎）/ "llm"（AI 建议）
     source: Mapped[str] = mapped_column(String(10), default="rule")
+    # 法定扣分条款代码（如 "OP-PRESENT-ILLNESS-02" / "IP-DISCHARGE-01"；LLM 建议无此值）
+    # 2026-08-21 阶段0 补列：此前 rule_code 在 SSE 里给了前端但落库丢失，
+    # "全院最高频扣分条款 Top 榜"这类统计只能退化到粒度混乱的 field_name
+    rule_code: Mapped[Optional[str]] = mapped_column(String(40))
     # 问题解决时间
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     # 问题发现时间
@@ -251,6 +255,54 @@ class QCIssue(Base):
 
     # 关联病历（可空）
     record: Mapped[Optional["MedicalRecord"]] = relationship(back_populates="qc_issues")
+
+
+class QCReport(Base):
+    """质控评分报告表（每次法定评分的权威落库记录，2026-08-21 阶段0 新增）。
+
+    与 qc_issues 的分工：本表是"表头"（一次评分的分数/等级/全部法定扣分明细），
+    qc_issues 是"明细流水"（逐条问题的处理状态跟踪）。此前评分结果只走 SSE
+    给前端、完全不落库——"科室甲级率月度趋势"这类看板在库里无数可查；
+    且 qc_issues 只在 LLM 成功后才写，LLM 一挂整次质控零痕迹。
+    本表在规则引擎评分完成的瞬间落库（不等 LLM、与 LLM 成败无关）。
+
+    统计口径约定：同一 (encounter_id, record_type) 会随医生反复点质控产生多行，
+    看板统计一律按 created_at 取最新一行，否则测出来的是"谁爱点按钮"。
+
+    department_id / doctor_id 是从 Encounter 冗余下来的快照列——看板按科室/
+    医生聚合时避免三层 join（audit_logs 冗余 user_name/user_role 是同一先例）。
+    """
+
+    __tablename__ = "qc_reports"
+
+    __table_args__ = (
+        # 看板主查询：按接诊+类型取最新一次评分
+        Index("idx_qc_reports_enc", "encounter_id", "record_type", "created_at"),
+        # 科室维度月度聚合
+        Index("idx_qc_reports_dept", "department_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    # 被质控的接诊（评分必有接诊上下文；极少数无 encounter 的裸调用存 NULL）
+    encounter_id: Mapped[Optional[str]] = mapped_column(ForeignKey("encounters.id"))
+    # 被质控的那份文书（可空：纯草稿态跑质控时病历行可能还不存在）
+    medical_record_id: Mapped[Optional[str]] = mapped_column(ForeignKey("medical_records.id"))
+    # 文书类型（住院多文书场景的定位键，与评分表路由同源）
+    record_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    # 使用的评分标准标识（如 "zj_outpatient_emergency_2023" / "zj_inpatient_2021"）
+    rubric_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    # 总分（法定百分制）
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    # 等级（"甲级"/"乙级"/"丙级"；门急诊标准无等级时存 "合格"/"不合格"口径值）
+    grade: Mapped[str] = mapped_column(String(10), nullable=False)
+    # 是否通过（与 SSE 的 pass 字段同源）
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 全部法定扣分明细快照：[{rule_code,item_name,target_field,points,is_veto,description}]
+    deductions: Mapped[Optional[list]] = mapped_column(JSONB)
+    # 科室/医生冗余快照（来自 Encounter，聚合免 join；接诊缺失时为 NULL）
+    department_id: Mapped[Optional[str]] = mapped_column(String)
+    doctor_id: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class AITask(Base):

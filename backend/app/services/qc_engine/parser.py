@@ -114,21 +114,31 @@ def _split_tcm_diagnosis(merged_value: str) -> tuple[str, str]:
       1. "X（Y）" / "X(Y)" — 中/英文括号
       2. "X — Y" / "X—Y" / "X – Y" — 各类破折号
       3. "X" — 单值，视作疾病诊断；证候空（让 §中医证候诊断 报缺）
+
+    契约对拍：shared/contracts/tcm_diagnosis_cases.json（2026-08-21 阶段0 收口，
+    前端 domain/medical/tcmDiagnosis.ts 读同一份用例表）。占位符不是内容——
+    输入为占位符或拆出的半边是占位符时一律转空，下游 is_filled 语义不变。
     """
+    from app.services.ai.record_schemas import PLACEHOLDER
+
+    def _clean(part: str) -> str:
+        p = part.strip().rstrip(" 。.")
+        return "" if p == PLACEHOLDER else p
+
     s = merged_value.strip().rstrip(" 。.\n")
-    if not s:
+    if not s or s == PLACEHOLDER:
         return "", ""
 
     # 括号格式
     paren = re.match(r"^(.+?)\s*[（(]\s*(.+?)\s*[)）]\s*$", s)
     if paren:
-        return paren.group(1).strip().rstrip(" 。."), paren.group(2).strip().rstrip(" 。.")
+        return _clean(paren.group(1)), _clean(paren.group(2))
 
     # 破折号格式（半角"-"不切，避免疾病名带连字符歧义）
     for sep in ["——", "—", "–"]:
         if sep in s:
             parts = s.split(sep, 1)
-            return parts[0].strip().rstrip(" 。."), parts[1].strip().rstrip(" 。.")
+            return _clean(parts[0]), _clean(parts[1])
 
     # 单值
     return s, ""
