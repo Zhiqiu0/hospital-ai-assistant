@@ -15,6 +15,7 @@ import { message } from '@/services/messageBridge'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'
 import { writeSectionToRecord } from '@/components/workbench/qcFieldMaps'
+import { supplementableIssues } from '@/components/workbench/qcFieldConstants'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 import type { RecordEditorShared } from './useRecordEditorShared'
 
@@ -46,6 +47,15 @@ export function useRecordSupplement(
       message.warning('请先执行 AI 质控')
       return
     }
+    // 补全范围收口（2026-08-22 终验实锤）：只补**法定扣分项**。
+    // LLM 质量建议（source=llm）的 field_name 由模型自命名（如"治疗意见及措施"
+    // 复合段大项名），补全后行级写入定位不到子行 → 内容落成段首自由文本、
+    // 目标行仍是占位符；医保风险/首页交叉提示是提醒不是缺失，也不该被"补内容"。
+    const fixableIssues = supplementableIssues(qcIssues)
+    if (!fixableIssues.length) {
+      message.info('没有可自动补全的法定缺失项（其余为提示类建议，请人工判断）')
+      return
+    }
     setIsSupplementing(true)
     const original = recordContent
 
@@ -58,7 +68,7 @@ export function useRecordSupplement(
         },
         body: JSON.stringify({
           ...buildRecordTaskPayload(original),
-          qc_issues: qcIssues,
+          qc_issues: fixableIssues,
         }),
       })
       if (!res.ok) {

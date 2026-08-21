@@ -5,8 +5,9 @@
  * 本文件覆盖 FIELD_TO_LINE_PREFIX 常量表的完整性自检：
  * 英文键齐全 / whole_line 模式标记 / 中英文别名一一对应。
  */
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { FIELD_TO_LINE_PREFIX } from './qcFieldMaps'
+import { supplementableIssues } from './qcFieldConstants'
 
 // ─── 契约一致性自检：确保 FIELD_TO_LINE_PREFIX 表完整 ────────────────
 
@@ -54,5 +55,19 @@ describe('FIELD_TO_LINE_PREFIX 自检', () => {
     for (const [en, cn] of Object.entries(aliases)) {
       expect(FIELD_TO_LINE_PREFIX[cn]).toEqual(FIELD_TO_LINE_PREFIX[en])
     }
+  })
+})
+
+describe('supplementableIssues 补全范围收口（2026-08-22 终验实锤）', () => {
+  it('剔除 LLM 建议/医保风险/首页提示，只留法定扣分项', () => {
+    const issues = [
+      { source: 'rule', issue_type: 'rubric', field_name: '注意事项' },
+      { source: 'llm', issue_type: 'quality', field_name: '治疗意见及措施' },
+      { source: 'rule', issue_type: 'insurance', field_name: '用药' },
+      { source: 'rule', issue_type: 'frontpage_hint', field_name: '出院诊断' },
+    ]
+    const out = supplementableIssues(issues)
+    expect(out).toHaveLength(1)
+    expect(out[0].field_name).toBe('注意事项')
   })
 })
