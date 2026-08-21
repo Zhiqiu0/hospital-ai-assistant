@@ -48,9 +48,22 @@ def _clean_name(raw: str) -> tuple[str, str]:
 
 
 def _pinyin_initial(name: str) -> str:
-    """主名 → 拼音首字母串（仅保留字母，小写）。"""
-    letters = lazy_pinyin(name, style=Style.FIRST_LETTER, errors="ignore")
-    return "".join(c for c in "".join(letters).lower() if c.isalnum())
+    """主名 → 拼音首字母串（小写；数字/字母原样保留）。
+
+    2026-08-22 终验修正：lazy_pinyin(errors='ignore') 会丢掉非汉字——
+    "2型糖尿病"变成 "xtnb"，医生输 "2xtnb" 搜不到。逐字符处理：
+    汉字取拼音首字母，ASCII 数字/字母原样保留。
+    """
+    out = []
+    for ch in name:
+        if ch.isascii():
+            if ch.isalnum():
+                out.append(ch.lower())
+        else:
+            letters = lazy_pinyin(ch, style=Style.FIRST_LETTER, errors="ignore")
+            if letters and letters[0]:
+                out.append(letters[0][0].lower())
+    return "".join(out)
 
 
 def _load_hubei(path: Path) -> list[tuple[str, str, str]]:
