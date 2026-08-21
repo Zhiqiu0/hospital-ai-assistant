@@ -130,3 +130,13 @@ async def test_writeback_falls_back_to_text_fields(async_db, seeded):
     dx = payload["diagnoses"]
     assert dx[0] == {"name": "急性上呼吸道感染", "is_primary": True, "category": "western"}
     assert dx[1]["category"] == "tcm_disease" and dx[1]["is_primary"] is False
+
+
+@pytest.mark.asyncio
+async def test_search_code_prefix_ignores_dots(client):
+    """编码检索忽略点号（2026-08-22 用户实测）：a010102 与 a01.01.02 同样命中。"""
+    r = await client.get("/api/v1/diagnosis-codes/search?q=b0402010402&code_type=TCD_SYN")
+    assert any(i["code"] == "B04.02.01.04.02.01" for i in r.json()), "去点编码应命中"
+    # 带点写法照常可用
+    r = await client.get("/api/v1/diagnosis-codes/search?q=B04.02&code_type=TCD_SYN")
+    assert any(i["code"].startswith("B04.02") for i in r.json())
