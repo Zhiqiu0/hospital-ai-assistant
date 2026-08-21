@@ -14,6 +14,7 @@ export const ROLE_MAP: Record<string, { label: string; color: string }> = {
   nurse: { label: '护士', color: 'cyan' },
   // 角色集合的唯一权威在后端 core/authz.py ALL_ROLES——新增角色两处同步（2026-08-21 阶段0）
   radiologist: { label: '影像科医生', color: 'purple' },
+  qc_officer: { label: '科室质控员', color: 'geekblue' },
 }
 
 /** 用户列表行类型（后端 UserResponse 子集，仅含本页用到的字段） */

@@ -29,7 +29,9 @@ PACS_WRITE_ROLES = {"radiologist", *ADMIN_ROLES}
 # radiologist 就曾三次漏同步（建号被拒/列表显示英文原文）。本集合是唯一
 # 权威——管理端建号校验（_user_authz.VALID_ROLES）从这里引用；新增角色
 # （如后续的科室质控员 qc_officer）只改这里 + 各消费点的注释指引。
-ALL_ROLES = {"doctor", "nurse", "radiologist", *ADMIN_ROLES}
+# 科室质控员（2026-08-21 阶段4）：只读复核通道，绝不进 ADMIN_ROLES /
+# RECORD_WRITE_ROLES（不能写病历、不能进 admin 后台——权限走 /qc/* 专属路由树）
+ALL_ROLES = {"doctor", "nurse", "radiologist", "qc_officer", *ADMIN_ROLES}
 
 
 async def assert_encounter_access(
