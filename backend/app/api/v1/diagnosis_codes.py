@@ -38,7 +38,9 @@ async def search_codes(
         return []
     lowered = term.lower()
     # 编码匹配忽略点号（2026-08-22 用户实测）：国标码带层级点（A01.01.02），
-    # 医生记不住点在哪——"a010102"应与"a01.01.02"同样命中
+    # 医生记不住点在哪——"a010102"应与"a01.01.02"同样命中。
+    # 大小写不敏感（2026-08-22 终验实锤）：ICD 医保码含小写 x（I10.x05），
+    # 只把输入 upper 会让含 x 码段永不命中——两侧都 upper 再比
     code_term = term.upper().replace(".", "")
 
     rows = (await db.execute(
@@ -49,7 +51,7 @@ async def search_codes(
                 DiagnosisCode.name.contains(term),
                 DiagnosisCode.aliases.contains(term),
                 DiagnosisCode.pinyin_initial.startswith(lowered),
-                func.replace(DiagnosisCode.code, ".", "").startswith(code_term),
+                func.upper(func.replace(DiagnosisCode.code, ".", "")).startswith(code_term),
             ),
         )
         # 短名靠前（"高血压"排在"高血压性心脏病…"前），同长按编码稳定排序
