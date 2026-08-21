@@ -13,6 +13,7 @@ import SpecialAssessmentSection from './SpecialAssessmentSection'
 import PhysicalExamSection from './PhysicalExamSection'
 import InpatientInquiryFooter from './inpatientInquiry/InpatientInquiryFooter'
 import CollapsibleSection from '@/components/common/CollapsibleSection'
+import WesternDiagnosisEditor from './inquiry/WesternDiagnosisEditor'
 import { useInpatientInquiryPanel } from '@/hooks/useInpatientInquiryPanel'
 import { useCurrentPatient } from '@/store/activeEncounterStore'
 
@@ -200,24 +201,37 @@ export default function InpatientInquiryPanel() {
             <PhysicalExamSection />
           </CollapsibleSection>
 
-          {/* 四、入院诊断 */}
+          {/* 四、入院诊断（2026-08-21 阶段1b 结构化）：
+              中医病/证各一条文本 + 西医条目编辑器（逐条"入院病情"标志——
+              病案首页必填项）。旧 admission_diagnosis 文本由投影自动合成，
+              不再直接编辑；必填校验挪到保存逻辑（至少一条诊断）。 */}
           <CollapsibleSection title="四、入院诊断" accent="#2563eb" defaultOpen>
             <Form.Item
-              style={{ marginBottom: 0 }}
-              name="admission_diagnosis"
-              rules={[{ required: true, message: '请填写入院诊断' }]}
-              label={
-                <span style={labelStyle}>
-                  入院诊断 <span style={{ color: '#ef4444' }}>*</span>
-                </span>
-              }
+              style={{ marginBottom: 10 }}
+              name="tcm_disease_diagnosis"
+              label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医疾病诊断</span>}
             >
-              <TextArea
-                rows={3}
-                placeholder={'1. 主要诊断（使用规范中文术语，主要诊断放首位）\n2. 其他诊断...'}
-                style={{ borderRadius: 6, fontSize: 13, resize: 'none' }}
+              <Input placeholder="如：眩晕病、项痹病" style={{ borderRadius: 6, fontSize: 13 }} />
+            </Form.Item>
+            <Form.Item
+              style={{ marginBottom: 10 }}
+              name="tcm_syndrome_diagnosis"
+              label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医证候诊断</span>}
+            >
+              <Input
+                placeholder="如：肝阳上亢证、气滞血瘀证"
+                style={{ borderRadius: 6, fontSize: 13 }}
               />
             </Form.Item>
+            <div style={{ marginBottom: 0 }}>
+              <span style={labelStyle}>
+                西医诊断 <span style={{ color: '#ef4444' }}>*</span>
+                <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: 6 }}>
+                  主要诊断放首位，合并症逐条列出，每条标注入院病情
+                </span>
+              </span>
+              <WesternDiagnosisEditor showAdmissionCondition disabled={isInputLocked} />
+            </div>
           </CollapsibleSection>
         </Form>
       </div>

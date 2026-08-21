@@ -26,6 +26,10 @@ export const INPATIENT_INQUIRY_KEYS = [
   'auxiliary_exam',
   'admission_diagnosis',
   'initial_impression',
+  // 中医病/证文本（2026-08-21 阶段1b：入院诊断结构化后表单直填这两项，
+  // admission_diagnosis 改由诊断条目投影合成）
+  'tcm_disease_diagnosis',
+  'tcm_syndrome_diagnosis',
 ] as const
 
 /** 写入病历同步时关心的字段集合（用于"本次哪些字段改了"对比）。 */
@@ -58,6 +62,10 @@ export interface InpatientInquiryData {
   psychology_assessment: string
   auxiliary_exam: string
   admission_diagnosis: string
+  // 诊断三字段（阶段1b）：tcm 两项来自表单，western 由诊断条目投影生成
+  tcm_disease_diagnosis: string
+  tcm_syndrome_diagnosis: string
+  western_diagnosis: string
   // 生命体征（结构化独立字段）
   temperature: string
   pulse: string
@@ -76,9 +84,7 @@ export interface InpatientInquiryData {
  * values 来自 antd Form，字段类型不固定（字符串/数字/对象/空值），
  * 用 unknown 而非 any 强迫显式收窄；本函数内部统一用 readString helper。
  */
-export function buildInpatientInquiryData(
-  values: Record<string, unknown>
-): InpatientInquiryData {
+export function buildInpatientInquiryData(values: Record<string, unknown>): InpatientInquiryData {
   // 把"任意类型 form value"压成字符串：空值 → ''；其它 → String 化
   const readString = (v: unknown): string =>
     v == null || v === '' ? '' : typeof v === 'string' ? v : String(v)
@@ -97,6 +103,9 @@ export function buildInpatientInquiryData(
     psychology_assessment: readString(values.psychology_assessment),
     auxiliary_exam: readString(values.auxiliary_exam),
     admission_diagnosis: readString(values.admission_diagnosis),
+    tcm_disease_diagnosis: readString(values.tcm_disease_diagnosis),
+    tcm_syndrome_diagnosis: readString(values.tcm_syndrome_diagnosis),
+    western_diagnosis: '', // 由诊断条目投影生成（onSave 内赋值），不读表单
     temperature: readString(values.temperature),
     pulse: readString(values.pulse),
     respiration: readString(values.respiration),

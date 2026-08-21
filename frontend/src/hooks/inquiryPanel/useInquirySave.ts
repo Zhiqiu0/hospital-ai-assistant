@@ -14,6 +14,11 @@ import { usePatientProfileEditStore } from '@/store/patientProfileEditStore'
 import api from '@/services/api'
 import { INQUIRY_FORM_FIELDS, buildInquiryData, syncInquiryToRecord } from '@/utils/inquirySync'
 import type { InquiryData } from '@/store/types'
+import { useDiagnosisEntriesStore, selectWestern } from '@/store/diagnosisEntriesStore'
+import {
+  composeDiagnosisItems,
+  renderDiagnosisProjection,
+} from '@/domain/medical/diagnosisProjection'
 
 interface InquirySaveParams {
   form: FormInstance
@@ -80,6 +85,32 @@ export function useInquirySave({
       }
     }
 
+    // ── 诊断条目合成与投影（2026-08-21 阶段1b 结构化）────────────────────
+    // 西医条目（store）+ 中医病/证（表单文本）合成完整列表；条目为空而文本
+    // 非空时整段初始化一条（AI 生成/复诊带入桥）。本地投影立即回填三个旧
+    // 文本字段（LLM/渲染/QC 链路的输入源），PUT 后端后由权威投影再覆盖一致
+    const diagnosisItems = composeDiagnosisItems(
+      selectWestern(useDiagnosisEntriesStore.getState().entries),
+      {
+        western: normalizedData.western_diagnosis,
+        tcmDisease: normalizedData.tcm_disease_diagnosis,
+        tcmSyndrome: normalizedData.tcm_syndrome_diagnosis,
+      }
+    )
+    useDiagnosisEntriesStore.getState().setEntries(diagnosisItems)
+    const projection = renderDiagnosisProjection(diagnosisItems)
+    normalizedData = {
+      ...normalizedData,
+      western_diagnosis: projection.western_diagnosis,
+      tcm_disease_diagnosis: projection.tcm_disease_diagnosis,
+      tcm_syndrome_diagnosis: projection.tcm_syndrome_diagnosis,
+    }
+    form.setFieldsValue({
+      western_diagnosis: projection.western_diagnosis,
+      tcm_disease_diagnosis: projection.tcm_disease_diagnosis,
+      tcm_syndrome_diagnosis: projection.tcm_syndrome_diagnosis,
+    })
+
     // buildInquiryData 返回的 Record<string, string> 与 InquiryData 字段并集兼容
     // （都是字符串型字段），借助 unknown 桥接，避免污染 inquirySync 的返回类型
     setInquiry(normalizedData as unknown as InquiryData)
@@ -90,6 +121,18 @@ export function useInquirySave({
     if (currentEncounterId) {
       try {
         await api.put(`/encounters/${currentEncounterId}/inquiry`, normalizedData)
+        // 诊断条目落库（结构化权威源；后端会做主诊断唯一等校验 + 权威投影双写）
+        await api.put(`/encounters/${currentEncounterId}/diagnoses`, {
+          items: diagnosisItems.map(i => ({
+            category: i.category,
+            name: i.name,
+            code: i.code || null,
+            code_type: i.code_type || null,
+            is_primary: i.is_primary,
+            admission_condition: i.admission_condition || null,
+            sort_order: i.sort_order,
+          })),
+        })
       } catch {
         savedOk = false
       }

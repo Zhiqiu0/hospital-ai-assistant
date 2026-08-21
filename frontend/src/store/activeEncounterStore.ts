@@ -23,6 +23,7 @@ import { useInquiryStore } from './inquiryStore'
 import { useRecordStore } from './recordStore'
 import { useQCStore } from './qcStore'
 import { useAISuggestionStore } from './aiSuggestionStore'
+import { useDiagnosisEntriesStore } from './diagnosisEntriesStore'
 import { useAiWrittenFieldsStore } from './aiWrittenFieldsStore'
 import { usePatientCacheStore } from './patientCacheStore'
 
@@ -107,6 +108,8 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
           useRecordStore.getState().reset()
           useQCStore.getState().reset()
           useAISuggestionStore.getState().reset()
+          // 诊断条目按接诊隔离（2026-08-21 阶段1b）——切接诊即清，防跨患者串
+          useDiagnosisEntriesStore.getState().reset()
           // AI 写入高亮按接诊隔离 —— 切换接诊清空，避免上一个接诊的
           // 高亮残留误导医生（2026-05-24 治本路线）
           useAiWrittenFieldsStore.getState().clear()
@@ -149,11 +152,12 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
         })),
 
       clearActive: () => {
-        // 关闭接诊：4 个子 store 也一并清空（统一入口，避免遗漏字段）
+        // 关闭接诊：子 store 也一并清空（统一入口，避免遗漏字段）
         useInquiryStore.getState().reset()
         useRecordStore.getState().reset()
         useQCStore.getState().reset()
         useAISuggestionStore.getState().reset()
+        useDiagnosisEntriesStore.getState().reset()
         set({
           patientId: null,
           encounterId: null,
@@ -230,6 +234,8 @@ export function resetAllWorkbench(): void {
   useRecordStore.getState().reset()
   useQCStore.getState().reset()
   useAISuggestionStore.getState().reset()
+  // 诊断条目（2026-08-21 阶段1b）：不清会把上一位患者的诊断带给下一位
+  useDiagnosisEntriesStore.getState().reset()
   useActiveEncounterStore.getState().clearActive()
 }
 

@@ -249,7 +249,8 @@ export default function InquiryPanel() {
 
           {/* 诊断区块（可折叠） */}
           <CollapsibleSection title="诊断" defaultOpen>
-            <DiagnosisSection />
+            {/* locked 需显式下传：西医条目编辑器不走 Form 字段，disabled 级联管不到 */}
+            <DiagnosisSection locked={isInputLocked} />
           </CollapsibleSection>
 
           {/* 治疗意见区块（可折叠） */}

@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "诊断条目 → 文本投影 契约用例表（2026-08-21 阶段1b，前后端对拍单一真相）。",
+    "消费方：backend/tests/test_diagnosis_projection_contract.py + frontend/src/domain/medical/diagnosisProjection.test.ts",
+    "后端 diagnosis_service.render_diagnosis_projection 是权威（PUT 后落库）；",
+    "前端 domain/medical/diagnosisProjection.renderDiagnosisProjection 用于保存前本地即时回填。",
+    "要点：西医多条编号串接（'1.X；2.Y'）且主诊断恒排首位；单条纯名；",
+    "住院合成行 = '中医诊断：merge(病,证)' 换行 '西医诊断：...'（任一半有才输出该半行）。"
+  ],
+  "cases": [
+    {
+      "note": "两条西医(主诊断在后录入也要排首)+中医病证",
+      "entries": [
+        { "category": "western", "name": "2型糖尿病", "is_primary": false, "sort_order": 0 },
+        { "category": "western", "name": "高血压病", "is_primary": true, "sort_order": 1 },
+        { "category": "tcm_disease", "name": "眩晕病", "is_primary": false, "sort_order": 0 },
+        { "category": "tcm_syndrome", "name": "肝阳上亢证", "is_primary": false, "sort_order": 0 }
+      ],
+      "western_diagnosis": "1.高血压病；2.2型糖尿病",
+      "tcm_disease_diagnosis": "眩晕病",
+      "tcm_syndrome_diagnosis": "肝阳上亢证",
+      "admission_diagnosis": "中医诊断：眩晕病 — 肝阳上亢证\n西医诊断：1.高血压病；2.2型糖尿病"
+    },
+    {
+      "note": "单条西医纯名不编号",
+      "entries": [
+        { "category": "western", "name": "急性上呼吸道感染", "is_primary": true, "sort_order": 0 }
+      ],
+      "western_diagnosis": "急性上呼吸道感染",
+      "tcm_disease_diagnosis": "",
+      "tcm_syndrome_diagnosis": "",
+      "admission_diagnosis": "西医诊断：急性上呼吸道感染"
+    },
+    {
+      "note": "仅中医病(无证)——合成行走合并契约的仅疾病分支",
+      "entries": [
+        { "category": "tcm_disease", "name": "感冒", "is_primary": true, "sort_order": 0 }
+      ],
+      "western_diagnosis": "",
+      "tcm_disease_diagnosis": "感冒",
+      "tcm_syndrome_diagnosis": "",
+      "admission_diagnosis": "中医诊断：感冒"
+    },
+    {
+      "note": "空列表全空投影",
+      "entries": [],
+      "western_diagnosis": "",
+      "tcm_disease_diagnosis": "",
+      "tcm_syndrome_diagnosis": "",
+      "admission_diagnosis": ""
+    }
+  ]
+}
