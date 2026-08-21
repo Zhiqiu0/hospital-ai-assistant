@@ -58,7 +58,7 @@ export default function AiWritePanel() {
     >
       <BulbOutlined style={{ color: '#d48806', fontSize: 14 }} />
       <span style={{ fontSize: 12, color: '#874d00', marginRight: 4 }}>
-        本次 AI 补全 {fields.length} 项（点击 chip 查看，点 × 放弃；编辑该行后高亮消失）：
+        本次 AI 补全 {fields.length} 项（点击查看原文，点 × 标记已确认；编辑该行后自动消失）：
       </span>
       {fields.map(field => (
         <span
@@ -86,7 +86,7 @@ export default function AiWritePanel() {
           <CloseOutlined
             onClick={() => removeField(field)}
             style={{ fontSize: 10, color: '#bfbfbf', cursor: 'pointer', padding: 2 }}
-            title="放弃 AI 写入标记"
+            title="标记为已确认（不会改动病历内容）"
           />
         </span>
       ))}
