@@ -74,7 +74,14 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> str:
         if cleaned != content.strip():
             logger.warning("ai.qc_fix.guard: stripped_fabricated_vitals field=%s",
                            req.field_name)
-        return cleaned
+        # 异己前缀截断（2026-08-22 串写实锤守卫，与批量补全同款）：LLM 偶把
+        # 相邻字段（处理意见/复诊建议…）整段拼进单字段的修复文本
+        from app.services.ai.supplement_batch_service import _strip_foreign_prefixes
+        stripped = _strip_foreign_prefixes(req.field_name or "", cleaned)
+        if stripped != cleaned:
+            logger.warning("ai.qc_fix.guard: stripped_foreign_prefixes field=%s",
+                           req.field_name)
+        return stripped
     except Exception as exc:
         logger.exception("ai.qc_fix: failed err=%s", exc)
         return req.suggestion or ""

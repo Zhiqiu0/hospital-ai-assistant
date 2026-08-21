@@ -160,3 +160,34 @@ describe('writeSectionToRecord — 2026-06-11 映射修复回归', () => {
     expect(next).toContain('【注意事项】\n低盐饮食，监测血压')
   })
 })
+
+describe('splitFixLines 串写拆段（2026-08-22 生产实锤：句号分隔的多前缀行）', () => {
+  it('一行四前缀按前缀位置切开，各归各行（旧实现只认分号拆不开）', () => {
+    const runOn =
+      '治则治法：平肝潜阳，熄风止痛。处理意见：完善头颅CT检查。复诊建议：建议1周后复诊。注意事项：避免劳累，保证睡眠。'
+    const merged = mergeCompoundSectionBody(
+      '治则治法：[未填写，需补充]\n处理意见：[未填写，需补充]\n复诊建议：[未填写，需补充]\n注意事项：[未填写，需补充]',
+      runOn,
+      ['治则治法：', '处理意见：', '复诊建议：', '注意事项：']
+    )
+    const lines = merged.split('\n')
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe('治则治法：平肝潜阳，熄风止痛')
+    expect(lines[1]).toBe('处理意见：完善头颅CT检查')
+    expect(lines[2]).toBe('复诊建议：建议1周后复诊')
+    expect(lines[3]).toBe('注意事项：避免劳累，保证睡眠')
+    // 整章不得出现重复前缀（实锤 bug 的直接断言）
+    for (const p of ['治则治法：', '处理意见：', '复诊建议：', '注意事项：']) {
+      expect(merged.split(p)).toHaveLength(2)
+    }
+  })
+
+  it('字段内容里的正常句号/分号不被误切（单前缀行原样保留）', () => {
+    const merged = mergeCompoundSectionBody(
+      '治则治法：[未填写，需补充]',
+      '治则治法：平肝潜阳；熄风止痛。兼顾脾胃。',
+      ['治则治法：', '处理意见：']
+    )
+    expect(merged).toBe('治则治法：平肝潜阳；熄风止痛。兼顾脾胃。')
+  })
+})
