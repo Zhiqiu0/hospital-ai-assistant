@@ -365,3 +365,38 @@ class AITask(Base):
 
 # 延迟导入避免循环引用（MedicalRecord ↔ Encounter）
 from app.models.encounter import Encounter  # noqa: E402
+
+
+class QCReview(Base):
+    """病历复核记录表（科室质控员三级质控的电子化落点，2026-08-21 阶段4）。
+
+    病案首页质控方案要求"出院病历 24 小时内科室质控员自查并签字"——此前
+    系统只有医生单签，三级体系（院-科-人）里"科"这一层是纸面的。本表记录
+    质控员对已签发文书的复核结论，复核工作台见 api/v1/qc/。
+
+    conclusion 取值：
+      passed   : 复核通过
+      returned : 退回整改（comment 必填整改意见）
+    同一份文书可多次复核（退回→医生修订→再复核），按 created_at 取最新为准。
+    """
+
+    __tablename__ = "qc_reviews"
+
+    __table_args__ = (
+        Index("idx_qc_reviews_record", "medical_record_id", "created_at"),
+        Index("idx_qc_reviews_enc", "encounter_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    medical_record_id: Mapped[str] = mapped_column(
+        ForeignKey("medical_records.id"), nullable=False
+    )
+    encounter_id: Mapped[Optional[str]] = mapped_column(ForeignKey("encounters.id"))
+    # 复核人（id + 姓名快照，与 audit_logs 冗余 user_name 同先例）
+    reviewer_id: Mapped[str] = mapped_column(String, nullable=False)
+    reviewer_name: Mapped[Optional[str]] = mapped_column(String(50))
+    # passed / returned
+    conclusion: Mapped[str] = mapped_column(String(10), nullable=False)
+    # 复核意见（退回时必填）
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

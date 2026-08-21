@@ -328,3 +328,18 @@ async def require_admin(current_user=Depends(get_current_user)):
     if current_user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return current_user
+
+
+async def require_qc_officer(current_user=Depends(get_current_user)):
+    """FastAPI 依赖：质控员通道（qc_officer 或管理员）。
+
+    2026-08-21 阶段4：科室质控员的复核工作台走 /api/v1/qc/* 专属路由树，
+    与 /admin/*（require_admin 硬门禁）完全隔离——质控员不获得任何管理权限，
+    也不进 RECORD_WRITE_ROLES（病历署名必须是接诊医生本人的医院硬要求）。
+    管理员放行是为了医务科/院级检查也能用同一工作台。
+    """
+    from app.core.authz import ADMIN_ROLES
+
+    if current_user.role != "qc_officer" and current_user.role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="需要质控员权限")
+    return current_user

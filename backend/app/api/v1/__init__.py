@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.api.v1 import auth, patients, encounters, medical_records, ai, pacs, lab_reports, inpatient, ai_voice_stream, ai_feedback, sentry_tunnel, his, his_queue, his_ws, diagnosis_codes
 from app.api.v1.admin import router as admin_router
+from app.api.v1.qc import router as qc_router
 
 router = APIRouter()
 
@@ -27,6 +28,8 @@ router.include_router(sentry_tunnel.router, prefix="", tags=["可观测性"])
 
 # 后台管理：单一聚合 router，自带 audit_admin_action 依赖（修复"管理员操作零审计"硬伤）
 router.include_router(admin_router, prefix="/admin")
+# 质控员工作台（2026-08-21 阶段4；路由树级 require_qc_officer 门禁）
+router.include_router(qc_router, prefix="/qc", tags=["质控复核"])
 
 # 注：旧的桌面 Agent「控件模式」和「/embed 嵌入模式」两代旧接入范式均已退休删除
 # （2026-08-12 embed 下线），HIS 接入统一走下面的接口模式：推送建档 + 叫号 + 回写。

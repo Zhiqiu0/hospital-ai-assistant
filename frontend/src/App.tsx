@@ -37,6 +37,7 @@ import WorkbenchPage from '@/pages/WorkbenchPage'
 const EmergencyWorkbenchPage = lazy(() => import('@/pages/EmergencyWorkbenchPage'))
 const InpatientWorkbenchPage = lazy(() => import('@/pages/InpatientWorkbenchPage'))
 const PacsWorkbenchPage = lazy(() => import('@/pages/PacsWorkbenchPage'))
+const QcWorkbenchPage = lazy(() => import('@/pages/QcWorkbenchPage'))
 const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout'))
 
 /** 懒加载路由切换时的过渡画面（与应用启动 Spin 风格一致）
@@ -75,11 +76,22 @@ function PacsRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// 质控复核工作台只对科室质控员（qc_officer）和管理员开放（2026-08-21 阶段4）；
+// 角色集合唯一权威在后端 core/authz.py ALL_ROLES
+function QcRoute({ children }: { children: React.ReactNode }) {
+  const { token, user } = useAuthStore()
+  if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
+  const allowed = user && (user.role === 'qc_officer' || ADMIN_ROLES.includes(user.role))
+  if (!allowed) return <Navigate to="/workbench" replace />
+  return <>{children}</>
+}
+
 function RootRedirect() {
   const { token, user, systemType } = useAuthStore()
   if (!token || isTokenExpired(token)) return <Navigate to="/login" replace />
   if (user && ADMIN_ROLES.includes(user.role)) return <Navigate to="/admin" replace />
   if (user?.role === 'radiologist') return <Navigate to="/pacs" replace />
+  if (user?.role === 'qc_officer') return <Navigate to="/qc" replace />
   if (systemType === 'inpatient') return <Navigate to="/inpatient" replace />
   return <Navigate to="/workbench" replace />
 }
@@ -154,6 +166,14 @@ export default function App() {
               <PacsRoute>
                 <PacsWorkbenchPage />
               </PacsRoute>
+            }
+          />
+          <Route
+            path="/qc"
+            element={
+              <QcRoute>
+                <QcWorkbenchPage />
+              </QcRoute>
             }
           />
           <Route

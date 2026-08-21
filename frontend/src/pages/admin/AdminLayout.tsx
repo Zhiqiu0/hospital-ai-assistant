@@ -58,6 +58,7 @@ const ROLE_MAP: Record<string, string> = {
   nurse: '护士',
   // 角色集合的唯一权威在后端 core/authz.py ALL_ROLES（2026-08-21 阶段0）
   radiologist: '影像科医生',
+  qc_officer: '科室质控员',
 }
 
 export default function AdminLayout() {
