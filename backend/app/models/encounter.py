@@ -230,3 +230,60 @@ class InquiryInput(Base, TimestampMixin):
 
     # 关联接诊记录
     encounter: Mapped[Encounter] = relationship(back_populates="inquiry_inputs")
+
+
+class Diagnosis(Base, TimestampMixin):
+    """诊断条目表（病历诊断的结构化权威源，2026-08-21 阶段1）。
+
+    背景（病案首页质控方案落地）：病案首页是 DRG 分组唯一数据源，"主要诊断
+    选择错误"是法定单项否决（扣 10 分）且直接决定医保拨付。此前诊断散落在
+    inquiry_inputs 的三个自由文本列，主诊断靠"第一个非空字段即主"隐式推断，
+    "入院病情"标志（首页逐条诊断必填项）完全没有落点。
+
+    职责边界（与 problem_list 表的区分，防两套真相）：
+      - 本表      = 法定文书语义——病历/病案首页上的诊断条目（回写 HIS 的
+                    diagnoses[] 数组即从本表构建），每次接诊的权威诊断清单
+      - problem_list = 临床管理语义——住院期间的问题跟踪（active/resolved
+                    生命周期），是医生的工作清单而非法定文书内容
+
+    双写过渡策略（阶段1）：本表为权威；保存时同步把条目渲染成文本投影写回
+    inquiry_inputs 的旧三列（western_diagnosis / tcm_disease_diagnosis /
+    tcm_syndrome_diagnosis），LLM 生成 / 渲染器 / QC 引擎现有文本链路零改动
+    继续工作，后续阶段逐步切到结构化直读。
+
+    category 取值（与 HIS 回写 diagnoses[].category 枚举一致）：
+      western     : 西医诊断（可多条，其中恰一条 is_primary）
+      tcm_disease : 中医疾病诊断（每次接诊至多一条）
+      tcm_syndrome: 中医证候诊断（每次接诊至多一条）
+
+    admission_condition（入院病情，病案首页逐条诊断的标志位，住院场景填写）：
+      有 / 临床未确定 / 情况不明 / 无 —— 国家病案首页规范四值枚举
+    """
+
+    __tablename__ = "diagnoses"
+
+    __table_args__ = (
+        # 主查询：按接诊拉全部条目（排序在应用层按 sort_order）
+        Index("idx_diagnoses_enc", "encounter_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    encounter_id: Mapped[str] = mapped_column(
+        ForeignKey("encounters.id"), nullable=False
+    )
+    # 诊断类别：western / tcm_disease / tcm_syndrome（枚举见类注释）
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    # 诊断名称（权威展示值；编码化后与 code 成对）
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # 诊断编码 + 编码体系（阶段2 编码化启用；HIS 回写 v1.4 已预留同名槽位）
+    # code_type 枚举与接口规范一致：ICD10（西医）/ GB95（中医病证分类国标）
+    code: Mapped[Optional[str]] = mapped_column(String(20))
+    code_type: Mapped[Optional[str]] = mapped_column(String(10))
+    # 是否主要诊断（西医组内恰一条为真；法定单项否决项，必须显式而非推断）
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 入院病情标志（住院场景逐条必填；门急诊留空）
+    admission_condition: Mapped[Optional[str]] = mapped_column(String(10))
+    # 组内排序（西医多条时的展示与回写次序；主诊断恒排首位）
+    sort_order: Mapped[int] = mapped_column(default=0)
+    # 录入人（医生姓名快照，与 problem_list.added_by 同风格）
+    added_by: Mapped[Optional[str]] = mapped_column(String(50))

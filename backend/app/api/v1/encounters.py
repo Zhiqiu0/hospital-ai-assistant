@@ -32,7 +32,12 @@ from app.schemas.encounter import EncounterCreate, EncounterResponse
 from app.services.encounter_service import EncounterService
 
 # 同目录子路由（各自持有 APIRouter，端点路径与拆分前逐字一致）
-from app.api.v1 import encounters_inquiry, encounters_lifecycle, encounters_quickstart
+from app.api.v1 import (
+    encounters_diagnoses,
+    encounters_inquiry,
+    encounters_lifecycle,
+    encounters_quickstart,
+)
 
 # 主 router：仍由 app/api/v1/__init__.py 以 prefix="/encounters" 注册；
 # 子路由不带额外 prefix，拼回后端点路径与原文件完全相同。
@@ -74,3 +79,5 @@ async def create_encounter(
 router.include_router(encounters_quickstart.router)
 router.include_router(encounters_lifecycle.router)
 router.include_router(encounters_inquiry.router)
+# 诊断条目子资源（2026-08-21 阶段1a 诊断结构化）
+router.include_router(encounters_diagnoses.router)

@@ -69,6 +69,27 @@ class EncounterSnapshotMixin:
             .limit(1)
         )).scalar_one_or_none()
 
+        # ── 2.5 诊断条目（结构化权威源，2026-08-21 阶段1a）────────────
+        from app.models.encounter import Diagnosis
+        diagnosis_rows = (await self.db.execute(
+            select(Diagnosis)
+            .where(Diagnosis.encounter_id == encounter_id)
+            .order_by(Diagnosis.is_primary.desc(), Diagnosis.sort_order, Diagnosis.created_at)
+        )).scalars().all()
+        diagnoses_list = [
+            {
+                "id": d.id,
+                "category": d.category,
+                "name": d.name,
+                "code": d.code,
+                "code_type": d.code_type,
+                "is_primary": d.is_primary,
+                "admission_condition": d.admission_condition,
+                "sort_order": d.sort_order,
+            }
+            for d in diagnosis_rows
+        ]
+
         # ── 3. 病历 + 当前版本一次 LEFT JOIN 查回（消除 N+1）──────────
         # 原实现：N 条病历 → N+1 次查询；现在合并为 1 次。
         rows = (await self.db.execute(
@@ -137,6 +158,9 @@ class EncounterSnapshotMixin:
             } if patient else None,
             "patient_profile": patient_profile,
             "inquiry": _serialize_inquiry(inquiry, encounter),
+            # 诊断条目（结构化权威源，2026-08-21 阶段1a）——前端条目编辑器恢复用；
+            # 旧文本三列仍在 inquiry 里（双写投影），两者由服务层保证一致
+            "diagnoses": diagnoses_list,
             "is_first_visit": encounter.is_first_visit,
             "active_record": record_items[0] if record_items else None,
             "records": record_items,
