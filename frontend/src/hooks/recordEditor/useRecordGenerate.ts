@@ -42,9 +42,18 @@ export function useRecordGenerate(shared: RecordEditorShared) {
     // 病程记录类型需要注入上一份病历作为 AI 上下文（pull-forward）
     // 用共享 isCourseRecordType()，避免跟 record_prompts._INPATIENT_TITLES /
     // record_renderer._RENDERERS 三处硬编码列表不同步。
-    let previousRecord = previousRecordContent || undefined
-    if (isCourseRecordType(recordType) && !previousRecord) {
-      previousRecord = await fetchLatestRecord()
+    //
+    // 优先级（2026-08-21 第四轮走查修正）：course 类必须优先拉住院侧最新文书——
+    // previousRecordContent 是转住院时存的急诊/门诊病历，整段住院期间常驻不清，
+    // 旧写法它永远短路 fetchLatestRecord：住院第 N 天写病程 / 出院记录时，
+    // AI 拿的还是入院前的门诊病历，住院期间的病情演变全部缺失（生产实锤：
+    // 出院记录的入院情况/诊疗经过全为占位符）。拉不到（刚转住院还没写任何
+    // 住院文书）再退回转诊参考。非 course 类型维持原语义。
+    let previousRecord: string | undefined
+    if (isCourseRecordType(recordType)) {
+      previousRecord = (await fetchLatestRecord()) || previousRecordContent || undefined
+    } else {
+      previousRecord = previousRecordContent || undefined
     }
 
     // 1.6 起 8 个 profile 字段已迁出 inquiry，但后端 prompt 仍然需要它们：
