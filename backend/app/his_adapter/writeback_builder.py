@@ -65,6 +65,10 @@ async def _build_diagnoses(db: AsyncSession, encounter_id: str, inq: Optional[In
         out = []
         for d in rows:
             item: dict = {"name": d.name, "is_primary": d.is_primary, "category": d.category}
+            # 入院病情标志（2026-08-21 阶段3；新增可选字段，按规范 2.5 向后兼容
+            # 条款 HIS 忽略未识别字段即可，v1.5 增补文档同步说明）
+            if d.admission_condition:
+                item["admission_condition"] = d.admission_condition
             if d.code:
                 item["code"] = d.code
                 spec_type = _CODE_TYPE_TO_SPEC.get(d.code_type or "")

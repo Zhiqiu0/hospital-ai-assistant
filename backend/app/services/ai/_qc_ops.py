@@ -25,6 +25,7 @@ from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts import QC_FIX_PROMPT
 from app.services.ai.task_logger import log_ai_task, save_qc_report
+from app.services.ai._qc_frontpage import load_front_page
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.scorer import score
 
@@ -95,6 +96,8 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         }
 
     rubric = _select_rubric(req.record_type)
+    # 病案首页结构化数据预取（2026-08-21 阶段3；无 encounter 时首页规则跳过）
+    front_page = await load_front_page(db, getattr(req, "encounter_id", None))
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
@@ -107,6 +110,7 @@ async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:
         # 复诊豁免透传（2026-08-20）：不传则主诉持续时间等规则恒按初诊从严
         is_first_visit=req.is_first_visit if req.is_first_visit is not None else True,
         inquiry=extract_inquiry_dict(req),
+        front_page=front_page,
     )
     report = score(rubric, ctx)
     issues = _deductions_to_issues(report)

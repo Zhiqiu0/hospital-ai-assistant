@@ -118,6 +118,35 @@ class EncounterMeta:
 
 
 @dataclass(frozen=True)
+class FrontPageData:
+    """病案首页结构化数据（2026-08-21 阶段3，法定"病案首页 10 分"实装的数据源）。
+
+    由 service 层按 encounter_id 预取（患者档案 + 接诊 + 诊断条目表），
+    ctx 保持纯数据——checker 仍是同步纯函数，355 个既有 rubric 测试不受影响。
+    未预取（None/默认空）时首页规则一律不触发，兼容纯文本调用方。
+
+    Attributes:
+        id_card:        身份证号（校验位/性别位/出生段互验用）
+        birth_date:     出生日期 ISO 字符串（与身份证出生段互验）
+        gender:         性别（male/female/unknown 或中文，与身份证性别位互验）
+        blood_type:     血型（首页"其余信息"0.5分/处口径）
+        admission_route: 入院途径（首页项目 1分/处口径）
+        allergy_history: 药物过敏史文本（首页项目口径）
+        diagnoses:      结构化诊断条目 [{category,name,code,is_primary,admission_condition}]
+        loaded:         是否已预取（False = 数据缺席，一切首页规则跳过）
+    """
+
+    id_card: str = ""
+    birth_date: str = ""
+    gender: str = ""
+    blood_type: str = ""
+    admission_route: str = ""
+    allergy_history: str = ""
+    diagnoses: tuple = ()
+    loaded: bool = False
+
+
+@dataclass(frozen=True)
 class RecordContext:
     """评分上下文——按 FHIR R5 三资源分层。
 
@@ -135,6 +164,8 @@ class RecordContext:
     patient_meta: PatientMeta = field(default_factory=PatientMeta)
     encounter_meta: EncounterMeta = field(default_factory=EncounterMeta)
     inquiry: dict[str, str] = field(default_factory=dict)
+    # 病案首页结构化数据（2026-08-21 阶段3；未预取时 loaded=False 首页规则跳过）
+    front_page: FrontPageData = field(default_factory=FrontPageData)
 
     def section(self, name: str) -> Section:
         """取章节——缺失时返回空 Section，避免规则代码写 None 判断。
@@ -177,6 +208,7 @@ def build_context(
     patient_gender: str = "",
     patient_age: str = "",
     inquiry: Optional[dict[str, str]] = None,
+    front_page: Optional[FrontPageData] = None,
 ) -> RecordContext:
     """从病历正文 + 元数据构造 RecordContext。
 
@@ -196,4 +228,5 @@ def build_context(
             is_first_visit=is_first_visit,
         ),
         inquiry=inquiry or {},
+        front_page=front_page or FrontPageData(),
     )

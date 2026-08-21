@@ -24,6 +24,7 @@ PDF 备注 6："单项否决指标计分时扣 10 分，不累积扣分"。
 from __future__ import annotations
 
 from app.services.qc_engine import _inpatient_checkers as ic
+from app.services.qc_engine import _inpatient_checkers_frontpage as fp
 from app.services.qc_engine.rubric import (
     DeductionRule,
     GradeThreshold,
@@ -33,15 +34,60 @@ from app.services.qc_engine.rubric import (
 )
 
 
-# ─── 1. 病案首页（10 分）— 暂不评分，占位 ─────────────────────────
-# PDF：患者基本信息错误（单项否决）、主要诊断错误（单项否决）…… 都是面向
-# 结构化首页数据，不在病历正文 ctx 范围内。本系统暂留空规则，待接入病案首页
-# 数据后实装。
+# ─── 1. 病案首页（10 分）— 2026-08-21 阶段3 实装可确定判定子集 ─────
+# 数据源：ctx.front_page（service 层按 encounter_id 预取患者档案+接诊+诊断
+# 条目表；未预取时 loaded=False 全部规则不触发，兼容纯文本调用方）。
+# 只实装 PDF 评分说明里能从结构化数据**确定判真**的条款；判不了的绝不猜
+# （手术编码、离院方式、首页 24h 填报时刻等系统无数据项一律跳过）。
+# PDF 注："考核医师病历质量时，编码不做要求"→ 诊断编码不在扣分范围。
 _FRONT_PAGE = RubricItem(
     name="病案首页",
     max_points=10,
-    description="患者基本信息/诊断/手术编码/入院途径等首页字段（本系统暂不评分）",
-    deduction_rules=(),  # TODO: 接入结构化首页数据后实装
+    description="患者基本信息/诊断/入院途径/入院病情等首页字段（结构化判定子集）",
+    deduction_rules=(
+        DeductionRule(
+            code="IP-FP-01",
+            description="项目填写漏填：诊断条目缺「入院病情」标志",
+            deduct_points=1,
+            checker=fp.frontpage_admission_condition_missing,
+            target_field=None,
+        ),
+        DeductionRule(
+            code="IP-FP-02",
+            description="项目填写漏填：入院途径未填写",
+            deduct_points=1,
+            checker=fp.frontpage_admission_route_missing,
+            target_field=None,
+        ),
+        DeductionRule(
+            code="IP-FP-03",
+            description="项目填写漏填：药物过敏未填写",
+            deduct_points=1,
+            checker=fp.frontpage_allergy_missing,
+            target_field=None,
+        ),
+        DeductionRule(
+            code="IP-FP-04",
+            description="其余信息漏填：血型未填写",
+            deduct_points=0.5,
+            checker=fp.frontpage_blood_type_missing,
+            target_field=None,
+        ),
+    ),
+    veto_rules=(
+        VetoRule(
+            code="IP-FP-VETO-01",
+            description="患者基本信息错误（身份证校验位错误或与性别/出生日期矛盾，单项否决）",
+            checker=fp.frontpage_basic_info_conflict,
+            target_field=None,
+        ),
+        VetoRule(
+            code="IP-FP-VETO-02",
+            description="主要诊断填写错误（未标注主要诊断，单项否决）",
+            checker=fp.frontpage_primary_diagnosis_missing,
+            target_field=None,
+        ),
+    ),
 )
 
 
