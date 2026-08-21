@@ -18,7 +18,7 @@
  *   签发前 RecordEditor 会读 fields 判断是否需要弹"以下 N 处为 AI 补全，
  *   请确认"对话框。
  */
-import { CloseOutlined, BulbOutlined } from '@ant-design/icons'
+import { BulbOutlined } from '@ant-design/icons'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 
 /** chip 跳转的 CustomEvent 名，RecordEditor 监听后调 setSelectionRange + focus */
@@ -58,36 +58,33 @@ export default function AiWritePanel() {
     >
       <BulbOutlined style={{ color: '#d48806', fontSize: 14 }} />
       <span style={{ fontSize: 12, color: '#874d00', marginRight: 4 }}>
-        本次 AI 补全 {fields.length} 项（点击 chip 查看，点 × 放弃；编辑该行后高亮消失）：
+        本次 AI 补全 {fields.length} 项（点击跳转查看并确认；直接编辑该行也会消除）：
       </span>
       {fields.map(field => (
+        // 点击即"查看并确认"（2026-08-22 用户拍板）：跳转 + 闪烁 + 移除标记
+        // 一步完成——原设计要求跳转后再点正文那行才消，多一步且路径隐蔽；
+        // 独立 × 按钮随之失去存在价值，一并移除减少视觉噪音。
+        // 签发前"还有 N 处未确认"弹窗读同一状态池，计数随点击即时减少。
         <span
           key={field}
+          onClick={() => {
+            handleJump(field)
+            removeField(field)
+          }}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
-            padding: '2px 8px 2px 10px',
+            padding: '2px 10px',
             background: '#fff',
             border: '1px solid #ffd666',
             borderRadius: 12,
             fontSize: 12,
             color: '#874d00',
-            cursor: 'default',
+            cursor: 'pointer',
           }}
+          title="点击跳转到病历对应行并确认（不会改动病历内容）"
         >
-          <span
-            onClick={() => handleJump(field)}
-            style={{ cursor: 'pointer' }}
-            title="点击跳转到病历对应行"
-          >
-            {field}
-          </span>
-          <CloseOutlined
-            onClick={() => removeField(field)}
-            style={{ fontSize: 10, color: '#bfbfbf', cursor: 'pointer', padding: 2 }}
-            title="放弃 AI 写入标记"
-          />
+          {field}
         </span>
       ))}
     </div>
