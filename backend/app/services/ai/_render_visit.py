@@ -19,6 +19,7 @@ from app.services.ai._render_common import (
     _subline,
     _v,
 )
+from app.services.ai.record_schemas import PLACEHOLDER, coalesce_field
 
 
 # ─── 门诊（中医） ────────────────────────────────────────────────────
@@ -219,11 +220,18 @@ def render_admission_note(
     parts.append(_section("【专项评估】", "\n".join(assessment_lines)))
 
     # 体格检查 — 生命体征行 + 文字描述
+    # 两个子字段各自空转占位符会渲染出连续两行 "[未填写，需补充]"（2026-08-21
+    # 第四轮走查实锤，看着像 bug 且会被前端反解整段写回问诊字段）——
+    # 空子行不渲染，两者皆空时整节收敛为单个占位符
     pe_lines = [
-        normalize_vitals_line(_v(data, "physical_exam_vitals")),
-        _v(data, "physical_exam_text"),
+        line
+        for line in (
+            normalize_vitals_line(coalesce_field(data.get("physical_exam_vitals"), "")),
+            coalesce_field(data.get("physical_exam_text"), ""),
+        )
+        if line
     ]
-    parts.append(_section("【体格检查】", "\n".join(pe_lines)))
+    parts.append(_section("【体格检查】", "\n".join(pe_lines) or PLACEHOLDER))
     # 专科检查独立成节（= 医院模板"体格检查（二）"，2026-08-18）：
     # 骨伤/手外病历的核心体征单独一节，医生一眼能看到、质控能定位。
     parts.append(_section("【专科检查】", _v(data, "specialist_exam")))
