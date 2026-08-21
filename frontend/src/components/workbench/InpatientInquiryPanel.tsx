@@ -14,6 +14,7 @@ import PhysicalExamSection from './PhysicalExamSection'
 import InpatientInquiryFooter from './inpatientInquiry/InpatientInquiryFooter'
 import CollapsibleSection from '@/components/common/CollapsibleSection'
 import WesternDiagnosisEditor from './inquiry/WesternDiagnosisEditor'
+import { FormDiagnosisNameInput } from './inquiry/DiagnosisCodeInput'
 import { useInpatientInquiryPanel } from '@/hooks/useInpatientInquiryPanel'
 import { useCurrentPatient } from '@/store/activeEncounterStore'
 
@@ -211,15 +212,20 @@ export default function InpatientInquiryPanel() {
               name="tcm_disease_diagnosis"
               label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医疾病诊断</span>}
             >
-              <Input placeholder="如：眩晕病、项痹病" style={{ borderRadius: 6, fontSize: 13 }} />
+              <FormDiagnosisNameInput
+                codeType="TCD_DIS"
+                placeholder="如：眩晕病、项痹病（可输拼音首字母联想）"
+                style={{ borderRadius: 6, fontSize: 13 }}
+              />
             </Form.Item>
             <Form.Item
               style={{ marginBottom: 10 }}
               name="tcm_syndrome_diagnosis"
               label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医证候诊断</span>}
             >
-              <Input
-                placeholder="如：肝阳上亢证、气滞血瘀证"
+              <FormDiagnosisNameInput
+                codeType="TCD_SYN"
+                placeholder="如：肝阳上亢证、气滞血瘀证（可输拼音首字母联想）"
                 style={{ borderRadius: 6, fontSize: 13 }}
               />
             </Form.Item>

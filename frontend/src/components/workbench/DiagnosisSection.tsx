@@ -7,6 +7,7 @@
 import { Form, Input } from 'antd'
 import { BulbOutlined } from '@ant-design/icons'
 import WesternDiagnosisEditor from './inquiry/WesternDiagnosisEditor'
+import { FormDiagnosisNameInput } from './inquiry/DiagnosisCodeInput'
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
@@ -49,7 +50,11 @@ export default function DiagnosisSection({ locked = false }: { locked?: boolean 
           name="tcm_disease_diagnosis"
           label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医疾病诊断</span>}
         >
-          <Input placeholder="如：眩晕病、胸痹、感冒" style={{ borderRadius: 6, fontSize: 13 }} />
+          <FormDiagnosisNameInput
+            codeType="TCD_DIS"
+            placeholder="如：眩晕病、胸痹、感冒（可输拼音首字母联想）"
+            style={{ borderRadius: 6, fontSize: 13 }}
+          />
         </Form.Item>
 
         <Form.Item
@@ -57,8 +62,9 @@ export default function DiagnosisSection({ locked = false }: { locked?: boolean 
           name="tcm_syndrome_diagnosis"
           label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医证候诊断</span>}
         >
-          <Input
-            placeholder="如：肝阳上亢证、痰热壅肺证"
+          <FormDiagnosisNameInput
+            codeType="TCD_SYN"
+            placeholder="如：肝阳上亢证、痰热壅肺证（可输拼音首字母联想）"
             style={{ borderRadius: 6, fontSize: 13 }}
           />
         </Form.Item>

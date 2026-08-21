@@ -287,3 +287,43 @@ class Diagnosis(Base, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(default=0)
     # 录入人（医生姓名快照，与 problem_list.added_by 同风格）
     added_by: Mapped[Optional[str]] = mapped_column(String(50))
+
+
+class DiagnosisCode(Base):
+    """诊断/手术编码字典表（2026-08-21 阶段2 编码化）。
+
+    数据源（全部官方渠道，构建脚本 scripts/build_diagnosis_dict.py）：
+      ICD10    : 疾病诊断编码，医保 2.0 口径（湖北完整库的医保对应码列）
+      ICD9CM3  : 手术操作编码，医保 2.0 口径（同上）
+      TCD_DIS  : 中医疾病名代码（GB/T 15657-2021，A 码，云南医保局医保版材料）
+      TCD_SYN  : 中医证候名代码（GB/T 15657-2021，B 码，同上）
+    共约 4.8 万条，随迁移自动导入（seed_data/diagnosis_codes.csv.gz）。
+
+    检索设计：名称 contains + 拼音首字母前缀 + 编码前缀 三路（搜索端点见
+    api/v1/diagnosis_codes.py）；aliases 存"可选词"别名（中医国标里的
+    同义写法，如 感冒 的"伤风感冒"），检索时一并命中。
+
+    HIS 回写 code_type 映射：ICD10→"ICD10"；TCD_DIS/TCD_SYN→"GB95"
+    （v1.4 规范枚举值；国标已升级 2021 版，具体口径联调时与厂商确认）。
+    """
+
+    __tablename__ = "diagnosis_codes"
+
+    __table_args__ = (
+        # 三路检索索引：类型+名称 / 类型+拼音首字母（前缀）/ 类型+编码（前缀）
+        Index("idx_diag_codes_type_name", "code_type", "name"),
+        Index("idx_diag_codes_type_pinyin", "code_type", "pinyin_initial"),
+        Index("idx_diag_codes_type_code", "code_type", "code"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # ICD10 / ICD9CM3 / TCD_DIS / TCD_SYN
+    code_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    # 主名拼音首字母串（小写），联想检索用
+    pinyin_initial: Mapped[Optional[str]] = mapped_column(String(60))
+    # 别名（"；"分隔，中医"可选词"），检索一并命中
+    aliases: Mapped[Optional[str]] = mapped_column(String(300))
+    # 字典版本标注（整库换版时区分）
+    version: Mapped[str] = mapped_column(String(20), default="医保2.0")
