@@ -83,6 +83,9 @@ export default function AdminLayout() {
     { key: '/admin/users', icon: <UserOutlined />, label: '用户管理' },
     { key: '/admin/departments', icon: <ApartmentOutlined />, label: '科室管理' },
     { key: '/admin/qc-rules', icon: <SafetyOutlined />, label: '质控评分标准' },
+    // 质控复核台直达（2026-08-22）：医务科用管理员账号也要用复核/统计，
+    // require_qc_officer 对管理员本就放行，这里只是补菜单入口（跳出 /admin 树）
+    { key: '/qc', icon: <SafetyOutlined />, label: '质控复核台' },
     { key: '/admin/stats', icon: <BarChartOutlined />, label: '数据统计' },
     { key: '/admin/records', icon: <FileTextOutlined />, label: '病历管理' },
     { key: '/admin/patients', icon: <TeamOutlined />, label: '患者档案' },
