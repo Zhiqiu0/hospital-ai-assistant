@@ -205,3 +205,18 @@ export const FIELD_TO_LINE_PREFIX: Record<
   当前用药: { section: '【专项评估】', prefix: '· 当前用药' },
   宗教信仰: { section: '【专项评估】', prefix: '· 宗教信仰' },
 }
+
+/**
+ * 可自动补全的问题过滤（2026-08-22 终验收口）：只保留法定扣分项。
+ *   - source==='llm'：LLM 质量建议，field_name 由模型自命名（常是复合段大项名），
+ *     行级写入定位不到子行，补出来的内容会落成段首自由文本
+ *   - issue_type==='insurance' / 'frontpage_hint'：风险/交叉提醒，
+ *     不是"缺失字段"，不该由 AI 补内容
+ */
+export function supplementableIssues<T extends { source?: string; issue_type?: string }>(
+  issues: T[]
+): T[] {
+  return issues.filter(
+    i => i.source !== 'llm' && i.issue_type !== 'insurance' && i.issue_type !== 'frontpage_hint'
+  )
+}
