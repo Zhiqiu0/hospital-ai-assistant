@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends
 
 from app.core.security import require_qc_officer
 
-from app.api.v1.qc import reviews
+from app.api.v1.qc import reviews, stats
 
 router = APIRouter(dependencies=[Depends(require_qc_officer)])
 router.include_router(reviews.router)
+# 质控指标统计（2026-08-21 阶段5）
+router.include_router(stats.router)

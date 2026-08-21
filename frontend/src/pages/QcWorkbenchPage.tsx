@@ -6,7 +6,8 @@
  * 复核通过 / 退回整改（必填意见）。所有查阅与结论均写审计日志。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Drawer, Input, Layout, Space, Table, Tag, Typography } from 'antd'
+import { Button, Drawer, Input, Layout, Space, Table, Tabs, Tag, Typography } from 'antd'
+import QcStatsPanel from './qc/QcStatsPanel'
 import { CheckOutlined, LogoutOutlined, RollbackOutlined, SafetyOutlined } from '@ant-design/icons'
 import { message } from '@/services/messageBridge'
 import api from '@/services/api'
@@ -153,45 +154,57 @@ export default function QcWorkbenchPage() {
         </Space>
       </Header>
       <Content style={{ padding: 16, overflow: 'auto' }}>
-        <Table<QueueItem>
-          rowKey="record_id"
-          loading={loading}
-          dataSource={items}
-          pagination={{
-            current: page,
-            pageSize: 20,
-            total,
-            onChange: setPage,
-            showTotal: t => `待复核 ${t} 份`,
-          }}
-          columns={[
-            { title: '患者', dataIndex: 'patient_name', width: 120 },
+        <Tabs
+          items={[
             {
-              title: '文书',
-              dataIndex: 'record_type',
-              width: 130,
-              render: (v: string, row) =>
-                `${TYPE_LABEL[v] || v}${row.record_no && row.record_no !== '1' ? ` #${row.record_no}` : ''}`,
-            },
-            {
-              title: '签发时间',
-              dataIndex: 'submitted_at',
-              render: (v: string | null) => (v ? v.replace('T', ' ').slice(0, 16) : '—'),
-            },
-            {
-              title: '出院时间（24h 复核时限参考）',
-              dataIndex: 'discharged_at',
-              render: (v: string | null) => (v ? v.replace('T', ' ').slice(0, 16) : '未出院'),
-            },
-            {
-              title: '操作',
-              width: 100,
-              render: (_, row) => (
-                <Button size="small" onClick={() => openDetail(row.record_id)}>
-                  复核
-                </Button>
+              key: 'queue',
+              label: '待复核',
+              children: (
+                <Table<QueueItem>
+                  rowKey="record_id"
+                  loading={loading}
+                  dataSource={items}
+                  pagination={{
+                    current: page,
+                    pageSize: 20,
+                    total,
+                    onChange: setPage,
+                    showTotal: t => `待复核 ${t} 份`,
+                  }}
+                  columns={[
+                    { title: '患者', dataIndex: 'patient_name', width: 120 },
+                    {
+                      title: '文书',
+                      dataIndex: 'record_type',
+                      width: 130,
+                      render: (v: string, row) =>
+                        `${TYPE_LABEL[v] || v}${row.record_no && row.record_no !== '1' ? ` #${row.record_no}` : ''}`,
+                    },
+                    {
+                      title: '签发时间',
+                      dataIndex: 'submitted_at',
+                      render: (v: string | null) => (v ? v.replace('T', ' ').slice(0, 16) : '—'),
+                    },
+                    {
+                      title: '出院时间（24h 复核时限参考）',
+                      dataIndex: 'discharged_at',
+                      render: (v: string | null) =>
+                        v ? v.replace('T', ' ').slice(0, 16) : '未出院',
+                    },
+                    {
+                      title: '操作',
+                      width: 100,
+                      render: (_, row) => (
+                        <Button size="small" onClick={() => openDetail(row.record_id)}>
+                          复核
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
               ),
             },
+            { key: 'stats', label: '质控统计', children: <QcStatsPanel /> },
           ]}
         />
       </Content>
