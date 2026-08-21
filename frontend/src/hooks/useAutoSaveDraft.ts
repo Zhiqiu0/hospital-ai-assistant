@@ -279,7 +279,6 @@ export function useAutoSaveDraft({
     // 同步 recordStore 的"已落库"标记，水合的 localIsDirty 判断与状态条同时受益
     useRecordStore.getState().markSaved(payload.content, Date.now())
     setSavingState('saved')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baselineSignal])
 
   // ── 强制 flush 信号：外部（如 ExamSuggestionTab 写入按钮）希望立即落盘 ─────
