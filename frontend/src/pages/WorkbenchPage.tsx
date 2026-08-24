@@ -47,6 +47,7 @@ import LabReportTab from '@/components/workbench/LabReportTab'
 import NewEncounterModal from '@/components/workbench/NewEncounterModal'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
 import WorkbenchHeader from '@/components/workbench/WorkbenchHeader'
+import ReturnedRecordsNotice from '@/components/workbench/ReturnedRecordsNotice'
 import NoPatientOverlay from '@/components/workbench/NoPatientOverlay'
 import CancelEncounterModal from '@/components/workbench/CancelEncounterModal'
 import HisQueueDock from '@/components/workbench/HisQueueDock'
@@ -251,6 +252,9 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           onOpenCancel={openCancel}
         />
       </Header>
+
+      {/* 质控退回提醒横幅（有退回待整改文书时才渲染，2026-08-22 退回闭环） */}
+      <ReturnedRecordsNotice />
 
       <Content
         style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10, position: 'relative' }}

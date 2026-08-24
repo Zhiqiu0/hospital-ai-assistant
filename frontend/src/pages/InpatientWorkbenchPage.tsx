@@ -38,6 +38,7 @@ import WardView from '@/components/workbench/WardView'
 import NewInpatientEncounterModal from '@/components/workbench/NewInpatientEncounterModal'
 import ComplianceBar from '@/components/workbench/ComplianceBar'
 import InpatientHeader from '@/components/workbench/InpatientHeader'
+import ReturnedRecordsNotice from '@/components/workbench/ReturnedRecordsNotice'
 import InpatientRightPanel from '@/components/workbench/InpatientRightPanel'
 import ProgressNotePanel from '@/components/workbench/ProgressNotePanel'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar'
@@ -161,6 +162,9 @@ export default function InpatientWorkbenchPage() {
         onDischarged={handleDischarged}
         onOpenCancel={openCancel}
       />
+
+      {/* 质控退回提醒横幅（有退回待整改文书时才渲染，2026-08-22 退回闭环） */}
+      <ReturnedRecordsNotice />
 
       <Content
         style={{ display: 'flex', overflow: 'hidden', gap: 0, padding: 10, position: 'relative' }}
