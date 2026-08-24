@@ -226,6 +226,71 @@ async def create_record(
     return await service.create(data)
 
 
+@router.get("/my-returned")
+async def my_returned_records(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """当前医生被质控退回待整改的文书清单（2026-08-22 退回闭环）。
+
+    口径：本医生接诊下的已签发文书，其**最新一条复核结论为 returned**，且
+    退回之后没有再签发过同接诊同类型的文书。住院重签不覆盖旧文书而是
+    新建一份（record_no 递增，见 _medical_record_sign），所以"整改完成"
+    的判据必须落在 (encounter, record_type) 维度而不是单条 record 上：
+    只要退回时间之后签发过同类型文书（同条覆盖或新建皆可），即视为已
+    整改自动出清单——新文书会重新进入质控复核队列，语义互为镜像。
+    """
+    from sqlalchemy import func
+    from sqlalchemy.orm import aliased
+
+    from app.models.encounter import Encounter
+    from app.models.medical_record import QCReview
+
+    # 同接诊同类型的"另一份/同一份"文书别名，用于判定退回后是否已重签
+    resigned = aliased(MedicalRecord)
+
+    latest_review_at = (
+        select(
+            QCReview.medical_record_id.label("rid"),
+            func.max(QCReview.created_at).label("mx"),
+        )
+        .group_by(QCReview.medical_record_id)
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(MedicalRecord, QCReview, Encounter)
+        .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+        .join(latest_review_at, latest_review_at.c.rid == MedicalRecord.id)
+        .join(QCReview, (QCReview.medical_record_id == MedicalRecord.id)
+              & (QCReview.created_at == latest_review_at.c.mx))
+        .where(
+            Encounter.doctor_id == current_user.id,
+            QCReview.conclusion == "returned",
+            # 退回后又签发过同接诊同类型文书（含同条覆盖与住院新建）→ 已整改出清单
+            ~select(resigned.id).where(
+                resigned.encounter_id == MedicalRecord.encounter_id,
+                resigned.record_type == MedicalRecord.record_type,
+                resigned.submitted_at > QCReview.created_at,
+            ).exists(),
+        )
+        .order_by(QCReview.created_at.desc())
+        .limit(50)
+    )).all()
+    return [
+        {
+            "record_id": rec.id,
+            "encounter_id": enc.id,
+            "record_type": rec.record_type,
+            "visit_type": enc.visit_type,
+            "patient_id": enc.patient_id,
+            "returned_at": rv.created_at.isoformat(),
+            "reviewer_name": rv.reviewer_name,
+            "comment": rv.comment,
+        }
+        for rec, rv, enc in rows
+    ]
+
+
 @router.get("/{record_id}", response_model=MedicalRecordResponse)
 async def get_record(
     record_id: str,
