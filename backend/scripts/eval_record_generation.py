@@ -6,6 +6,11 @@
 悄悄改坏——本脚本把真实病例的"医生录入 → AI 生成 → 规则引擎打分"整条链路
 固化下来，改完生成相关代码手动跑一遍，几分钟内知道有没有劣化。
 
+2026-08-25 黄金病例集扩容：新增 7 例（eval_golden_cases.py），覆盖全部
+10 个 record_type。扩容首跑即抓出病程类"编造住院期间事实"（臂丛麻醉/
+敷料干燥/已予抗感染），已在 INPATIENT_STYLE_RULES 第 5 条治本并用 banned
+串钉住。
+
 不是单元测试（调真 LLM、花钱、有随机性），与 eval_cc_rewrite.py（主诉专项）
 配套，用法：
     cd backend && venv/Scripts/python scripts/eval_record_generation.py
@@ -153,6 +158,8 @@ GOUT_REVISIT = dict(
     previous_record=GOUT_REVISIT_PREV,
 )
 
+from eval_golden_cases import HAND_TERSE, HEADACHE_EMERGENCY  # noqa: E402
+
 # (名字, record_type, 录入, 最低分, 扣分码白名单, 必须出现, 禁止出现)
 CASES = [
     ("住院入院记录·速记", "admission_note", FRACTURE_TERSE, 96,
@@ -180,6 +187,54 @@ CASES = [
      ["病史同前", "好转", "既往体质健康", "西医诊断：痛风，混合性高脂血症", "125/80"],
      # 中药/西药/输液 = 药物具体化编造；"上次开了药" = 口语残留
      ["中药", "西药", "输液", "上次开了药"]),
+    # ── 2026-08-25 黄金病例集扩容：覆盖到全部 10 个 record_type ──────────
+    # 病程类共用入院载荷（与生产 pickInpatientInquiry 一致），核心考点是
+    # "住院期间已发生事实拿不到必须占位，不得编造"——首跑实测模型曾编
+    # "臂丛麻醉/敷料干燥无渗液/已予抗感染/已签知情同意书"（与录入"出血活跃"
+    # 直接矛盾），已在 INPATIENT_STYLE_RULES 第 5 条 + schema 描述治本，
+    # 下列 banned 串即为当时实测到的编造原文，钉住不许回潮。
+    # 急诊处置字段按 prompt 契约"照抄医生录入不改写"——录入口语会原样保留，
+    # 属设计行为；故禁串只查叙述性字段的口语（去掉会命中照抄处置的"痛得厉害"）
+    ("急诊·头痛颈痛", "emergency", dict(HEADACHE_EMERGENCY, record_type="emergency"), 97,
+     set(),
+     ["T:36.6", "140/80", "混合型颈椎病", "偏头痛", "回家观察"],
+     [c for c in COLLOQUIAL if c != "痛得厉害"]),
+    ("日常病程·电锯伤", "course_record", dict(HAND_TERSE, record_type="course_record"), 100,
+     set(),
+     [],
+     COLLOQUIAL + ["敷料干燥", "无明显渗血渗液", "继续予伤口换药"]),
+    # must 用"电锯"（病史补充必然复述受伤机制，跨运行稳定）；
+    # "指神经断裂"在第二跑被模型换写法，作 must 太脆
+    ("上级查房·电锯伤", "senior_round", dict(HAND_TERSE, record_type="senior_round"), 100,
+     set(),
+     ["电锯"],
+     COLLOQUIAL + ["敷料干燥"]),
+    # 诊疗经过/出院情况/出院带药录入没提供 → 治本后如实落占位，对应扣分
+    # 是"如实反映缺失"（IP-DISCHARGE-02 缺诊疗经过 / 04 缺出院医嘱 / 05 缺出院情况），
+    # 与复诊病例的白名单哲学一致；实际使用中医生补录后即满分
+    ("出院记录·电锯伤", "discharge_record", dict(HAND_TERSE, record_type="discharge_record"), 97,
+     {"IP-DISCHARGE-02", "IP-DISCHARGE-04", "IP-DISCHARGE-05"},
+     ["【诊疗经过】", "【出院医嘱】"],
+     COLLOQUIAL + ["愈合良好", "较前好转", "术后予抗感染"]),
+    # IP-PERIOP-PRE-02 缺拟施手术名称：录入未提供术式 → 正确落占位后的如实扣分
+    ("术前小结·电锯伤", "pre_op_summary", dict(HAND_TERSE, record_type="pre_op_summary"), 99,
+     {"IP-PERIOP-PRE-02"},
+     # 手术组成员医生未录 → 必须占位；"指神经断裂"来自录入的入院诊断
+     ["指神经断裂", "术者：[未填写，需补充]"],
+     # 臂丛/知情同意书/检查已完善 = 首跑实测编造（录入均未提供）
+     COLLOQUIAL + ["臂丛", "知情同意书", "术前检查已完善"]),
+    # 手术经过不在生成载荷内（生产病程类共用入院载荷）→ 正确行为是全占位
+    # 由术者手工补全；IP-PERIOP-VETO-01（缺手术经过单项否决）为如实扣分，白名单
+    ("手术记录·电锯伤", "op_record", dict(HAND_TERSE, record_type="op_record"), 90,
+     {"IP-PERIOP-VETO-01"},
+     ["【手术经过】", "[未填写，需补充]"],
+     COLLOQUIAL + ["术中出血约", "麻醉满意"]),
+    # IP-PERIOP-POST-01 缺恢复评估：术后当日情况未录入 → 正确落占位后的如实扣分
+    # （模型偶尔会从疼痛评分给出简短评估拿满分，99+白名单两种运行都覆盖）
+    ("术后病程·电锯伤", "post_op_record", dict(HAND_TERSE, record_type="post_op_record"), 99,
+     {"IP-PERIOP-POST-01"},
+     [],
+     COLLOQUIAL + ["敷料干燥", "无明显渗血渗液", "已给予抗感染", "恢复情况符合预期"]),
 ]
 
 
