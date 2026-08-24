@@ -171,10 +171,12 @@ services:
         VITE_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
         VITE_SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     restart: unless-stopped
-    depends_on:
-      backend:
-        # backend 健康后再启动 nginx，避免首次请求 502/连接关闭
-        condition: service_healthy
+    # 不再 depends_on backend（2026-08-25 部署无缝化）：
+    # 该依赖的存在让 compose 在每次重建 backend 时**级联重建 nginx**，
+    # 全站（含静态页）跟着 backend 启动链一起断 10-15 秒。
+    # 它原本解决的"nginx 启动时 backend 域名解析不到会起不来"已由
+    # nginx.conf 的 resolver + 变量 proxy_pass 治本（解析推迟到请求期），
+    # nginx 可先于 backend 启动，backend 就绪前 API 502、静态页照常服务。
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost/health.txt || exit 1"]
       interval: 5s

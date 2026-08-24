@@ -134,8 +134,21 @@ jobs:
             fi
             ls -t /app/backups/pre_migrate_*.sql 2>/dev/null | tail -n +11 | xargs -r rm -f
 
+            # ── 换容器前预跑迁移+种子（2026-08-25 部署无缝化）──────────────
+            # 用**新镜像**起一次性容器把 alembic + 种子先跑掉（幂等；老 backend
+            # 此刻还在正常服务，迁移全部向后兼容/只增不破坏）。这样随后重建的
+            # backend 容器 entrypoint 里同样的四步全是秒级空转，API 中断窗口
+            # 从"启动链全长"缩到纯 uvicorn 启动的几秒。失败则中止部署——
+            # 老容器未动，线上无损。
+            # --entrypoint 必须显式覆盖：镜像 ENTRYPOINT 是 entrypoint.sh（结尾
+            # exec uvicorn 且不透传参数），不覆盖的话下面的命令会被整个吞掉
+            docker compose run --rm --no-deps --entrypoint sh backend -c \
+              "python alembic_guard.py && alembic upgrade head && python init_db.py && python seed_config.py"
+
             # 现在 db + orthanc 库都就绪，正常 up 全部 service
-            # （backend entrypoint 会执行 alembic_guard + alembic upgrade head + 种子）
+            # （backend entrypoint 会执行 alembic_guard + alembic upgrade head + 种子，
+            #  已被上方预跑变成空转；frontend 已解除对 backend 的 depends_on，
+            #  只有 nginx 配置/前端产物变化时才会重建，静态页不再陪跑中断）
             # 不用 --wait，改成显式 up + 自己轮询 backend / frontend 关键服务 healthy
             docker compose up -d
             for i in $(seq 1 30); do
