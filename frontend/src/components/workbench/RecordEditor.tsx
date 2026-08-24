@@ -15,7 +15,7 @@ import PreviousRecordPanel from './PreviousRecordPanel'
 import AiWritePanel, { AI_WRITE_JUMP_EVENT, type AiWriteJumpDetail } from './AiWritePanel'
 import RecordEditorToolbar from './recordEditor/RecordEditorToolbar'
 import RecordEditorStatusBar from './recordEditor/RecordEditorStatusBar'
-import { locateFieldInRecord } from './qcFieldMaps'
+import { locateFieldInRecord, extractFieldPreview } from './qcFieldMaps'
 import { useRecordEditor } from '@/hooks/useRecordEditor'
 import { useAutoSaveDraft } from '@/hooks/useAutoSaveDraft'
 import { useDraftByTypeLoader } from '@/hooks/useDraftByTypeLoader'
@@ -140,27 +140,43 @@ export default function RecordEditor() {
       setFinalModalOpen(true)
       return
     }
+    // 摘要取实时正文里各字段当前内容（未确认字段必然未被编辑，即 AI 写入原文），
+    // 医生在弹窗里直接核内容，不用关弹窗回正文逐条找（2026-08-22 增强）
+    const liveContent = recordContent
     modal.confirm({
       title: `还有 ${fields.length} 处 AI 补全未确认`,
       content: (
         <div>
-          <div style={{ marginBottom: 8 }}>以下字段是本次 AI 补全写入，医生尚未点击或修改：</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-            {fields.map(f => (
-              <span
-                key={f}
-                style={{
-                  padding: '2px 8px',
-                  background: '#fffbe6',
-                  border: '1px solid #ffd666',
-                  borderRadius: 10,
-                  fontSize: 12,
-                  color: '#874d00',
-                }}
-              >
-                {f}
-              </span>
-            ))}
+          <div style={{ marginBottom: 8 }}>以下内容是本次 AI 补全写入，医生尚未点击或修改：</div>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              marginBottom: 8,
+              maxHeight: 260,
+              overflowY: 'auto',
+            }}
+          >
+            {fields.map(f => {
+              const preview = extractFieldPreview(liveContent, f)
+              return (
+                <div
+                  key={f}
+                  style={{
+                    padding: '4px 8px',
+                    background: '#fffbe6',
+                    border: '1px solid #ffd666',
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: '#874d00',
+                  }}
+                >
+                  <b>{f}</b>
+                  {preview && <span style={{ marginLeft: 6 }}>{preview}</span>}
+                </div>
+              )
+            })}
           </div>
           <div style={{ color: '#874d00', fontSize: 12 }}>
             请确认这些内容已审核无误。点"一并接受并签发"将清空提示并继续签发流程。
