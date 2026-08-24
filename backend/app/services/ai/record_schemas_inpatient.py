@@ -77,11 +77,11 @@ FIRST_COURSE_SCHEMA: dict[str, str] = {
 # 平铺段落（不含【】章节标题，只用"{title}：{value}"行式段落）。
 # renderer 用普通"标题：内容"格式输出。
 COURSE_RECORD_SCHEMA: dict[str, str] = {
-    "patient_complaint": "患者病情记录（当前主诉/症状变化）",
-    "physical_exam_today": "查体（当日体征：'T:__℃ P:__次/分 R:__次/分 BP:__/__mmHg'+ 专科体征变化）",
-    "auxiliary_results": "辅助检查结果回报（最新化验/检查结果及分析）",
+    "patient_complaint": "患者病情记录（当前主诉/症状变化；当日情况未录入写 [未填写，需补充]，不得编'敷料干燥无渗液'）",
+    "physical_exam_today": "查体（当日体征；未录入当日查体写 [未填写，需补充]，不得照抄入院体征）",
+    "auxiliary_results": "辅助检查结果回报（最新化验/检查结果及分析；无新回报写 [未填写，需补充]）",
     "case_analysis": "病情分析（演变/诊断是否需修正）",
-    "treatment_adjustment": "诊疗措施及调整（当日医嘱调整及依据）",
+    "treatment_adjustment": "诊疗措施及调整（只写录入的医嘱调整；未提供写 [未填写，需补充]，不得编'继续抗感染'）",
     "precautions": "注意事项（下一步观察要点）",
 }
 
@@ -106,9 +106,10 @@ DISCHARGE_RECORD_SCHEMA: dict[str, str] = {
     "admission_status": "入院情况（入院时主要症状/体征/辅助检查结果）",
     "admission_diagnosis": "入院诊断",
     "treatment_course": (
-        "诊疗经过（住院期间检查/确诊过程/治疗方案及效果/用药/手术（如有）/病情变化及处理）"
+        "诊疗经过（住院期间检查/确诊过程/治疗方案及效果/用药/手术（如有）/病情变化及处理；"
+        "只写医生录入的经过，未提供写 [未填写，需补充]，不得编'已行手术/术后予抗感染'）"
     ),
-    "discharge_status": "出院情况（出院时症状体征改善情况/一般状态）",
+    "discharge_status": "出院情况（出院时症状体征改善情况/一般状态；未录入写 [未填写，需补充]，不得编'愈合良好'）",
     "discharge_diagnosis": "出院诊断（最终诊断，主要诊断放首位）",
     "discharge_advice": (
         "出院医嘱（①带药医嘱：药名/剂量/用法/疗程 ②饮食生活注意 ③随访时间复查项目 "
@@ -125,12 +126,12 @@ PRE_OP_SUMMARY_SCHEMA: dict[str, str] = {
     "case_brief": "病历摘要（姓名/性别/年龄/主诉/入院经过/主要体征/辅助检查结果）",
     "preop_diagnosis": "术前诊断（规范中文诊断术语，主要诊断放首位）",
     "surgery_indication": "手术指征（具体说明手术适应证）",
-    "surgery_plan": "拟施手术名称及方式",
-    "anesthesia_plan": "拟施麻醉方式",
+    "surgery_plan": "拟施手术名称及方式（只写医生录入明确的术式；未提供写 [未填写，需补充]，不得按伤情推测）",
+    "anesthesia_plan": "拟施麻醉方式（未提供写 [未填写，需补充]，不得推测）",
     "surgery_team": "手术组成员（'术者：xxx  一助：xxx  二助：xxx' 格式，未定时各位置写 [未填写，需补充]）",
-    "preop_preparation": "术前准备情况（术前检查完善情况/特殊准备）",
+    "preop_preparation": "术前准备情况（只写录入中明确完成的准备；未提供写 [未填写，需补充]，不得编'已完善检查/已签知情同意书'）",
     "intraop_postop_risk": "术中术后预计情况及预防处理措施（可能出现的并发症及预防措施）",
-    "senior_advice": "上级医师意见（对手术必要性/方案的审核意见）",
+    "senior_advice": "上级医师意见（须上级医师本人给出；录入未提供写 [未填写，需补充]，不得代拟）",
 }
 
 
@@ -155,12 +156,12 @@ OP_RECORD_SCHEMA: dict[str, str] = {
 
 # ─── 术后病程记录 — post_op_record ───────────────────────────────────
 POST_OP_RECORD_SCHEMA: dict[str, str] = {
-    "patient_complaint": "患者主诉（疼痛程度/部位/有无发热/恶心呕吐等不适）",
+    "patient_complaint": "患者主诉（疼痛程度/部位/有无发热/恶心呕吐等不适；术后当日情况未录入写 [未填写，需补充]）",
     "physical_exam_today": (
-        "查体（'T:__℃ P:__次/分 R:__次/分 BP:__/__mmHg' + 伤口情况 + 专科体征）"
+        "查体（术后当日体征+伤口情况；未录入写 [未填写，需补充]，不得照抄入院体征或编'敷料干燥'）"
     ),
-    "auxiliary_results": "辅助检查结果回报（术后化验/检查结果及分析）",
-    "recovery_assessment": "病情分析及术后恢复情况评估（恢复是否符合预期/有无并发症迹象）",
-    "treatment_measures": "诊疗措施（医嘱执行/调整及依据：抗感染/止痛/其他）",
+    "auxiliary_results": "辅助检查结果回报（术后化验/检查结果及分析；无回报写 [未填写，需补充]）",
+    "recovery_assessment": "病情分析及术后恢复情况评估（只基于录入的术后情况；未录入写 [未填写，需补充]，不得编'恢复符合预期'）",
+    "treatment_measures": "诊疗措施（只写录入的医嘱；未提供写 [未填写，需补充]，不得编'已予抗感染'）",
     "next_plan": "注意事项及下一步计划（观察重点及处理计划）",
 }
