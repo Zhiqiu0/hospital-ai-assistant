@@ -235,3 +235,36 @@ export function locateFieldInRecord(
   }
   return null
 }
+
+/**
+ * 提取字段当前内容摘要（2026-08-22 签发确认弹窗增强）
+ *
+ * 签发前"还有 N 处 AI 补全未确认"弹窗此前只列字段名，医生要确认内容
+ * 仍得关弹窗回正文找。摘要直接取**实时正文**里该字段当前的内容——
+ * 未确认字段必然未被医生编辑过（编辑即从池中移除），所以实时内容
+ * 就是 AI 写入的内容，比写入时另存快照更准也更省状态。
+ *
+ * 行级字段 → 该行去掉"前缀："后的值；章节级 → 标题后首个非空行。
+ * 超长截断加省略号；定位失败返回 null（弹窗退回只显示字段名）。
+ */
+export function extractFieldPreview(
+  content: string,
+  fieldName: string,
+  maxLen = 60
+): string | null {
+  const loc = locateFieldInRecord(content, fieldName)
+  if (!loc) return null
+  let text = content.slice(loc.start, loc.end).trim()
+  // 章节级/兜底定位只覆盖标题（如"【处理】"）——摘要要看到正文，向后取首个非空行
+  if (/^【[^】]+】$/.test(text)) {
+    const after = content.slice(loc.end).replace(/^\n+/, '')
+    const nextBreak = after.indexOf('\n')
+    text = (nextBreak === -1 ? after : after.slice(0, nextBreak)).trim()
+  } else {
+    // 行级定位覆盖整行（"舌象：舌红苔黄"）——去掉前缀只留值，字段名弹窗里已单独展示
+    const colonIdx = normalizeColon(text).indexOf('：')
+    if (colonIdx >= 0) text = text.slice(colonIdx + 1).trim()
+  }
+  if (!text) return null
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text
+}

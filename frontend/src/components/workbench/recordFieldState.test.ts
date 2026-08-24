@@ -8,7 +8,12 @@
  *   - value       行原本是医生手填值 → 撤销应还原原值
  */
 import { describe, expect, test } from 'vitest'
-import { restoreFieldState, snapshotFieldState, writeSectionToRecord } from './qcFieldMaps'
+import {
+  extractFieldPreview,
+  restoreFieldState,
+  snapshotFieldState,
+  writeSectionToRecord,
+} from './qcFieldMaps'
 
 describe('snapshotFieldState / restoreFieldState — per-field 三态撤销', () => {
   test('per-field 三态撤销：原本不存在的行 → 写入 → 取消应删除该行（不留占位符）', () => {
@@ -72,5 +77,38 @@ T:36.5℃
     const restored = restoreFieldState(written, 'tongue_coating', snap)
     expect(restored).toContain('医生手填的内容')
     expect(restored).not.toContain('AI 覆盖的内容')
+  })
+})
+
+describe('extractFieldPreview — 签发确认弹窗内容摘要', () => {
+  const sample = `【主诉】
+反复头痛3天，加重1天
+
+【体格检查】
+T:36.5℃ P:78次/分
+望诊：神清，面色红润
+切诊·舌象：舌淡红苔薄白
+
+【辅助检查】
+暂无`
+
+  test('行级字段：取该行值并去掉前缀', () => {
+    expect(extractFieldPreview(sample, 'tongue_coating')).toBe('舌淡红苔薄白')
+  })
+
+  test('章节级字段：取标题后首个非空行', () => {
+    expect(extractFieldPreview(sample, 'chief_complaint')).toBe('反复头痛3天，加重1天')
+  })
+
+  test('超长内容截断加省略号', () => {
+    const long = `【主诉】\n${'很长的主诉内容'.repeat(20)}`
+    const preview = extractFieldPreview(long, 'chief_complaint')
+    expect(preview).toHaveLength(61) // 60 字 + 省略号
+    expect(preview!.endsWith('…')).toBe(true)
+  })
+
+  test('定位失败返回 null（弹窗退回只显字段名）', () => {
+    expect(extractFieldPreview('【别的章节】\n内容', 'tongue_coating')).toBeNull()
+    expect(extractFieldPreview(sample, '完全未映射的字段')).toBeNull()
   })
 })
