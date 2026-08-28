@@ -15,7 +15,7 @@
 import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 # 集中校验：身份证号走 GB 11643 校验码 + 出生日期合法性；手机号走 1[3-9]\d{9}
 # 类型别名引入是为了让 schemas 永远只有一处规则定义，杜绝多文件抄正则导致漂移
@@ -23,23 +23,45 @@ from app.core.validators.identity import IdCardStrict, Phone
 
 
 class PatientCreate(BaseModel):
-    """创建患者入参（必填：姓名；其余字段均可选）。"""
+    """创建患者入参（必填：姓名；其余字段均可选）。
 
-    name: str                              # 患者姓名（必填）
+    长度上限（2026-08-28 极端字符审计）：与 DB 列宽一致（PG String(N) 按字符
+    计数，代理对生僻字算 1 字不受影响）。此前无上限时超长直接打穿到 PG 抛
+    DataError → 500 无友好提示；HIS 推送路径更是落 ack 50000 让该患者每次
+    复诊都推不进来（用户导入 user_bulk_import 修过同款坑，患者路径漏了）。
+    """
+
+    name: str = Field(max_length=50)      # 患者姓名（必填；列宽 String(50)）
     gender: Optional[str] = None          # 性别："男"/"女"/"未知"
     birth_date: Optional[datetime.date] = None  # 出生日期（YYYY-MM-DD）
     phone: Phone = None                   # 联系电话（带 normalize + 11 位号段校验）
     id_card: IdCardStrict = None          # 居民身份证号（带 normalize + GB 11643 校验码）
-    address: Optional[str] = None         # 家庭住址
+    address: Optional[str] = Field(None, max_length=500)   # 家庭住址（列无宽限，防滥用设 500）
     # 病案首页扩展字段（住院病历必填）
-    ethnicity: Optional[str] = None       # 民族
-    marital_status: Optional[str] = None  # 婚姻状况
-    occupation: Optional[str] = None      # 职业
-    workplace: Optional[str] = None       # 工作单位
-    contact_name: Optional[str] = None    # 紧急联系人姓名
+    ethnicity: Optional[str] = Field(None, max_length=20)      # 民族
+    marital_status: Optional[str] = Field(None, max_length=10)  # 婚姻状况
+    occupation: Optional[str] = Field(None, max_length=100)     # 职业
+    workplace: Optional[str] = Field(None, max_length=200)      # 工作单位
+    contact_name: Optional[str] = Field(None, max_length=50)    # 紧急联系人姓名
     contact_phone: Phone = None           # 紧急联系人电话（同样走手机号校验）
-    contact_relation: Optional[str] = None# 紧急联系人关系
-    blood_type: Optional[str] = None      # 血型
+    contact_relation: Optional[str] = Field(None, max_length=20)  # 紧急联系人关系
+    blood_type: Optional[str] = Field(None, max_length=10)      # 血型
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        """姓名清洗（2026-08-28 极端字符审计）：
+        - 剥零宽字符/BOM/NUL：HIS 推送或微信/PDF 粘贴可能夹带，进库后拼音索引
+          与汉字搜索双双静默 miss，医生以为没建过档而重复建档
+        - 压平换行/制表（单行字段）
+        """
+        # ​/‌/‍ 零宽空格系、﻿ BOM、⁠ 词连接符、\x00 NUL
+        for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
+            v = v.replace(ch, "")
+        v = v.replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
+        if not v:
+            raise ValueError("患者姓名不能为空")
+        return v
 
 
 class PatientResponse(BaseModel):
@@ -82,22 +104,32 @@ class PatientResponse(BaseModel):
 
 
 class PatientUpdate(BaseModel):
-    """更新患者信息入参（所有字段可选，只更新传入的字段）。"""
+    """更新患者信息入参（所有字段可选，只更新传入的字段）。
 
-    name: Optional[str] = None
+    长度上限与姓名清洗与 PatientCreate 同口径（2026-08-28 极端字符审计）。
+    """
+
+    name: Optional[str] = Field(None, max_length=50)
     gender: Optional[str] = None
     birth_date: Optional[datetime.date] = None
     phone: Phone = None                   # 走手机号 normalize + 校验
     id_card: IdCardStrict = None          # 走身份证 normalize + 校验
-    address: Optional[str] = None
-    ethnicity: Optional[str] = None
-    marital_status: Optional[str] = None
-    occupation: Optional[str] = None
-    workplace: Optional[str] = None
-    contact_name: Optional[str] = None
+    address: Optional[str] = Field(None, max_length=500)
+    ethnicity: Optional[str] = Field(None, max_length=20)
+    marital_status: Optional[str] = Field(None, max_length=10)
+    occupation: Optional[str] = Field(None, max_length=100)
+    workplace: Optional[str] = Field(None, max_length=200)
+    contact_name: Optional[str] = Field(None, max_length=50)
     contact_phone: Phone = None           # 走手机号 normalize + 校验
-    contact_relation: Optional[str] = None
-    blood_type: Optional[str] = None
+    contact_relation: Optional[str] = Field(None, max_length=20)
+    blood_type: Optional[str] = Field(None, max_length=10)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return PatientCreate._clean_name(v)
 
 
 class PatientListItem(BaseModel):

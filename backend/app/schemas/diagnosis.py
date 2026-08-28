@@ -34,7 +34,15 @@ class DiagnosisItemIn(BaseModel):
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
-        v = (v or "").strip()
+        """诊断名清洗（2026-08-28 极端字符审计）。
+
+        中间夹换行的诊断名会让投影产出多行"西医诊断：A/B"，QC 行级解析
+        只取首行——第二条诊断对质控完全隐形；HIS 回写单行字段也会收到
+        换行。压平换行/制表，顺带剥零宽字符与 NUL。
+        """
+        for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
+            v = (v or "").replace(ch, "")
+        v = v.replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
         if not v:
             raise ValueError("诊断名称不能为空")
         if len(v) > 200:

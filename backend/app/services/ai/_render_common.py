@@ -41,9 +41,15 @@ def _section(header: str, body: str) -> str:
 
 
 def _subline(prefix: str, value: str) -> str:
-    """子行拼装：'{prefix}{value}'。prefix 自带冒号（如 '望诊：' / '· 疼痛评估：'）。"""
-    return f"{prefix}{value}"
+    """子行拼装：'{prefix}{value}'。prefix 自带冒号（如 '望诊：' / '· 疼痛评估：'）。
 
+    值内换行压平（2026-08-28 极端字符审计）：LLM 偶发在行级字段值里带换行，
+    渲染出"切诊·舌象：舌红/苔黄"两行后 QC 行级解析只认首行（静默截断）、
+    前端撤销按单行还原会残留孤行。行级字段语义上就是单行，压平无信息损失。
+    """
+    flat = (str(value).replace("\r\n", " ").replace("\n", " ")
+            .replace("\r", " ").replace("\t", " "))
+    return f"{prefix}{flat}"
 
 def _merge_tcm_diagnosis(disease: str, syndrome: str) -> str:
     """中医诊断合并行：'X — Y' 格式。

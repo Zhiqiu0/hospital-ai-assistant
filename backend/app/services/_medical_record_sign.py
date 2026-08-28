@@ -40,6 +40,9 @@ class MedicalRecordSignMixin:
         Returns:
             签发后的 MedicalRecord ORM 对象（已 commit 并 refresh）。
         """
+        # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
+        # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
+        content = content.replace("\x00", "")
         # 加锁查找同接诊同类型的病历（防止并发重复签发）
         # 注意：(encounter_id, record_type) 无唯一约束，历史上可能存在多行
         # （create() 无条件新建、并发首存各插一条），故用 order_by+first() 取最新一条，

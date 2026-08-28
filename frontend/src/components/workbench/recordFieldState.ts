@@ -266,5 +266,8 @@ export function extractFieldPreview(
     if (colonIdx >= 0) text = text.slice(colonIdx + 1).trim()
   }
   if (!text) return null
-  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text
+  // 按码点切片（2026-08-28 极端字符审计）：String.slice 按 UTF-16 单元切，
+  // 第 maxLen 位恰是生僻字（如 𨭉）前半个代理对时尾部显示乱码 �
+  const chars = Array.from(text)
+  return chars.length > maxLen ? `${chars.slice(0, maxLen).join('')}…` : text
 }

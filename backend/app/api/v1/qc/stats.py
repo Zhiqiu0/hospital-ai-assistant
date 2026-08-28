@@ -181,17 +181,26 @@ async def stats_export(
 ):
     """CSV 导出（Excel 可直接打开，作医务科月度通报素材）。"""
     data = await _collect_summary(db, days)
+
+    def _csv_safe(v):
+        """CSV 公式注入防护（2026-08-28 极端字符审计）：科室名可由 HIS
+        dept_name 自动建档带入，= + - @ 开头会被 Excel 当公式执行。
+        危险首字符前置单引号（Excel 显示原文不执行）。"""
+        s = str(v)
+        return f"'{s}" if s[:1] in ("=", "+", "-", "@") else v
+
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"病历质控指标汇总（近 {days} 天，导出于 {datetime.now():%Y-%m-%d %H:%M}）"])
     w.writerow([])
     w.writerow(["科室", "评分文书数", "平均分", "甲级率%", "合格率%"])
     for d in data["dept_stats"]:
-        w.writerow([d["department"], d["count"], d["avg_score"], d["grade_a_rate"], d["pass_rate"]])
+        w.writerow([_csv_safe(d["department"]), d["count"], d["avg_score"],
+                    d["grade_a_rate"], d["pass_rate"]])
     w.writerow([])
     w.writerow(["高频扣分条款", "次数", "条款说明"])
     for r in data["top_rules"]:
-        w.writerow([r["rule_code"], r["count"], r["description"]])
+        w.writerow([_csv_safe(r["rule_code"]), r["count"], _csv_safe(r["description"])])
     w.writerow([])
     w.writerow(["复核通过", data["reviews"]["passed"]])
     w.writerow(["退回整改", data["reviews"]["returned"]])

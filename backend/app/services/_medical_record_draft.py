@@ -67,6 +67,9 @@ class MedicalRecordDraftMixin:
             HTTPException(409): 乐观锁冲突，调用方应提示"内容已被其他设备修改"
             HTTPException(403): 病历已签发，不可再编辑
         """
+        # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
+        # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
+        content = content.replace("\x00", "")
         result = await self.db.execute(
             select(MedicalRecord)
             .where(
@@ -219,6 +222,9 @@ class MedicalRecordDraftMixin:
             {"record_id": ..., "version_no": ..., "saved": bool}
             saved=False 表示已签发跳过保存。
         """
+        # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
+        # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
+        content = content.replace("\x00", "")
         result = await self.db.execute(
             select(MedicalRecord)
             .where(
