@@ -51,10 +51,15 @@ async def _acquire_ai_gen_lock(user_id: str, scope: str) -> tuple[str, str]:
     """为 AI 流式生成接口拿锁，已被占用则直接 409。
 
     锁 key 含 user_id + scope，让同一医生同时只能跑一个生成任务（极少有合理用例
-    要并行跑两份病历草稿）；ttl=120s 覆盖正常 LLM 流耗时。
+    要并行跑两份病历草稿）。
+
+    ttl=300s 对齐 nginx SSE 超时（2026-08-28 体检修正）：原 120s 只覆盖"正常"
+    耗时，LLM 慢/重试中锁先过期，医生再点一次就两股生成流并发双份计费——
+    恰是抖动/欠费日最需要防重复点击的时候。300s 后 nginx 也会掐流，锁活得
+    比流长即可；流正常结束时锁会被主动释放，不会让医生干等 5 分钟。
     """
     lock_key = f"lock:ai_gen:{user_id}:{scope}"
-    token = await redis_cache.acquire_lock(lock_key, ttl=120)
+    token = await redis_cache.acquire_lock(lock_key, ttl=300)
     if token is None:
         raise HTTPException(
             status_code=429,

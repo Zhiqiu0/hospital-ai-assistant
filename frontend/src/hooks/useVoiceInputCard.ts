@@ -158,6 +158,13 @@ export function useVoiceInputCard({
         // 避免整段覆盖把医生在病历里的手改冲掉。草稿为空时后端会回退到 existingInquiry。
         existingRecord: recordContent || undefined,
       })
+      // 降级识别（2026-08-28 体检）：后端 LLM 失败时返回空载荷 + degraded 标记，
+      // 此前空载荷被当成功处理——弹"整理完成"且记账 lastAnalyzedTranscript，
+      // 医生什么都没拿到还被"转写内容未变化"挡住重试。现在明确报错并保留重试资格。
+      if ((data as { degraded?: boolean })?.degraded) {
+        message.error((data as { error?: string })?.error || 'AI 整理失败，请稍后重试')
+        return
+      }
       // 到达时重新判定模式：锁定后一律走"预览+插入病历"，绝不直写表单
       const recordModeNow = !!onApplyToRecordRef.current
       const filteredPatch = filterPatch((data?.inquiry || {}) as Partial<InquiryData>)

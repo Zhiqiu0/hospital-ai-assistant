@@ -168,13 +168,21 @@ async def voice_structure(
             "speaker_dialogue": result.get("speaker_dialogue", []),
             "inquiry": result.get("inquiry", {}),
             "draft_record": "",
+            "degraded": False,
         }
     except Exception as exc:
         logger.exception("voice.structure: failed err=%s", exc)
+        # degraded=True 让前端区分"AI 故障"和"真的没提取到内容"——此前空载荷
+        # 伪装成成功，医生看到"整理完成"却什么都没有，是欠费日最费解的路径
+        # （2026-08-28 全量体检修复；error 为医生可读原因）
+        from app.services.ai.llm_client import LLMServiceError
         return {
             "transcript_id": req.transcript_id,
             "transcript_summary": "",
             "speaker_dialogue": [],
             "inquiry": {},
             "draft_record": "",
+            "degraded": True,
+            "error": exc.user_message if isinstance(exc, LLMServiceError)
+                     else "AI 整理失败，请稍后重试",
         }

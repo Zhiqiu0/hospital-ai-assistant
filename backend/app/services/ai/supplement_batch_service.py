@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ai.ai_utils import safe_format
-from app.services.ai.llm_client import llm_client
+from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts_qc import QC_FIX_BATCH_PROMPT
@@ -185,7 +185,10 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
         )
     except Exception as exc:
         logger.exception("supplement_batch: llm_failed err=%s", exc)
-        return {"items": [], "error": f"AI 调用失败：{type(exc).__name__}"}
+        # 业务化异常带医生可读文案（欠费/凭证/限流可识别），其余保留类型名
+        msg = exc.user_message if isinstance(exc, LLMServiceError) \
+            else f"AI 调用失败：{type(exc).__name__}"
+        return {"items": [], "error": msg}
 
     # 写审计（不阻断主流程）
     try:

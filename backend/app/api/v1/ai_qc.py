@@ -74,8 +74,9 @@ async def qc_fix(
         resource_type="medical_record",
         detail=f"field={req.field_name or 'unknown'}",
     )
-    fix_text = await qc_stream_service.run_qc_fix(db, req)
-    return {"fix_text": fix_text}
+    # 返回 {"fix_text", "degraded", "error"}——degraded=True 表示 LLM 失败
+    # 保守回退了原建议文本，前端须提示医生"这不是 AI 写的修复"
+    return await qc_stream_service.run_qc_fix(db, req)
 
 
 @router.post("/grade-score")

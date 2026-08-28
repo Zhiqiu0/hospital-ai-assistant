@@ -87,7 +87,12 @@ export default function QCIssuePanel() {
         current_record: recordContent,
         chief_complaint: inquiry.chief_complaint,
         history_present_illness: inquiry.history_present_illness,
-      })) as { fix_text?: string }
+      })) as { fix_text?: string; degraded?: boolean; error?: string }
+      // 降级识别（2026-08-28 体检）：LLM 失败时后端保守回退原建议文本，
+      // 必须提示医生"这不是 AI 写的修复"，避免把建议原文误当修复采纳
+      if (result.degraded) {
+        message.warning(`${result.error || 'AI 修复失败'}，已展示原建议文本供参考`)
+      }
       setQCFixTexts({ ...qcFixTexts, [idx]: result.fix_text ?? '' })
     } catch {
       message.error('AI 生成修复失败，请重试')
