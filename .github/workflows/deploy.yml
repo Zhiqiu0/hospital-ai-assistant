@@ -224,6 +224,22 @@ jobs:
               echo "[deploy] crontab 已配置：$VOICE_CLEANUP_CRON"
             fi
 
+            # ── 自动配置 crontab：每天 04:10 清理过期吊销令牌（2026-08-28 体检）
+            # revoked_tokens 只进不出，token 过期后行无安全价值但永久堆积
+            TOKEN_CLEANUP_CRON="10 4 * * * cd /app && docker compose exec -T backend python scripts/cleanup_expired_tokens.py >> /var/log/mediscribe-voice-cleanup.log 2>&1"
+            if ! crontab -l 2>/dev/null | grep -qF "scripts/cleanup_expired_tokens.py"; then
+              echo "[deploy] 配置每日过期令牌清理 crontab..."
+              (crontab -l 2>/dev/null; echo "$TOKEN_CLEANUP_CRON") | crontab -
+              echo "[deploy] crontab 已配置：$TOKEN_CLEANUP_CRON"
+            fi
+
+            # ── docker 构建缓存回收（2026-08-28 体检）─────────────────────
+            # 每次 deploy 都 build，构建缓存无限增长（实测 730 条 5.5GB），
+            # dangling 镜像同理。保底留 2GB 缓存加速下次构建，其余回收；
+            # 只删 dangling 镜像不动 tagged（旧版镜像随 compose 生命周期管理）
+            docker builder prune -f --keep-storage=2GB > /dev/null 2>&1 || true
+            docker image prune -f > /dev/null 2>&1 || true
+
             echo "Deploy finished at $(date) release=$SENTRY_RELEASE"
 
       - name: Health check

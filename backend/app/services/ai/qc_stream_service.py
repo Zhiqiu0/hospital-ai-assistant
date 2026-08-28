@@ -243,3 +243,8 @@ async def run_quick_qc_stream(
             }
     finally:
         llm_task.cancel()  # 幂等：已完成任务 cancel 无副作用；断开/出错都能清理
+        # 消费已完成任务的异常（2026-08-28 体检）：若 LLM 子任务在被 await 前
+        # 就带异常完成（规则段先抛错/客户端断开时 LLM 恰失败），cancel 是
+        # no-op、异常永不被取回 → GC 时 asyncio 往日志打 "Task exception was
+        # never retrieved" 孤儿堆栈，污染 error.log 排障入口
+        llm_task.add_done_callback(lambda t: t.cancelled() or t.exception())

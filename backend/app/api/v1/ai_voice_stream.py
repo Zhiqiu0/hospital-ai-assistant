@@ -239,6 +239,15 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
                 logger.warning("voice_stream.pump_uplink: failed err=%s", exc)
             finally:
                 client_closed.set()
+                # 立刻关上游解锁 downlink（2026-08-28 体检修复）：downlink 阻塞在
+                # `async for raw in upstream`，仅设标志它感知不到——此前要等
+                # DashScope 对静默任务的应用层超时（约 60s，第三方行为）才释放，
+                # 每次异常收尾泄漏 1 协程 + 2 socket 一分钟；若第三方行为变化则
+                # 永久驻留。close 幂等，正常路径重复关无害。
+                try:
+                    await upstream.close()
+                except Exception:
+                    pass
 
         await asyncio.gather(pump_downlink(), pump_uplink())
 
