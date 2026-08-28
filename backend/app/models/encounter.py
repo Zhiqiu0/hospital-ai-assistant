@@ -265,6 +265,12 @@ class Diagnosis(Base, TimestampMixin):
     __table_args__ = (
         # 主查询：按接诊拉全部条目（排序在应用层按 sort_order）
         Index("idx_diagnoses_enc", "encounter_id"),
+        # 主诊断唯一部分索引（2026-08-28 完整性审计）：replace_all 的接诊行锁
+        # 是"单写路径记得加锁"式保护，这里给"每接诊至多一条主诊断"的病案首页
+        # 硬约束加 DB 终极兜底（迁移 k20260828integrity 同名建）
+        Index("uq_diag_primary_per_enc", "encounter_id", unique=True,
+              postgresql_where=text("is_primary"),
+              sqlite_where=text("is_primary")),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -314,6 +320,9 @@ class DiagnosisCode(Base):
         Index("idx_diag_codes_type_name", "code_type", "name"),
         Index("idx_diag_codes_type_pinyin", "code_type", "pinyin_initial"),
         Index("idx_diag_codes_type_code", "code_type", "code"),
+        # 字典键唯一（2026-08-28 完整性审计）：构建脚本已去重，这里防换版
+        # 导入路径回潮（迁移 k20260828integrity 同名建）
+        Index("uq_diagcode_type_code", "code_type", "code", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)

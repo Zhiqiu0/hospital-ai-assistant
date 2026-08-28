@@ -404,19 +404,27 @@ async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
         .where(DoctorCode.code == code, User.is_active.is_(True), role_ok)
     )).scalars().first()
     if doctor is None:
-        result = await db.execute(
+        # 多行命中显式报错（2026-08-28 完整性审计）：users.employee_no 无唯一
+        # 约束（历史工号可能重复，不宜硬加 DB 约束），原 .first() 会按执行计划
+        # 任意取一个——接诊派错人、病历署错名。兜底命中 >1 行时拒绝并让厂商
+        # ack 可见，逼出数据治理而不是静默错派。
+        rows = (await db.execute(
             select(User).where(
                 User.employee_no == code, User.is_active.is_(True), role_ok
             )
-        )
-        doctor = result.scalars().first()
+        )).scalars().all()
+        if len(rows) > 1:
+            raise AdmitError(40007, f"工号 {code} 对应多个账号，请联系管理员清理后重试")
+        doctor = rows[0] if rows else None
     if doctor is None:
-        result = await db.execute(
+        rows = (await db.execute(
             select(User).where(
                 User.username == code, User.is_active.is_(True), role_ok
             )
-        )
-        doctor = result.scalars().first()
+        )).scalars().all()
+        if len(rows) > 1:
+            raise AdmitError(40007, f"工号 {code} 对应多个账号，请联系管理员清理后重试")
+        doctor = rows[0] if rows else None
     if doctor is None:
         # 区分「查无此工号」与「工号对应的账号不是临床角色」——后者在联调现场
         # 光看 40007 会以为是没开户，实际是角色配错，能省下大量排查时间。

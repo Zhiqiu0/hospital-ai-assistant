@@ -44,9 +44,13 @@ class EncounterCancelMixin:
 
         Returns: {"ok": True, "encounter_id": ..., "already_cancelled": bool}
         """
-        # 取接诊本身
+        # 取接诊本身——加行锁（2026-08-28 完整性审计）：原先"先查后写"全程无锁，
+        # 与并发的 quick_save（它锁的也是这行 encounter）不互斥，cancel 的检查
+        # 通过后签发流程完成提交，cancel 再落 status='cancelled'——已签发、已回写
+        # HIS 的接诊被取消，还可能联动软删患者。行锁让两者在 encounter 行上串行：
+        # 后到者在锁内看到的是对方提交后的最新状态，检查即为真。
         result = await self.db.execute(
-            select(Encounter).where(Encounter.id == encounter_id)
+            select(Encounter).where(Encounter.id == encounter_id).with_for_update()
         )
         encounter = result.scalar_one_or_none()
         if encounter is None:
@@ -189,12 +193,15 @@ class EncounterCancelMixin:
             )
             return False
 
-        # 2. 取患者本体，校验来源 + 标软删
+        # 2. 取患者本体，校验来源 + 标软删——加行锁（2026-08-28 完整性审计）：
+        # "判无其他接诊→软删"与 HIS 同患者并发建新接诊之间原本无互斥，可产出
+        # "in_progress 接诊指向已软删患者"（搜索/查重全过滤 is_deleted，医生
+        # 打不开档案）。锁患者行让并发建接诊的 patient 读取等到软删提交后再判。
         patient = (await self.db.execute(
             select(Patient).where(
                 Patient.id == patient_id,
                 Patient.is_deleted.is_(False),  # 已软删则跳过（幂等）
-            )
+            ).with_for_update()
         )).scalar_one_or_none()
         if patient is None:
             return False  # 患者不存在或已软删，no-op

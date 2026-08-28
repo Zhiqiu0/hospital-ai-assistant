@@ -15,7 +15,19 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _validate_record_type(v: str) -> str:
+    """record_type 枚举收口（2026-08-28 完整性审计）：此前任何一层都不校验，
+    持医生 token 传 record_type="foo" 可一路建档→签发→原样回写 HIS（破坏规范
+    3.2 枚举，厂商侧行为未定义）。白名单以 AI 侧 NEW_ARCH_RECORD_TYPES 为
+    单一真相（延迟导入避免 schemas→services 的模块级依赖环）。"""
+    from app.services.ai.record_prompts import NEW_ARCH_RECORD_TYPES
+    if v not in NEW_ARCH_RECORD_TYPES:
+        raise ValueError(f"record_type 必须是 {sorted(NEW_ARCH_RECORD_TYPES)} 之一")
+    return v
+
 
 
 class QuickSaveRequest(BaseModel):
@@ -29,12 +41,16 @@ class QuickSaveRequest(BaseModel):
     record_type: str = "outpatient"  # 病历类型
     content: str              # 病历全文（markdown 格式）
 
+    _rt = field_validator("record_type")(_validate_record_type)
+
 
 class MedicalRecordCreate(BaseModel):
     """创建病历主记录的入参（在病历生成之前先创建主记录）。"""
 
     encounter_id: str
     record_type: str
+
+    _rt = field_validator("record_type")(_validate_record_type)
 
 
 class RecordContentUpdate(BaseModel):
@@ -55,6 +71,8 @@ class AutoSaveDraftRequest(BaseModel):
     encounter_id: str
     record_type: str
     content: str  # 完整病历正文（前端编辑器当前值）
+
+    _rt = field_validator("record_type")(_validate_record_type)
     expected_updated_at: Optional[datetime] = None  # 上次保存返回的 updated_at，乐观锁凭证
     # 记录时间（临床相关时点）。住院文书用它表达"这份病程记的是哪天的事"；
     # 门急诊当场书写不必传。与系统录入时间差得多会被标为补记，

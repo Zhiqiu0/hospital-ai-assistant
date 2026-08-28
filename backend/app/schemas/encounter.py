@@ -18,11 +18,24 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, field_validator, Field, model_validator
 
 # 一键开始接诊路径同样新建患者，必须走同一份身份证 / 手机号校验，
 # 否则 API 直调或前端表单绕过时会污染患者主索引
 from app.core.validators.identity import IdCardStrict, Phone
+
+_VISIT_TYPES = ("outpatient", "emergency", "inpatient")
+
+
+def _validate_visit_type(v: str) -> str:
+    """visit_type 枚举收口（2026-08-28 完整性审计）：此前裸 str，传"住院"/
+    任意串入库后所有 == "inpatient" 判定静默走门急诊口径（record_no 不递增、
+    签发即关接诊、QC 选表走兜底）。HIS 推送侧本就有宽容映射，本方 API 收紧。"""
+    if v not in _VISIT_TYPES:
+        raise ValueError(f"visit_type 必须是 {_VISIT_TYPES} 之一")
+    return v
+
+
 
 
 class QuickStartRequest(BaseModel):
@@ -54,6 +67,7 @@ class QuickStartRequest(BaseModel):
     blood_type: Optional[str] = None
     # 接诊设置
     visit_type: str = "outpatient"        # "outpatient" / "emergency" / "inpatient"
+    _vt = field_validator("visit_type")(_validate_visit_type)
     department_id: Optional[str] = None   # 科室（空则使用当前登录医生的科室）
     bed_no: Optional[str] = None          # 床位号（住院用）
     admission_route: Optional[str] = None  # 入院途径（住院病案首页）
@@ -72,6 +86,8 @@ class EncounterCreate(BaseModel):
 
     patient_id: str            # 已存在的患者 UUID
     visit_type: str            # 就诊类型
+
+    _vt = field_validator("visit_type")(_validate_visit_type)
     department_id: Optional[str] = None
     is_first_visit: bool = True
     bed_no: Optional[str] = None

@@ -44,9 +44,26 @@ class MedicalRecordCrudMixin:
                 detail="该接诊的这类病历已签发，不能再建新的；需要更正请走病历修订",
             )
 
+        # record_no 复用统一计算（2026-08-28 完整性审计）：原先恒用列默认值 1，
+        # 对已有同类型文书的住院接诊调一次就造出重复 (enc,type,1)——HIS 回写
+        # 幂等键撞车互相覆盖。与草稿/签发路径同口径先锁 encounter 行串行化，
+        # 再算 next_no；三元组唯一约束（k20260828recuniq）作最后兜底。
+        from sqlalchemy import func
+
+        await self.db.execute(
+            select(Encounter.id).where(Encounter.id == data.encounter_id)
+            .with_for_update()
+        )
+        next_no = (await self.db.execute(
+            select(func.coalesce(func.max(MedicalRecord.record_no), 0) + 1).where(
+                MedicalRecord.encounter_id == data.encounter_id,
+                MedicalRecord.record_type == data.record_type,
+            )
+        )).scalar() or 1
         record = MedicalRecord(
             encounter_id=data.encounter_id,
             record_type=data.record_type,
+            record_no=next_no,
         )
         self.db.add(record)
         await self.db.commit()

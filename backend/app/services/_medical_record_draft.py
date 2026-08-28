@@ -70,6 +70,14 @@ class MedicalRecordDraftMixin:
         # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
         # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
         content = content.replace("\x00", "")
+        # 首行并发防重（2026-08-28 完整性审计）：该 (enc,type) 还没有行时
+        # record 级行锁锁不到东西，AI 落库与 auto-save 并发会各插一行同号文书。
+        # 与 quick_save 同口径先锁 encounter 行，把首行插入串行化；
+        # 三元组唯一约束（k20260828recuniq）作最后兜底。
+        from app.models.encounter import Encounter as _Enc
+        await self.db.execute(
+            select(_Enc.id).where(_Enc.id == encounter_id).with_for_update()
+        )
         result = await self.db.execute(
             select(MedicalRecord)
             .where(
@@ -225,6 +233,14 @@ class MedicalRecordDraftMixin:
         # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
         # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
         content = content.replace("\x00", "")
+        # 首行并发防重（2026-08-28 完整性审计）：该 (enc,type) 还没有行时
+        # record 级行锁锁不到东西，AI 落库与 auto-save 并发会各插一行同号文书。
+        # 与 quick_save 同口径先锁 encounter 行，把首行插入串行化；
+        # 三元组唯一约束（k20260828recuniq）作最后兜底。
+        from app.models.encounter import Encounter as _Enc
+        await self.db.execute(
+            select(_Enc.id).where(_Enc.id == encounter_id).with_for_update()
+        )
         result = await self.db.execute(
             select(MedicalRecord)
             .where(

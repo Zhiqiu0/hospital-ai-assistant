@@ -245,6 +245,7 @@ async def test_snapshot_records_ordered_by_updated_at_desc(async_db, base_encoun
     """多份病历按 updated_at 倒序，第一条是 active_record。"""
     older = MedicalRecord(
         id="rec-older",
+        record_no=1,
         encounter_id=base_encounter.id,
         record_type="outpatient",
         status="draft",
@@ -253,6 +254,7 @@ async def test_snapshot_records_ordered_by_updated_at_desc(async_db, base_encoun
     )
     newer = MedicalRecord(
         id="rec-newer",
+        record_no=2,
         encounter_id=base_encounter.id,
         record_type="outpatient",
         status="draft",

@@ -61,11 +61,12 @@ async def seed(async_db):
 
 
 async def _mk_record(db, *, encounter_id, status="submitted",
-                     submitted_at=None, content="病历全文内容", version_no=1):
+                     submitted_at=None, content="病历全文内容", version_no=1, record_no=1):
     """直接落库一条病历 + 最新版本（list 查询只读，不需要走签发全流程）。"""
     rec = MedicalRecord(
         encounter_id=encounter_id, record_type="outpatient",
         status=status, current_version=version_no,
+        record_no=record_no,
         submitted_at=submitted_at or datetime(2026, 6, 5, 10, 0),
     )
     db.add(rec)
@@ -92,7 +93,7 @@ async def test_list_records_empty(async_db):
 async def test_list_records_pagination(async_db, seed):
     """3 条已签发病历，page_size=2：第一页 2 条、第二页 1 条，total 恒为 3。"""
     for i in range(3):
-        await _mk_record(async_db, encounter_id=seed.enc_a.id,
+        await _mk_record(async_db, encounter_id=seed.enc_a.id, record_no=i + 1,
                          submitted_at=datetime(2026, 6, 5, 10, i))
     svc = AdminRecordService(async_db)
     page1 = await svc.list_all_records(page=1, page_size=2)
