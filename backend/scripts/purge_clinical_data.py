@@ -42,6 +42,12 @@ from app.database import AsyncSessionLocal  # noqa: E402
 # 顺序错了 PG 会直接报外键冲突（不会静默留孤儿），但报错就得从头再来，
 # 所以这里按依赖图排好，一次过。
 PURGE_ORDER = [
+    # 2026-08-28 全量体检补漏：qc_reviews/qc_reports/diagnoses 是 08-21 病案首页
+    # 质控工程新增的表，本脚本（08-17 交付）没赶上——漏删会被外键直接拦住
+    # medical_records/encounters 的删除，开业当天脚本必失败。已加表覆盖契约测试
+    # （tests/test_purge_coverage.py）防再漏。
+    ("qc_reviews", "质控员复核记录（依赖 medical_records / encounters）"),
+    ("qc_reports", "质控评分报告（依赖 medical_records / encounters）"),
     ("qc_issues", "质控问题（依赖 ai_tasks / medical_records）"),
     ("ai_tasks", "AI 任务记录"),
     ("record_versions", "病历版本（正文全文在这里）"),
@@ -49,6 +55,7 @@ PURGE_ORDER = [
     ("inquiry_inputs", "问诊分字段录入"),
     ("vital_signs", "生命体征"),
     ("problem_list", "住院问题列表"),
+    ("diagnoses", "诊断条目（依赖 encounters）"),
     ("ai_suggestion_feedback", "AI 建议采纳反馈"),
     ("lab_reports", "检验报告"),
     ("imaging_reports", "影像报告（依赖 imaging_studies）"),
@@ -64,13 +71,15 @@ PURGE_ORDER = [
 # departments        科室（含 HIS 推送自动建的）
 # qc_rules           医保/关键词质控规则配置
 # revoked_tokens     登录态黑名单，与临床数据无关
+# diagnosis_codes    医保 2.0 编码字典（4.8 万条配置资产，由迁移导入，绝不能清）
 #
 # ⚠️ 开业前第二步（2026-08-17 第 13 轮审计新增）：本脚本保留 users/departments，
 #    但这两张表里还混着联调/审计留下的**测试账号与测试科室**（如种子 doctor01，
 #    口令 doctor123 明文就在仓库里，实测能登生产签病历）。清库清不掉它们。
 #    正式开业前，跑完本脚本 --execute 后，**再跑 purge_test_accounts.py --execute**
 #    把测试账号/科室清掉，并按它的口令体检把 admin 默认口令改掉。
-KEEP = ["users", "doctor_codes", "departments", "qc_rules", "revoked_tokens"]
+KEEP = ["users", "doctor_codes", "departments", "qc_rules", "revoked_tokens",
+        "diagnosis_codes"]
 
 CONFIRM_PHRASE = "确认清空临床数据"
 
@@ -141,8 +150,25 @@ async def main(execute: bool) -> int:
 
         # 全部删除放在**同一个事务**里：中途任何一张表出错就整体回滚，
         # 不会留下"删了一半"的库（那比不删更难收拾）。
+        #
+        # audit_logs 只追加触发器（2026-08-28 全量体检修复）：生产库上
+        # trg_audit_logs_append_only 会对 DELETE 直接 RAISE EXCEPTION——
+        # 原写法删到审计表必炸、整个清库回滚，脚本在生产从来跑不通
+        # （交付时只干跑过，干跑不触发触发器）。这里在同一事务内临时禁用
+        # 该触发器、删完立即恢复：ALTER TABLE 是事务性的，中途失败回滚时
+        # 触发器状态也一并还原，不存在"禁用后忘了开"的窗口。
+        # 这是唯一的合法删审计通道：仅限开业前清测试数据这一次性场景。
         for table, _desc, n in counts:
-            if n:
+            if not n:
+                continue
+            if table == "audit_logs":
+                await db.execute(text(
+                    "ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only"))
+                await db.execute(text("DELETE FROM audit_logs"))
+                await db.execute(text(
+                    "ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only"))
+                print(f"  已清空 audit_logs（{n} 行，触发器已恢复）")
+            else:
                 await db.execute(text(f"DELETE FROM {table}"))
                 print(f"  已清空 {table}（{n} 行）")
         await db.commit()
