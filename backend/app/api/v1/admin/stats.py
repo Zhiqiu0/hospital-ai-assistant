@@ -79,16 +79,11 @@ async def overview(db: AsyncSession = Depends(get_db), current_user=Depends(requ
         "total_encounters": total_encounters,
         "total_ai_tasks": total_ai_tasks,
         "total_qc_issues": total_qc_issues,
-        # per-feature counts
-        "generate_count": type_counts.get("generate", 0),
-        "polish_count": type_counts.get("polish", 0),
-        "qc_count": type_counts.get("qc", 0),
-        "inquiry_count": type_counts.get("inquiry", 0),
-        "exam_count": type_counts.get("exam", 0),
-        # QC issue type breakdown
-        "completeness_issues": issue_counts.get("completeness", 0),
-        "format_issues": issue_counts.get("format", 0),
-        "logic_issues": issue_counts.get("logic", 0),
+        # 全量分布（2026-08-29 对抗复核）：此前各自硬编码 5/3 个键做挑选，
+        # rubric 质控问题类与 diagnosis 等新任务类在看板上整类不可见——
+        # 改为直接回传 group-by 全量 dict，新增类别自动出现，前端负责中文标签
+        "task_type_counts": type_counts,
+        "issue_type_counts": issue_counts,
         # risk level breakdown
         "high_risk_issues": risk_counts.get("high", 0),
         "medium_risk_issues": risk_counts.get("medium", 0),
@@ -139,7 +134,13 @@ async def usage_stats(
         .group_by(day_col)
         .order_by(day_col)
     )
-    daily = [{"date": str(row.day), "count": row.cnt} for row in daily_result]
+    # 零填充（2026-08-29 对抗复核）：group-by 只回有接诊的日子，某天 0 接诊
+    # 会整天从横轴消失，折线被"接起来"看不出停诊/故障日——补齐 7 天全轴
+    counts = {str(row.day): row.cnt for row in daily_result}
+    daily = []
+    for i in range(7):
+        d = str((seven_days_ago + timedelta(days=i)).date())
+        daily.append({"date": d, "count": counts.get(d, 0)})
 
     return {"by_department": items, "daily_trend": daily}
 

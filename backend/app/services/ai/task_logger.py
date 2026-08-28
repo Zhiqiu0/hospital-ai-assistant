@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 async def log_ai_task(
     task_type: str,
-    token_input: int = 0,
-    token_output: int = 0,
+    token_input: Optional[int] = None,
+    token_output: Optional[int] = None,
     output_result: Optional[dict] = None,
     model_name: Optional[str] = None,
     prompt_version: Optional[str] = None,
@@ -46,8 +46,11 @@ async def log_ai_task(
 
     Args:
         task_type:     任务类型，如 "qc"、"generate"、"polish" 等。
-        token_input:   本次调用消耗的输入 token 数；无法获取时传 0。
-        token_output:  本次调用消耗的输出 token 数；无法获取时传 0。
+        token_input:   本次调用消耗的输入 token 数；无法获取时传 None 落 NULL
+                       （2026-08-29 对抗复核：原约定传 0，会把"供应商没回
+                       usage"伪装成"零消耗"，token 报表悄悄少计还查不出来；
+                       NULL 让缺数据可见，聚合时天然被 SUM 跳过）。
+        token_output:  本次调用消耗的输出 token 数；无法获取时传 None，同上。
         output_result: LLM 返回的 JSON 结果。snapshot 恢复时能拿回前端，
                        让医生 logout 重登后追问/检查/诊断建议都还在。
 
@@ -66,6 +69,12 @@ async def log_ai_task(
     from app.core.request_context import get_encounter_id, get_medical_record_id
     encounter_id = get_encounter_id()
     medical_record_id = get_medical_record_id()
+
+    # 可观测（2026-08-29）：usage 缺失说明供应商响应异常或流式中断，
+    # 打点便于在日志里统计缺失率——大面积缺失时成本核算已不可信
+    if token_input is None or token_output is None:
+        logger.warning("ai_task.usage_missing: task_type=%s 本次调用未取到 usage，"
+                       "token 计数落 NULL", task_type)
 
     task_id = generate_uuid()
     async with AsyncSessionLocal() as db:

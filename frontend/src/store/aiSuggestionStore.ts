@@ -88,6 +88,9 @@ export const useAISuggestionStore = create<AISuggestionState>()(
       name: 'medassist-ai-suggestions',
       // isExamLoading 是瞬态不持久化，否则刷新后 loading 状态会卡住
       partialize: state => ({
+        // 归属必须随数据一起持久化（2026-08-29 对抗复核抓漏）：漏了它则每次
+        // 刷新 owner 恒 null，水合 assertOwner 必失配把刚恢复的数据全清
+        ownerEncounterId: state.ownerEncounterId,
         examSuggestions: state.examSuggestions,
         inquirySuggestions: state.inquirySuggestions,
         diagnosisSuggestions: state.diagnosisSuggestions,

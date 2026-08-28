@@ -496,7 +496,13 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     for _ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
         cleaned_name = cleaned_name.replace(_ch, "")
     cleaned_name = (cleaned_name.replace("\n", " ").replace("\r", " ")
-                    .replace("\t", " ").strip()) or payload.patient_name
+                    .replace("\t", " ").strip())
+    # 清洗后为空（纯零宽/纯空白姓名）用占位名，绝不回退未清洗原值——
+    # 原值会在 PatientCreate 校验器处炸掉整条接诊（2026-08-29 对抗复核修正）
+    if not cleaned_name:
+        logger.warning("his_admit.patient: 姓名不可清洗，使用占位名 visit_id=%s",
+                       payload.visit_id)
+        cleaned_name = "未知患者"
     if len(cleaned_name) > 50:
         logger.warning("his_admit.patient: 姓名超列宽截断 len=%d", len(cleaned_name))
         cleaned_name = cleaned_name[:50]
@@ -592,7 +598,17 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             # 走到这里说明不合格的不是这两个字段（如姓名/生日），退回原策略兜底
             fields["id_card"] = None
             fields["phone"] = None
-            create_data = PatientCreate(**fields)
+            try:
+                create_data = PatientCreate(**fields)
+            except ValidationError:
+                # 最终兜底（2026-08-29 对抗复核）："绝不因脏数据拒收接诊"是本
+                # 函数的头号不变量——姓名等仍不过校验时降级到占位名+最小字段，
+                # 医生在工作台里能看到接诊并手工更正档案，好过整条接诊被拒
+                logger.warning(
+                    "his_admit.patient: 档案字段全面降级为占位建档 visit_id=%s",
+                    payload.visit_id,
+                )
+                create_data = PatientCreate(name="未知患者")
 
     # commit=False：建患者与建接诊合并为同一事务，接诊失败不留孤儿档案
     created = await service.create(create_data, commit=False)

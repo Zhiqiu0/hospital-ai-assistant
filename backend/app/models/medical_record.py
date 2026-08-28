@@ -166,6 +166,17 @@ class RecordVersion(Base):
             postgresql_where=text("sign_hash IS NOT NULL"),
             sqlite_where=text("sign_hash IS NOT NULL"),
         ),
+        # 管理员修订通道（2026-08-29 对抗复核）：质控复核台"最新修订时间"子查询
+        # 与删除横幅整改判据都按 source='admin_revise' 过滤后按 medical_record_id
+        # 聚合/EXISTS，上面各索引都不覆盖 → 版本表增长后每次开复核台全表扫。
+        # 修订版本占比极小，部分索引小且精准。迁移见 l20260829idxgap。
+        Index(
+            "idx_record_versions_admin_revise",
+            "medical_record_id",
+            "created_at",
+            postgresql_where=text("source = 'admin_revise'"),
+            sqlite_where=text("source = 'admin_revise'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -285,6 +296,15 @@ class QCReport(Base):
         Index("idx_qc_reports_enc", "encounter_id", "record_type", "created_at"),
         # 科室维度月度聚合
         Index("idx_qc_reports_dept", "department_id", "created_at"),
+        # 删除病历前"有无质控报告"探测（2026-08-29 对抗复核）：按
+        # medical_record_id 等值查，此前无索引全表扫。可空列用部分索引跳过
+        # NULL 行（裸调用产生的报告无病历关联，不参与该查询）。
+        Index(
+            "idx_qc_reports_record",
+            "medical_record_id",
+            postgresql_where=text("medical_record_id IS NOT NULL"),
+            sqlite_where=text("medical_record_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -333,6 +353,15 @@ class AITask(Base):
     # 无索引即全表扫描 + 排序。ai_tasks 是随每次 AI 调用增长的大表。
     __table_args__ = (
         Index("idx_ai_tasks_enc_type_created", "encounter_id", "task_type", "created_at"),
+        # 删除病历时解挂 AI 任务（2026-08-29 对抗复核）：UPDATE ... WHERE
+        # medical_record_id = X 此前无索引全表扫；大部分任务不挂病历（NULL），
+        # 部分索引只存非空行，极小。迁移见 l20260829idxgap。
+        Index(
+            "idx_ai_tasks_record",
+            "medical_record_id",
+            postgresql_where=text("medical_record_id IS NOT NULL"),
+            sqlite_where=text("medical_record_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)

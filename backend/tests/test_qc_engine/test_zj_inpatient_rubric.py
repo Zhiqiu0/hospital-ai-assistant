@@ -251,7 +251,7 @@ def test_first_course_missing_case_summary_triggers_veto():
     report = score(ZJ_INPATIENT_V2021, ctx)
     fc_items = [it for it in report.item_scores if it.name == "首次病程录"]
     assert fc_items[0].veto_triggered is True
-    assert fc_items[0].deducted == 6  # VETO 扣 10 但 cap 到 max_points=6
+    assert fc_items[0].deducted == 10  # VETO 固定扣 10，不按 max_points=6 封顶
 
 
 def test_first_course_missing_treatment_plan_triggers():

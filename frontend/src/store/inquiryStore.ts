@@ -91,6 +91,9 @@ export const useInquiryStore = create<InquiryState>()(
       storage: createJSONStorage(() => safeLocalStorage),
       // 全部字段都持久化，刷新页面后表单数据不丢
       partialize: state => ({
+        // 归属必须随数据一起持久化（2026-08-29 对抗复核抓漏）：漏了它则每次
+        // 刷新 owner 恒 null，水合 assertOwner 必失配把刚恢复的数据全清
+        ownerEncounterId: state.ownerEncounterId,
         inquiry: state.inquiry,
         inquirySavedAt: state.inquirySavedAt,
       }),

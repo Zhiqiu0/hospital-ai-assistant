@@ -119,8 +119,8 @@ async def voice_structure(
         usage = llm_client._last_usage
         await log_ai_task(
             "generate",
-            token_input=usage.prompt_tokens if usage else 0,
-            token_output=usage.completion_tokens if usage else 0,
+            token_input=usage.prompt_tokens if usage else None,
+            token_output=usage.completion_tokens if usage else None,
             model_name=model_options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
         )
 

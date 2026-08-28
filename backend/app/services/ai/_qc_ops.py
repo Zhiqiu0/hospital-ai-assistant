@@ -63,8 +63,8 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> dict:
         usage = llm_client._last_usage
         await log_ai_task(
             "qc",
-            token_input=usage.prompt_tokens if usage else 0,
-            token_output=usage.completion_tokens if usage else 0,
+            token_input=usage.prompt_tokens if usage else None,
+            token_output=usage.completion_tokens if usage else None,
             model_name=model_options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
         )
         # 数值真实性守卫（2026-08-11 审计修复）：与批量修复路径同款确定性后校验。

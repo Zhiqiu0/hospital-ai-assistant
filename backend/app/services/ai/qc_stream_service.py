@@ -178,8 +178,8 @@ async def run_quick_qc_stream(
             llm_result, usage = await llm_task
             task_id = await log_ai_task(
                 "qc",
-                token_input=usage.prompt_tokens if usage else 0,
-                token_output=usage.completion_tokens if usage else 0,
+                token_input=usage.prompt_tokens if usage else None,
+                token_output=usage.completion_tokens if usage else None,
                 model_name=model_options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
             )
 

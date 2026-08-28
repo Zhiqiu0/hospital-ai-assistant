@@ -50,7 +50,7 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
         .group_by(QCReport.encounter_id, QCReport.record_type)
         .subquery()
     )
-    rows = (await db.execute(
+    raw_rows = (await db.execute(
         select(QCReport).join(
             latest_at,
             (QCReport.encounter_id == latest_at.c.enc)
@@ -58,6 +58,16 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
             & (QCReport.created_at == latest_at.c.mx),
         )
     )).scalars().all()
+    # 平票去重（2026-08-29 对抗复核）：两次评分 created_at 相同（秒级精度下
+    # 连点两次质控就会撞）时上面的 join 会把两行都带回来，同一份文书被双计。
+    # 按 (encounter, record_type) 只留一条，id 最大者胜——UUID 无时序含义，
+    # 但选择是确定性的，且消除了双计。
+    picked: dict[tuple, QCReport] = {}
+    for r in raw_rows:
+        k = (r.encounter_id, r.record_type)
+        if k not in picked or (r.id or "") > (picked[k].id or ""):
+            picked[k] = r
+    rows = list(picked.values())
 
     dept_names = {
         d.id: d.name for d in (await db.execute(select(Department))).scalars().all()
@@ -69,12 +79,17 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
         key = r.department_id or "__none__"
         bucket = by_dept.setdefault(key, {
             "department": dept_names.get(r.department_id, "未挂科室"),
-            "count": 0, "score_sum": 0.0, "grade_a": 0, "passed": 0,
+            "count": 0, "score_sum": 0.0,
+            "grade_a": 0, "graded": 0, "passed": 0,
         })
         bucket["count"] += 1
         bucket["score_sum"] += float(r.score or 0)
-        if r.grade == "甲级":
-            bucket["grade_a"] += 1
+        # 甲级率分母只算三级体系文书（2026-08-29 对抗复核）：门急诊评级是
+        # 合格/不合格，永远评不出"甲级"，混进分母会把住院甲级率稀释失真
+        if r.grade in ("甲级", "乙级", "丙级"):
+            bucket["graded"] += 1
+            if r.grade == "甲级":
+                bucket["grade_a"] += 1
         if r.passed:
             bucket["passed"] += 1
         for d in (r.deductions or []):
@@ -91,7 +106,7 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
                 "department": b["department"],
                 "count": b["count"],
                 "avg_score": round(b["score_sum"] / b["count"], 1) if b["count"] else 0,
-                "grade_a_rate": round(b["grade_a"] / b["count"] * 100, 1) if b["count"] else 0,
+                "grade_a_rate": round(b["grade_a"] / b["graded"] * 100, 1) if b["graded"] else 0,
                 "pass_rate": round(b["passed"] / b["count"] * 100, 1) if b["count"] else 0,
             }
             for b in by_dept.values()
