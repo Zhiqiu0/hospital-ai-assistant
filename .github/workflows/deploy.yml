@@ -233,6 +233,15 @@ jobs:
               echo "[deploy] crontab 已配置：$TOKEN_CLEANUP_CRON"
             fi
 
+            # ── 自动配置 crontab：每天 04:20 ai_tasks 超期载荷瘦身（2026-08-28 体检）
+            # 只清 180 天前行的 input/output JSONB 大字段，行与 token 统计元数据保留
+            AI_PAYLOAD_CRON="20 4 * * * cd /app && docker compose exec -T backend python scripts/cleanup_ai_task_payloads.py >> /var/log/mediscribe-voice-cleanup.log 2>&1"
+            if ! crontab -l 2>/dev/null | grep -qF "scripts/cleanup_ai_task_payloads.py"; then
+              echo "[deploy] 配置每日 AI 载荷瘦身 crontab..."
+              (crontab -l 2>/dev/null; echo "$AI_PAYLOAD_CRON") | crontab -
+              echo "[deploy] crontab 已配置：$AI_PAYLOAD_CRON"
+            fi
+
             # ── docker 构建缓存回收（2026-08-28 体检）─────────────────────
             # 每次 deploy 都 build，构建缓存无限增长（实测 730 条 5.5GB），
             # dangling 镜像同理。保底留 2GB 缓存加速下次构建，其余回收；
