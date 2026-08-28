@@ -57,6 +57,10 @@ export function useInpatientInquiryPanel() {
       psychology_assessment: inquiry.psychology_assessment,
       auxiliary_exam: inquiry.auxiliary_exam,
       admission_diagnosis: inquiry.admission_diagnosis || inquiry.initial_impression,
+      // 中医病条目的入院病情从条目 store 回填（快照恢复时整组灌入过）
+      tcm_admission_condition:
+        useDiagnosisEntriesStore.getState().entries.find(e => e.category === 'tcm_disease')
+          ?.admission_condition || undefined,
       // 生命体征 8 字段（结构化独立字段，VitalSignsInput 通过 Form.Item name 绑定）
       temperature: inquiry.temperature,
       pulse: inquiry.pulse,
@@ -133,6 +137,8 @@ export function useInpatientInquiryPanel() {
     const diagnosisItems = composeDiagnosisItems(westernEntries, {
       tcmDisease: tcmDiseaseText,
       tcmSyndrome: tcmSyndromeText,
+      // 中医病条目的入院病情（2026-08-28 口径对拍修复：病案首页必填项）
+      tcmDiseaseCondition: (values.tcm_admission_condition as string) || undefined,
     })
     // 入院诊断必填（原 TextArea 的 required 校验挪到这里：至少一条诊断）
     if (diagnosisItems.length === 0) {
@@ -154,11 +160,14 @@ export function useInpatientInquiryPanel() {
 
     // InpatientInquiryData 是 InquiryData 子集（字段名/类型对齐），用 unknown 桥接
     setInquiry({ ...inquiry, ...inquiryData } as unknown as InquiryData)
+    // 服务端保存必须 await 并按结果给提示（2026-08-28 弱网审计）：原 fire-and-forget
+    // 失败也弹"已保存"+清 dirty，医生以为存上了，换设备/重登走 snapshot 恢复即
+    // 静默丢数据——门诊侧（useInquirySave）早已治过这个 P1，住院侧漏改。
     if (currentEncounterId) {
-      api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData).catch(() => {})
-      // 诊断条目落库（结构化权威源；后端做主诊断唯一校验 + 权威投影双写）
-      api
-        .put(`/encounters/${currentEncounterId}/diagnoses`, {
+      try {
+        await api.put(`/encounters/${currentEncounterId}/inquiry`, inquiryData)
+        // 诊断条目落库（结构化权威源；后端做主诊断唯一校验 + 权威投影双写）
+        await api.put(`/encounters/${currentEncounterId}/diagnoses`, {
           items: diagnosisItems.map(i => ({
             category: i.category,
             name: i.name,
@@ -169,7 +178,12 @@ export function useInpatientInquiryPanel() {
             sort_order: i.sort_order,
           })),
         })
-        .catch(() => {})
+      } catch {
+        message.error('入院问诊保存失败，请检查网络后重试')
+        setSaving(false)
+        // 保留 isDirty：让医生知道还没存上，可再次点击保存
+        return
+      }
     }
 
     // 把已改动的字段同步到右侧病历对应章节（profile 字段章节由 PatientProfileCard 维护）

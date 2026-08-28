@@ -18,7 +18,7 @@
  *   3. 否则依次恢复：reset → setCurrentEncounter → setInquiry → setRecordContent/Type
  */
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
@@ -120,6 +120,8 @@ export function useWorkbenchBase({
   const [resumeOpen, setResumeOpen] = useState(false)
   const [resumeList, setResumeList] = useState<ResumeEncounterItem[]>([])
   const [resumeLoading, setResumeLoading] = useState(false)
+  // handleResume 的"最新点击优先"序号（见函数内注释）
+  const resumeSeqRef = useRef(0)
 
   const openHistory = () => {
     setHistoryOpen(true)
@@ -157,6 +159,11 @@ export function useWorkbenchBase({
     patient_name?: string
     patient?: { name?: string } | null
   }) => {
+    // 最新点击优先（2026-08-28 弱网审计）：病区列表/叫号抽屉点患者 A 慢网
+    // 无反馈，医生再点 B——两个 /workspace 并发返回后原实现"后返回者赢"，
+    // A 慢返回会把工作台整个切回 A，医生以为在写 B 实际写进 A 的接诊。
+    // 序号守卫：响应回来只认最后一次点击，过期响应整体丢弃。
+    const seq = ++resumeSeqRef.current
     setResumeLoading(true)
     try {
       const snapshot = (await api.get(
@@ -165,6 +172,7 @@ export function useWorkbenchBase({
         is_first_visit?: boolean
         is_patient_reused?: boolean
       }
+      if (seq !== resumeSeqRef.current) return
       // 住院不走这条分支（2026-08-14 第六轮审计修复）：
       // 住院一次接诊有入院记录 + 多份病程 + 出院小结，签完入院记录后 active_record
       // 就是 submitted——医生从病区列表点进来只会看到"本次病历已签发"并被弹去历史
@@ -246,9 +254,11 @@ export function useWorkbenchBase({
       )
       setResumeOpen(false)
     } catch {
-      message.error(resumeErrorMsg)
+      // 过期请求的失败不弹错（它已被更新的点击取代）
+      if (seq === resumeSeqRef.current) message.error(resumeErrorMsg)
     } finally {
-      setResumeLoading(false)
+      // 只有最新一次请求有权关 loading，过期响应不得干扰在途请求的状态
+      if (seq === resumeSeqRef.current) setResumeLoading(false)
     }
   }
 

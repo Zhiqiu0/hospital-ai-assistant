@@ -68,6 +68,8 @@ export default function NewEncounterModal({
   const [searching, setSearching] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 患者搜索乱序守卫序号（见 handleSearch 注释）
+  const searchSeqRef = useRef(0)
 
   // 每次弹窗打开时按当前 mode 重置所有状态，防止上次的 step 残留
   useEffect(() => {
@@ -100,6 +102,8 @@ export default function NewEncounterModal({
       setResults([])
       return
     }
+    // 乱序守卫（2026-08-28 弱网审计）：先发的慢响应后到不得覆盖新关键词结果
+    const seq = ++searchSeqRef.current
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
@@ -114,6 +118,7 @@ export default function NewEncounterModal({
         const res = (await api.get(`/patients?${params.toString()}`)) as {
           items?: Patient[]
         }
+        if (seq !== searchSeqRef.current) return
         setResults(res.items || [])
       } catch {
         setResults([])
@@ -160,10 +165,21 @@ export default function NewEncounterModal({
         // 无 status。原判据 `!e?.response` 永远为真（拦截器从不返回 .response），会把
         // 400/409 等业务错误也误判为断网而重发 POST，可能重复建接诊。
         const e = err as { status?: number }
-        if (e?.status == null) {
+        // 自动重发仅限老患者（2026-08-28 弱网审计收紧）：网络错误可能是
+        // "请求已到达、响应丢失"——新患者（无 patient_id 去重键）重发会建出
+        // 两份患者档案+两条接诊；老患者重发最多撞"已有进行中接诊"的业务
+        // 校验，安全。新患者场景改为提示医生先确认再手动重试。
+        if (e?.status == null && 'patient_id' in payload) {
           await new Promise(r => setTimeout(r, 3000))
           res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
-        } else throw err
+        } else {
+          if (e?.status == null) {
+            message.warning(
+              '网络异常，本次创建结果未知——请先在「复诊」里搜索该患者确认是否已建档，再决定是否重试'
+            )
+          }
+          throw err
+        }
       }
       onSuccess(res, values.visit_type || (isEmergency ? 'emergency' : 'outpatient'))
       handleClose()

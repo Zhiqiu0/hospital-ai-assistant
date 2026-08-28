@@ -64,14 +64,15 @@ export default function InquirySuggestionTab() {
     }
     setLoading(true)
     try {
-      setSuggestions(
-        await fetchInquirySuggestions(
-          inquiry.chief_complaint,
-          inquiry.history_present_illness,
-          inquiry.initial_impression,
-          currentEncounterId
-        )
+      const fetched = await fetchInquirySuggestions(
+        inquiry.chief_complaint,
+        inquiry.history_present_illness,
+        inquiry.initial_impression,
+        currentEncounterId
       )
+      // 跨患者守卫（2026-08-28 弱网审计）：慢响应回来时已切患者则丢弃
+      if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
+      setSuggestions(fetched)
     } catch {
       setSuggestions([])
     } finally {
@@ -138,6 +139,8 @@ export default function InquirySuggestionTab() {
         initial_impression: inquiry.initial_impression || '',
         encounter_id: currentEncounterId || undefined,
       })) as { diagnoses?: DiagnosisItem[]; degraded?: boolean }
+      // 跨患者守卫（2026-08-28 弱网审计）：慢响应回来时已切患者则丢弃
+      if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
       // degraded=true 是后端 AI 故障兜底，不是"真的没有可建议的诊断"（2026-06-11）
       if (data.degraded) {
         message.error('AI 服务暂时不可用，请稍后重试')

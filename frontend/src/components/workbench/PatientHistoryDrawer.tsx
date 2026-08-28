@@ -148,21 +148,32 @@ export default function PatientHistoryDrawer({
   useEffect(() => {
     if (!open || !searchable || selected) return
     const kw = searchKeyword.trim()
+    // 乱序守卫（2026-08-28 弱网审计）：防抖只挡住"还没发出的"，在途请求
+    // 挡不住——先发的慢响应后到会覆盖新关键词的结果（输入框"李"、列表"张"）
+    let stale = false
     const t = setTimeout(
       () => {
         setSearching(true)
         api
           .get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=50`)
           .then(res => {
+            if (stale) return
             const data = res as { items?: Patient[] } | null
             setPatientList(data?.items || [])
           })
-          .catch(() => setPatientList([]))
-          .finally(() => setSearching(false))
+          .catch(() => {
+            if (!stale) setPatientList([])
+          })
+          .finally(() => {
+            if (!stale) setSearching(false)
+          })
       },
       kw ? 300 : 0
     )
-    return () => clearTimeout(t)
+    return () => {
+      stale = true
+      clearTimeout(t)
+    }
   }, [open, searchable, selected, searchKeyword])
 
   const handlePickPatient = (p: Patient) => {

@@ -92,6 +92,8 @@ function RootRedirect() {
   if (user && ADMIN_ROLES.includes(user.role)) return <Navigate to="/admin" replace />
   if (user?.role === 'radiologist') return <Navigate to="/pacs" replace />
   if (user?.role === 'qc_officer') return <Navigate to="/qc" replace />
+  // nurse 无任何后端写权限（2026-08-28 口径对拍）：不放进医生工作台吃一墙 403
+  if (user?.role === 'nurse') return <Navigate to="/login" replace />
   if (systemType === 'inpatient') return <Navigate to="/inpatient" replace />
   return <Navigate to="/workbench" replace />
 }

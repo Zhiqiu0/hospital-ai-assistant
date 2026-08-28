@@ -208,11 +208,13 @@ export default function QCRulesPage() {
                   等级判定：
                   {rubric.grade_thresholds
                     .map((t, idx, arr) => {
-                      // 最高等级显示 ≥ 自身阈值；其他等级显示 < 上一级阈值
-                      // 否则会出现"不合格（≥0 分）"这种怪文案
+                      // 区间渲染（2026-08-28 口径对拍修复）：中间等级必须同时给
+                      // 上下界，原写法只显 "<上一级阈值"，三级标准会渲染成
+                      // "乙级（<90）/ 丙级（<80）"——乙级区间与丙级重叠
                       if (idx === 0) return `${t.label}（≥${t.min_score} 分）`
                       const upper = arr[idx - 1].min_score
-                      return `${t.label}（<${upper} 分）`
+                      if (idx === arr.length - 1) return `${t.label}（<${upper} 分）`
+                      return `${t.label}（${t.min_score}-${upper - 1} 分）`
                     })
                     .join(' / ')}
                 </Text>

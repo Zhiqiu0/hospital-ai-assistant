@@ -5,6 +5,7 @@
  *   - handleAdmitToInpatient：急诊→住院（保留急诊病历作参考，创建住院接诊并跳转）
  *   - handleAddObservationNote：急诊留观追记（病历末尾插入带时间戳的追记块）
  */
+import { useRef } from 'react'
 import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -27,10 +28,16 @@ export function useEmergencyFlow({
   setRecordContent,
 }: EmergencyFlowParams) {
   const navigate = useNavigate()
+  // 转住院在途标志（防重，见 handleAdmitToInpatient 注释）
+  const admittingRef = useRef(false)
 
   // 急诊→住院：保留急诊病历作参考，创建住院接诊并跳转
   const handleAdmitToInpatient = async () => {
     if (!currentPatient) return
+    // 在途防重（2026-08-28 弱网审计）：慢网下按钮无反馈医生会再点，两个
+    // quick-start 并发会建出两条住院接诊且两次 reset+navigate 交错
+    if (admittingRef.current) return
+    admittingRef.current = true
     const emergencyRecord = recordContent
     try {
       const res = (await api.post('/encounters/quick-start', {
@@ -58,6 +65,8 @@ export function useEmergencyFlow({
       message.success(`已为「${res.patient.name}」创建住院接诊`)
     } catch {
       message.error('创建住院接诊失败，请稍后重试')
+    } finally {
+      admittingRef.current = false
     }
   }
 

@@ -272,6 +272,14 @@ async def my_returned_records(
                 resigned.record_type == MedicalRecord.record_type,
                 resigned.submitted_at > QCReview.created_at,
             ).exists(),
+            # 门急诊整改通道 = 管理员修订（2026-08-28 口径对拍修复）：修订只建
+            # RecordVersion(source=admin_revise) 不动 submitted_at，原判据认不出
+            # → 横幅永不消失。退回后存在更晚的管理员修订版本同样视为已整改。
+            ~select(RecordVersion.id).where(
+                RecordVersion.medical_record_id == MedicalRecord.id,
+                RecordVersion.source == "admin_revise",
+                RecordVersion.created_at > QCReview.created_at,
+            ).exists(),
         )
         .order_by(QCReview.created_at.desc())
         .limit(50)

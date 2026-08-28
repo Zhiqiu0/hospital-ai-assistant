@@ -19,6 +19,7 @@ import {
   composeDiagnosisItems,
   renderDiagnosisProjection,
 } from '@/domain/medical/diagnosisProjection'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 
 interface InquirySaveParams {
   form: FormInstance
@@ -56,6 +57,13 @@ export function useInquirySave({
 
   const onSave = async (values: Record<string, unknown>) => {
     setSaving(true)
+    // 跨患者写回守卫（2026-08-28 弱网审计）：normalize-fields 最长可等 300s，
+    // 期间医生可能已切到下一位患者（叫号场景高频）。慢响应回来后如果无条件
+    // setInquiry/setEntries/setRecordContent，就把 A 的内容写进 B 的工作台并被
+    // auto-save 固化——生成/润色链路早有同款指针守卫，保存链路此前漏装。
+    const startEncounterId = useActiveEncounterStore.getState().encounterId
+    const stillSameEncounter = () =>
+      useActiveEncounterStore.getState().encounterId === startEncounterId
     const data = buildInquiryData(values)
 
     // 找出本次新增或修改的字段，用于 AI 规范化和病历章节同步
@@ -82,6 +90,11 @@ export function useInquirySave({
         }
       } catch {
         /* 规范化失败时继续用原值 */
+      }
+      // 慢响应期间已切患者：后续所有本地写回都会污染新患者工作台，整体中止
+      if (!stillSameEncounter()) {
+        setSaving(false)
+        return
       }
     }
 
@@ -142,6 +155,12 @@ export function useInquirySave({
       message.error('问诊保存失败，请检查网络后重试')
       setSaving(false)
       // 保留 isDirty：让医生知道还没存上，可再次点击保存
+      return
+    }
+    // PUT 落库归属 startEncounterId 是正确的；但若期间已切患者，
+    // 下面的正文章节同步/自动生成/去向提示都不能再碰新患者的工作台
+    if (!stillSameEncounter()) {
+      setSaving(false)
       return
     }
 
