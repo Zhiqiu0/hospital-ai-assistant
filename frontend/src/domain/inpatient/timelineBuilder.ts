@@ -20,6 +20,8 @@ export interface TimelineItem {
   status: string // draft / submitted
   title?: string | null
   content: string
+  /** 补记标识（记录时点与系统录入时间差超阈值，规范要求显式标注） */
+  isLateEntry?: boolean
 }
 
 /**
@@ -38,6 +40,9 @@ export interface MedicalRecordRaw {
   content?: string | null
   submitted_at?: string | null
   created_at?: string | null
+  /** 临床记录时点（后端 describe_record_time 三元组，2026-08-28 补记链路修复） */
+  recorded_at?: string | null
+  is_late_entry?: boolean
 }
 
 /**
@@ -68,10 +73,14 @@ export function medicalRecordToItem(r: MedicalRecordRaw): TimelineItem {
     label: rule.label,
     color: rule.color,
     bgColor: rule.bgColor,
-    recordedAt: r.submitted_at || r.created_at || '',
+    // 时间轴时点优先临床记录时间（2026-08-28 补记链路修复）：补写昨天的
+    // 查房要按"昨天"排位显示，而不是按今天的签发/建档时间——此前后端明明
+    // 返回了 recorded_at/is_late_entry，前端整条链路零消费
+    recordedAt: r.recorded_at || r.submitted_at || r.created_at || '',
     status: r.status || 'draft',
     title: null,
     content: r.content || '',
+    isLateEntry: r.is_late_entry === true,
   }
 }
 

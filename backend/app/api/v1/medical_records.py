@@ -127,7 +127,11 @@ async def quick_save_record(
             spawn(dispatch_writeback(enc.id, current_user.id, enc.visit_no or ""),
                   name=f"writeback:{enc.id}")
             his_writeback = "dispatched"
-    return {"ok": True, "record_id": record.id, "his_writeback": his_writeback}
+    # submitted_at 回传（2026-08-28 时间审计）：打印件"签发时间"此前用医生
+    # 电脑时钟兜底，与签名哈希链锁定的服务器时刻可不一致——法律文书时间
+    # 必须以服务器为准，前端 setFinal 直接吃这个真值
+    return {"ok": True, "record_id": record.id, "his_writeback": his_writeback,
+            "submitted_at": record.submitted_at.isoformat() if record.submitted_at else None}
 
 
 @router.get("/draft-by-type")

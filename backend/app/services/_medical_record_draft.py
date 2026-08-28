@@ -189,6 +189,14 @@ class MedicalRecordDraftMixin:
                 current_version.content = {"text": content}
             record.status = "editing"
 
+        # 记录时间同步（2026-08-28 时间审计修复）：原先 recorded_at 只在首次
+        # 建 record 的分支写入，更新分支从不碰——而住院时间轴"新建文书"是先以
+        # now 建档、医生随后才把 DatePicker 改成实际时点（如补写昨天的查房），
+        # 改动全部落进更新分支被静默丢弃：补记标识（is_late_entry）永远不成立，
+        # record_time.py 头注宣称的整条补记链路没有一环生效。
+        if recorded_at is not None:
+            record.recorded_at = recorded_at
+
         # 强制刷新 record.updated_at——SQLAlchemy onupdate 只在字段实际改变时触发，
         # 但 auto-save 经常 status 还是 "editing"，等于不更新 updated_at；
         # 这会让乐观锁失效（多设备冲突时两边的 expected_updated_at 都对得上）。

@@ -62,9 +62,17 @@ async def today_queue(
             or_(
                 Encounter.status == "in_progress",
                 Encounter.visited_at >= today_start,
+                # 跨零点收尾保留（2026-08-28 时间审计）：夜班 23:40 接诊、00:20
+                # 签发的条目 visited_at 属"昨天"且已非 in_progress，原条件下
+                # 从队列即时消失——若此刻 HIS 回写失败，红色标签和重试入口
+                # 一并丢失。按"今天有过状态更新"保留到当天结束。
+                Encounter.updated_at >= today_start,
             ),
         )
-        .order_by(Encounter.visited_at.desc())
+        # 进行中优先置顶（2026-08-28 时间审计：docstring 一直这么写、SQL 一直
+        # 没实现——被跨天保留的昨晚在诊病人原本沉底）
+        .order_by((Encounter.status == "in_progress").desc(),
+                  Encounter.visited_at.desc())
     )
     items = []
     for enc, patient in result.all():

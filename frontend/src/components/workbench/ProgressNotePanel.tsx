@@ -126,7 +126,8 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
         // 用本地 naive ISO（无 Z/tz），配合后端 TIMESTAMP WITHOUT TIME ZONE 字段
         recorded_at: recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
       })
-      markSaved(content)
+      // 基线复合键与 autosave 脏判断同口径（记录时间+正文，2026-08-28 补记修复）
+      markSaved(`${recordedAt?.format('YYYY-MM-DDTHH:mm:ss') ?? ''}\u0001${content}`)
       message.success('已保存')
       onSaved()
     } catch {
@@ -177,12 +178,13 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
         {/* 日期格式必须带年份（2026-08-14 第八轮审计）：原先是 MM-DD HH:mm，
             跨年补写时选出来的 2027-12-29 在框里显示成「12-29 10:00」，与正确的
             2026-12-29 肉眼完全无法区分，而病历时间逻辑是住院质控的必查项。
-            后端已加区间校验兜底，界面上也要让医生看得见。 */}
+            后端对 recorded_at 有上限校验兜底（2026-08-28 补），界面同样禁选未来。 */}
         {!isReadOnly && (
           <DatePicker
             size="small"
             showTime={{ format: 'HH:mm' }}
             format="YYYY-MM-DD HH:mm"
+            disabledDate={d => !!d && d.isAfter(dayjs(), 'day')}
             value={recordedAt}
             onChange={v => setRecordedAt(v)}
             style={{ fontSize: 12 }}

@@ -79,6 +79,20 @@ class AutoSaveDraftRequest(BaseModel):
     # 不是可以随意改的时间线 —— 规范依据见 services/record_time.py。
     recorded_at: Optional[datetime] = None
 
+    @field_validator("recorded_at")
+    @classmethod
+    def _no_future_recorded_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """记录时间不得在未来（2026-08-28 时间审计）：此前零校验，选到明天的
+        病程时点会零提示进入法律文书。留 10 分钟容差吸收客户端时钟漂移；
+        回溯下限不设——补写历史病程是合法场景（补记机制负责标注）。"""
+        if v is None:
+            return v
+        naive = v.replace(tzinfo=None) if v.tzinfo is not None else v
+        from datetime import timedelta
+        if naive > datetime.now() + timedelta(minutes=10):
+            raise ValueError("记录时间不能晚于当前时间")
+        return v
+
 
 class MedicalRecordResponse(BaseModel):
     """病历主记录查询响应。"""

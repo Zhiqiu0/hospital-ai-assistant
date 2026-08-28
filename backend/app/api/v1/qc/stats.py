@@ -132,7 +132,11 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
     archive_total = archive_ok = 0
     now = datetime.now()
     for enc in discharged:
-        deadline = add_workdays(enc.completed_at, 7)
+        # 截止取第 7 个工作日的**当日终点**（2026-08-28 时间审计）：add_workdays
+        # 返回同一钟点，"9 点出院→第 7 工作日 15 点签完"会被误判超期，达标率
+        # 随出院钟点系统性波动——"N 个工作日内"的通行口径是到当日结束
+        from datetime import time as _time
+        deadline = datetime.combine(add_workdays(enc.completed_at, 7).date(), _time.max)
         recs = recs_by_enc.get(enc.id, [])
         if not recs:
             continue

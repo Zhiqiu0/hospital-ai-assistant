@@ -79,17 +79,20 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         })
       }
 
-      await api.post('/medical-records/quick-save', {
+      const saveRes = (await api.post('/medical-records/quick-save', {
         encounter_id: encounterId,
         record_type: recordType,
         content: recordContent,
-      })
+      })) as { submitted_at?: string | null }
 
       // 标记本地 isFinal=true：编辑器只读、auto-save 停摆，但接诊上下文保留
       // 不再 resetAllWorkbench——A 方案下转住院要求"先签发"，签发后立刻 reset
       // 会让医生失去转住院入口，形成"必须先签发→签发就清空→无法转住院"死循环。
       // 让医生显式选择下一步动作（转住院 / 新建接诊 / 登出），各动作自带 reset。
-      useRecordStore.getState().setFinal(true)
+      // 签发时刻用服务器真值（2026-08-28 时间审计）：原空参回退 new Date()
+      // ——医生电脑时钟错 1 小时，打印件"签发时间"就与签名哈希链锁定的
+      // 法定时刻差 1 小时
+      useRecordStore.getState().setFinal(true, saveRes.submitted_at ?? null)
       message.success('病历已签发，可继续转住院或开始下一位接诊')
       handleClose()
     } catch (e) {

@@ -220,6 +220,13 @@ export default function InpatientTimeline({
                       草稿
                     </Tag>
                   )}
+                  {/* 补记徽标（2026-08-28 补记链路修复）：规范要求补记必须显式
+                      标注——记录时点与系统录入时间差超阈值时后端置 is_late_entry */}
+                  {item.isLateEntry && (
+                    <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>
+                      补记
+                    </Tag>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
                   {item.recordedAt

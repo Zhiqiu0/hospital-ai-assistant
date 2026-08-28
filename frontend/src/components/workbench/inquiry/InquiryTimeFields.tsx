@@ -4,6 +4,7 @@
  * 内容：就诊时间 + 病发时间，两个 DatePicker。
  * 用 ClockCircleOutlined 图标 + 浅灰背景突出"时间"分组。
  */
+import dayjs from 'dayjs'
 import { Form, DatePicker } from 'antd'
 import { ClockCircleOutlined } from '@ant-design/icons'
 import type { InquiryData } from '@/store/types'
@@ -55,6 +56,9 @@ export default function InquiryTimeFields({
           rules={[{ required: true, message: '请选择就诊时间' }]}
         >
           <DatePicker
+            // 禁选未来（2026-08-28 时间审计）：就诊/病发时间选到明天会零提示
+            // 进入签发正文成为法律文书内容
+            disabledDate={d => !!d && d.isAfter(dayjs(), 'day')}
             showTime={{ format: 'HH:mm', use12Hours: false }}
             format="YYYY-MM-DD HH:mm"
             placeholder="选择就诊时间"
@@ -79,6 +83,9 @@ export default function InquiryTimeFields({
           rules={[{ required: true, message: '请选择病发时间' }]}
         >
           <DatePicker
+            // 禁选未来（2026-08-28 时间审计）：就诊/病发时间选到明天会零提示
+            // 进入签发正文成为法律文书内容
+            disabledDate={d => !!d && d.isAfter(dayjs(), 'day')}
             showTime={{ format: 'HH:mm', use12Hours: false }}
             format="YYYY-MM-DD HH:mm"
             placeholder="请选择病发时间"

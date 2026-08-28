@@ -70,8 +70,18 @@ export default function WardView({
       const now = Date.now()
       const items: WardPatient[] = (res.items || []).map(p => ({
         ...p,
+        // 自然日口径 + 下限钳位（2026-08-28 时间审计）：原按 24h 块计数，
+        // "昨天 20 点入院"今早显示"第 1 天"（医疗惯例是第 2 天）；客户端时钟
+        // 慢几分钟时刚入院会显示"第 0 天"
         admit_days: p.visited_at
-          ? Math.floor((now - new Date(p.visited_at).getTime()) / 86400000)
+          ? Math.max(
+              0,
+              Math.floor(
+                (new Date(new Date(now).toDateString()).getTime() -
+                  new Date(new Date(p.visited_at).toDateString()).getTime()) /
+                  86400000
+              )
+            )
           : null,
       }))
       setPatients(items)
