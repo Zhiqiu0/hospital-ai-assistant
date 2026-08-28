@@ -22,7 +22,8 @@
  */
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { safeLocalStorage } from '@/store/safeStorage'
 import { useQCStore } from './qcStore'
 
 interface RecordState {
@@ -253,6 +254,9 @@ export const useRecordStore = create<RecordState>()(
     }),
     {
       name: 'medassist-record',
+      // 配额安全存储（2026-08-28 多标签页审计）：写满时降级仅内存态，
+      // 不在医生每次按键的调用栈里抛 QuotaExceededError
+      storage: createJSONStorage(() => safeLocalStorage),
       // 瞬态字段（isGenerating/isPolishing/pendingGenerate）不持久化
       partialize: state => ({
         recordContent: state.recordContent,

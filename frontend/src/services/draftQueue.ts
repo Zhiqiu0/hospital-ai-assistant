@@ -146,3 +146,24 @@ export async function flushDraftQueue(
     }
   }
 }
+
+/**
+ * 清空整个离线草稿队列（2026-08-28 多标签页审计·登出清理）。
+ *
+ * 队列此前跨登出残留：上一位医生离线积压的病历正文（PHI）留在本机；
+ * 换医生后 flush 撞后端归属校验 403 被静默丢弃——既留 PHI 又丢数据。
+ * 登出即清：离线草稿本就是"同一医生稍后补传"的容错，不跨人保留。
+ */
+export async function clearDraftQueue(): Promise<void> {
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    /* IndexedDB 不可用时静默——队列本身也建不起来 */
+  }
+}

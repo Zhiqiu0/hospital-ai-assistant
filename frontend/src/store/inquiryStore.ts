@@ -17,7 +17,8 @@
  */
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { safeLocalStorage } from '@/store/safeStorage'
 import { InquiryData, defaultInquiry } from './types'
 
 interface InquiryState {
@@ -36,11 +37,28 @@ interface InquiryState {
   setInitialImpression: (text: string) => void
   /** 重置到初始空状态（切换接诊或登出时调用） */
   reset: () => void
+  /** 归属接诊（2026-08-28 多标签页审计）：单槽 persist 在双标签页会被互相
+   *  覆盖，还原时与接诊指针对不上就必须丢弃——宁可重拉，不能把甲患者的
+   *  数据拼到乙患者名下（与 recordStore.ownerEncounterId 同款守卫） */
+  ownerEncounterId: string | null
+  bindOwner: (encounterId: string | null) => void
+  /** 归属校验：对不上即 reset+重绑，返回是否通过 */
+  assertOwner: (encounterId: string) => boolean
 }
 
 export const useInquiryStore = create<InquiryState>()(
   persist(
-    set => ({
+    (set, get) => ({
+      ownerEncounterId: null,
+      bindOwner: encounterId => set({ ownerEncounterId: encounterId }),
+      assertOwner: encounterId => {
+        const owner = get().ownerEncounterId
+        if (owner === encounterId) return true
+        // 对不上：丢弃本槽数据并绑到当前接诊（随后由水合重新灌入真实数据）
+        get().reset()
+        set({ ownerEncounterId: encounterId })
+        return false
+      },
       inquiry: defaultInquiry,
       inquirySavedAt: 0,
 
@@ -68,6 +86,9 @@ export const useInquiryStore = create<InquiryState>()(
     }),
     {
       name: 'medassist-inquiry',
+      // 配额安全存储（2026-08-28 多标签页审计）：写满时降级仅内存态，
+      // 不在医生每次按键的调用栈里抛 QuotaExceededError
+      storage: createJSONStorage(() => safeLocalStorage),
       // 全部字段都持久化，刷新页面后表单数据不丢
       partialize: state => ({
         inquiry: state.inquiry,
