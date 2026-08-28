@@ -20,6 +20,10 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator, Field, model_validator
 
+# 一键开始接诊路径同样新建患者，必须走同一份身份证 / 手机号校验，
+# 否则 API 直调或前端表单绕过时会污染患者主索引
+from app.core.validators.identity import IdCardStrict, Phone
+
 _VISIT_TYPES = ("outpatient", "emergency", "inpatient")
 
 
@@ -32,9 +36,6 @@ def _validate_visit_type(v: str) -> str:
     return v
 
 
-# 一键开始接诊路径同样新建患者，必须走同一份身份证 / 手机号校验，
-# 否则 API 直调或前端表单绕过时会污染患者主索引
-from app.core.validators.identity import IdCardStrict, Phone
 
 
 class QuickStartRequest(BaseModel):
