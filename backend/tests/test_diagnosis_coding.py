@@ -146,3 +146,18 @@ async def test_search_code_prefix_ignores_dots(client):
     # 带点写法照常可用
     r = await client.get("/api/v1/diagnosis-codes/search?q=B04.02&code_type=TCD_SYN")
     assert any(i["code"].startswith("B04.02") for i in r.json())
+
+
+@pytest.mark.asyncio
+async def test_search_escapes_like_wildcards(client, async_db):
+    """LIKE 通配符转义（2026-08-28 体检）：医保库病名本身含 %，
+    输入 "10%" 不得退化成 '含10即命中'；输入 "_" 不得全表通配。"""
+    async_db.add(DiagnosisCode(code="T31.100", name="累及体表10%-19%的烧伤",
+                               code_type="ICD10", pinyin_initial="ljtb1019dss"))
+    await async_db.commit()
+    r = await client.get("/api/v1/diagnosis-codes/search?q=10%25&code_type=ICD10")
+    names = [i["name"] for i in r.json()]
+    assert "累及体表10%-19%的烧伤" in names, "字面 % 应命中含 % 的病名"
+    assert "特发性高血压" not in names, "% 不得当通配符把 I10 系全捞出来"
+    r = await client.get("/api/v1/diagnosis-codes/search?q=_&code_type=ICD10")
+    assert r.json() == [], "_ 不得当单字符通配命中全表"

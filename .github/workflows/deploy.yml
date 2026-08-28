@@ -229,7 +229,10 @@ jobs:
       - name: Health check
         run: |
           sleep 15
-          curl --fail --retry 3 --retry-delay 5 \
+          # -L 跟随跳转（2026-08-28 体检）：nginx 80 端口对 /api 也 301 到
+          # https，curl --fail 对 3xx 不报错——原写法命中跳转即算通过，
+          # backend 挂了也绿。跟到 https 真打到后端才算数。
+          curl --fail -L --retry 3 --retry-delay 5 \
             "http://${{ secrets.SERVER_HOST }}/api/v1/health" \
             && echo "Health check passed" \
             || (echo "Health check failed" && exit 1)

@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,8 +114,11 @@ async def review_record_detail(
     每次查阅写审计（质控员看的是他人病历，等保三级要求可追溯）。
     """
     rec = await db.get(MedicalRecord, record_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="病历不存在")
+    # 只允许查看已签发文书（2026-08-28 体检修复）：复核队列只列 submitted，
+    # 但详情端点原先接受任意 id——质控员可读到医生仍在撰写的草稿全文
+    # （含 AI 生成未复核内容），越出复核所需最小信息面
+    if rec is None or rec.status != "submitted":
+        raise HTTPException(status_code=404, detail="病历不存在或尚未签发")
     enc = await db.get(Encounter, rec.encounter_id) if rec.encounter_id else None
     dept = _dept_scope(current_user)
     if dept and (enc is None or enc.department_id != dept):
@@ -169,7 +172,9 @@ class ReviewSubmit(BaseModel):
 
     medical_record_id: str
     conclusion: str  # passed / returned
-    comment: Optional[str] = None
+    # 上限 2000 字（2026-08-28 体检）：意见会整段进 audit_logs.detail 并经
+    # /my-returned 原样下发医生端，不设限时一次粘贴可产生 MB 级审计行
+    comment: Optional[str] = Field(None, max_length=2000)
 
     @field_validator("conclusion")
     @classmethod
@@ -195,6 +200,20 @@ async def submit_review(
     dept = _dept_scope(current_user)
     if dept and (enc is None or enc.department_id != dept):
         raise HTTPException(status_code=403, detail="仅可复核本科室病历")
+
+    # 幂等防重（2026-08-28 体检）：双击提交/复核"已是最新同结论"的文书时
+    # 直接返回既有复核，不再插行——stats 的复核数按行计数，重复插入会虚增
+    # 月度通报指标。判据：最新一条复核结论相同且晚于当前签发时间（重签后
+    # 允许再核，与队列口径一致）。
+    latest = (await db.execute(
+        select(QCReview).where(QCReview.medical_record_id == rec.id)
+        .order_by(QCReview.created_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if (latest is not None and latest.conclusion == data.conclusion
+            and (latest.comment or "") == ((data.comment or "").strip() or "")
+            and rec.submitted_at is not None
+            and latest.created_at >= rec.submitted_at):
+        return {"ok": True, "review_id": latest.id, "duplicate": True}
 
     review = QCReview(
         medical_record_id=rec.id,

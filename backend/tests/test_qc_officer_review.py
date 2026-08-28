@@ -120,3 +120,48 @@ def test_qc_officer_cannot_write_records():
     """红线：质控员绝无病历书写权（署名必须是接诊医生本人）。"""
     with pytest.raises(HTTPException):
         assert_can_write_record(_user("q1", "qc_officer"))
+
+
+@pytest.mark.asyncio
+async def test_detail_rejects_draft_and_submit_idempotent(async_db, seeded):
+    """2026-08-28 体检修复回归：①详情端点不得泄露未签发草稿全文；
+    ②同结论同意见重复提交幂等不插行（防双击虚增通报指标）；
+    ③意见超 2000 字被 422 拒收。"""
+    from sqlalchemy import func as sa_func, select as sa_select
+    from app.models.medical_record import QCReview
+    from app.services.medical_record_service import MedicalRecordService
+
+    officer = _user("qa", "qc_officer", dept="dept-A")
+    # 造一份草稿（auto_save_draft 不签发）
+    svc = MedicalRecordService(async_db)
+    draft = await svc.auto_save_draft("enc-a", "course_record", "草稿内容勿泄", "doc-1")
+    draft_id = draft["record_id"] if isinstance(draft, dict) else draft.id
+    async with _client_as(async_db, officer) as ac:
+        r = await ac.get(f"/api/v1/qc/records/{draft_id}")
+        assert r.status_code == 404, "草稿必须 404，不得给质控员看未定稿全文"
+
+        # 重复提交幂等：同结论+同意见 第二次不插行
+        r1 = await ac.post("/api/v1/qc/reviews", json={
+            "medical_record_id": seeded["a"], "conclusion": "returned",
+            "comment": "主诉需补充"})
+        assert r1.status_code == 200 and not r1.json().get("duplicate")
+        r2 = await ac.post("/api/v1/qc/reviews", json={
+            "medical_record_id": seeded["a"], "conclusion": "returned",
+            "comment": "主诉需补充"})
+        assert r2.json().get("duplicate") is True
+        n = (await async_db.execute(
+            sa_select(sa_func.count()).select_from(QCReview)
+            .where(QCReview.medical_record_id == seeded["a"]))).scalar()
+        assert n == 1, "重复提交不得插入第二行"
+        # 同结论但意见不同 = 质控员补充意见，允许再插
+        r3 = await ac.post("/api/v1/qc/reviews", json={
+            "medical_record_id": seeded["a"], "conclusion": "returned",
+            "comment": "主诉需补充持续时间与诱因"})
+        assert not r3.json().get("duplicate")
+
+        # 意见超长 422
+        r4 = await ac.post("/api/v1/qc/reviews", json={
+            "medical_record_id": seeded["a"], "conclusion": "returned",
+            "comment": "长" * 2001})
+        assert r4.status_code == 422
+    app.dependency_overrides.clear()
