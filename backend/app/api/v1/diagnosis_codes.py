@@ -47,11 +47,15 @@ async def search_codes(
         select(DiagnosisCode)
         .where(
             DiagnosisCode.code_type == code_type,
+            # autoescape（2026-08-28 体检）：医保库病名本身含 %（"累及体表
+            # 10%-19%的烧伤"），不转义时输入 "10%" 的 % 变 LIKE 通配符，
+            # 命中一切含 "10" 的名称；输入 "_" 更是全表通配
             or_(
-                DiagnosisCode.name.contains(term),
-                DiagnosisCode.aliases.contains(term),
-                DiagnosisCode.pinyin_initial.startswith(lowered),
-                func.upper(func.replace(DiagnosisCode.code, ".", "")).startswith(code_term),
+                DiagnosisCode.name.contains(term, autoescape=True),
+                DiagnosisCode.aliases.contains(term, autoescape=True),
+                DiagnosisCode.pinyin_initial.startswith(lowered, autoescape=True),
+                func.upper(func.replace(DiagnosisCode.code, ".", ""))
+                .startswith(code_term, autoescape=True),
             ),
         )
         # 短名靠前（"高血压"排在"高血压性心脏病…"前），同长按编码稳定排序

@@ -117,14 +117,23 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
             Encounter.completed_at >= since,
         )
     )).scalars().all()
+    # 一次取回全部出院接诊的文书再按接诊分桶（2026-08-28 体检修复）：
+    # 原写法在循环内逐接诊查询（N+1），按年看板/导出时是数千次串行查询，
+    # 2 核生产机上单次请求拖到秒级；summary 与 export 各算一遍则翻倍。
+    recs_by_enc: dict[str, list] = {}
+    if discharged:
+        rec_rows = (await db.execute(
+            select(MedicalRecord.encounter_id, MedicalRecord.status,
+                   MedicalRecord.submitted_at)
+            .where(MedicalRecord.encounter_id.in_([e.id for e in discharged]))
+        )).all()
+        for eid, s, t in rec_rows:
+            recs_by_enc.setdefault(eid, []).append((s, t))
     archive_total = archive_ok = 0
     now = datetime.now()
     for enc in discharged:
         deadline = add_workdays(enc.completed_at, 7)
-        recs = (await db.execute(
-            select(MedicalRecord.status, MedicalRecord.submitted_at)
-            .where(MedicalRecord.encounter_id == enc.id)
-        )).all()
+        recs = recs_by_enc.get(enc.id, [])
         if not recs:
             continue
         archive_total += 1

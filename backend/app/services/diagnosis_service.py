@@ -131,7 +131,13 @@ class DiagnosisService:
         from app.models.encounter import Encounter
         from app.models.medical_record import MedicalRecord
 
-        enc = await self.db.get(Encounter, encounter_id)
+        # 接诊行锁 = 整组替换的串行化点（2026-08-28 体检修复）：
+        # 双击保存/双标签页并发 PUT 时，READ COMMITTED 下 T2 的 DELETE 看不到
+        # T1 刚插入的行，删 0 行后再插自己一组 → 两组条目并存、可能双主诊断，
+        # "主诊断唯一"这一病案首页硬约束被破坏且 HIS 回写取主结果不确定。
+        # 锁住接诊行后冻结检查与删插整段互斥；SQLite 测试库无行锁语义但
+        # 生产 PG 生效（with_for_update 在 SQLite 上是 no-op，不破坏测试）。
+        enc = await self.db.get(Encounter, encounter_id, with_for_update=True)
         if enc is not None:
             if enc.visit_type == "inpatient":
                 if enc.status == "completed":

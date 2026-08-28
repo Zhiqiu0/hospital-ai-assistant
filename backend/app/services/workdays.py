@@ -13,7 +13,13 @@
 
 2026 年安排依据：国务院办公厅关于 2026 年部分节假日安排的通知。
 """
+import logging
 from datetime import date, datetime, timedelta
+
+logger = logging.getLogger(__name__)
+
+# 日历覆盖到的年份——每年更新 HOLIDAYS/EXTRA_WORKDAYS 时同步 +1
+_CALENDAR_YEAR = 2026
 
 # 2026 法定节假日（放假日；含元旦/春节/清明/五一/端午/中秋/国庆）
 HOLIDAYS: frozenset[date] = frozenset({
@@ -64,4 +70,13 @@ def add_workdays(start: datetime, n: int) -> datetime:
         d = d + timedelta(days=1)
         if is_workday(d):
             remaining -= 1
+    # 日历覆盖告警（2026-08-28 体检）：本表只维护到 _CALENDAR_YEAR 年，
+    # 跨年后新一年的法定假日未录入会被当工作日 → 截止时刻算早、把按时签发
+    # 误判超时（假指标）。忘更新时至少让 error.log 里有迹可循。
+    if d.year > _CALENDAR_YEAR:
+        logger.warning(
+            "workdays.calendar: 截止日 %s 超出节假日日历覆盖年份(%d)，"
+            "请更新 services/workdays.py 的 HOLIDAYS/EXTRA_WORKDAYS",
+            d.isoformat(), _CALENDAR_YEAR,
+        )
     return datetime.combine(d, start.time())
