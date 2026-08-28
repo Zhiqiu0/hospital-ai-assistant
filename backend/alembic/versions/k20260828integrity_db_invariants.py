@@ -51,24 +51,36 @@ def upgrade() -> None:
         return  # SQLite 测试库：应用层校验已覆盖，DB 兜底仅生产 PG
 
     # ── 1. 文书三元组唯一 ────────────────────────────────────────────
-    # 存量重复顺延：同 (enc,type,no) 的行按 created_at 保最早，其余 record_no
-    # 依次抬到该 (enc,type) 当前最大值之后（与 h20260814veruniq 同哲学）
+    # 存量重复顺延（2026-08-29 对抗复核修正）：首版"每个重复组各自从 mx+1
+    # 起编"在同 (enc,type) 存在多个重复组时会撞同一个新号，唯一索引创建失败
+    # 中断部署。修正为：每组重复保留 created_at 最早一行**原号不动**（record_no
+    # 是 HIS 回写幂等键，存量号绝不能改），其余"多余行"跨组统一从 mx+1 连续
+    # 顺延——新号互不相同且大于全部既有号，数学上不可能撞。
+    # （生产已按首版 SQL 应用且实际数据无多重复组、已通过；本修正面向演练库
+    # 重放与未来环境，alembic 版本号不变不会在生产重跑。）
     bind.execute(sa.text("""
-        WITH d AS (
-            SELECT id, encounter_id, record_type, record_no,
+        WITH dups AS (
+            SELECT id, encounter_id, record_type,
                    ROW_NUMBER() OVER (
                        PARTITION BY encounter_id, record_type, record_no
-                       ORDER BY created_at, id) AS rn
+                       ORDER BY created_at, id) AS rn_in_grp
             FROM medical_records
+        ), extras AS (
+            SELECT d.id, d.encounter_id, d.record_type,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY d.encounter_id, d.record_type
+                       ORDER BY d.id) AS seq
+            FROM dups d WHERE d.rn_in_grp > 1
         ), m AS (
             SELECT encounter_id, record_type, MAX(record_no) AS mx
             FROM medical_records GROUP BY encounter_id, record_type
         )
         UPDATE medical_records r
-        SET record_no = m.mx + d.rn - 1
-        FROM d JOIN m ON m.encounter_id = d.encounter_id
-                     AND m.record_type = d.record_type
-        WHERE r.id = d.id AND d.rn > 1
+        SET record_no = m.mx + e.seq
+        FROM extras e
+        JOIN m ON m.encounter_id = e.encounter_id
+              AND m.record_type = e.record_type
+        WHERE r.id = e.id
     """))
     bind.execute(sa.text(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_medrec_enc_type_no "

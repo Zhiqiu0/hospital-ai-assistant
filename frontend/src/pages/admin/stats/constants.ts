@@ -12,6 +12,11 @@ export const TASK_TYPE_MAP: Record<string, string> = {
   exam: '检查建议',
   // 诊断建议（旧的 AI 诊断建议链路，分类汇总时仍会出现）；漏了会直接显示英文 raw 值
   diagnosis: '诊断建议',
+  // 2026-08-29 补全：这三类实际在写库（见 log_ai_task 各调用点），此前
+  // 看板硬编码 5 类导致它们整类不可见
+  exam_suggestion: '检查建议(旧)',
+  inquiry_suggestion: '追问建议(旧)',
+  supplement_batch: '批量补全',
 }
 
 export const RISK_COLOR: Record<string, string> = {
@@ -36,6 +41,9 @@ export const ISSUE_TYPE_LABEL: Record<string, string> = {
   // QC 引擎在某些规则上回填的是 'quality'（综合质量类别，老规则遗留），
   // 漏掉这个映射会让"质控分析"tab 直接显示英文 raw 值。
   quality: '质量类',
+  // 法定评分规则扣分（task_logger 对 source='rule' 的兜底桶）——主力类别，
+  // 2026-08-29 补：此前看板硬编码三类，这一类整体不可见
+  rubric: '评分规则扣分',
 }
 
 /**

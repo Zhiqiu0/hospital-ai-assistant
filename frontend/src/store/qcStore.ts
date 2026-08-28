@@ -161,6 +161,9 @@ export const useQCStore = create<QCState>()(
       name: 'medassist-qc',
       // 瞬态字段（isQCing/qcLlmLoading/qcRunId）不持久化，否则刷新后按钮会卡在 loading
       partialize: state => ({
+        // 归属必须随数据一起持久化（2026-08-29 对抗复核抓漏）：漏了它则每次
+        // 刷新 owner 恒 null，水合 assertOwner 必失配把刚恢复的数据全清
+        ownerEncounterId: state.ownerEncounterId,
         qcIssues: state.qcIssues,
         qcSummary: state.qcSummary,
         qcPass: state.qcPass,

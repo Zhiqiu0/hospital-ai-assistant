@@ -34,11 +34,38 @@ import WorkbenchPage from '@/pages/WorkbenchPage'
 //   原先静态 import 导致门诊医生打开登录页也要下载影像引擎。
 //   懒加载后这些页面的代码只在真正访问对应路由时才拉取。
 //   登录/门诊工作台/嵌入入口保持静态导入——它们是首屏主路径。
-const EmergencyWorkbenchPage = lazy(() => import('@/pages/EmergencyWorkbenchPage'))
-const InpatientWorkbenchPage = lazy(() => import('@/pages/InpatientWorkbenchPage'))
-const PacsWorkbenchPage = lazy(() => import('@/pages/PacsWorkbenchPage'))
-const QcWorkbenchPage = lazy(() => import('@/pages/QcWorkbenchPage'))
-const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout'))
+/**
+ * 懒加载 + 旧分包自愈（2026-08-29 第四轮走查实锤）：部署后旧页签里的
+ * index.html 还引用着上一版的分包 hash，rsync --delete 已把旧文件删掉，
+ * 首次跳转懒加载路由即 "Failed to fetch dynamically imported module" 落
+ * ErrorBoundary——医生开一整天的页签跨部署后必踩。失败时整页刷新一次
+ * 拿新 index.html 即自愈；sessionStorage 防新版本也加载失败时的刷新循环。
+ */
+function lazyWithReload(factory: () => Promise<{ default: React.ComponentType }>) {
+  return lazy(() =>
+    factory().catch(err => {
+      const KEY = 'chunk-reload-once'
+      try {
+        if (!sessionStorage.getItem(KEY)) {
+          sessionStorage.setItem(KEY, '1')
+          window.location.reload()
+          // reload 进行中，返回永不 resolve 的组件占位避免闪错
+          return new Promise<never>(() => {})
+        }
+        sessionStorage.removeItem(KEY)
+      } catch {
+        /* sessionStorage 不可用则直接抛给 ErrorBoundary */
+      }
+      throw err
+    })
+  )
+}
+
+const EmergencyWorkbenchPage = lazyWithReload(() => import('@/pages/EmergencyWorkbenchPage'))
+const InpatientWorkbenchPage = lazyWithReload(() => import('@/pages/InpatientWorkbenchPage'))
+const PacsWorkbenchPage = lazyWithReload(() => import('@/pages/PacsWorkbenchPage'))
+const QcWorkbenchPage = lazyWithReload(() => import('@/pages/QcWorkbenchPage'))
+const AdminLayout = lazyWithReload(() => import('@/pages/admin/AdminLayout'))
 
 /** 懒加载路由切换时的过渡画面（与应用启动 Spin 风格一致）
  *  Spin 的 tip 只在"嵌套模式"下生效（antd 约定），所以给个空容器当 children */

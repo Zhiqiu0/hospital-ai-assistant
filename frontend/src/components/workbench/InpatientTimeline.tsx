@@ -126,7 +126,8 @@ export default function InpatientTimeline({
         encounter_id: currentEncounterId,
         record_type: noteType,
         content: '',
-        recorded_at: dayjs().format('YYYY-MM-DDTHH:mm:ss'),
+        // 不发 recorded_at：留服务器取 now。发本机时钟的话，客户端钟快过
+        // 后端未来校验容差就会 422，新建文书直接失败（2026-08-29 对抗复核）
       })) as DraftResponse
       await load()
       onSelect({

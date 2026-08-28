@@ -22,8 +22,12 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 6 * 3600   # 每 6 小时查一次（余额变化慢，够用且不扰民）
-WARN_THRESHOLD_CNY = 100.0          # 低于此值告警：按实测用量约等于 2000 次接诊的余量
+WARN_THRESHOLD_CNY = 100.0          # 低于此值告警：按现价约 1300 次接诊的余量
 BALANCE_URL = "https://api.deepseek.com/user/balance"
+# 每次接诊估算成本（元）。按 DeepSeek 2026-08 价目 × 实测用量（约 9200 输入
+# + 3300 输出 token/接诊）折算 ≈ 0.076 元。价目调整时同步更新此数——
+# 2026-08-29 对抗复核发现旧值 0.045 用的是降价前价目，剩余次数虚高近一倍。
+COST_PER_ENCOUNTER_CNY = 0.076
 
 
 async def check_balance_once() -> float | None:
@@ -69,9 +73,10 @@ async def balance_monitor_loop() -> None:
                 # 免得看到告警的人不知道这条有多急。
                 logger.error(
                     "ai_balance_low: AI 供应商余额仅剩 %.2f 元（阈值 %.0f）。"
-                    "按每次接诊约 0.045 元估算，约还能支撑 %d 次接诊；"
+                    "按每次接诊约 %.3f 元估算，约还能支撑 %d 次接诊；"
                     "耗尽后全院 AI 生成/质控会同时失败，请尽快充值。",
-                    balance, WARN_THRESHOLD_CNY, int(balance / 0.045),
+                    balance, WARN_THRESHOLD_CNY, COST_PER_ENCOUNTER_CNY,
+                    int(balance / COST_PER_ENCOUNTER_CNY),
                 )
             else:
                 logger.info("ai_balance: 余额 %.2f 元，充足", balance)

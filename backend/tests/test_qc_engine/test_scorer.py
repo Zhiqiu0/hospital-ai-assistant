@@ -160,8 +160,9 @@ def test_veto_triggers_fixed_10_points_and_skips_other_rules():
     assert rep.deductions[0].is_veto is True
 
 
-def test_veto_deduction_also_capped_at_item_max_points():
-    """单项否决扣 10，但若该大项 max_points<10 也受上限保护。"""
+def test_veto_deduction_not_capped_at_item_max_points():
+    """单项否决固定扣 10，不按大项分值封顶（2026-08-29 对齐 PDF 备注 6 字面：
+    "计分时扣 10 分，不累积扣分"，原文无封顶限定）。"""
     r = _rubric(
         items=[
             RubricItem(
@@ -176,7 +177,7 @@ def test_veto_deduction_also_capped_at_item_max_points():
         thresholds=[GradeThreshold(90, "甲"), GradeThreshold(80, "乙"), GradeThreshold(0, "丙")],
     )
     rep = score(r, _ctx())
-    assert rep.item_scores[0].deducted == 2  # min(10, 2)
+    assert rep.item_scores[0].deducted == 10  # 固定 10，max_points=2 不封顶
 
 
 # ─── 规则崩溃容错 ─────────────────────────────────────────────────

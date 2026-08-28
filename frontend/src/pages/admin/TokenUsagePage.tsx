@@ -1,17 +1,14 @@
 /**
  * Token 用量页（pages/admin/TokenUsagePage.tsx）
  *
- * 监控 AI API 调用的 token 消耗情况，调用 GET /admin/token-usage：
- *   - 总览卡片：今日/本月 input tokens、output tokens、费用估算
- *   - 按 task_type 分类：生成/质控/建议/语音 各自的 token 消耗
- *   - 按模型分类：不同 model_name 的用量对比
- *   - 明细表格：每次 AI 调用的 input/output tokens、耗时、费用
+ * 监控 AI API 调用的 token 消耗情况，调用 GET /admin/stats/token-usage：
+ *   - 总览卡片：累计/今日 input+output tokens
+ *   - 供应商余额：DeepSeek 余额 + 阿里云语音服务状态
+ *   - 按 task_type 分类：各功能的调用次数与 token 消耗
  *
- * 费用估算：
- *   基于配置的单价（元/千 token）在前端计算，
- *   不从后端返回货币金额（避免汇率/定价耦合）。
- *
- * Badge 颜色：当日用量超阈值时显示红色 Badge 提醒管理员。
+ * （2026-08-29 修头注：原注释写的端点路径少了 /stats 段、且描述了
+ *   本页从未实现的"费用前端估算/明细表格/超阈值 Badge"——照注释找
+ *   功能会白找。以实际代码为准重写。）
  */
 import { useEffect, useState } from 'react'
 import { Row, Col, Card, Statistic, Table, Typography, Tag, Alert, Spin, Badge } from 'antd'

@@ -19,7 +19,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 
-import { ISSUE_TYPE_LABEL } from './constants'
+import { ISSUE_TYPE_LABEL, TASK_TYPE_MAP } from './constants'
 
 const { Text } = Typography
 
@@ -32,14 +32,10 @@ export interface OverviewData {
   total_encounters?: number
   total_ai_tasks?: number
   total_qc_issues?: number
-  generate_count?: number
-  polish_count?: number
-  qc_count?: number
-  inquiry_count?: number
-  exam_count?: number
-  completeness_issues?: number
-  format_issues?: number
-  logic_issues?: number
+  /** 全量分布（2026-08-29）：后端直接回传 group-by dict，键=原始类型标识。
+   *  此前前后端各自硬编码 5/3 个键，rubric 质控类与新增 AI 功能整类不可见 */
+  task_type_counts?: Record<string, number>
+  issue_type_counts?: Record<string, number>
   high_risk_issues?: number
   medium_risk_issues?: number
   low_risk_issues?: number
@@ -87,14 +83,11 @@ export default function OverviewTab({ overview, loading }: OverviewTabProps) {
     },
   ]
 
-  // ── AI 功能分布数据（饼图替代为条形图） ───────────────────────────
-  const aiFeatureData = [
-    { key: '1', type: '病历生成', count: overview?.generate_count ?? 0 },
-    { key: '2', type: '病历润色', count: overview?.polish_count ?? 0 },
-    { key: '3', type: 'AI质控', count: overview?.qc_count ?? 0 },
-    { key: '4', type: '追问建议', count: overview?.inquiry_count ?? 0 },
-    { key: '5', type: '检查建议', count: overview?.exam_count ?? 0 },
-  ]
+  // ── AI 功能分布数据（全量渲染后端 dict，按次数降序；未知类型兜底显示
+  //    原始标识而不是整类消失）─────────────────────────────────────────
+  const aiFeatureData = Object.entries(overview?.task_type_counts ?? {})
+    .sort(([, a], [, b]) => b - a)
+    .map(([type, count]) => ({ key: type, type: TASK_TYPE_MAP[type] || type, count }))
   const totalAIFeature = aiFeatureData.reduce((s, r) => s + r.count, 0)
 
   // ── 质控问题摘要 ────────────────────────────────────────────────────
@@ -102,11 +95,11 @@ export default function OverviewTab({ overview, loading }: OverviewTabProps) {
   //   (completeness↔high / format↔medium / logic↔low)，
   // 导致"分类总数"和底部"风险等级总数"对不上（前者只统计绑定那一格，后者全量）。
   // 现在拆开——分类表只按 issue_type 统计总数，风险等级走下方独立卡片。
-  const qcSummaryData = [
-    { key: '1', issue_type: 'completeness', count: overview?.completeness_issues ?? 0 },
-    { key: '2', issue_type: 'format', count: overview?.format_issues ?? 0 },
-    { key: '3', issue_type: 'logic', count: overview?.logic_issues ?? 0 },
-  ]
+  // 2026-08-29：改为全量渲染后端 group-by dict（此前硬编码三类，rubric
+  // 规则类问题在看板整类不可见）。
+  const qcSummaryData = Object.entries(overview?.issue_type_counts ?? {})
+    .sort(([, a], [, b]) => b - a)
+    .map(([issue_type, count]) => ({ key: issue_type, issue_type, count }))
 
   // ── 风险等级卡片 ────────────────────────────────────────────────────
   const riskCards = [

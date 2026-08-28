@@ -83,8 +83,8 @@ async def inquiry_suggestions(
         usage = llm_client._last_usage
         await log_ai_task(
             "inquiry",
-            token_input=usage.prompt_tokens if usage else 0,
-            token_output=usage.completion_tokens if usage else 0,
+            token_input=usage.prompt_tokens if usage else None,
+            token_output=usage.completion_tokens if usage else None,
             output_result=result,  # snapshot 恢复时能取回，logout 重登不丢
             # 记真实用到的模型，而不是全局默认（审计 #7）
             model_name=model_options.get("model_name"),
@@ -128,8 +128,8 @@ async def exam_suggestions(
         usage = llm_client._last_usage
         await log_ai_task(
             "exam",
-            token_input=usage.prompt_tokens if usage else 0,
-            token_output=usage.completion_tokens if usage else 0,
+            token_input=usage.prompt_tokens if usage else None,
+            token_output=usage.completion_tokens if usage else None,
             output_result=result,  # snapshot 恢复时能取回
             model_name=model_options.get("model_name"),  # 审计 #7
         )
@@ -183,8 +183,8 @@ async def diagnosis_suggestion(
         usage = llm_client._last_usage
         await log_ai_task(
             "diagnosis",  # 之前误写成 'inquiry' 跟追问混了，task_type 改正
-            token_input=usage.prompt_tokens if usage else 0,
-            token_output=usage.completion_tokens if usage else 0,
+            token_input=usage.prompt_tokens if usage else None,
+            token_output=usage.completion_tokens if usage else None,
             output_result=result,
             model_name=model_options.get("model_name"),  # 审计 #7
         )

@@ -126,8 +126,10 @@ def _score_item(item: RubricItem, ctx: RecordContext) -> ItemScore:
                 is_veto=True,
                 target_field=veto.target_field,
             ))
-            # PDF 备注 6："扣 10 分，不累积扣分"——此项不再走 deduction_rules
-            actual_deducted = min(VETO_DEDUCT_POINTS, item.max_points)
+            # PDF 备注 6："计分时扣 10 分，不累积扣分"——固定扣 10，**不按大项
+            # 分值封顶**（2026-08-29 裁决：原文无封顶限定，min(10, max_points)
+            # 是我们自己加的宽松化，会把小分值大项的否决扣罚打折）
+            actual_deducted = VETO_DEDUCT_POINTS
             return ItemScore(
                 name=item.name,
                 max_points=item.max_points,
