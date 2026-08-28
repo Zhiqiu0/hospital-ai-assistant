@@ -110,8 +110,38 @@ export default function App() {
   const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated())
   useEffect(() => {
     if (hydrated) return
-    return useAuthStore.persist.onFinishHydration(() => setHydrated(true))
+    const un = useAuthStore.persist.onFinishHydration(() => setHydrated(true))
+    // 兜底超时（2026-08-28 多标签页审计）：localStorage 损坏等原因导致
+    // hydration 永不完成时，3 秒后放行按未登录走（守卫会踢到 /login），
+    // 不能让全院医生对着永久 Spinner
+    const t = setTimeout(() => setHydrated(true), 3000)
+    return () => {
+      un()
+      clearTimeout(t)
+    }
   }, [hydrated])
+
+  // 跨标签页登出同步（2026-08-28 多标签页审计）：全仓原本没有任何 storage
+  // 监听——一个标签页登出后，其他标签页已渲染的患者数据可以无限期留在
+  // 屏幕上（写路径服务端已兜死，这里堵展示残留）。auth 槽的 token 与本
+  // 标签页内存不一致时立即跳登录清屏。
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== 'mediscribe-auth') return
+      let storToken: string | null = null
+      try {
+        storToken = e.newValue ? (JSON.parse(e.newValue)?.state?.token ?? null) : null
+      } catch {
+        storToken = null
+      }
+      const memToken = useAuthStore.getState().token
+      if (memToken && storToken !== memToken) {
+        window.location.href = '/login'
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   if (!hydrated) {
     return (

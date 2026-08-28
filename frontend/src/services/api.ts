@@ -59,6 +59,26 @@ api.interceptors.response.use(
 
     if (status === 401 && !isLoginRequest) {
       // Token 失效或未登录 → 清除登录态并跳转，不弹 toast（页面即将刷新）
+      //
+      // 僵尸标签页防误伤（2026-08-28 多标签页审计）：医生 A 在标签 1 登出、
+      // 医生 B 随后在标签 1 登录后，标签 2 内存里还是 A 的已吊销 token——
+      // 它的轮询撞 401 时原实现无条件 clearAuth，把 B 的有效 token 覆写为
+      // null、lastUserId 覆写回 A，还连带清掉 B 的语音转写/档案草稿。
+      let storageToken: string | null = null
+      try {
+        const raw = localStorage.getItem('mediscribe-auth')
+        storageToken = raw ? (JSON.parse(raw)?.state?.token ?? null) : null
+      } catch {
+        storageToken = null
+      }
+      const memToken = useAuthStore.getState().token
+      if (memToken && storageToken && storageToken !== memToken) {
+        // localStorage 里已是别人的有效会话：本标签页只自我了断跳登录，
+        // 绝不 clearAuth（那会把 B 的 token/lastUserId 整槽覆写并清掉 B 的
+        // 语音转写与档案草稿）
+        window.location.href = '/login'
+        return Promise.reject(error.response?.data ?? error)
+      }
       useAuthStore.getState().clearAuth()
       window.location.href = '/login'
       return Promise.reject(error.response?.data ?? error)

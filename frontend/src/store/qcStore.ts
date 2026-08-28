@@ -75,11 +75,28 @@ interface QCState {
   markStale: () => void
   /** 重置所有质控状态（切换接诊 / 登出时调用） */
   reset: () => void
+  /** 归属接诊（2026-08-28 多标签页审计）：单槽 persist 在双标签页会被互相
+   *  覆盖，还原时与接诊指针对不上就必须丢弃——宁可重拉，不能把甲患者的
+   *  数据拼到乙患者名下（与 recordStore.ownerEncounterId 同款守卫） */
+  ownerEncounterId: string | null
+  bindOwner: (encounterId: string | null) => void
+  /** 归属校验：对不上即 reset+重绑，返回是否通过 */
+  assertOwner: (encounterId: string) => boolean
 }
 
 export const useQCStore = create<QCState>()(
   persist(
-    set => ({
+    (set, get) => ({
+      ownerEncounterId: null,
+      bindOwner: encounterId => set({ ownerEncounterId: encounterId }),
+      assertOwner: encounterId => {
+        const owner = get().ownerEncounterId
+        if (owner === encounterId) return true
+        // 对不上：丢弃本槽数据并绑到当前接诊（随后由水合重新灌入真实数据）
+        get().reset()
+        set({ ownerEncounterId: encounterId })
+        return false
+      },
       qcRunId: '',
       isQCing: false,
       qcLlmLoading: false,

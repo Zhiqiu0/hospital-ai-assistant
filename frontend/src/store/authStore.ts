@@ -79,6 +79,9 @@ export const useAuthStore = create<AuthState>()(
       setAuth: (token, user) => set({ token, user, lastUserId: user.id }),
       clearAuth: () => {
         clearPatientScopedData()
+        // 离线草稿队列一并清（2026-08-28 多标签页审计）：跨登出残留 = 上一位
+        // 医生的病历正文留在本机 + 换人后 flush 撞 403 被静默丢弃
+        void import('@/services/draftQueue').then(m => m.clearDraftQueue())
         // lastUserId 刻意保留：供登录页判断"是不是同一个医生回来了"
         set({ token: null, user: null, systemType: 'outpatient' })
       },
@@ -89,7 +92,18 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'mediscribe-auth',
       // 应用启动时从 localStorage 恢复后，若 token 已过期则立即清除，避免假登录状态
-      onRehydrateStorage: () => state => {
+      onRehydrateStorage: () => (state, error) => {
+        // 损坏自愈（2026-08-28 多标签页审计）：mediscribe-auth JSON 损坏时
+        // zustand 的 hydrate promise 走 catch，hasHydrated 永不为 true、
+        // App 卡在加载 Spinner 且每次刷新复现——清掉坏 key 按未登录处理
+        if (error) {
+          try {
+            localStorage.removeItem('mediscribe-auth')
+          } catch {
+            /* storage 不可用时按未登录继续 */
+          }
+          return
+        }
         if (state?.token && isTokenExpired(state.token)) {
           state.clearAuth()
         }

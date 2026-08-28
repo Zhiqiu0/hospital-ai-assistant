@@ -26,6 +26,9 @@ import api from '@/services/api'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { usePatientCacheStore } from '@/store/patientCacheStore'
 import { useRecordStore } from '@/store/recordStore'
+import { useAISuggestionStore } from '@/store/aiSuggestionStore'
+import { useQCStore } from '@/store/qcStore'
+import { useInquiryStore } from '@/store/inquiryStore'
 import { applySnapshotResult, type SnapshotResult } from '@/store/encounterIntake'
 
 export function useEnsureSnapshotHydrated() {
@@ -47,6 +50,12 @@ export function useEnsureSnapshotHydrated() {
     // 这里在拉快照之前先校验：对不上就丢弃正文（下面的 snapshot 会拉回该接诊的真实
     // 病历，宁可让医生等一次网络往返，也不能张冠李戴）。
     useRecordStore.getState().assertOwner(currentEncounterId)
+    // 问诊/质控/AI 建议三家同款归属校验（2026-08-28 多标签页审计）：
+    // 对不上即清空重绑——尤其防"后端该接诊 inquiry 为 null 时水合跳过覆盖、
+    // 甲患者问诊残留在乙工作台并被保存写库"的高危路径
+    useInquiryStore.getState().assertOwner(currentEncounterId)
+    useQCStore.getState().assertOwner(currentEncounterId)
+    useAISuggestionStore.getState().assertOwner(currentEncounterId)
     // 已 hydrate 过同一个 encounter，跳过
     if (hydratedForRef.current === currentEncounterId) return
     // patientCache 已有该患者数据（同一会话切回来）—— 无需 hydrate

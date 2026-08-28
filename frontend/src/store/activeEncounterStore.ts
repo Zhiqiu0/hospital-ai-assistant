@@ -117,6 +117,11 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
         // 病历正文归属跟着接诊走（2026-08-13 第五轮审计修复）：正文与接诊指针是
         // 两个独立的持久化槽，不绑定归属就会在多标签页/刷新后拼出"甲的病历配乙的患者"
         useRecordStore.getState().bindOwner(input.encounterId)
+        // 问诊/质控/AI 建议三个单槽同样绑定归属（2026-08-28 多标签页审计：
+        // 此前只有病历正文有守卫，其余三家裸奔可跨标签拼到错误患者名下）
+        useInquiryStore.getState().bindOwner(input.encounterId)
+        useQCStore.getState().bindOwner(input.encounterId)
+        useAISuggestionStore.getState().bindOwner(input.encounterId)
 
         // 病历类型也跟着接诊走（2026-08-13 第五轮审计修复）：
         // 急诊工作台只是 <WorkbenchPage mode="emergency" />，全程没有任何一处
