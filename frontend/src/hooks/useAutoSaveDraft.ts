@@ -145,7 +145,14 @@ export function useAutoSaveDraft({
       } catch {
         // IndexedDB 也挂了——只能记日志，下次防抖触发还是会试
 
-        console.warn('autosave: enqueue failed', err)
+        // 只打状态与消息（2026-08-28 PHI 审计）：整个 AxiosError 展开即见
+        // config.data（病历正文）与 Authorization 头，而触发场景（弱网）正是
+        // 医生最可能截 F12 发群求助的时刻
+        console.warn(
+          'autosave: enqueue failed',
+          (err as { status?: number })?.status ?? '',
+          (err as { message?: string })?.message ?? ''
+        )
       }
       return false
     }
