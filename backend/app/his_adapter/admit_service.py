@@ -480,6 +480,20 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     from app.schemas.patient import PatientCreate
     from app.services.patient_service import PatientService
 
+    # 姓名宽容清洗（2026-08-28 极端字符审计，与 _coerce_gender 同哲学：
+    # 绝不因脏数据拒收接诊）：剥零宽/BOM/NUL、压平换行、超过列宽 50 截断——
+    # 不清洗的话零宽字符会让该患者拼音/汉字搜索双双 miss（医生重复建档），
+    # 超长则打穿到 PG DataError 落 ack 50000，该患者每次复诊都推不进来。
+    cleaned_name = payload.patient_name or ""
+    for _ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
+        cleaned_name = cleaned_name.replace(_ch, "")
+    cleaned_name = (cleaned_name.replace("\n", " ").replace("\r", " ")
+                    .replace("\t", " ").strip()) or payload.patient_name
+    if len(cleaned_name) > 50:
+        logger.warning("his_admit.patient: 姓名超列宽截断 len=%d", len(cleaned_name))
+        cleaned_name = cleaned_name[:50]
+    payload = payload.model_copy(update={"patient_name": cleaned_name})
+
     birth_date: Optional[date] = None
     if payload.birth_date:
         try:

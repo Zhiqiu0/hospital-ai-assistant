@@ -203,9 +203,12 @@ class PatientQueryMixin:
                 Patient.id.in_(select(completed_subq.c.patient_id))
             )
         if keyword:
+            # LIKE 通配符转义（2026-08-28 极端字符审计，与诊断字典同款）：
+            # 输入 "50%" 不得退化成"含 50 即命中"、"_" 不得单字符通配
+            kw_esc = keyword.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
             conditions = [
-                Patient.name.ilike(f"%{keyword}%"),
-                Patient.patient_no.ilike(f"%{keyword}%"),
+                Patient.name.ilike(f"%{kw_esc}%"),
+                Patient.patient_no.ilike(f"%{kw_esc}%"),
             ]
             # 关键词为纯 ASCII 字母时同时打拼音列：覆盖 "zhang" / "zs" / "zhangs" / "zsan"
             # 等市面常见输入。汉字/数字/混合关键词跳过拼音列——拼音存的是英文，
