@@ -1,9 +1,11 @@
-# 2026-07-07 安全升级：fastapi 0.115.0 钉死 starlette<0.39，而 starlette 0.38.6 有
-# CVE-2024-47874（multipart 表单无大小限制内存耗尽 DoS，0.40.0 修复）。升到
-# fastapi 0.115.6 放开到 starlette 0.41.x（含修复），登录/上传等未认证表单端点不再可被打。
-fastapi==0.115.6
-# 显式钉住 starlette（fastapi 0.115.6 允许 0.40~0.41）：0.41.3 含 CVE-2024-47874 修复
-starlette==0.41.3
+# 2026-08-28 安全升级（全量体检）：starlette 0.41.3 有 CVE-2025-54121——
+# multipart 解析 SpooledTemporaryFile 滚盘是同步阻塞事件循环的（0.47.2 修复）。
+# 生产真实可达：语音 webm/DICOM 压缩包都是大文件 multipart，2 核 2 worker 下
+# 一个大上传滚盘期间该 worker 上所有请求（含叫号 SSE、签发）整体卡顿。
+# fastapi 0.115.6 钉死 starlette<0.42，须一起升。
+# 历史：2026-07-07 升 0.41.x 修 CVE-2024-47874（multipart 内存耗尽）。
+fastapi==0.116.1
+starlette==0.47.2
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 alembic==1.13.3
