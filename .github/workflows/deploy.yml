@@ -83,6 +83,11 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # ssh-action 默认 10m 超时（2026-08-28 实锤踩坑）：构建缓存被逐出后
+          # 全量重建超 10 分钟，命令被拦腰砍断报 "Run Command Timeout"。
+          # 本次万幸砍在 build 阶段容器未动；若砍在 up 中段就是生产全挂
+          # （2026-08-13 评估自动回滚时就预警过这个 footgun）。放宽到 30m。
+          command_timeout: 30m
           script: |
             set -e
             cd /app
@@ -242,11 +247,12 @@ jobs:
               echo "[deploy] crontab 已配置：$AI_PAYLOAD_CRON"
             fi
 
-            # ── docker 构建缓存回收（2026-08-28 体检）─────────────────────
-            # 每次 deploy 都 build，构建缓存无限增长（实测 730 条 5.5GB），
-            # dangling 镜像同理。保底留 2GB 缓存加速下次构建，其余回收；
-            # 只删 dangling 镜像不动 tagged（旧版镜像随 compose 生命周期管理）
-            docker builder prune -f --keep-storage=2GB > /dev/null 2>&1 || true
+            # ── docker 构建缓存回收（2026-08-28 体检；同日修正）───────────
+            # 教训：首版 --keep-storage=2GB 把 apt/pip 基础层也逐出了，下一次
+            # 部署从零重装系统依赖、构建超 10 分钟撞上 ssh 超时。改为：
+            # 只清 7 天没用到的缓存条目 + 上限放到 8GB（磁盘 79G 用 30%，
+            # 增长有界即可，热层绝不能逐出——它是部署速度的保证）
+            docker builder prune -f --filter "until=168h" --keep-storage=8GB > /dev/null 2>&1 || true
             docker image prune -f > /dev/null 2>&1 || true
 
             echo "Deploy finished at $(date) release=$SENTRY_RELEASE"
