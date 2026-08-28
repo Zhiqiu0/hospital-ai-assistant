@@ -55,7 +55,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'  # 与生产镜像 python:3.11-slim 对齐（2026-08-28 体检）
           cache: pip
 
       - name: Install dependencies
@@ -124,7 +124,7 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16  # 与生产 postgres:16-alpine 对齐（2026-08-28 体检）
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'  # 与生产镜像 python:3.11-slim 对齐（2026-08-28 体检）
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt

@@ -152,12 +152,22 @@ services:
       HIS_WRITEBACK_APP_ID: ${HIS_WRITEBACK_APP_ID:-}
       HIS_WRITEBACK_APP_SECRET: ${HIS_WRITEBACK_APP_SECRET:-}
       HIS_WRITEBACK_TIMEOUT_SECONDS: ${HIS_WRITEBACK_TIMEOUT_SECONDS:-30}
+      # 入站 WS 白名单（2026-08-28 体检补漏）：config 读、his_ws 执行，此前唯独
+      # 它没透传——联调时按注释填 .env 会静默不生效（默认空=不限制）
+      HIS_WS_IP_ALLOWLIST: ${HIS_WS_IP_ALLOWLIST:-}
+      # 种子账号初始密码（2026-08-28 体检补漏）：init_db 读、.env.example 宣传
+      # "生产建议设强密码"，但没透传时服务器 .env 设了也白设——灾备重建/换库
+      # 重开会静默用 admin123456/doctor123 建号
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_DOCTOR_PASSWORD: ${SEED_DOCTOR_PASSWORD:-}
       HIS_WRITEBACK_MAX_RETRIES: ${HIS_WRITEBACK_MAX_RETRIES:-2}
     volumes:
       - uploads_data:/app/uploads
       - /app/logs:/app/logs
     ports:
-      - "8010:8010"
+      # 仅本机绑定（2026-08-28 体检）：nginx 走 docker 内网 backend:8010，
+      # 公网无人需要裸 8010——全网卡暴露会绕过 TLS 与 nginx 日志脱敏
+      - "127.0.0.1:8010:8010"
 
   frontend:
     build:
