@@ -55,6 +55,11 @@ class MedicalRecord(Base, TimestampMixin):
     # 原先全表扫描随病历量线性劣化。索引随 alembic 基线建出。
     __table_args__ = (
         Index("idx_medical_records_enc_type", "encounter_id", "record_type"),
+        # 文书身份键唯一（2026-08-28 完整性审计）：(接诊, 类型, 序号) = HIS 回写
+        # 幂等键，重复即互相覆盖。应用层已在三条写路径锁 encounter 行串行化，
+        # 此索引是最后兜底（迁移 k20260828integrity 同名建，含存量顺延清理）
+        Index("uq_medrec_enc_type_no", "encounter_id", "record_type", "record_no",
+              unique=True),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)

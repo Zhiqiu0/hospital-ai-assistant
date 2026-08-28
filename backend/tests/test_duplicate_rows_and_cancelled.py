@@ -30,8 +30,10 @@ async def test_quick_save_tolerates_duplicate_records(async_db):
     await async_db.commit()
     # 故意造两条同 (encounter_id, record_type) 病历
     async_db.add_all([
-        MedicalRecord(encounter_id=enc.id, record_type="outpatient"),
-        MedicalRecord(encounter_id=enc.id, record_type="outpatient"),
+        # record_no 1/2：k20260828integrity 唯一索引后同号重复不可能存在，
+        # 历史重复会被迁移顺延成不同序号——夹具按迁移后的真实形态造数
+        MedicalRecord(encounter_id=enc.id, record_type="outpatient", record_no=1),
+        MedicalRecord(encounter_id=enc.id, record_type="outpatient", record_no=2),
     ])
     await async_db.commit()
 

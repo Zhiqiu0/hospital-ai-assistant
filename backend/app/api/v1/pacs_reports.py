@@ -139,7 +139,9 @@ async def delete_study(
       3. ImagingStudy：DELETE
     """
     assert_pacs_write(current_user)
-    study = await db.get(ImagingStudy, study_id)
+    # 行锁（2026-08-28 完整性审计）：原"先查后删"与并发的发布不互斥，检查
+    # 通过后对方发布提交，随后仍会物理删除已发布报告（合规红线）。锁行串行。
+    study = await db.get(ImagingStudy, study_id, with_for_update=True)
     if not study:
         raise HTTPException(404, "检查不存在")
 

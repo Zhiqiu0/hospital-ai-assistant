@@ -407,7 +407,11 @@ async def delete_empty_draft(
     """
     assert_can_write_record(current_user)
 
-    record = await db.get(MedicalRecord, record_id)
+    # 行锁（2026-08-28 完整性审计）：原"先查后删"全程无锁，检查通过后并发的
+    # quick_save 对同文书签发提交，随后的 DELETE 会把签发版本连主记录物理
+    # 删除——"病历只能修订不能删"被绕过且签名链留悬空 prev_hash。锁行后
+    # 与签发路径（同样锁 record 行）串行，锁内看到的 status 即为真。
+    record = await db.get(MedicalRecord, record_id, with_for_update=True)
     if record is None:
         raise HTTPException(status_code=404, detail="病历不存在")
     await assert_encounter_access(db, record.encounter_id, current_user)
@@ -435,6 +439,29 @@ async def delete_empty_draft(
                 status_code=409,
                 detail="病历已有内容，不可删除（如需作废请走病历修订流程）",
             )
+
+    # 外键解链（2026-08-28 完整性审计）：对空白文书跑过一次质控/AI 生成失败
+    # 会留下 ai_tasks/qc_issues 行（列本就 nullable，属日志型引用），不解开的话
+    # DELETE 直接 IntegrityError 500——医生永远删不掉误建的空文书。
+    # qc_reports/qc_reviews 是质控证据链，存在即说明这份"空文书"被正式评过/
+    # 复核过，不该删，给明确 409 而不是 500。
+    from sqlalchemy import update as sa_update
+
+    from app.models.medical_record import AITask, QCIssue, QCReport, QCReview
+    evidence = (await db.execute(
+        select(QCReport.id).where(QCReport.medical_record_id == record_id).limit(1)
+    )).scalar_one_or_none() or (await db.execute(
+        select(QCReview.id).where(QCReview.medical_record_id == record_id).limit(1)
+    )).scalar_one_or_none()
+    if evidence is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="该文书已有质控评分/复核记录，不可删除（如需作废请走病历修订流程）",
+        )
+    await db.execute(sa_update(AITask).where(AITask.medical_record_id == record_id)
+                     .values(medical_record_id=None))
+    await db.execute(sa_update(QCIssue).where(QCIssue.medical_record_id == record_id)
+                     .values(medical_record_id=None))
 
     await db.execute(
         delete(RecordVersion).where(RecordVersion.medical_record_id == record_id)
