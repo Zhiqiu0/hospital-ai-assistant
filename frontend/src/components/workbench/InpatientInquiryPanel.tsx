@@ -218,6 +218,24 @@ export default function InpatientInquiryPanel() {
                 style={{ borderRadius: 6, fontSize: 13 }}
               />
             </Form.Item>
+            {/* 中医病条目的入院病情（2026-08-28 口径对拍修复）：病案首页对中医病
+                诊断同样要求该标志，此前只有西医条目有落点，住院质控恒扣 1 分 */}
+            <Form.Item
+              style={{ marginBottom: 10 }}
+              name="tcm_admission_condition"
+              label={<span style={{ ...labelStyle, color: '#7c3aed' }}>中医疾病·入院病情</span>}
+            >
+              <Select
+                allowClear
+                placeholder="有 / 临床未确定 / 情况不明 / 无"
+                options={['有', '临床未确定', '情况不明', '无'].map(v => ({
+                  value: v,
+                  label: v,
+                }))}
+                style={{ width: 200 }}
+                size="small"
+              />
+            </Form.Item>
             <Form.Item
               style={{ marginBottom: 10 }}
               name="tcm_syndrome_diagnosis"

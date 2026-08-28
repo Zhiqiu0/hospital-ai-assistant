@@ -68,6 +68,8 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
   const [searching, setSearching] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 患者搜索乱序守卫序号（见 handleSearch 注释）
+  const searchSeqRef = useRef(0)
 
   // 弹窗每次打开都重置状态，避免上次的 step / 选中态残留
   useEffect(() => {
@@ -98,12 +100,15 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
       setResults([])
       return
     }
+    // 乱序守卫（2026-08-28 弱网审计）：先发的慢响应后到不得覆盖新关键词结果
+    const seq = ++searchSeqRef.current
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
         const res = (await api.get(`/patients?keyword=${encodeURIComponent(kw)}&page_size=8`)) as {
           items?: Patient[]
         }
+        if (seq !== searchSeqRef.current) return
         setResults(res.items || [])
       } catch {
         setResults([])
@@ -159,10 +164,19 @@ export default function NewInpatientEncounterModal({ open, onClose, onSuccess }:
         // 仅"网络瞬断"才延后 3s 重试一次，HTTP 错误直接抛（2026-08-11 审计修复，
         // 与门诊 modal 一致）：拦截器对 HTTP 错误 reject 带 status 的对象，网络错误无。
         const e = err as { status?: number }
-        if (e?.status == null) {
+        // 自动重发仅限老患者（2026-08-28 弱网审计收紧，与门诊 modal 一致）：
+        // 新患者无去重键，"请求已到达、响应丢失"时重发会重复建档
+        if (e?.status == null && 'patient_id' in payload) {
           await new Promise(r => setTimeout(r, 3000))
           res = (await api.post('/encounters/quick-start', payload)) as QuickStartResult
-        } else throw err
+        } else {
+          if (e?.status == null) {
+            message.warning(
+              '网络异常，本次创建结果未知——请先搜索该患者确认是否已建档，再决定是否重试'
+            )
+          }
+          throw err
+        }
       }
       // 同步患者档案到本地缓存（profile 字段跟随患者）
       // applyQuickStartResult 接收 EncounterIntakePayload，QuickStartResult 是兼容超集

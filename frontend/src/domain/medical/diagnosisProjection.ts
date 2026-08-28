@@ -86,7 +86,14 @@ export function parseAdmissionDiagnosisText(text: string): {
  */
 export function composeDiagnosisItems(
   westernEntries: DiagnosisEntry[],
-  formTexts: { western?: string; tcmDisease?: string; tcmSyndrome?: string }
+  formTexts: {
+    western?: string
+    tcmDisease?: string
+    tcmSyndrome?: string
+    /** 中医疾病条目的入院病情（住院；2026-08-28 口径对拍修复——病案首页
+     *  对中医病诊断同样要求该标志，此前前端无落点导致住院质控恒扣 1 分） */
+    tcmDiseaseCondition?: string
+  }
 ): DiagnosisEntry[] {
   let western = westernEntries.filter(e => e.name.trim())
   const westernText = (formTexts.western || '').trim()
@@ -96,7 +103,14 @@ export function composeDiagnosisItems(
   const items: DiagnosisEntry[] = [...western]
   const tcmD = (formTexts.tcmDisease || '').trim()
   const tcmS = (formTexts.tcmSyndrome || '').trim()
-  if (tcmD) items.push({ category: 'tcm_disease', name: tcmD, is_primary: false, sort_order: 0 })
+  if (tcmD)
+    items.push({
+      category: 'tcm_disease',
+      name: tcmD,
+      is_primary: false,
+      sort_order: 0,
+      admission_condition: formTexts.tcmDiseaseCondition || undefined,
+    })
   if (tcmS) items.push({ category: 'tcm_syndrome', name: tcmS, is_primary: false, sort_order: 0 })
   // 主诊断兜底与后端一致（西医优先）；后端也会再校验一遍，这里补齐是为了
   // 本地投影/展示即时正确

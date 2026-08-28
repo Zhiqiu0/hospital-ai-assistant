@@ -5,7 +5,7 @@
  * 待复核清单（已签发文书，科室质控员自动限本科室）→ 查看全文 →
  * 复核通过 / 退回整改（必填意见）。所有查阅与结论均写审计日志。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Input, Layout, Space, Table, Tabs, Tag, Typography } from 'antd'
 import QcStatsPanel from './qc/QcStatsPanel'
 import { CheckOutlined, LogoutOutlined, RollbackOutlined, SafetyOutlined } from '@ant-design/icons'
@@ -61,6 +61,8 @@ export default function QcWorkbenchPage() {
   const { user, clearAuth } = useAuthStore()
   const navigate = useNavigate()
   const [items, setItems] = useState<QueueItem[]>([])
+  // openDetail 的"最新点击优先"序号（见函数内注释）
+  const detailSeqRef = useRef(0)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -89,12 +91,16 @@ export default function QcWorkbenchPage() {
   }, [page, load])
 
   const openDetail = async (recordId: string) => {
+    // 最新点击优先（2026-08-28 弱网审计）：慢网下连点两份病历，原实现后返回者
+    // 静默覆盖抽屉内容——质控员对着 A 的正文写意见、结论却落在 B 上。
+    const seq = ++detailSeqRef.current
     try {
       const res = (await api.get(`/qc/records/${recordId}`)) as unknown as RecordDetail
+      if (seq !== detailSeqRef.current) return
       setDetail(res)
       setComment('')
     } catch {
-      message.error('加载病历失败')
+      if (seq === detailSeqRef.current) message.error('加载病历失败')
     }
   }
 
@@ -263,6 +269,8 @@ export default function QcWorkbenchPage() {
               value={comment}
               onChange={e => setComment(e.target.value)}
               placeholder="复核意见（退回整改时必填）"
+              maxLength={2000}
+              showCount
             />
             <Space style={{ justifyContent: 'flex-end', display: 'flex' }}>
               <Button

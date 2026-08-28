@@ -59,18 +59,33 @@ async def review_queue(
         .group_by(QCReview.medical_record_id)
         .subquery()
     )
+    # 最新管理员修订时间（2026-08-28 口径对拍修复）：门急诊退回后的整改通道
+    # 是管理员修订（只建 RecordVersion 不动 submitted_at），修订后必须重新
+    # 进入复核队列——与"医生重签需再核"互为镜像
+    latest_revise = (
+        select(
+            RecordVersion.medical_record_id,
+            func.max(RecordVersion.created_at).label("last_revise_at"),
+        )
+        .where(RecordVersion.source == "admin_revise")
+        .group_by(RecordVersion.medical_record_id)
+        .subquery()
+    )
 
     stmt = (
         select(MedicalRecord, Encounter, Patient, latest_review.c.last_review_at)
         .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
         .join(Patient, Encounter.patient_id == Patient.id)
         .outerjoin(latest_review, latest_review.c.medical_record_id == MedicalRecord.id)
+        .outerjoin(latest_revise, latest_revise.c.medical_record_id == MedicalRecord.id)
         .where(
             MedicalRecord.status == "submitted",
             MedicalRecord.submitted_at.isnot(None),
-            # 待复核：从未复核，或最新复核早于最新签发（修订重签需再核）
+            # 待复核：从未复核，或最新复核早于最新签发（医生重签需再核），
+            # 或最新复核早于最新管理员修订（门急诊整改通道，同样需再核）
             (latest_review.c.last_review_at.is_(None))
-            | (latest_review.c.last_review_at < MedicalRecord.submitted_at),
+            | (latest_review.c.last_review_at < MedicalRecord.submitted_at)
+            | (latest_review.c.last_review_at < latest_revise.c.last_revise_at),
         )
         .order_by(desc(MedicalRecord.submitted_at))
     )

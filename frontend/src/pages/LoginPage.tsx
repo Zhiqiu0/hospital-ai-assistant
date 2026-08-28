@@ -115,6 +115,13 @@ export default function LoginPage() {
         // 不登出直接换人登录比正常登出更常见。
         clearPatientScopedData()
       }
+      // nurse 拦在登录关口（2026-08-28 口径对拍修复）：后端 RECORD_WRITE_ROLES
+      // 不含 nurse——建接诊/写病历/签发全线 403。原先前端把 nurse 放进完整
+      // 医生工作台，每个按钮都以 403 收场，比明说"没开通"更糟。
+      if (res.user.role === 'nurse') {
+        message.warning('护士账号暂未开通工作台功能，请联系管理员分配可用角色')
+        return
+      }
       setAuth(res.access_token, res.user)
       setSystemType(selectedSystem)
       const adminRoles = ['super_admin', 'hospital_admin', 'dept_admin']

@@ -116,7 +116,14 @@ api.interceptors.response.use(
       console.error(
         `[api 网络断连] url=${sanitizedUrl} method=${(error.config?.method || 'GET').toUpperCase()} code=${errCode} msg="${errMsg}" lastSuccess=${sinceLastSuccess} navType=${(performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type || 'unknown'} online=${navigator.onLine}`
       )
-      message.error('网络连接失败，请检查网络后重试')
+      // 超时与断网分文案（2026-08-28 弱网审计）：ECONNABORTED 是"网络通、
+      // 服务器慢"——引导医生"立即重试"只会加倍压服务器，且把运维排查方向
+      // 带偏成网络问题
+      if (errCode === 'ECONNABORTED') {
+        message.error('服务器响应超时（网络正常），请稍候片刻再试')
+      } else {
+        message.error('网络连接失败，请检查网络后重试')
+      }
     }
 
     // 上报到 Sentry：网络错误 / 5xx / 401（非登录请求） 都值得追溯

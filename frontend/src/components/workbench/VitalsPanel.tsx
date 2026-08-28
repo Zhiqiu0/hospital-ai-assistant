@@ -161,8 +161,9 @@ export default function VitalsPanel() {
           <Form.Item name="temperature" style={{ margin: 0 }}>
             <InputNumber
               placeholder="体温 °C"
-              min={35}
-              max={42}
+              // 区间=生理极限（2026-08-28 口径对拍：min=35 曾把真实低体温 34.2 静默钳成 35）
+              min={25}
+              max={45}
               step={0.1}
               style={{ width: '100%' }}
               suffix="°C"
@@ -171,8 +172,8 @@ export default function VitalsPanel() {
           <Form.Item name="pulse" style={{ margin: 0 }}>
             <InputNumber
               placeholder="脉搏 次/min"
-              min={20}
-              max={250}
+              min={0}
+              max={300}
               style={{ width: '100%' }}
               suffix="次"
             />
@@ -180,8 +181,8 @@ export default function VitalsPanel() {
           <Form.Item name="respiration" style={{ margin: 0 }}>
             <InputNumber
               placeholder="呼吸 次/min"
-              min={5}
-              max={60}
+              min={0}
+              max={80}
               style={{ width: '100%' }}
               suffix="次"
             />
@@ -189,7 +190,7 @@ export default function VitalsPanel() {
           <Form.Item name="spo2" style={{ margin: 0 }}>
             <InputNumber
               placeholder="SpO₂ %"
-              min={50}
+              min={0}
               max={100}
               style={{ width: '100%' }}
               suffix="%"
@@ -198,8 +199,8 @@ export default function VitalsPanel() {
           <Form.Item name="bp_systolic" style={{ margin: 0 }}>
             <InputNumber
               placeholder="收缩压 mmHg"
-              min={50}
-              max={250}
+              min={20}
+              max={300}
               style={{ width: '100%' }}
               suffix="收"
             />
@@ -207,8 +208,8 @@ export default function VitalsPanel() {
           <Form.Item name="bp_diastolic" style={{ margin: 0 }}>
             <InputNumber
               placeholder="舒张压 mmHg"
-              min={30}
-              max={150}
+              min={10}
+              max={200}
               style={{ width: '100%' }}
               suffix="舒"
             />

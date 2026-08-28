@@ -73,6 +73,9 @@ export default function ExamSuggestionTab() {
         initial_impression: inquiry.initial_impression,
         encounter_id: currentEncounterId || undefined,
       })) as { suggestions?: ExamSuggestion[]; degraded?: boolean }
+      // 跨患者守卫（2026-08-28 弱网审计）：慢响应期间已切患者时丢弃，
+      // 否则 A 的检查建议会显示在 B 的界面上被"写入"进 B 的病历
+      if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
       // degraded=true 是后端 AI 故障兜底，提示医生而不是静默显示"无建议"（2026-06-11）
       if (data.degraded) {
         message.error('AI 服务暂时不可用，请稍后重试')

@@ -9,7 +9,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -24,17 +24,23 @@ router = APIRouter()
 # ── Request 模型 ──────────────────────────────────────────────────────────────
 
 class VitalSignIn(BaseModel):
-    """录入生命体征请求体。"""
+    """录入生命体征请求体。
+
+    区间口径（2026-08-28 口径对拍修复）：两端统一用**生理极限**而非常见值——
+    此前前端 InputNumber min=35 会把真实低体温 34.2 静默钳位成 35（错误数据
+    无提示落库），后端又零校验照收 9999。现在：前端下限放宽到生理极限
+    （不再钳掉真实异常值），后端同一组极限值兜底拒收离谱输入。
+    """
     recorded_at: Optional[str] = None   # ISO8601 字符串，留空则用服务器当前时间
-    temperature: Optional[float] = None
-    pulse: Optional[int] = None
-    respiration: Optional[int] = None
-    bp_systolic: Optional[int] = None
-    bp_diastolic: Optional[int] = None
-    spo2: Optional[int] = None
-    weight: Optional[float] = None
-    height: Optional[float] = None
-    notes: Optional[str] = None
+    temperature: Optional[float] = Field(None, ge=25, le=45)
+    pulse: Optional[int] = Field(None, ge=0, le=300)
+    respiration: Optional[int] = Field(None, ge=0, le=80)
+    bp_systolic: Optional[int] = Field(None, ge=20, le=300)
+    bp_diastolic: Optional[int] = Field(None, ge=10, le=200)
+    spo2: Optional[int] = Field(None, ge=0, le=100)
+    weight: Optional[float] = Field(None, ge=0.3, le=400)
+    height: Optional[float] = Field(None, ge=20, le=260)
+    notes: Optional[str] = Field(None, max_length=500)
 
 
 # ── 生命体征 ──────────────────────────────────────────────────────────────────

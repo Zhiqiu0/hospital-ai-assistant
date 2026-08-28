@@ -141,3 +141,38 @@ async def test_route_not_swallowed_by_dynamic_segment(async_db, seeded):
         r = await ac.get("/api/v1/medical-records/my-returned")
         assert r.status_code == 200, "静态路径被动态段吞掉会 404/422"
     app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_admin_revise_clears_reminder_and_requeues(async_db, seeded):
+    """门急诊整改通道 = 管理员修订（2026-08-28 口径对拍修复）：
+    修订只建 RecordVersion(source=admin_revise) 不动 submitted_at——
+    ①医生退回横幅必须消失 ②文书必须重新进入复核队列。"""
+    from app.models.medical_record import RecordVersion
+
+    async_db.add(_review(seeded["mine"], "enc-1", "returned", "门诊退回",
+                         at=seeded["t_mine"] + timedelta(milliseconds=1)))
+    await async_db.commit()
+
+    async with _client_as(async_db, _user("doc-me")) as ac:
+        assert len((await ac.get("/api/v1/medical-records/my-returned")).json()) == 1
+    app.dependency_overrides.clear()
+
+    # 管理员修订：新版本 source=admin_revise，时间晚于退回
+    async_db.add(RecordVersion(
+        medical_record_id=seeded["mine"], version_no=99,
+        content={"text": "修订后的正文"}, source="admin_revise",
+        created_at=seeded["t_mine"] + timedelta(milliseconds=5)))
+    await async_db.commit()
+
+    async with _client_as(async_db, _user("doc-me")) as ac:
+        assert (await ac.get("/api/v1/medical-records/my-returned")).json() == [], \
+            "管理员修订后退回横幅必须消失"
+    app.dependency_overrides.clear()
+
+    # 复核队列侧：修订晚于最新复核 → 重新入队
+    async with _client_as(async_db, _user("qh", "qc_officer")) as ac:
+        ids = {i["record_id"] for i in
+               (await ac.get("/api/v1/qc/review-queue")).json()["items"]}
+        assert seeded["mine"] in ids, "管理员修订后必须重新进入复核队列"
+    app.dependency_overrides.clear()

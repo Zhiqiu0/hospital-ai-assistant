@@ -1,8 +1,10 @@
 /**
  * 住院文书类型规则（domain/inpatient/recordRules.ts）
  *
- * 定义每种住院文书的显示标签、图标颜色、书写截止要求。
- * 用于时间轴展示和合规提醒。
+ * 定义每种住院文书的显示标签与图标颜色，用于时间轴展示。
+ * 时限口径不在这里（2026-08-28 口径对拍清理）：原 deadlineHours 是与后端
+ * record_deadlines.py 各写一份的第二真相源（数值已漂移且无消费点），
+ * 已删除——时限一律吃后端 /compliance 接口。
  */
 
 export type InpatientNoteType =
@@ -17,8 +19,6 @@ export interface NoteTypeRule {
   label: string
   color: string // Ant Design tag 颜色
   bgColor: string // 时间轴条目背景
-  /** 入院后多少小时内必须完成（null = 无硬性截止）*/
-  deadlineHours: number | null
   /** 是否可重复书写（日常病程可多次，入院记录只有1份）*/
   repeatable: boolean
 }
@@ -38,42 +38,36 @@ export const NOTE_TYPE_RULES: Record<InpatientNoteType | string, NoteTypeRule> =
     label: '日常病程',
     color: 'green',
     bgColor: '#f0fdf4',
-    deadlineHours: 24,
     repeatable: true,
   },
   first_course_record: {
     label: '首次病程',
     color: 'cyan',
     bgColor: '#ecfeff',
-    deadlineHours: 8,
     repeatable: false,
   },
   senior_round: {
     label: '上级查房',
     color: 'purple',
     bgColor: '#faf5ff',
-    deadlineHours: 48,
     repeatable: true,
   },
   discharge_record: {
     label: '出院记录',
     color: 'orange',
     bgColor: '#fff7ed',
-    deadlineHours: 24,
     repeatable: false,
   },
   op_record: {
     label: '手术记录',
     color: 'red',
     bgColor: '#fef2f2',
-    deadlineHours: 24,
     repeatable: true,
   },
   outpatient: {
     label: '门诊病历',
     color: 'blue',
     bgColor: '#eff6ff',
-    deadlineHours: 24,
     repeatable: false,
   },
 
@@ -81,42 +75,36 @@ export const NOTE_TYPE_RULES: Record<InpatientNoteType | string, NoteTypeRule> =
     label: '入院记录',
     color: 'blue',
     bgColor: '#eff6ff',
-    deadlineHours: 24,
     repeatable: false,
   },
   first_course: {
     label: '首次病程',
     color: 'cyan',
     bgColor: '#ecfeff',
-    deadlineHours: 8,
     repeatable: false,
   },
   daily_course: {
     label: '日常病程',
     color: 'green',
     bgColor: '#f0fdf4',
-    deadlineHours: null,
     repeatable: true,
   },
   surgery_pre: {
     label: '术前小结',
     color: 'orange',
     bgColor: '#fff7ed',
-    deadlineHours: null,
     repeatable: false,
   },
   surgery_post: {
     label: '术后病程',
     color: 'volcano',
     bgColor: '#fff1f0',
-    deadlineHours: 6,
     repeatable: false,
   },
   discharge: {
     label: '出院小结',
     color: 'purple',
     bgColor: '#faf5ff',
-    deadlineHours: 24,
     repeatable: false,
   },
 }
@@ -127,7 +115,6 @@ export function getNoteRule(noteType: string): NoteTypeRule {
       label: noteType,
       color: 'default',
       bgColor: 'var(--surface-2)',
-      deadlineHours: null,
       repeatable: true,
     }
   )
