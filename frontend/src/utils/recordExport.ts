@@ -18,6 +18,14 @@
  * 没有时按现有 patient 数据兜底，不会缺信息。
  */
 
+/** 姓名脱敏（PHI 出口审计）：'张三'→'张*'，'欧阳娜娜'→'欧阳**'，空值→'患者' */
+function maskName(name?: string | null): string {
+  if (!name) return '患者'
+  const chars = Array.from(name)
+  if (chars.length <= 1) return name
+  const keep = chars.length >= 3 ? 2 : 1
+  return chars.slice(0, keep).join('') + '*'.repeat(chars.length - keep)
+}
 export const RECORD_TYPE_LABEL: Record<string, string> = {
   outpatient: '门诊病历',
   admission_note: '入院记录',
@@ -252,7 +260,7 @@ export function printRecord(
   const formatted = esc(content).replace(/\n/g, '<br>')
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-<title>${esc(typeLabel)} - ${esc(patient?.name || '未知患者')}</title>
+<title>${esc(typeLabel)} - ${esc(maskName(patient?.name))}</title>
 <style>
   body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
   h2 { text-align: center; font-size: 20px; margin-bottom: 12px; }
@@ -337,7 +345,9 @@ ${
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${typeLabel}_${patient?.name || '未知患者'}.doc`
+  // 文件名脱敏（2026-08-28 PHI 审计）：全名会永久留在公用电脑下载目录/
+  // 最近文件/回收站，文书类型本身就是病情线索。取姓+*，医生仍可辨认。
+  a.download = `${typeLabel}_${maskName(patient?.name)}.doc`
   a.click()
   URL.revokeObjectURL(url)
 }

@@ -19,6 +19,7 @@
  */
 
 import * as Sentry from '@sentry/react'
+import { sanitizeUrlForLog } from '@/services/urlSanitize'
 
 // ── 敏感字段名单（兜底脱敏用，前缀匹配 + 包含匹配）─────────────────────────────
 // 任何 event 里如果 extra/contexts 含这些字段都会被替换为 [scrubbed]
@@ -88,6 +89,23 @@ function scrubEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
   // 请求 query 里可能带 username 等，保留 url 路径用于聚合，清掉 query
   if (event.request?.query_string) {
     event.request.query_string = '[scrubbed]'
+  }
+  // ── breadcrumbs / tags 清洗（2026-08-28 PHI 出口审计补盲区）────────────
+  // xhr/fetch breadcrumb 会记录报错前几十条请求的完整 URL——含
+  // /patients?keyword=张三；tags['http.url'] 同理且在 Sentry 后台可索引。
+  // 二者此前都不在清洗范围，是患者姓名出境的通道。
+  if (event.breadcrumbs) {
+    for (const bc of event.breadcrumbs) {
+      if (bc.data && typeof bc.data.url === 'string') {
+        bc.data.url = sanitizeUrlForLog(bc.data.url)
+      }
+      if (typeof bc.message === 'string') {
+        bc.message = sanitizeUrlForLog(bc.message)
+      }
+    }
+  }
+  if (event.tags && typeof event.tags['http.url'] === 'string') {
+    event.tags['http.url'] = sanitizeUrlForLog(event.tags['http.url'] as string)
   }
   return event
 }
@@ -180,7 +198,7 @@ export function captureAxiosError(error: {
     const method = (error.config?.method || 'GET').toUpperCase()
 
     scope.setTag('http.status', status?.toString() || 'network_error')
-    scope.setTag('http.url', url)
+    scope.setTag('http.url', sanitizeUrlForLog(url))
     scope.setTag('http.method', method)
 
     scope.setExtra('errorCode', error.code)
@@ -192,7 +210,10 @@ export function captureAxiosError(error: {
     }
 
     // 用 captureException 上报；如果 error 不是真正的 Error 实例，包一层
-    const exc = error instanceof Error ? error : new Error(`HTTP ${status || 'NETWORK'} ${method} ${url}`)
+    const exc =
+      error instanceof Error
+        ? error
+        : new Error(`HTTP ${status || 'NETWORK'} ${method} ${sanitizeUrlForLog(url)}`)
     Sentry.captureException(exc)
   })
 }

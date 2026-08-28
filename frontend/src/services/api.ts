@@ -18,6 +18,7 @@ import axios from 'axios'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import { captureAxiosError } from '@/sentry'
+import { sanitizeUrlForLog } from '@/services/urlSanitize'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -28,29 +29,6 @@ const api = axios.create({
 // 帮助判断是不是 HTTP/2 stale connection（典型特征：刚刷新过、间隔 > 75s 后第一次）。
 // 全局单例可观察值，不需要响应式。
 let lastSuccessAt = 0
-
-/**
- * 把 URL 路径中的常见 ID（uuid / 长 hex / 中文姓名拼接段）替换成占位符，
- * 防止 PHI 进 console（医生 F12 可能截图发群里）。
- * 保留 endpoint 结构便于聚合分析（如 /encounters/:id/quick-start）。
- */
-function sanitizeUrlForLog(url: string): string {
-  if (!url) return ''
-  return (
-    url
-      // UUID（含/不含连字符）
-      .replace(
-        /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
-        ':uuid'
-      )
-      // 长 hex（>=24 字符，覆盖患者外部码 / sha 等）
-      .replace(/\b[0-9a-fA-F]{24,}\b/g, ':hex')
-      // 纯数字 ID（连续 6 位以上，避免误伤短数字如分页）
-      .replace(/\/\d{6,}/g, '/:num')
-      // query string（可能含患者姓名 / 关键词）
-      .replace(/\?.*$/, '?[scrubbed]')
-  )
-}
 
 // 请求拦截：自动附加 JWT Token（从 zustand 持久化 store 读取）
 api.interceptors.request.use(config => {
@@ -97,10 +75,13 @@ api.interceptors.response.use(
       }
     } else if (status === 404) {
       // 404 由调用方决定是否提示（有些 404 是正常业务流程），这里只记录
-      console.warn(`[api] 404 Not Found: ${requestUrl}`)
+      console.warn(`[api] 404 Not Found: ${sanitizeUrlForLog(requestUrl)}`)
     } else if (status != null && status >= 500) {
       message.error('服务器内部错误，请稍后重试或联系管理员')
-      console.error(`[api] ${status} Server Error: ${requestUrl}`, error.response?.data)
+      console.error(
+        `[api] ${status} Server Error: ${sanitizeUrlForLog(requestUrl)}`,
+        error.response?.data
+      )
     } else if (!status) {
       // status 为 undefined：网络断连、请求超时或 CORS 错误
       // ── 诊断日志（2026-05-25 治本辅助）──────────────────────────────
