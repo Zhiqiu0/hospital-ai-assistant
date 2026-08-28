@@ -14,8 +14,6 @@ import logging
 from typing import Optional
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
-from app.services.ai.llm_client import llm_client
-from app.services.ai.task_logger import log_ai_task
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
