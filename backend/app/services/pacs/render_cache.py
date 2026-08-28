@@ -208,8 +208,13 @@ async def fetch_render_jpeg(
     # 默认窗位窗宽 → 异步写缓存（不阻塞响应）。超限的大图不进 Redis：
     # 影像缓存丢了只是多渲染一次，而它挤掉的回写抢占标记/限流计数是正确性问题。
     if cache_key and not _too_large_to_cache(jpeg_bytes):
-        asyncio.create_task(
-            redis_cache.set_bytes(cache_key, jpeg_bytes, ttl=settings.thumbnail_cache_ttl)
+        # bg_tasks.spawn 持引用（2026-08-28 体检）：裸 create_task 只有弱引用，
+        # 回写任务可能在完成前被 GC 取消（缓存静默未写）；与 2026-08-11 批量
+        # 收口的同类残留点
+        from app.his_adapter.bg_tasks import spawn
+        spawn(
+            redis_cache.set_bytes(cache_key, jpeg_bytes, ttl=settings.thumbnail_cache_ttl),
+            name="pacs_render_cache_write",
         )
     return jpeg_bytes, "MISS"
 
