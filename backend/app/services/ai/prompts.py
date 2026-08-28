@@ -14,9 +14,6 @@ from app.services.ai.prompts_voice import (  # noqa: F401
     VOICE_STRUCTURE_PROMPT_INPATIENT,
     VOICE_STRUCTURE_PROMPT_OUTPATIENT,
 )
-from app.services.ai.prompts_operations import (  # noqa: F401
-    CONTINUE_PROMPT,
-)
 from app.services.ai.prompts_suggestions import (  # noqa: F401
     DIAGNOSIS_SUGGESTION_PROMPT,
     EXAM_SUGGESTIONS_PROMPT,

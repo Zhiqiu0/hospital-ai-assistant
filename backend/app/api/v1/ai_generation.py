@@ -3,7 +3,6 @@ AI 病历生成路由（/api/v1/ai/quick-generate 等）
 
 端点列表：
   POST   /quick-generate      流式生成指定类型病历草稿
-  POST   /quick-continue      流式续写未完成病历
   POST   /quick-supplement    根据质控问题一键补全病历（流式）
   POST   /quick-polish        病历润色（流式）
   POST   /normalize-fields    问诊字段规范化（口语→书面）
@@ -22,21 +21,15 @@ from app.core.security import get_current_user
 from app.database import get_db
 from app.services.audit_service import log_action
 from app.schemas.ai_request import (
-    ContinueRequest,
     NormalizeFieldsRequest,
     PolishRequest,
     QuickGenerateRequest,
     SupplementRequest,
 )
 from app.services.ai.ai_utils import (
-    compose_physical_exam,
-    stream_text,
     stream_with_lock,
 )
 from app.services.ai.field_normalize_service import run_normalize_fields
-from app.services.ai.model_options import get_model_options
-from app.services.ai.prompts import RECORD_TYPE_LABELS
-from app.services.ai.prompts_operations import build_continue_prompt
 from app.services.ai.record_gen_v2_service import (
     stream_polish_v2,
     stream_record_v2,
@@ -106,52 +99,6 @@ async def quick_generate(
     return StreamingResponse(
         stream_with_lock(
             stream_record_v2(record_type, req, db),
-            lock_key, lock_token,
-        ),
-        media_type="text/event-stream",
-    )
-
-
-@router.post("/quick-continue")
-async def quick_continue(
-    req: ContinueRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """续写病历未完成部分（流式）。"""
-    await log_action(
-        action="ai_quick_continue",
-        user_id=current_user.id,
-        user_name=current_user.username,
-        user_role=current_user.role,
-        resource_type="medical_record",
-        detail=f"record_type={req.record_type or 'outpatient'}",
-    )
-    composed_physical_exam = compose_physical_exam(
-        physical_exam=req.physical_exam,
-        temperature=req.temperature,
-        pulse=req.pulse,
-        respiration=req.respiration,
-        bp_systolic=req.bp_systolic,
-        bp_diastolic=req.bp_diastolic,
-        spo2=req.spo2,
-        height=req.height,
-        weight=req.weight,
-    )
-    prompt = build_continue_prompt(
-        req,
-        record_type_label=RECORD_TYPE_LABELS.get(req.record_type or "outpatient", "门诊病历"),
-        composed_physical_exam=composed_physical_exam,
-    )
-    model_options = get_model_options("generate")
-    # 连接池护栏：下面 stream_text 全程只调 LLM、不碰 db，但本请求的 db session 会
-    # 一直活到流式响应发完。先 commit 结束本请求此前的只读事务（若有）、把连接还回池，
-    # 避免整段 LLM 流（最长 270s）白占一条池连接。
-    await db.commit()
-    lock_key, lock_token = await _acquire_ai_gen_lock(current_user.id, "continue")
-    return StreamingResponse(
-        stream_with_lock(
-            stream_text(prompt, task_type="generate", model_options=model_options),
             lock_key, lock_token,
         ),
         media_type="text/event-stream",

@@ -56,6 +56,13 @@ function sanitizeUrlForLog(url: string): string {
 api.interceptors.request.use(config => {
   const { token } = useAuthStore.getState()
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // 同步 AI 端点超时放宽到 300s 对齐 nginx（2026-08-28 体检）：
+  // LLM 单次调用上限 270s，全局 120s 会让前端先报错、后端继续跑完照常计费，
+  // 医生重试等于双份烧钱。SSE 端点走 fetch 不受本超时影响；
+  // 调用方显式传 timeout 时不覆盖。
+  if (config.url?.startsWith('/ai/') && config.timeout === 120000) {
+    config.timeout = 300000
+  }
   return config
 })
 

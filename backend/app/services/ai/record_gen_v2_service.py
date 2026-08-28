@@ -79,6 +79,10 @@ def _guard_vitals_in_result(result: Any, req: Any) -> None:
                 result[field] = cleaned
 
 
+# SSE 静默期心跳间隔（秒）：远小于 nginx 300s proxy_read_timeout 即可
+_HEARTBEAT_INTERVAL = 15.0
+
+
 async def _call_llm_json_with_retry(
     prompt: str,
     opts: dict,
@@ -222,7 +226,25 @@ async def _stream_json_pipeline(
         # 整个流式期间都白占一条池连接，多医生并发就把 30 连接的池占满。
         # 后续 _log_and_save_draft 的写走独立/重新借的连接，不受影响。
         await db.commit()
-        result = await _call_llm_json_with_retry(prompt, opts)
+        # 静默期心跳（2026-08-28 体检收尾）：JSON 管线在 LLM 完整返回前对客户端
+        # 零字节输出，LLM 慢/重试时静默可超 nginx 的 300s proxy_read_timeout，
+        # nginx 会掐流让医生看到莫名失败而后端还在跑。把 LLM 调用挪进后台任务，
+        # 每 15s 吐一行 SSE 注释（": ping"）保活——前端解析器只认 data: 行，
+        # 注释行天然被忽略，行为零变化。
+        llm_task = asyncio.ensure_future(_call_llm_json_with_retry(prompt, opts))
+        try:
+            while True:
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(llm_task), timeout=_HEARTBEAT_INTERVAL)
+                    break
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        except BaseException:
+            # 客户端断开（GeneratorExit）或其他异常时取消 LLM 任务，不留孤儿
+            if not llm_task.done():
+                llm_task.cancel()
+            raise
     except Exception as exc:
         logger.exception("%s: llm_failed record_type=%s err=%s", log_prefix, record_type, exc)
         # 业务化异常带医生可读文案（欠费→"请联系管理员充值"），其余保留类型名
