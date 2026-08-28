@@ -96,7 +96,9 @@ export function getStaleness(
   if (!updatedAt) return null
   const updated = new Date(updatedAt).getTime()
   if (Number.isNaN(updated)) return null
-  const days = Math.floor((Date.now() - updated) / (1000 * 60 * 60 * 24))
+  // 下限钳位（2026-08-28 时间审计）：客户端时钟慢于服务器时，刚确认的字段
+  // Math.floor(负小数) = -1，文案变成"-1 天前确认"
+  const days = Math.max(0, Math.floor((Date.now() - updated) / (1000 * 60 * 60 * 24)))
   let color: string
   let bgColor: string | undefined
   if (days <= 7) {

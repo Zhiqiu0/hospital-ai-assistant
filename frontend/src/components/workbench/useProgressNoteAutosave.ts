@@ -57,7 +57,10 @@ export function useProgressNoteAutosave(params: {
       timerRef.current = null
     }
     if (!pending) return
-    if (pending.content === savedRef.current) return
+    // 脏判断含记录时间（2026-08-28 补记链路修复）：只改 DatePicker 不改正文时
+    // 原判断直接跳过 flush，医生选的"实际记录时点"永远到不了后端
+    const snapKey = `${pending.recordedAt?.format('YYYY-MM-DDTHH:mm:ss') ?? ''}\u0001${pending.content}`
+    if (snapKey === savedRef.current) return
     try {
       // 走正式病历的草稿保存（2026-08-14 统一文书模型）：
       // 原先打的是 progress-notes，那张表没有版本、没有签名链、不回写 HIS、
@@ -70,7 +73,7 @@ export function useProgressNoteAutosave(params: {
         // 这是"这份文书对应的诊疗时点"，与系统录入时间差得多会被标为补记。
         recorded_at: pending.recordedAt?.format('YYYY-MM-DDTHH:mm:ss'),
       })
-      savedRef.current = pending.content
+      savedRef.current = snapKey
     } catch {
       // 自动保存失败不打扰医生（他随时可以点「保存草稿」拿到明确反馈）；
       // 保留 savedRef 不变，下一轮防抖会再试一次。
@@ -88,9 +91,10 @@ export function useProgressNoteAutosave(params: {
   // 正文变化 → 记快照 + 重置防抖
   useEffect(() => {
     if (disabled || !encounterId || !itemId || !recordType) return
-    // 首次水合（savedRef 为空）时把当前正文当作基线，不触发一次无谓的回写
+    // 首次水合（savedRef 为空）时把当前状态当作基线，不触发一次无谓的回写
+    // （基线含记录时间，与 flush 的脏判断同一复合键口径）
     if (savedRef.current === null) {
-      savedRef.current = content
+      savedRef.current = `${recordedAt?.format('YYYY-MM-DDTHH:mm:ss') ?? ''}\u0001${content}`
       return
     }
     pendingRef.current = { encounterId, itemId, recordType, content, recordedAt }
