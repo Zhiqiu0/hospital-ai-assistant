@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_context import get_encounter_id, get_user_id
 from app.services.ai.ai_utils import sse_event
-from app.services.ai.llm_client import llm_client
+from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.record_prompts import (
     build_polish_prompt,
@@ -111,6 +111,10 @@ async def _call_llm_json_with_retry(
                 "llm_json_retry: attempt=%d/%d err=%s",
                 attempt + 1, max_retries + 1, exc,
             )
+            # 确定性失败（欠费/凭证无效/输出截断）重试注定同样失败，
+            # 立即上抛省掉一次白烧的计费（2026-08-28 全量体检）
+            if isinstance(exc, LLMServiceError) and not exc.retryable:
+                raise
             # 最后一次直接抛，由上层 SSE error 事件兜底
             if attempt == max_retries:
                 raise
@@ -221,7 +225,10 @@ async def _stream_json_pipeline(
         result = await _call_llm_json_with_retry(prompt, opts)
     except Exception as exc:
         logger.exception("%s: llm_failed record_type=%s err=%s", log_prefix, record_type, exc)
-        yield sse_event("error", message=f"AI 调用失败：{type(exc).__name__}")
+        # 业务化异常带医生可读文案（欠费→"请联系管理员充值"），其余保留类型名
+        msg = exc.user_message if isinstance(exc, LLMServiceError) \
+            else f"AI 调用失败：{type(exc).__name__}"
+        yield sse_event("error", message=msg)
         return
 
     # 2.5 数值真实性守卫：剔除 AI 编造、医生录入里查无出处的生命体征数值（病历安全红线）

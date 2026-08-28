@@ -229,7 +229,10 @@ async def run_quick_qc_stream(
                 summary_parts.append(
                     f"{report.score:.0f} 分（{report.grade}），结构问题 {len(rule_issues)} 项需修复"
                 )
-            summary_parts.append("AI 质量分析失败，仅返回规则引擎结果")
+            # 业务化异常带原因（欠费/限流医生可读），其余保持通用文案
+            from app.services.ai.llm_client import LLMServiceError
+            reason = exc.user_message if isinstance(exc, LLMServiceError) else "AI 质量分析失败"
+            summary_parts.append(f"{reason}，仅返回规则引擎结果")
             yield {
                 "type": "done",
                 "summary": "，".join(summary_parts),

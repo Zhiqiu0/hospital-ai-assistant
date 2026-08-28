@@ -20,7 +20,7 @@ from app.schemas.ai_request import (
 )
 from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric, get_rubric_key
 from app.services.ai.ai_utils import safe_format
-from app.services.ai.llm_client import llm_client
+from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
 from app.services.ai.prompts import QC_FIX_PROMPT
@@ -32,8 +32,14 @@ from app.services.qc_engine.scorer import score
 logger = logging.getLogger(__name__)
 
 
-async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> str:
-    """单条质控问题的修复文本；失败返回原 suggestion 作为保守回退。"""
+async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> dict:
+    """单条质控问题的修复文本。
+
+    返回 {"fix_text", "degraded", "error"}：LLM 失败时保守回退原 suggestion，
+    但必须带 degraded=True 让医生知道"这不是 AI 写的修复"（2026-08-28 体检：
+    此前静默回退，医生把建议原文误当 AI 修复采纳）。error 为医生可读原因
+    （欠费/限流等，来自 LLMServiceError）。
+    """
     prompt = safe_format(
         QC_FIX_PROMPT,
         field_name=req.field_name or "未知字段",
@@ -81,10 +87,11 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> str:
         if stripped != cleaned:
             logger.warning("ai.qc_fix.guard: stripped_foreign_prefixes field=%s",
                            req.field_name)
-        return stripped
+        return {"fix_text": stripped, "degraded": False, "error": None}
     except Exception as exc:
         logger.exception("ai.qc_fix: failed err=%s", exc)
-        return req.suggestion or ""
+        err = exc.user_message if isinstance(exc, LLMServiceError) else "AI 修复失败"
+        return {"fix_text": req.suggestion or "", "degraded": True, "error": err}
 
 
 async def run_grade_score(db: AsyncSession, req: GradeScoreRequest) -> dict:

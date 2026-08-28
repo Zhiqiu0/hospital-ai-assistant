@@ -36,6 +36,10 @@ export function useRecordGenerate(shared: RecordEditorShared) {
 
   const _doGenerate = async () => {
     setGenerating(true)
+    // 失败回滚基线（2026-08-28 体检）：重新生成会先清空编辑器，此前 LLM 失败后
+    // 只弹错不回滚，医生面对空白编辑器以为草稿丢了（DB 里其实还在）。
+    // 与润色路径同款：失败且仍在同一接诊时恢复原文。
+    const original = useRecordStore.getState().recordContent
     setRecordContent('')
     const { isFirstVisit, visitType: currentVisitType } = useActiveEncounterStore.getState()
 
@@ -116,8 +120,17 @@ export function useRecordGenerate(shared: RecordEditorShared) {
       if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
       syncGeneratedRecordToInquiry(useRecordStore.getState().recordContent)
     } catch (e) {
-      // AbortError 是用户主动取消，正常路径不弹错；其他错误统一提示
-      if ((e as { name?: string })?.name !== 'AbortError') message.error('生成失败，请重试')
+      // AbortError 是用户主动取消，正常路径不弹错
+      if ((e as { name?: string })?.name !== 'AbortError') {
+        // 后端 SSE error 事件带医生可读文案（欠费→"请联系管理员充值"），
+        // 有就显示，没有才退回通用提示（2026-08-28 体检：此前一律丢弃）
+        const msg = (e as { message?: string })?.message
+        message.error(msg && msg !== 'STREAM_ERROR' ? msg : '生成失败，请重试')
+        // 失败回滚：仍在同一接诊且编辑器还是本次生成的半截/空白时恢复原文
+        if (useActiveEncounterStore.getState().encounterId === currentEncounterId && original) {
+          setRecordContent(original)
+        }
+      }
     } finally {
       setGenerating(false)
     }
