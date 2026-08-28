@@ -27,12 +27,9 @@ from app.schemas.ai_request import (
     SupplementRequest,
 )
 from app.services.ai.ai_utils import (
-    compose_physical_exam,
     stream_with_lock,
 )
 from app.services.ai.field_normalize_service import run_normalize_fields
-from app.services.ai.model_options import get_model_options
-from app.services.ai.prompts import RECORD_TYPE_LABELS
 from app.services.ai.record_gen_v2_service import (
     stream_polish_v2,
     stream_record_v2,
