@@ -69,7 +69,9 @@ export function useRecordPolish(shared: RecordEditorShared) {
     } catch (e) {
       // 切患者导致的 AbortError 不算错误；非 abort 错误且仍是同一接诊才回滚原文
       if ((e as { name?: string })?.name !== 'AbortError' && stillSameEncounter()) {
-        message.error('润色失败，请重试')
+        // 优先展示后端业务文案（欠费/限流可识别，2026-08-28 与生成路径统一）
+        const msg = (e as { message?: string })?.message
+        message.error(msg && msg !== 'STREAM_ERROR' ? msg : '润色失败，请重试')
         setRecordContent(original)
       }
     } finally {

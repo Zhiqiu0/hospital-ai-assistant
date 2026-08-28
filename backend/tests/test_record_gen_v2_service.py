@@ -207,3 +207,31 @@ async def test_emergency_happy_path(monkeypatch, async_db):
     assert "【患者去向】" in text
     # 急诊不含中医四诊子行
     assert "切诊·舌象：" not in text
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_during_slow_llm(async_db, monkeypatch):
+    """SSE 静默期心跳（2026-08-28 体检）：LLM 慢时管线须周期吐注释行保活，
+    否则 nginx 300s 静默超时会掐流。心跳行是 SSE 注释（: 开头），前端解析
+    器只认 data: 行，天然忽略。"""
+    import asyncio as aio
+
+    async def slow_chat_json_stream(*args, **kwargs):
+        await aio.sleep(0.25)
+        return {"chief_complaint": "头痛3天"}
+
+    def fake_get_model_options(*args, **kwargs):
+        return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
+
+    monkeypatch.setattr(v2_service.llm_client, "chat_json_stream", slow_chat_json_stream)
+    monkeypatch.setattr(v2_service, "get_model_options", fake_get_model_options)
+    monkeypatch.setattr(v2_service, "_HEARTBEAT_INTERVAL", 0.05)
+
+    lines = []
+    async for line in stream_record_v2("outpatient", _mock_req(), async_db):
+        lines.append(line)
+    pings = [l for l in lines if l.startswith(":")]
+    assert len(pings) >= 2, f"慢 LLM 期间应有心跳注释行，实际 {len(pings)}"
+    # 心跳之外的事件仍然完整：最后一个 data 行是 done
+    data_events = [_parse_sse(l) for l in lines if l.startswith("data: ")]
+    assert data_events[-1]["type"] == "done"

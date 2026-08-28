@@ -3,7 +3,6 @@ AI 路由层共享工具函数（app/services/ai/ai_utils.py）
 
 包含：
   - safe_format          : 安全格式化 prompt 模板
-  - stream_text          : LLM 文本 → SSE 流生成器
 
 历史：get_active_prompt（从 prompt_templates 表读管理员自定义提示词）已删
 （2026-08-18）——提示词归代码 prompts_*.py 唯一维护，后台不再可改。
@@ -142,43 +141,3 @@ async def stream_with_lock(generator, lock_key: str, lock_token: str):
         await redis_cache.release_lock(lock_key, lock_token)
 
 
-async def stream_text(
-    prompt: str,
-    task_type: str = "generate",
-    model_options: Optional[dict] = None,
-):
-    """将 LLM 文本响应包装为 SSE 流，完成后异步记录 token 用量。
-
-    Args:
-        prompt: 发送给 LLM 的完整 prompt 字符串。
-        task_type: 用于审计日志的任务类型标识（如 'generate'、'polish'）。
-        model_options: 包含 model_name/temperature/max_tokens 的配置字典。
-
-    Yields:
-        SSE 格式字符串，事件类型：start / chunk / error / done。
-    """
-    yield 'data: {"type":"start"}\n\n'
-    messages = [{"role": "user", "content": prompt}]
-    options = model_options or {}
-    try:
-        async for chunk in llm_client.stream(
-            messages,
-            temperature=options.get("temperature", 0.3),
-            max_tokens=options.get("max_tokens", 4096),
-            model_name=options.get("model_name"),
-        ):
-            payload = json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False)
-            yield f"data: {payload}\n\n"
-    except Exception as exc:
-        logger.exception("ai.stream_text: failed err=%s", exc)
-        yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
-
-    yield 'data: {"type":"done"}\n\n'
-
-    usage = llm_client._last_usage
-    await log_ai_task(
-        task_type,
-        token_input=usage.prompt_tokens if usage else 0,
-        token_output=usage.completion_tokens if usage else 0,
-        model_name=options.get("model_name"),  # 真实模型，非全局默认（审计 #7）
-    )

@@ -111,7 +111,11 @@ export function useRecordQC(shared: RecordEditorShared) {
         }
       }
     } catch (e) {
-      if ((e as { name?: string })?.name !== 'AbortError') message.error('质控失败，请重试')
+      if ((e as { name?: string })?.name !== 'AbortError') {
+        // 优先展示后端业务文案（欠费/限流可识别，2026-08-28 与生成路径统一）
+        const msg = (e as { message?: string })?.message
+        message.error(msg && msg !== 'STREAM_ERROR' ? msg : '质控失败，请重试')
+      }
       setQCLlmLoading(false)
     } finally {
       setQCing(false)

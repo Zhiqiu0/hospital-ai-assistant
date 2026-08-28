@@ -90,32 +90,6 @@ class QuickGenerateRequest(BaseModel):
     previous_record: Optional[str] = None
 
 
-class ContinueRequest(BaseModel):
-    """续写病历的入参。"""
-
-    current_content: str = ""
-    record_type: Optional[str] = "outpatient"
-    patient_name: Optional[str] = ""
-    patient_gender: Optional[str] = ""
-    patient_age: Optional[str] = ""
-    chief_complaint: Optional[str] = ""
-    history_present_illness: Optional[str] = ""
-    past_history: Optional[str] = ""
-    allergy_history: Optional[str] = ""
-    personal_history: Optional[str] = ""
-    physical_exam: Optional[str] = ""
-    initial_impression: Optional[str] = ""
-    # 生命体征（独立字段，生成 prompt 时合并到 physical_exam 前缀）
-    temperature: Optional[str] = ""
-    pulse: Optional[str] = ""
-    respiration: Optional[str] = ""
-    bp_systolic: Optional[str] = ""
-    bp_diastolic: Optional[str] = ""
-    spo2: Optional[str] = ""
-    height: Optional[str] = ""
-    weight: Optional[str] = ""
-
-
 class _RecordTaskBase(BaseModel):
     """病历改写任务（supplement / polish）的共享入参基类。
 

@@ -53,10 +53,25 @@ export async function streamSSE(
     body: JSON.stringify(body),
     signal: options?.signal,
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    // 尽量取后端 detail（如生成锁 429 的"您有一个 AI 生成任务正在进行中"），
+    // 医生看到业务文案而不是裸状态码（2026-08-28 体检）
+    let detail = ''
+    try {
+      detail = ((await res.json()) as { detail?: string })?.detail || ''
+    } catch {
+      /* 非 JSON 响应体，退回状态码 */
+    }
+    throw new Error(detail || `HTTP ${res.status}`)
+  }
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buf = ''
+  // 断流识别（2026-08-28 体检）：后端所有 SSE 流的成功路径都以 type=done 收尾
+  // （generate/polish/qc 契约）。此前网络断流被当"正常结束"静默返回——医生
+  // 拿到半截正文毫无提示，随后 auto-save 还会带旧基线撞 409 误导为"他端修改"。
+  // 未见 done 即抛错，让调用方的失败路径（报错+回滚原文）接管。
+  let doneSeen = false
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -76,11 +91,17 @@ export async function streamSSE(
       if (obj.type === 'error') {
         throw new Error(typeof obj.message === 'string' ? obj.message : 'STREAM_ERROR')
       }
+      if (obj.type === 'done') {
+        doneSeen = true
+      }
       if (obj.type === 'chunk') {
         handlers.onChunk?.(typeof obj.text === 'string' ? obj.text : '')
       }
       // onEvent 的 event 字段签名仍是 any（见接口注释），调用方按 obj.xxx 访问
       handlers.onEvent?.(obj)
     }
+  }
+  if (!doneSeen) {
+    throw new Error('AI 数据流意外中断，请重试')
   }
 }
