@@ -72,34 +72,41 @@ export async function streamSSE(
   // 拿到半截正文毫无提示，随后 auto-save 还会带旧基线撞 409 误导为"他端修改"。
   // 未见 done 即抛错，让调用方的失败路径（报错+回滚原文）接管。
   let doneSeen = false
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    // SSE 协议以 \n 分行，事件之间是 data: ... 行
-    const lines = buf.split('\n')
-    buf = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line.startsWith('data:')) continue
-      let obj: { type: string; [key: string]: unknown }
-      try {
-        obj = JSON.parse(line.slice(5).trim())
-      } catch {
-        // 非 JSON 行（心跳 / 注释）忽略
-        continue
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      // SSE 协议以 \n 分行，事件之间是 data: ... 行
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue
+        let obj: { type: string; [key: string]: unknown }
+        try {
+          obj = JSON.parse(line.slice(5).trim())
+        } catch {
+          // 非 JSON 行（心跳 / 注释）忽略
+          continue
+        }
+        if (obj.type === 'error') {
+          throw new Error(typeof obj.message === 'string' ? obj.message : 'STREAM_ERROR')
+        }
+        if (obj.type === 'done') {
+          doneSeen = true
+        }
+        if (obj.type === 'chunk') {
+          handlers.onChunk?.(typeof obj.text === 'string' ? obj.text : '')
+        }
+        // onEvent 的 event 字段签名仍是 any（见接口注释），调用方按 obj.xxx 访问
+        handlers.onEvent?.(obj)
       }
-      if (obj.type === 'error') {
-        throw new Error(typeof obj.message === 'string' ? obj.message : 'STREAM_ERROR')
-      }
-      if (obj.type === 'done') {
-        doneSeen = true
-      }
-      if (obj.type === 'chunk') {
-        handlers.onChunk?.(typeof obj.text === 'string' ? obj.text : '')
-      }
-      // onEvent 的 event 字段签名仍是 any（见接口注释），调用方按 obj.xxx 访问
-      handlers.onEvent?.(obj)
     }
+  } finally {
+    // 任何退出路径（error 事件抛出 / 回调抛异常 / 未见 done 抛错）都取消
+    // 底层流（2026-08-29 资源泄漏审计）：不取消的话 HTTP 响应体连接要等 GC
+    // 收尾。cancel 幂等，正常 done 后调用无害。
+    void reader.cancel().catch(() => {})
   }
   if (!doneSeen) {
     throw new Error('AI 数据流意外中断，请重试')

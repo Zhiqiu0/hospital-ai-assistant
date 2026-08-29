@@ -82,12 +82,18 @@ async def call_qwen_vl(
                 },
             )
             if resp.status_code != 200:
-                raise HTTPException(500, f"AI 分析失败: {resp.text}")
+                # 细节只进日志不进响应（2026-08-29 第六轮审计）：上游错误体
+                # 可能含供应商内部信息，原样透传前端属泄漏面；给医生的提示
+                # 用通用文案即可，排查靠日志
+                logger.warning("pacs.analyze: 上游 %s 返回 %s body=%.300s",
+                               settings.aliyun_base_url, resp.status_code, resp.text)
+                raise HTTPException(500, "AI 影像分析失败，请稍后重试")
             return resp.json()["choices"][0]["message"]["content"]
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(500, f"AI 服务异常: {e}")
+    except Exception:
+        logger.exception("pacs.analyze: 调用异常")
+        raise HTTPException(500, "AI 影像分析服务异常，请稍后重试")
 
 
 # Modality 自适应采样上限：CT/MR 切片多取 18 帧、X 光本就 1-3 张全取、超声中等

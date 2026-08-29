@@ -19,7 +19,7 @@ from app.schemas.ai_request import (
     extract_inquiry_dict,
 )
 from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric, get_rubric_key
-from app.services.ai.ai_utils import safe_format
+from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
@@ -55,7 +55,7 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> dict:
         # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
         await db.commit()
         content = await llm_client.chat(
-            [{"role": "user", "content": prompt}],
+            guarded_messages(prompt),
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],

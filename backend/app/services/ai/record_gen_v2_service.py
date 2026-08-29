@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_context import get_encounter_id, get_user_id
-from app.services.ai.ai_utils import sse_event
+from app.services.ai.ai_utils import guarded_messages, sse_event
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.record_prompts import (
@@ -101,7 +101,7 @@ async def _call_llm_json_with_retry(
     for attempt in range(max_retries + 1):
         try:
             result = await llm_client.chat_json_stream(
-                [{"role": "user", "content": prompt}],
+                guarded_messages(prompt),
                 temperature=opts["temperature"],
                 max_tokens=opts["max_tokens"],
                 model_name=opts["model_name"],

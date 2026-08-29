@@ -28,7 +28,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.ai_request import QuickQCRequest, extract_inquiry_dict
-from app.services.ai.ai_utils import safe_format
+from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import QC_PROMPT, RECORD_TYPE_LABELS
@@ -108,7 +108,7 @@ async def run_quick_qc_stream(
     # 用包一层的协程在子任务上下文里把 usage 随结果一起返回。
     async def _llm_with_usage():
         result = await llm_client.chat_json_stream(
-            [{"role": "user", "content": llm_prompt}],
+            guarded_messages(llm_prompt),
             temperature=0,
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],

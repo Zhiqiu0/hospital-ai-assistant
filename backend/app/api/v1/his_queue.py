@@ -163,6 +163,9 @@ async def _still_authorized(user_id: str, jti: str | None, iat: int | None) -> b
 async def queue_stream(
     current_user: User = Depends(get_current_user),
     token: str = Depends(oauth2_scheme),
+    # 与 get_current_user 共享同一请求会话（依赖默认缓存），拿到句柄是为了
+    # 在流开始前主动关掉它——见下方 db.close() 注释（2026-08-29 第六轮审计）
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """SSE 事件流：订阅本医生的事件频道，实时推送叫号与回写结果。
 
@@ -220,6 +223,16 @@ async def queue_stream(
                     logger.warning("his_queue.stream: 事件泵终止，结束 SSE 流触发前端重连 channel=%s", channel)
                     return
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    # ── 连接池救命线（2026-08-29 第六轮资源泄漏审计·上线阻断级）────────────
+    # FastAPI 的 yield 依赖要到**流结束**才走 finally：get_current_user 在这个
+    # 请求会话上查过库（autobegin 事务已打开、不 commit），SSE 一挂就是一整天
+    # → 每位在线医生的每个页签占死一条 idle in transaction 连接；2 worker ×
+    # 池 30 共 60 条，40 医生开 1-2 页签即耗尽，全院普通请求等池 30s 超时 500。
+    # 鉴权已完成、本端点此后不再用请求会话（25s 重校验自带独立短会话），
+    # 立刻关闭：回滚 autobegin 事务、连接归还池。close() 幂等，流结束时
+    # get_db teardown 再关一次无害。
+    await db.close()
 
     return StreamingResponse(
         gen(),

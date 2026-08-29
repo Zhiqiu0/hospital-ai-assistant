@@ -140,7 +140,9 @@ async def test_prompt_sent_to_llm_uses_rubric_standard(async_db, monkeypatch):
     captured: dict = {}
 
     async def _capture_chat(messages, **_kwargs):
-        captured["prompt"] = messages[0]["content"]
+        # messages[0] 现在是注入守卫 system 消息（2026-08-29），
+        # 业务 prompt 恒在最后一条 user 消息里
+        captured["prompt"] = messages[-1]["content"]
         return {"issues": [], "summary": "", "pass": True}
 
     monkeypatch.setattr(llm_client, "chat_json_stream", _capture_chat)

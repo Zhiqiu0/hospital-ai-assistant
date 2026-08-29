@@ -23,7 +23,7 @@
 
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { safeLocalStorage } from '@/store/safeStorage'
+import { debouncedSafeLocalStorage } from '@/store/safeStorage'
 import { useQCStore } from './qcStore'
 
 interface RecordState {
@@ -256,7 +256,9 @@ export const useRecordStore = create<RecordState>()(
       name: 'medassist-record',
       // 配额安全存储（2026-08-28 多标签页审计）：写满时降级仅内存态，
       // 不在医生每次按键的调用栈里抛 QuotaExceededError
-      storage: createJSONStorage(() => safeLocalStorage),
+      // 尾防抖写（2026-08-29 资源泄漏审计）：本槽被每次按键触发全量序列化，
+      // 见 debouncedSafeLocalStorage 头注
+      storage: createJSONStorage(() => debouncedSafeLocalStorage),
       // 瞬态字段（isGenerating/isPolishing/pendingGenerate）不持久化
       partialize: state => ({
         recordContent: state.recordContent,

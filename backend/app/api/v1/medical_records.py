@@ -199,7 +199,15 @@ async def list_by_patient(
       校验，quick_save / auto_save_draft 在路由层 assert_encounter_access 校验。
       合规：每次查阅都写审计日志（action='view_records'），admin 可在
       "操作日志"页面追溯任何医生何时查阅了哪个患者，符合等保 2.0 三级要求。
+
+      角色收口（2026-08-29 第六轮渗透审计）：注释一直写的是"任意登录**医生**"，
+      实现却放行全部角色——科室质控员本被 /qc/* 的 _dept_scope 限在本科室，
+      经此端点却能读全院任意患者全文，科室隔离被架空。按声明收紧到
+      医生 + 管理角色；qc_officer/nurse/radiologist 的病历读取走各自专属通道。
     """
+    from app.core.authz import ADMIN_ROLES
+    if getattr(current_user, "role", None) not in {"doctor", *ADMIN_ROLES}:
+        raise HTTPException(status_code=403, detail="仅医生可查阅患者历史病历")
     await log_action(
         action="view_records",
         user_id=current_user.id,

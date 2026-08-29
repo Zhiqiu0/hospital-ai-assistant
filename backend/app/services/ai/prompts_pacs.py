@@ -38,8 +38,12 @@ def build_study_prompt(modality: Optional[str], body_part: Optional[str]) -> str
     modality 为 None 时退化成 "影像"，body_part 为 None 时省略括号内容。
     包含"序列"提示——多帧 CT/MR 一般会有不同序列（轴位/矢状位/T1/T2 等）。
     """
-    mod = modality or "影像"
-    part = body_part or ""
+    # 内联清洗（2026-08-29 第六轮提示注入审计）：modality/body_part 来自
+    # DICOM/HIS 元数据（第三方可控），与身份字段同口径压平换行+截断，
+    # 防多行内容伪装成 prompt 指令
+    from app.services.ai.record_schemas import sanitize_inline_field
+    mod = sanitize_inline_field(modality, default="影像") if modality else "影像"
+    part = sanitize_inline_field(body_part, default="") if body_part else ""
     head = f"你是一位经验丰富的放射科医生。请对以下{mod}影像（{part}）进行专业分析。"
     body = _PACS_REPORT_BODY.format(seq_hint="、序列")
     return f"{head}\n\n{body}"
@@ -51,7 +55,9 @@ def build_image_prompt(image_type: Optional[str]) -> str:
     image_type 为可选标签（如 "胸部 X 光"），仅作为提示词的一部分。
     单图无"序列"概念，因此结构化字段中不出现"序列"二字。
     """
-    hint = f"（{image_type}）" if image_type else ""
+    # 同 build_study_prompt：表单原始字符串无长度限制，清洗后再进 prompt
+    from app.services.ai.record_schemas import sanitize_inline_field
+    hint = f"（{sanitize_inline_field(image_type, default='')}）" if image_type else ""
     head = f"你是一位经验丰富的放射科医生。请对以下医学影像{hint}进行专业分析。"
     body = _PACS_REPORT_BODY.format(seq_hint="")
     return f"{head}\n\n{body}"

@@ -10,6 +10,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.ai.ai_utils import guarded_messages
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 
@@ -53,14 +54,19 @@ async def run_normalize_fields(db: AsyncSession, fields: dict[str, str]) -> dict
         # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
         await db.commit()
         content = await llm_client.chat(
-            messages=[{"role": "user", "content": prompt}],
+            guarded_messages(prompt),
             **(model_options or {}),
         )
         match = re.search(r"\{[\s\S]*\}", content)
         if not match:
             return {"fields": fields}
         result = json.loads(match.group())
-        return {"fields": {k: result[k] for k in fields if k in result and result[k]}}
+        # 只收字符串值（2026-08-29 第六轮提示注入审计）：LLM 返 dict/list 时
+        # 原实现原样透传，前端 setFieldsValue 会把它塞进表单并随 PUT 持久化
+        return {"fields": {
+            k: result[k] for k in fields
+            if k in result and result[k] and isinstance(result[k], str)
+        }}
     except Exception as exc:
         logger.exception("ai.normalize: failed err=%s", exc)
         return {"fields": fields}  # 失败时原样返回，不阻塞保存

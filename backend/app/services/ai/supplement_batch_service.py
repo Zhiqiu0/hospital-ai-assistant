@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.ai.ai_utils import safe_format
+from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import strip_unsubstantiated_vitals
@@ -178,7 +178,7 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
         # 只读事务、把连接还回池，避免长 await 期间白占一条池连接。
         await db.commit()
         result = await llm_client.chat_json_stream(
-            [{"role": "user", "content": prompt}],
+            guarded_messages(prompt),
             temperature=opts["temperature"],
             max_tokens=opts["max_tokens"],
             model_name=opts["model_name"],
