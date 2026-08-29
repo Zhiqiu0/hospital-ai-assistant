@@ -95,10 +95,12 @@ jobs:
         with:
           envs: SENTRY_RELEASE
           host: ${{ secrets.SERVER_HOST }}
-          # host key 指纹校验（2026-08-29 第九轮补全）：rsync 步已硬编码
-          # known_hosts，这条 ssh-action 通道原先不验 host key——补 fingerprint
-          # 后两条通道口径一致。服务器重装换键时与上方 known_hosts 行一起更新。
-          fingerprint: "SHA256:c9j8AaJ1qWwcqRXeT6rUy79vWZAGgR0fKhlDb4Y1iaM"
+          # host key 指纹校验（2026-08-29 第九轮补全；同日修正）：rsync 步已
+          # 硬编码 known_hosts，这条 ssh-action 通道原先不验 host key。
+          # 首版填 ed25519 指纹踩坑：go crypto/ssh 握手协商到的是 ECDSA 键，
+          # 指纹按**协商键型**比对 → mismatch 挂部署。改用 ECDSA 指纹
+          # （ssh-keyscan | ssh-keygen -lf 的 ECDSA 行）。重装服务器时同步更新。
+          fingerprint: "SHA256:+dKifJXy9DzZWpa4PMiutmB/l5iGrsnePCiOLth4/vY"
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # ssh-action 默认 10m 超时（2026-08-28 实锤踩坑）：构建缓存被逐出后
