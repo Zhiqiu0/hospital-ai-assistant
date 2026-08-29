@@ -57,9 +57,12 @@
   "StorageDirectory": "/var/lib/orthanc/db",
   "IndexDirectory": "/var/lib/orthanc/db",
 
-  // ───── CORS（让前端 OHIF 能直接 fetch）─────────────────
+  // ───── CORS ────────────────────────────────────────────
+  // ACAO 单源化到 docker-compose 的 ORTHANC__HTTP_HEADERS__* 环境变量
+  // （2026-08-29 第八轮审计：此前这里残留 "*" 与 compose 的域名收紧配置
+  //  双源冲突——env 覆盖对含连字符键名的转换行为不可靠，可能出现两个
+  //  ACAO 头共存。旧值删除，凭 compose 为唯一真源）。
   "HttpHeaders": {
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Authorization,Content-Type,Accept,Origin,X-Requested-With"
   },

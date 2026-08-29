@@ -4,10 +4,27 @@
 #   解决方案：所有 image 都加 docker.m.daocloud.io 前缀，绕开 docker hub。
 #   DaoCloud 反代支持任意 namespace（library/* + 第三方），稳定性较好。
 #   本地开发也可用——daocloud 反代的 image 与官方完全等价。
+# 日志轮转（2026-08-29 第八轮基础设施审计）：docker 默认 json-file 不限大小，
+# nginx 访问日志/后端 stdout 会无限增长吃满磁盘；SSH 部署用户无 root 改不了
+# /etc/docker/daemon.json，只能在 compose 层给每个服务配。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   db:
-    image: docker.m.daocloud.io/library/postgres:16-alpine
+    # tag@digest 双写（2026-08-29 第八轮审计）：镜像全链路经 daocloud/1ms 反代，
+    # 浮动 tag 无任何完整性校验（1ms 有擅自下架前科）；digest 内容寻址防篡改。
+    # 升级版本时同步更新 digest（取自生产实际运行的已验证镜像）。
+    image: docker.m.daocloud.io/library/postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
+    # 内存上限（2026-08-29）：2C4G 单机多容器共存，任一失控会触发宿主 OOM
+    # killer 乱杀（可能杀掉 PG/sshd 而非肇事者）。各服务限额合计 ~3.2G，
+    # 留 ~0.8G 给 nginx/系统。
+    mem_limit: 1g
+    logging: *default-logging
     environment:
       POSTGRES_DB: medassist
       POSTGRES_USER: medassist
@@ -33,8 +50,11 @@ services:
   # 接入 Redis 后第一次走 Orthanc，后续命中缓存 < 5ms，缩略图列表秒开
   # 也为后续 session / 限流 / 异步任务队列预留通用缓存层
   redis:
-    image: docker.m.daocloud.io/library/redis:7-alpine
+    image: docker.m.daocloud.io/library/redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
+    # maxmemory 256m 是数据上限，容器限额再放余量给进程本身
+    mem_limit: 384m
+    logging: *default-logging
     # 仅本机绑定——backend 容器走 docker 内网；外部不能直连 6379
     ports:
       - "127.0.0.1:6379:6379"
@@ -55,8 +75,10 @@ services:
   orthanc:
     # daocloud 有第三方镜像白名单，orthancteam 不在内（issue #2328）
     # 改用 docker.1ms.run（无白名单，支持任意 namespace）
-    image: docker.1ms.run/orthancteam/orthanc:25.6.2
+    image: docker.1ms.run/orthancteam/orthanc:25.6.2@sha256:b9918b73bfeca21fcabfd5ad4f214b7f5022a903e38fa75d9d781f2e5602f1b3
     restart: unless-stopped
+    mem_limit: 768m
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -99,6 +121,20 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1g
+    logging: *default-logging
+    # 容器加固（2026-08-29 第八轮审计）：backend 是唯一解析外部输入
+    # （上传压缩包/DICOM）的业务进程，降掉全部 capabilities + 禁提权，
+    # 即便解压器 RCE 也拿不到有用的容器权限。uvicorn 绑 8010（>1024）
+    # 无需任何 cap。非 root USER 改造涉及宿主挂载目录属主迁移，另行排期。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # 优雅停机（2026-08-29）：默认 TERM 后 10s 就 KILL，而同步 LLM 端点
+    # 最长 300s——部署重建瞬间在飞的病历生成会被硬杀且 LLM 照常计费。
+    # uvicorn 收 TERM 会停止接新请求并等在飞请求，60s 覆盖绝大多数场景。
+    stop_grace_period: 60s
     depends_on:
       db:
         condition: service_healthy
@@ -181,6 +217,8 @@ services:
         VITE_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
         VITE_SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     restart: unless-stopped
+    mem_limit: 256m
+    logging: *default-logging
     # 不再 depends_on backend（2026-08-25 部署无缝化）：
     # 该依赖的存在让 compose 在每次重建 backend 时**级联重建 nginx**，
     # 全站（含静态页）跟着 backend 启动链一起断 10-15 秒。
