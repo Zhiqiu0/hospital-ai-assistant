@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.core.authz import assert_encounter_access, assert_pacs_write, assert_patient_access
+from app.core.authz import assert_encounter_access, assert_pacs_write
 from app.models.encounter import Encounter
 from app.models.patient import Patient
 
@@ -20,58 +20,8 @@ def _user(uid: str, role: str = "doctor"):
     return SimpleNamespace(id=uid, role=role)
 
 
-# ── assert_patient_access ─────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_patient_access_radiologist_passes_without_db(async_db):
-    """放射科医生对任意患者直通，不查 DB。"""
-    # 即使该患者不存在也应通过——验证零 DB 查询路径
-    await assert_patient_access(async_db, "no-such-patient", _user("rad-1", role="radiologist"))
-
-
-@pytest.mark.asyncio
-async def test_patient_access_admin_passes_without_db(async_db):
-    """三种 admin 角色同样直通。"""
-    for role in ("super_admin", "hospital_admin", "dept_admin"):
-        await assert_patient_access(async_db, "no-such-patient", _user(f"u-{role}", role=role))
-
-
-@pytest.mark.asyncio
-async def test_patient_access_doctor_with_encounter_passes(async_db):
-    """普通医生对自己接诊过的患者放行。"""
-    pat = Patient(id="pat-doc-ok", name="测试患者")
-    enc = Encounter(
-        id="enc-doc-ok",
-        patient_id=pat.id,
-        doctor_id="doc-me",
-        visit_type="outpatient",
-        status="completed",
-        visited_at=datetime(2026, 4, 1),
-    )
-    async_db.add_all([pat, enc])
-    await async_db.commit()
-
-    await assert_patient_access(async_db, pat.id, _user("doc-me"))
-
-
-@pytest.mark.asyncio
-async def test_patient_access_doctor_without_encounter_blocked(async_db):
-    """普通医生对没接诊过的患者拒绝（403）。"""
-    pat = Patient(id="pat-doc-other", name="他人患者")
-    enc = Encounter(
-        id="enc-other",
-        patient_id=pat.id,
-        doctor_id="doc-other",
-        visit_type="outpatient",
-        status="completed",
-        visited_at=datetime(2026, 4, 1),
-    )
-    async_db.add_all([pat, enc])
-    await async_db.commit()
-
-    with pytest.raises(HTTPException) as exc:
-        await assert_patient_access(async_db, pat.id, _user("doc-me"))
-    assert exc.value.status_code == 403
+# assert_patient_access 已随 2026-08-29 第七轮审计删除（生产零调用死码），
+# 其测试一并移除；读权现行口径=开放读+审计，写权见 assert_patient_write_access。
 
 
 # ── assert_pacs_write ─────────────────────────────────────────────────────────

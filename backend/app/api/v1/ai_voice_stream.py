@@ -76,6 +76,12 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     if user is None or not user.is_active or user.must_change_password:
         await websocket.close(code=1008, reason="account not ready")
         return
+    # AI 角色门槛（2026-08-29 第七轮渗透审计，与 /ai/* 路由组同口径）：
+    # 实时 ASR 是付费额度通道，只读角色不该能连
+    from app.core.authz import RECORD_WRITE_ROLES
+    if user.role not in RECORD_WRITE_ROLES:
+        await websocket.close(code=1008, reason="role not allowed")
+        return
 
     # 密码水印同样在这里比对（2026-08-13 第四轮审计修复）：本端点不走
     # get_current_user 依赖，改密/重置后旧 token 在这条路上仍然有效。虽然它只

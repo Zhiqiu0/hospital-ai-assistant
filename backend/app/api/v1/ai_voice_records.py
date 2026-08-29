@@ -61,6 +61,13 @@ async def upload_voice_record(
     #    全仓其它接诊维度写接口一律先 assert_encounter_access，唯独这里漏了。
     if encounter_id:
         await assert_encounter_access(db, encounter_id, current_user)
+    # 孤儿写角色收口（2026-08-29 第七轮渗透审计）：不带 encounter_id 时
+    # 原先只要登录即可写入并触发付费 OCR/ASR——nurse/qc_officer 等只读
+    # 角色不该有此面。带 encounter_id 的路径由归属校验兜底（医生本人）。
+    if not encounter_id:
+        from app.core.authz import RECORD_WRITE_ROLES
+        if getattr(current_user, "role", None) not in RECORD_WRITE_ROLES:
+            raise HTTPException(status_code=403, detail="仅医生可上传")
 
     # ② 路径安全（同轮修复）：encounter_id 原样拼进落盘路径，
     #    传 "../../../x" 就能把文件写到 uploads 之外。文件名虽是随机 UUID
@@ -145,6 +152,11 @@ async def save_voice_transcript(
     """
     if body.encounter_id:
         await assert_encounter_access(db, body.encounter_id, current_user)
+    # 孤儿写角色收口（2026-08-29 第七轮渗透审计，与 upload 端点同口径）
+    if not body.encounter_id:
+        from app.core.authz import RECORD_WRITE_ROLES
+        if getattr(current_user, "role", None) not in RECORD_WRITE_ROLES:
+            raise HTTPException(status_code=403, detail="仅医生可保存转写")
 
     text = (body.transcript or "").strip()
     if not text:

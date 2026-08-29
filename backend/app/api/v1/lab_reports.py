@@ -48,6 +48,13 @@ async def upload_lab_report(
         raise HTTPException(400, "仅支持 JPG / PNG / WEBP / PDF 格式")
     if encounter_id:
         await assert_encounter_access(db, encounter_id, current_user)
+    # 孤儿写角色收口（2026-08-29 第七轮渗透审计）：不带 encounter_id 时
+    # 原先只要登录即可写入并触发付费 OCR/ASR——nurse/qc_officer 等只读
+    # 角色不该有此面。带 encounter_id 的路径由归属校验兜底（医生本人）。
+    if not encounter_id:
+        from app.core.authz import RECORD_WRITE_ROLES
+        if getattr(current_user, "role", None) not in RECORD_WRITE_ROLES:
+            raise HTTPException(status_code=403, detail="仅医生可上传")
 
     # 分块读 + 超 20MB 即 413
     content = await read_upload_capped(file, MAX_LAB_BYTES)

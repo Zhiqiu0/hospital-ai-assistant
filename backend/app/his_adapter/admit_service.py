@@ -227,6 +227,15 @@ async def _prefill_from_push(
         for k in _VITALS_KEYS
     } if vitals else {}
     vitals_data = {k: v for k, v in vitals_data.items() if v}
+    # 生理极限预检（2026-08-29 第七轮审计）：厂商推"体温 365"（漏小数点）、
+    # 身高体重错位等出界值单独丢弃并留痕，其余字段照填——绝不因体征拒收
+    # 接诊（与 birth_date 解析失败同哲学）。口径与问诊/住院路径共用 vital_limits。
+    from app.services.vital_limits import vital_out_of_range
+    dropped = [k for k, v in vitals_data.items() if vital_out_of_range(k, v)]
+    for k in dropped:
+        logger.warning(
+            "his_admit.prefill_vitals: %s=%r 超生理极限已丢弃 encounter=%s",
+            k, vitals_data.pop(k), encounter_id)
 
     try:
         if vitals_data:
@@ -540,6 +549,13 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             if len(parts) == 3 and all(p.isdigit() for p in parts):
                 raw_bd = f"{parts[0]}-{parts[1]:0>2}-{parts[2]:0>2}"
             birth_date = date.fromisoformat(raw_bd)
+            # 未来出生日期丢弃留痕（2026-08-29 第七轮审计）：负年龄会进病案
+            # 首页与回写，无合法场景；与解析失败同口径不拒收接诊
+            if birth_date > date.today():
+                logger.warning(
+                    "his_admit.patient: birth_date 在未来已丢弃 raw=%r visit_id=%s",
+                    payload.birth_date, payload.visit_id)
+                birth_date = None
         except ValueError:
             # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢
             logger.warning(

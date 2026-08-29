@@ -10,10 +10,11 @@ AI 路由聚合器（/api/v1/ai/*）
 """
 
 # ── 第三方库 ──────────────────────────────────────────────────────────────────
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.rate_limit import ai_limiter
+from app.core.security import get_current_user
 from app.api.v1.ai_voice import router as voice_router
 from app.api.v1.ai_generation import router as generation_router
 from app.api.v1.ai_suggestions import router as suggestions_router
@@ -25,10 +26,23 @@ async def _ai_rate_limit(request: Request) -> None:
     await ai_limiter.check(request)
 
 
-_rate_limit_dep = [Depends(_ai_rate_limit)]
+async def _ai_role_gate(current_user=Depends(get_current_user)) -> None:
+    """AI 能力角色门槛（2026-08-29 第七轮渗透审计）。
+
+    此前 /ai/* 全家桶只要登录：限速与单用户锁能封顶不能归零，被前端锁死
+    在登录页的 nurse、只读的 qc_officer 持 token 直调 API 仍可消耗 LLM/ASR
+    付费额度。AI 生成/质控/建议是医生的病历工作面，按 RECORD_WRITE_ROLES
+    同口径收紧（radiologist 的影像 AI 走 /pacs 自有端点，不受影响）。
+    """
+    from app.core.authz import RECORD_WRITE_ROLES
+    if getattr(current_user, "role", None) not in RECORD_WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="当前角色无 AI 助手使用权限")
+
+
+_ai_deps = [Depends(_ai_rate_limit), Depends(_ai_role_gate)]
 
 router = APIRouter()
-router.include_router(voice_router, dependencies=_rate_limit_dep)
-router.include_router(generation_router, dependencies=_rate_limit_dep)
-router.include_router(suggestions_router, dependencies=_rate_limit_dep)
-router.include_router(qc_router, dependencies=_rate_limit_dep)
+router.include_router(voice_router, dependencies=_ai_deps)
+router.include_router(generation_router, dependencies=_ai_deps)
+router.include_router(suggestions_router, dependencies=_ai_deps)
+router.include_router(qc_router, dependencies=_ai_deps)

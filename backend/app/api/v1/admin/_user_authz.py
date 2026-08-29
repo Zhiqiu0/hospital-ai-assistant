@@ -60,6 +60,37 @@ def assert_can_set_role(operator: User, new_role: str) -> None:
         raise HTTPException(status_code=403, detail="只有超级管理员能授予超级管理员角色")
 
 
+def assert_creation_scope(operator: "User", *, role: str,
+                          department_id, employee_no) -> None:
+    """建号范围守卫（2026-08-29 第七轮渗透审计）。
+
+    assert_can_manage_target 早已确立不变量「科室管理员只能管理本科室的账号」，
+    但**创建路径**只比角色等级不看科室——dept_admin 可在任意科室建号、可建
+    无科室的 qc_officer（= 院级质控员，全院已签发病历只读）、还能给未开户的
+    真实医生抢注 HIS 工号（admit 派工按 employee_no/username 映射，等于把
+    那位医生的患者全部截到自己控制的账号）。创建路径按同一不变量收口：
+      1. dept_admin 建号强制落在本科室；
+      2. qc_officer/radiologist 这类跨科室权限角色仅 hospital_admin 以上可授；
+      3. dept_admin 建号不得携带 HIS 工号（employee_no/codes），配工号属
+         院级开户动作（批量开户本来就是 hospital_admin 的流程）。
+    """
+    if operator.role in ("hospital_admin", "super_admin"):
+        return
+    # 走到这里 operator 只可能是 dept_admin（require_admin + set_role 已过滤）
+    if role in ("qc_officer", "radiologist"):
+        raise HTTPException(
+            status_code=403,
+            detail="质控员/影像医师为跨科室权限角色，请联系院级管理员开户")
+    op_dept = getattr(operator, "department_id", None)
+    if not op_dept or department_id != op_dept:
+        raise HTTPException(
+            status_code=403, detail="科室管理员只能在本科室创建账号")
+    if employee_no:
+        raise HTTPException(
+            status_code=403,
+            detail="HIS 工号绑定属院级开户动作，请联系院级管理员配置")
+
+
 async def assert_can_manage_target(
     db: AsyncSession, operator: User, target: User,
 ) -> None:
