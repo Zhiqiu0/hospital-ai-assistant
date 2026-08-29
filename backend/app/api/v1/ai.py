@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.rate_limit import ai_limiter
 from app.core.security import get_current_user
-from app.api.v1.ai_voice import router as voice_router
+from app.api.v1.ai_voice import audio_router, router as voice_router
 from app.api.v1.ai_generation import router as generation_router
 from app.api.v1.ai_suggestions import router as suggestions_router
 from app.api.v1.ai_qc import router as qc_router
@@ -43,6 +43,9 @@ _ai_deps = [Depends(_ai_rate_limit), Depends(_ai_role_gate)]
 
 router = APIRouter()
 router.include_router(voice_router, dependencies=_ai_deps)
+# 音频回放：只限速不挂角色门槛（query-token 自带鉴权，Bearer 依赖会把
+# <audio> 标签的请求全打成 401——2026-08-29 第八轮回归修复）
+router.include_router(audio_router, dependencies=[Depends(_ai_rate_limit)])
 router.include_router(generation_router, dependencies=_ai_deps)
 router.include_router(suggestions_router, dependencies=_ai_deps)
 router.include_router(qc_router, dependencies=_ai_deps)

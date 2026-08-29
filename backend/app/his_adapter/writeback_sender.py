@@ -183,7 +183,12 @@ async def send_writeback(
     if db is not None:
         await db.commit()
     result = await _send_payload(payload, client)
-    await _persist_writeback_status(db, encounter_id, result, _record_key(payload))
+    # 幽灵键防护（2026-08-29 第八轮回归修复）：接诊无任何可用文书时 payload
+    # 不带 record_no，_record_key 会兜出 "outpatient:0"——而 record_no 列
+    # default=1，永远不存在对应的 MedicalRecord，对账按真实文书迭代永远
+    # 清不掉它，队列红标被永久钉死。无文书标识时只落接诊级摘要。
+    key = _record_key(payload) if payload.get("record_no") is not None else None
+    await _persist_writeback_status(db, encounter_id, result, key)
     return result
 
 
@@ -204,7 +209,11 @@ async def _persist_writeback_status(
     from app.models.encounter import Encounter
 
     try:
-        encounter = await db.get(Encounter, encounter_id)
+        # 行锁（2026-08-29 第八轮回归修复）：手动重试一次点击 spawn N 条
+        # dispatch、叠加签发钩子/对账重投三源并发时，无锁的"读旧快照→整体
+        # 覆写"会互相抹掉对方刚写的文书条目（丢 success 则白费重推，丢
+        # failure 则队列红标消失一轮）。与全仓 JSONB 读改写口径统一 for update。
+        encounter = await db.get(Encounter, encounter_id, with_for_update=True)
         if encounter is None or not encounter.his_external_ref:
             return
         entry = {

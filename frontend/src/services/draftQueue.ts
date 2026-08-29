@@ -120,8 +120,33 @@ export async function removeDraftByKey(encounterId: string, recordType: string):
  * sender 由调用方注入（hook 内部的 performSave）；返回 true 表示发送成功，
  * 此时从队列里删除该条；失败则保留，下次 flush 再试。
  */
+// flush 互斥（2026-08-29 第八轮回归修复）：online 事件与切接诊可能同时触发
+// flush，两轮并发重放同一条目会双发请求；单飞标志让后来者直接让位
+// （条目还在队列里，下一次触发点会补上）。
+let flushInFlight = false
+
 export async function flushDraftQueue(
-  sender: (payload: DraftPayload) => Promise<boolean>
+  sender: (payload: DraftPayload) => Promise<boolean>,
+  options?: {
+    /** 跳过该键（当前正在编辑的接诊+文书）：其最新内容由编辑器的防抖/立即
+     *  保存路径负责，队列里的同键旧稿若并发重放，null 基线的旧稿后落会
+     *  静默回滚新稿并把基线毒化成旧内容（2026-08-29 第八轮回归修复） */
+    skipEncounterId?: string
+    skipRecordType?: string
+  }
+): Promise<void> {
+  if (flushInFlight) return
+  flushInFlight = true
+  try {
+    await _flushAll(sender, options)
+  } finally {
+    flushInFlight = false
+  }
+}
+
+async function _flushAll(
+  sender: (payload: DraftPayload) => Promise<boolean>,
+  options?: { skipEncounterId?: string; skipRecordType?: string }
 ): Promise<void> {
   let items: QueuedItem[]
   try {
@@ -131,6 +156,13 @@ export async function flushDraftQueue(
     return
   }
   for (const item of items) {
+    if (
+      options?.skipEncounterId &&
+      item.encounter_id === options.skipEncounterId &&
+      item.record_type === options.skipRecordType
+    ) {
+      continue
+    }
     try {
       const ok = await sender({
         encounter_id: item.encounter_id,
