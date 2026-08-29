@@ -95,6 +95,10 @@ jobs:
         with:
           envs: SENTRY_RELEASE
           host: ${{ secrets.SERVER_HOST }}
+          # host key 指纹校验（2026-08-29 第九轮补全）：rsync 步已硬编码
+          # known_hosts，这条 ssh-action 通道原先不验 host key——补 fingerprint
+          # 后两条通道口径一致。服务器重装换键时与上方 known_hosts 行一起更新。
+          fingerprint: "SHA256:c9j8AaJ1qWwcqRXeT6rUy79vWZAGgR0fKhlDb4Y1iaM"
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # ssh-action 默认 10m 超时（2026-08-28 实锤踩坑）：构建缓存被逐出后
@@ -215,6 +219,15 @@ jobs:
             sudo install -d -o "$(id -u)" -g "$(id -g)" -m 750 /var/backups/mediscribe
             sudo touch /var/log/mediscribe-backup.log
             sudo chown "$(id -u):$(id -g)" /var/log/mediscribe-backup.log
+
+            # ── /app/logs 权限（2026-08-29 第九轮回归修复·高危定时炸弹）──────
+            # cap_drop ALL 拿掉了 CAP_DAC_OVERRIDE：容器 root 不再豁免权限位，
+            # 对 ubuntu:755 的 bind mount 目录**创建新文件被内核拒绝**。日志
+            # 轮转（宿主 cron 00:05 mv 走旧文件）后 WatchedFileHandler 重开
+            # 即 PermissionError → 文件日志断流；下次重启 setup_logging 建文件
+            # 直接炸 → 后端起不来。1777（含 sticky）让容器与宿主 cron 双方
+            # 都能建/改各自文件，与 /tmp 同语义。幂等，每次部署校准。
+            sudo install -d -m 1777 /app/logs
 
             # ── 自动配置 crontab：每天凌晨 3 点跑 backup.sh 备份 PG + Orthanc + uploads
             # backup.sh 的 +x 已在 git 仓库里标记为 100755（git update-index --chmod=+x）

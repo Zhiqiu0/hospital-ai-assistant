@@ -69,23 +69,28 @@ def setup_logging(log_level: str = "INFO") -> None:
     # "先看 error.log"，等于排障入口静默瘸掉一半。
     # WatchedFileHandler 专为「外部工具轮转」设计：检测到文件被换掉就重新打开，
     # 多进程安全；轮转交给 deploy 配的每日 cron（rotate_logs.sh）单进程执行。
-    app_file = logging.handlers.WatchedFileHandler(
-        filename=LOGS_DIR / "app.log",
-        encoding="utf-8",
-    )
-    app_file.setLevel(logging.INFO)
-    app_file.setFormatter(formatter)
-    app_file.addFilter(rid_filter)
+    # 文件 handler 构造包容错（2026-08-29 第九轮回归修复）：WatchedFileHandler
+    # 构造即打开/创建文件，日志目录权限异常（cap_drop 后权限位不再豁免、
+    # 挂载错目录等）会直接抛 PermissionError 把整个后端打死——日志是排障
+    # 工具，绝不能反过来成为服务的死因。建不出来就降级只写 stdout
+    # （docker 日志仍在），并打一条显眼告警。
+    def _try_file_handler(filename, level):
+        try:
+            h = logging.handlers.WatchedFileHandler(filename=filename, encoding="utf-8")
+        except OSError as exc:
+            print(f"[logging] 文件日志不可用（{exc}），降级仅 stdout：{filename}",
+                  flush=True)
+            return None
+        h.setLevel(level)
+        h.setFormatter(formatter)
+        h.addFilter(rid_filter)
+        return h
+
+    app_file = _try_file_handler(LOGS_DIR / "app.log", logging.INFO)
 
     # ── error.log handler（仅告警和错误）──────────────────────────────────────
     # 排查线上问题时只看 error.log，信噪比高
-    err_file = logging.handlers.WatchedFileHandler(
-        filename=LOGS_DIR / "error.log",
-        encoding="utf-8",
-    )
-    err_file.setLevel(logging.WARNING)
-    err_file.setFormatter(formatter)
-    err_file.addFilter(rid_filter)
+    err_file = _try_file_handler(LOGS_DIR / "error.log", logging.WARNING)
 
     # ── 根 logger 配置 ─────────────────────────────────────────────────────────
     root = logging.getLogger()
@@ -94,8 +99,10 @@ def setup_logging(log_level: str = "INFO") -> None:
     # 热重载兼容：仅在 handlers 为空时添加，避免 uvicorn --reload 重复挂载
     if not root.handlers:
         root.addHandler(console)
-        root.addHandler(app_file)
-        root.addHandler(err_file)
+        if app_file is not None:
+            root.addHandler(app_file)
+        if err_file is not None:
+            root.addHandler(err_file)
 
     # ── 第三方库噪音抑制 ────────────────────────────────────────────────────────
     # uvicorn.access: 每个 HTTP 请求都会打一行日志，量大且无业务价值
