@@ -56,7 +56,11 @@ class AuditLog(Base):
 
     # ── 操作内容 ──────────────────────────────────────────────────────────────
     # 操作类型，如："login" / "create_record" / "qc_run" / "export_word"
-    action: Mapped[str] = mapped_column(String(50))
+    # 200 而非 50（2026-08-29 收尾轮）：admin 路由级审计的 action 是
+    # "admin:{method}:{path}" 拼接，长路径（rubrics 详情/reset-password）
+    # 超 50 → 插入失败被 log_action 静默吞掉——那些操作**从未被审计**，
+    # 等保审计链有洞且测试库(SQLite 不校验列宽)测不出来。
+    action: Mapped[str] = mapped_column(String(200))
     # 操作的资源类型，如："patient" / "medical_record" / "user"
     resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # 操作的具体资源 ID（UUID）
