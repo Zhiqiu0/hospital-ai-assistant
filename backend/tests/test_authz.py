@@ -1,8 +1,9 @@
 """授权辅助（core/authz.py）测试
 
-PACS thumbnail/dicom/frames 三个端点曾完全无鉴权，修复时统一接入
-assert_patient_access。本用例覆盖该辅助的角色直通 / 跨患者拒绝 /
-本医生放行三种关键场景，回归保护 PACS 鉴权决策的正确性。
+覆盖 assert_pacs_write / assert_encounter_access / assert_patient_write_access
+三个在役守卫。（旧的 assert_patient_access 读权守卫已于 2026-08-29 删除——
+生产零调用死码，患者信息现行口径是"登录开放读 + view_patient 审计留痕"，
+写权仍按归属校验。）
 """
 from datetime import datetime
 from types import SimpleNamespace

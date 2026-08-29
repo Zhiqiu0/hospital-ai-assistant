@@ -17,6 +17,9 @@ export const TASK_TYPE_MAP: Record<string, string> = {
   exam_suggestion: '检查建议(旧)',
   inquiry_suggestion: '追问建议(旧)',
   supplement_batch: '批量补全',
+  // 历史数据里的旧任务类型（2026-08-30 收尾轮生产实况核对补）：现行代码已
+  // 不再产生，但 ai_tasks 里存量仍在，改全量渲染后会以英文原文出现在看板上
+  qc_scan: 'AI质控(旧)',
 }
 
 export const RISK_COLOR: Record<string, string> = {
@@ -44,6 +47,10 @@ export const ISSUE_TYPE_LABEL: Record<string, string> = {
   // 法定评分规则扣分（task_logger 对 source='rule' 的兜底桶）——主力类别，
   // 2026-08-29 补：此前看板硬编码三类，这一类整体不可见
   rubric: '评分规则扣分',
+  // 历史 issue_type（2026-08-30 收尾轮生产实况核对补）：现行代码不再产生，
+  // 存量 qc_issues 里仍有，全量渲染后会显示英文原文
+  logic_consistency: '逻辑一致性',
+  standardization: '规范性(旧)',
 }
 
 /**
