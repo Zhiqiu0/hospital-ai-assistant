@@ -122,7 +122,8 @@ async def _reset_reconcile_attempts(
     db: AsyncSession, encounter_id: str, key: str,
 ) -> None:
     """把该文书的重投计数清零（HIS 整体离线：告警但不放弃，等对方恢复继续重试）。"""
-    enc = await db.get(Encounter, encounter_id)
+    # 行锁与 sender 落库口径统一（2026-08-29 第九轮）：防并发读改写抹条目
+    enc = await db.get(Encounter, encounter_id, with_for_update=True)
     if enc is None:
         return
     ref = dict(enc.his_external_ref or {})
@@ -139,7 +140,8 @@ async def _mark_reconcile(
     db: AsyncSession, encounter_id: str, key: str, *, exhausted: bool,
 ) -> None:
     """累加该文书的重投次数；exhausted=True 标记放弃（JSONB 整体重赋值才被侦测为脏）。"""
-    enc = await db.get(Encounter, encounter_id)
+    # 行锁同上（2026-08-29 第九轮）
+    enc = await db.get(Encounter, encounter_id, with_for_update=True)
     if enc is None or not enc.his_external_ref:
         return
     ref = dict(enc.his_external_ref)

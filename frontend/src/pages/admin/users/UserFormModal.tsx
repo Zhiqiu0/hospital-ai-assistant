@@ -36,8 +36,12 @@ export default function UserFormModal({
   // dept_admin 只能建本科室账号、跨科角色与工号绑定仅院级可为——表单若
   // 保持"科室可选/工号可选"的旧提示，dept_admin 留空或顺手填工号必撞 403。
   // 前端按角色收窄可选项与提示，与后端 assert_creation_scope 口径一致。
+  // 只在**新建**模式套建号范围规则（2026-08-29 第九轮修正）：后端只有
+  // create/bulk-import 有 assert_creation_scope，update 没有——编辑跨科
+  // 老账号时若也过滤科室/强制必填，会把既有 department_id 显示成裸 UUID、
+  // 还逼着先把人划进本科室才能改姓名。编辑模式维持原自由表单。
   const me = useAuthStore(s => s.user)
-  const isDeptAdmin = me?.role === 'dept_admin'
+  const isDeptAdmin = me?.role === 'dept_admin' && !editUser
   const roleOptions = Object.entries(ROLE_MAP)
     .filter(([v]) => !(isDeptAdmin && (v === 'qc_officer' || v === 'radiologist')))
     .map(([v, r]) => ({ value: v, label: r.label }))

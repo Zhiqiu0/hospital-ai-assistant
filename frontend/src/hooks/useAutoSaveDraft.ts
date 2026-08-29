@@ -208,7 +208,6 @@ export function useAutoSaveDraft({
       // 跳过刚切到的当前键：该接诊内容随后由水合+防抖保存最新稿（同 onOnline 口径）
       void flushDraftQueue(performSave, {
         skipEncounterId: encounterId ?? undefined,
-        skipRecordType: recordType,
       })
     }
     // 只在接诊真的变化时跑。flushPending 每次渲染都会重建，但它读的全是 ref
@@ -251,7 +250,6 @@ export function useAutoSaveDraft({
       // 回滚新稿。当前键交给 triggerFlush 立即发最新内容，队列只补别的接诊。
       void flushDraftQueue(performSave, {
         skipEncounterId: lastEncounterRef.current ?? undefined,
-        skipRecordType: useRecordStore.getState().recordType,
       })
       useRecordAutoSaveTrigger.getState().triggerFlush()
     }

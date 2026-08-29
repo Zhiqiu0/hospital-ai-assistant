@@ -128,11 +128,12 @@ let flushInFlight = false
 export async function flushDraftQueue(
   sender: (payload: DraftPayload) => Promise<boolean>,
   options?: {
-    /** 跳过该键（当前正在编辑的接诊+文书）：其最新内容由编辑器的防抖/立即
-     *  保存路径负责，队列里的同键旧稿若并发重放，null 基线的旧稿后落会
-     *  静默回滚新稿并把基线毒化成旧内容（2026-08-29 第八轮回归修复） */
+    /** 跳过该**接诊**的全部条目（2026-08-29 第九轮修正：原按接诊+类型双键
+     *  跳过，但住院切换瞬间 recordStore.reset 把 recordType 归 outpatient，
+     *  住院文书键必失配，防护对住院不生效。当前接诊的任何类型草稿都由
+     *  编辑器的水合+防抖保存最新稿负责，按接诊整体跳过才对）：
+     *  队列同键旧稿若并发重放，null 基线的旧稿后落会静默回滚新稿。 */
     skipEncounterId?: string
-    skipRecordType?: string
   }
 ): Promise<void> {
   if (flushInFlight) return
@@ -146,7 +147,7 @@ export async function flushDraftQueue(
 
 async function _flushAll(
   sender: (payload: DraftPayload) => Promise<boolean>,
-  options?: { skipEncounterId?: string; skipRecordType?: string }
+  options?: { skipEncounterId?: string }
 ): Promise<void> {
   let items: QueuedItem[]
   try {
@@ -156,11 +157,7 @@ async function _flushAll(
     return
   }
   for (const item of items) {
-    if (
-      options?.skipEncounterId &&
-      item.encounter_id === options.skipEncounterId &&
-      item.record_type === options.skipRecordType
-    ) {
+    if (options?.skipEncounterId && item.encounter_id === options.skipEncounterId) {
       continue
     }
     try {
