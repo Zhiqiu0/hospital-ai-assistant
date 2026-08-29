@@ -5,8 +5,7 @@ Round 5 瘦身：原文件 432 行超标，按职责拆到同目录子模块（�
   encounters_quickstart : POST /quick-start（一键创建患者 + 接诊，含幂等锁/复诊回填）
   encounters_lifecycle  : POST /、GET /my、POST /{id}/discharge|cancel、
                           GET /{id}、GET /{id}/workspace（生命周期与状态流转）
-  encounters_inquiry    : PUT /{id}/inquiry、GET /{id}/previous-record、
-                          POST /{id}/inquiry-suggestions|exam-suggestions（问诊与 AI 建议）
+  encounters_inquiry    : PUT /{id}/inquiry、GET /{id}/previous-record（问诊输入与上次病历）
 本文件只保留主 router 并 include 子路由（路径/方法/依赖零改动，行为完全一致）。
 
 端点列表：
@@ -19,8 +18,8 @@ Round 5 瘦身：原文件 432 行超标，按职责拆到同目录子模块（�
   GET    /{encounter_id}/workspace  获取工作台快照
   PUT    /{encounter_id}/inquiry    保存问诊输入
   GET    /{encounter_id}/previous-record  同步上次病历
-  POST   /{encounter_id}/inquiry-suggestions  问诊追问建议
-  POST   /{encounter_id}/exam-suggestions     检查建议
+（本模块下的两个 AI 建议 SSE 端点已于 2026-08-29 删除——前端一直走
+ /ai/inquiry-suggestions 与 /ai/exam-suggestions 的 JSON 版，那两个是死代码）
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
