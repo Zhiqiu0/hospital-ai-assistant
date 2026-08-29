@@ -30,25 +30,31 @@ CLAIM_WAIT_SECONDS = 3.0           # 派发方等待抢占的时长，超时本�
 PREFER_DELAY_SECONDS = 0.5         # 非来源诊室 worker 的让位延迟
 
 
-async def dispatch_writeback(encounter_id: str, doctor_id: str, visit_no: str) -> None:
+async def dispatch_writeback(
+    encounter_id: str, doctor_id: str, visit_no: str,
+    record_id: str | None = None,
+) -> None:
     """签发钩子入口（asyncio.create_task 调用，不阻塞签发响应）。
 
     Args:
         encounter_id: 接诊 ID
         doctor_id:    签发医生 ID（回写结果推送目标）
         visit_no:     就诊流水号（用于优先路由回来源诊室）
+        record_id:    要回写的那份文书（2026-08-29 粒度下沉：签发/修订钩子
+                      精确传本次那份；None 保持旧"最新已签发优先"行为）
     """
     try:
         req_id = uuid.uuid4().hex
         if his_ws_manager.has_connection():
             # 本 worker 就有连接：直接执行（不广播，无重复执行风险）
-            await _execute_and_report(encounter_id, doctor_id)
+            await _execute_and_report(encounter_id, doctor_id, record_id)
             return
         await his_event_bus.publish(WB_CMD_CHANNEL, {
             "req_id": req_id,
             "encounter_id": encounter_id,
             "doctor_id": doctor_id,
             "visit_no": visit_no,
+            "record_id": record_id,
         })
         await asyncio.sleep(CLAIM_WAIT_SECONDS)
         # 本地兜底也用原子抢占（2026-08-11 审计修复）：原先用 is_claimed 只读判断，
@@ -57,7 +63,7 @@ async def dispatch_writeback(encounter_id: str, doctor_id: str, visit_no: str) -
         if await his_event_bus.try_claim(f"his:wb:claim:{req_id}", CLAIM_TTL):
             logger.warning("his_wb.dispatch: 无 worker 抢占，本地兜底 encounter=%s",
                            encounter_id)
-            await _execute_and_report(encounter_id, doctor_id)
+            await _execute_and_report(encounter_id, doctor_id, record_id)
     except Exception:
         # 后台任务的异常没人 await，必须自己兜住记日志，绝不静默丢
         logger.exception("his_wb.dispatch: 派发异常 encounter=%s", encounter_id)
@@ -104,19 +110,22 @@ async def _maybe_execute(cmd: dict) -> None:
         ):
             return  # 别的 worker 已抢到
         await _execute_and_report(str(cmd.get("encounter_id", "")),
-                                  str(cmd.get("doctor_id", "")))
+                                  str(cmd.get("doctor_id", "")),
+                                  cmd.get("record_id") or None)
     except Exception:
         logger.exception("his_wb.consumer: 指令处理异常 cmd=%s", cmd.get("req_id"))
 
 
-async def _execute_and_report(encounter_id: str, doctor_id: str) -> None:
+async def _execute_and_report(
+    encounter_id: str, doctor_id: str, record_id: str | None = None,
+) -> None:
     """执行回写并把结果发布到医生事件频道（SSE 弹提示）。"""
     from app.database import AsyncSessionLocal
     from app.his_adapter.writeback_sender import send_writeback
 
     try:
         async with AsyncSessionLocal() as db:
-            result = await send_writeback(db, encounter_id)
+            result = await send_writeback(db, encounter_id, record_id=record_id)
         ok, status, message = result.ok, result.status, result.message
     except Exception as exc:
         logger.exception("his_wb.execute: 回写异常 encounter=%s", encounter_id)

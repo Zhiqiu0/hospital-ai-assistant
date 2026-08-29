@@ -36,7 +36,9 @@ import {
 
 const DEBOUNCE_MS = 5000
 
-export type AutoSaveState = 'idle' | 'saving' | 'saved' | 'queued' | 'conflict'
+// 类型移到 store 定义（避免循环导入），这里 re-export 保持旧引用不变
+export type { AutoSaveState } from '@/store/recordAutoSaveTrigger'
+import type { AutoSaveState } from '@/store/recordAutoSaveTrigger'
 
 export interface UseAutoSaveDraftOptions {
   /** 当前接诊 ID，无则不启用 auto-save（首次进入工作台还没接诊上下文） */
@@ -59,7 +61,13 @@ export function useAutoSaveDraft({
   savingState: AutoSaveState
 } {
   const [savedAt, setSavedAt] = useState(0)
-  const [savingState, setSavingState] = useState<AutoSaveState>('idle')
+  const [savingState, setSavingStateLocal] = useState<AutoSaveState>('idle')
+  // 状态同时镜像到全局 store（2026-08-29 离线审计）：此前返回值没人消费，
+  // 断网入队后状态栏仍显示绿色"已保存"，医生无从知道内容只在本机队列里
+  const setSavingState = (s: AutoSaveState) => {
+    setSavingStateLocal(s)
+    useRecordAutoSaveTrigger.getState().setAutoSaveState(s)
+  }
   // 上次成功保存的内容快照——用于"内容没变就不重发"判断
   const lastSavedContentRef = useRef<string>('')
   // 上次保存返回的 updated_at——给乐观锁带回
@@ -96,6 +104,11 @@ export function useAutoSaveDraft({
         // 同时记下「已落库的正文」，水合时据此判断本地是否有未保存编辑
         useRecordStore.getState().markSaved(payload.content, now)
       }
+      // 成功即清同键队列残留（2026-08-29 离线审计修复）：断网时失败入队的旧稿
+      // （尤其 expected=null 基线的）若不清，之后切接诊触发 flush 会以"跳过
+      // 乐观锁"姿态重放，把服务端**更新的内容静默回滚成旧稿**。本次成功已
+      // 覆盖同 (encounter, record_type) 的一切旧内容，队列副本必须作废。
+      void removeDraftByKey(payload.encounter_id, payload.record_type)
       return true
     } catch (err) {
       // axios 错误形状收敛到本地视图：拦截器虽 reject error.response?.data，
@@ -224,10 +237,18 @@ export function useAutoSaveDraft({
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flushPending()
     }
+    // 网络恢复即补发队列（2026-08-29 离线审计）：此前 flush 唯一触发点是
+    // 切接诊——断网期间积压的草稿要等医生换患者才补传，中间全程状态是
+    // "已暂存本机"。online 事件一到就补，医生停笔也能自动恢复。
+    const onOnline = () => {
+      void flushDraftQueue(performSave)
+    }
     window.addEventListener('pagehide', onHide)
+    window.addEventListener('online', onOnline)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisibility)
       flushPending() // 组件卸载（路由跳走 / 退出登录）
     }

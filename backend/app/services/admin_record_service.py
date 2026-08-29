@@ -264,9 +264,14 @@ class AdminRecordService:
             if enc is not None and enc.his_external_ref:
                 from app.his_adapter.bg_tasks import spawn
                 from app.his_adapter.writeback_dispatch import dispatch_writeback
+                # record_id 必带（2026-08-29 粒度下沉）：不带的话 builder 会
+                # 重挑"最新已签发"的文书——修订的是早期文书（如入院记录）时
+                # 重推的却是最新病程，HIS 里的错误版本永不更新，与本段注释
+                # 宣称的目标正相反。
                 spawn(
-                    dispatch_writeback(enc.id, current_user.id, enc.visit_no or ""),
-                    name=f"writeback-revise:{enc.id}",
+                    dispatch_writeback(enc.id, current_user.id, enc.visit_no or "",
+                                       record_id=record_id),
+                    name=f"writeback-revise:{enc.id}:{record_id}",
                 )
                 his_writeback = "dispatched"
                 logger.info(

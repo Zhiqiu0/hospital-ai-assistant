@@ -194,3 +194,18 @@ class AdmitPushRequest(BaseModel):
         "id_card", "phone", "visit_id", "hospital_code",
         "dept_code", "doctor_code", "patient_no", "birth_date", mode="before",
     )(_coerce_str)
+
+    # ── 幂等主键硬校验（2026-08-29 第五轮 HIS 契约审计）──────────────────
+    # visit_id/hospital_code 是幂等复用分支的匹配键：空串会让**不同患者**的
+    # 两条空 visit_id 推送互相命中复用分支、并进同一条接诊（患者串档）；
+    # 超过列宽（visit_no String(50)）会 DataError 落 50000 且厂商重试永败。
+    # 主键脏了没有"宽容收下"的余地——截断会制造键碰撞，只能拒收 40004。
+    @field_validator("visit_id", "hospital_code")
+    @classmethod
+    def _key_fields_nonempty(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("visit_id/hospital_code 不能为空")
+        if len(v) > 50:
+            raise ValueError("visit_id/hospital_code 超长（上限 50 字符）")
+        return v

@@ -137,36 +137,67 @@ def _envelope_code(resp: httpx.Response) -> tuple[int, str, dict]:
     )
 
 
+def _record_key(payload: dict) -> str:
+    """文书级状态键：record_type:record_no（无 record_no 的门急诊恒为 :0）。
+
+    与规范 §2.5 幂等键的后两段一致——同一个键在 HIS 侧对应同一份文书，
+    在我方 his_external_ref.writeback_records 里也对应同一份状态。
+    """
+    return "{}:{}".format(
+        payload.get("record_type") or "",
+        payload.get("record_no") if payload.get("record_no") is not None else "0",
+    )
+
+
 async def send_writeback(
     db: AsyncSession,
     encounter_id: str,
     app_version: str = "1.0.0",
     client: Optional[httpx.AsyncClient] = None,
+    record_id: Optional[str] = None,
 ) -> WritebackResult:
-    """把一次接诊的病历回写到 HIS（写入 + 刷新），并把结果落库。
+    """把一份病历回写到 HIS（写入 + 刷新），并把结果落库。
 
-    结果持久化（2026-08-11 技术债清偿）：写进 encounter.his_external_ref 的
-    writeback 键（JSONB 免加列），叫号队列据此展示"已回写/回写失败"，
-    失败的可从队列一键重试（手动端点与自动派发都经过本函数，单点落库）。
+    结果持久化（2026-08-11 技术债清偿 + 2026-08-29 粒度下沉）：
+      - encounter.his_external_ref.writeback：最近一次回写摘要（叫号队列展示用）
+      - encounter.his_external_ref.writeback_records[record_type:record_no]：
+        **每份文书**各自的回写状态与对账计数。此前只有接诊级一份状态，
+        住院多文书时后一份的成功会掩盖前一份的失败，对账永不补投。
 
     Args:
         db:           异步会话
         encounter_id: 接诊 ID
         app_version:  MediScribe 版本（写进 meta）
         client:       可注入的 httpx 客户端（测试用）；为空则内部创建
+        record_id:    指定回写哪份文书；None 保持旧"最新已签发优先"行为
 
     Returns:
         WritebackResult
     """
-    result = await _send_writeback_inner(db, encounter_id, app_version, client)
-    await _persist_writeback_status(db, encounter_id, result)
+    payload = await build_writeback_payload(
+        db, encounter_id, app_version=app_version, record_id=record_id)
+    # 连接池护栏（2026-08-11 审计修复）：payload 已读完，后面等 WS ack 最长可达
+    # ~80s（10s×3 重发 ×2 条消息），这期间不该占着 asyncpg 连接。提交只读事务
+    # 把连接还池；_persist_writeback_status 会另起短事务落库。
+    # （db 为 None 仅出现在单测 mock 场景，生产恒为真实会话）
+    if db is not None:
+        await db.commit()
+    result = await _send_payload(payload, client)
+    await _persist_writeback_status(db, encounter_id, result, _record_key(payload))
     return result
 
 
 async def _persist_writeback_status(
-    db: AsyncSession, encounter_id: str, result: WritebackResult
+    db: AsyncSession, encounter_id: str, result: WritebackResult,
+    record_key: Optional[str] = None,
 ) -> None:
-    """把回写结果写进 encounter.his_external_ref.writeback（失败只记日志不影响返回）。"""
+    """把回写结果写进 encounter.his_external_ref（失败只记日志不影响返回）。
+
+    双落点（2026-08-29 粒度下沉）：
+      - writeback：最近一次回写摘要（叫号队列 UI 兼容展示）
+      - writeback_records[record_key]：该文书自己的状态 + 对账计数。
+        对账计数保留/清零逻辑与 2026-08-13 复检修复一致，只是下沉到文书级。
+    """
     import logging
     from datetime import datetime
 
@@ -176,30 +207,42 @@ async def _persist_writeback_status(
         encounter = await db.get(Encounter, encounter_id)
         if encounter is None or not encounter.his_external_ref:
             return
-        # 对账状态必须保留（2026-08-13 复检修复）：原实现整体替换 writeback 字典，
-        # 把 reconcile_attempts / reconcile_exhausted 一并抹掉——而对账流程是
-        # 「先 send_writeback（计数被抹零）再 _mark_reconcile（+1）」，导致计数
-        # 恒为 1、MAX_RECONCILE_ATTEMPTS 上限永不成立、耗尽告警永不触发，
-        # 失败回写会被静默重投到窗口期结束。这里显式承接旧的对账字段。
-        prev_wb = (encounter.his_external_ref.get("writeback") or {})
-        new_wb = {
+        entry = {
             "status": result.status,
             "ok": result.ok,
             "message": result.message,
             "his_doc_id": result.his_doc_id,
             "at": datetime.now().isoformat(timespec="seconds"),
         }
+        # 接诊级摘要：承接旧对账字段（历史兼容；新对账走文书级计数）
+        prev_wb = (encounter.his_external_ref.get("writeback") or {})
+        new_wb = dict(entry)
         for keep in ("reconcile_attempts", "reconcile_exhausted"):
             if keep in prev_wb:
                 new_wb[keep] = prev_wb[keep]
-        # 回写成功即视为对账结束：清零计数，避免历史失败次数影响将来的重投判定
         if result.ok:
             new_wb.pop("reconcile_attempts", None)
             new_wb.pop("reconcile_exhausted", None)
+
+        # 文书级状态：各文书互不干扰，后一份的成功不再掩盖前一份的失败
+        wbr = dict(encounter.his_external_ref.get("writeback_records") or {})
+        if record_key:
+            prev_entry = dict(wbr.get(record_key) or {})
+            new_entry = dict(entry)
+            for keep in ("reconcile_attempts", "reconcile_exhausted"):
+                if keep in prev_entry:
+                    new_entry[keep] = prev_entry[keep]
+            # 回写成功即对账结束：清零该文书的计数
+            if result.ok:
+                new_entry.pop("reconcile_attempts", None)
+                new_entry.pop("reconcile_exhausted", None)
+            wbr[record_key] = new_entry
+
         # JSONB 整体重赋值才会被 SQLAlchemy 侦测为脏（未挂 MutableDict）
         encounter.his_external_ref = {
             **encounter.his_external_ref,
             "writeback": new_wb,
+            "writeback_records": wbr,
         }
         await db.commit()
     except Exception:
@@ -207,21 +250,13 @@ async def _persist_writeback_status(
             "his_wb.persist: 回写状态落库失败 encounter=%s", encounter_id)
 
 
-async def _send_writeback_inner(
-    db: AsyncSession,
-    encounter_id: str,
-    app_version: str = "1.0.0",
+async def _send_payload(
+    payload: dict,
     client: Optional[httpx.AsyncClient] = None,
 ) -> WritebackResult:
-    """回写主流程（通道选择 + 写入 + 刷新），结果由外层 send_writeback 落库。"""
-    payload = await build_writeback_payload(db, encounter_id, app_version=app_version)
-    # 连接池护栏（2026-08-11 审计修复）：payload 已读完，后面等 WS ack 最长可达 ~80s
-    # （10s×3 重发 ×2 条消息），这期间不该占着 asyncpg 连接。提交只读事务把连接还池，
-    # 与 qc_stream_service 的既有护栏一致；外层 _persist_writeback_status 会另起短事务落库。
-    # （db 为 None 仅出现在 WS 通道单测里 mock 掉 payload 构建的场景，生产恒为真实会话）
-    if db is not None:
-        await db.commit()
-
+    """回写发送（通道选择 + 写入 + 刷新）。payload 由 send_writeback 前置构建，
+    本函数不再触库——2026-08-29 粒度下沉重构：payload 前置后 send_writeback
+    才能拿到 record_type/record_no 做文书级落库键。"""
     # 通道选择：WS 长连接在线 → 方案 B；否则有 HTTP 地址 → 方案 A；都没有 → 空跑
     if his_ws_manager.has_connection():
         return await _send_via_ws(payload)
@@ -242,6 +277,11 @@ async def _send_writeback_inner(
             payload.get("visit_id") or "", payload.get("record_type") or "",
             payload.get("record_no") if payload.get("record_no") is not None else "0",
         )
+        # HTTP 头只收 ASCII（2026-08-29 第五轮审计）：visit_id 含中文/全角时
+        # httpx 组头抛 UnicodeEncodeError——不是 HTTPError，会逃过重试分类与
+        # 对账计数，5 分钟一轮无限重试永不触发耗尽告警。非 ASCII 字符转
+        # 十六进制转义，键的确定性（同 visit_id 恒同键）不受影响。
+        req_id = req_id.encode("ascii", errors="backslashreplace").decode("ascii")
 
         # 1. 写入
         try:

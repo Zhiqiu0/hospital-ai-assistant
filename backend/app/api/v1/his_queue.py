@@ -36,6 +36,26 @@ router = APIRouter(
 # SSE 心跳间隔（秒）：队列空闲时发注释行保活，防 nginx/浏览器判定连接死亡
 SSE_HEARTBEAT_SECONDS = 25
 
+# 回写失败状态按严重度排序（越靠前越该让医生先看到）
+_WB_FAILURE_ORDER = ("write_failed", "refresh_failed", "error", "skipped")
+
+
+def _worst_writeback_status(his_ref: dict) -> str | None:
+    """接诊的回写展示状态：文书级状态里挑最差的一档（2026-08-29 粒度下沉）。
+
+    住院多文书各有独立状态：只要有一份失败就展示失败（按严重度取最差），
+    全成功才展示 success；没有任何文书级状态时回落接诊级旧摘要（存量兼容）。
+    """
+    wbr = his_ref.get("writeback_records") or {}
+    statuses = {(e or {}).get("status") for e in wbr.values()}
+    statuses.discard(None)
+    for bad in _WB_FAILURE_ORDER:
+        if bad in statuses:
+            return bad
+    if "success" in statuses:
+        return "success"
+    return (his_ref.get("writeback") or {}).get("status")
+
 
 @router.get("/today")
 async def today_queue(
@@ -90,7 +110,9 @@ async def today_queue(
             "visited_at": enc.visited_at.isoformat() if enc.visited_at else None,
             # 回写状态（send_writeback 落进 his_external_ref.writeback）：
             # success / skipped / write_failed / refresh_failed / None(未触发)
-            "writeback_status": (his_ref.get("writeback") or {}).get("status"),
+            # 2026-08-29 粒度下沉：任何一份文书未成功就展示那份的失败状态，
+            # 不让后一份的成功把前一份的失败从医生眼前藏掉
+            "writeback_status": _worst_writeback_status(his_ref),
         })
     return {"items": items}
 

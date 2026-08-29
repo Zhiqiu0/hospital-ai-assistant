@@ -25,7 +25,14 @@ async def admit_push(request: Request) -> ApiEnvelope:
     业务落地与 WS 通道共用 admit_service.handle_admit：
     患者自动建档 + 按工号派医生 + visit_id 幂等建接诊 + 发工作台叫号事件。
     """
-    body_raw = (await request.body()).decode("utf-8")
+    # 非 UTF-8 body 走信封而不是裸 500（2026-08-29 第五轮 HIS 契约审计）：
+    # 国产 HIS（Delphi/老 Java 栈）默认 GBK 编码是现实形态，原先在一切校验
+    # 之前 decode 抛 UnicodeDecodeError → 全局兜底 500，违背"HTTP 恒 200
+    # 靠 code 区分"的信封契约（WS 通道早已容错，此处是遗漏）。
+    try:
+        body_raw = (await request.body()).decode("utf-8")
+    except UnicodeDecodeError:
+        return err(40004, "请求体必须为 UTF-8 编码")
     app_id = request.headers.get("X-App-Id", "")
     timestamp = request.headers.get("X-Timestamp", "")
     nonce = request.headers.get("X-Nonce", "")
@@ -85,6 +92,34 @@ async def trigger_writeback(
 
     from app.his_adapter.bg_tasks import spawn
     from app.his_adapter.writeback_dispatch import dispatch_writeback
-    spawn(dispatch_writeback(encounter_id, current_user.id, enc.visit_no or ""),
-          name=f"writeback:manual:{encounter_id}")
-    return ok({"status": "dispatched", "message": "已发起回写，结果稍后推送"})
+
+    # 逐文书补推（2026-08-29 粒度下沉）：住院一次接诊多份文书各有回写状态，
+    # 手动重试应把「未成功的那些」都补上，而不是只推 builder 挑的最新一份。
+    # 全部成功时重推最新一份（医生手动点=明确要重推，幂等覆盖无害）。
+    from sqlalchemy import select as sa_select
+    from app.models.medical_record import MedicalRecord
+    recs = (await db.execute(
+        sa_select(MedicalRecord).where(
+            MedicalRecord.encounter_id == encounter_id,
+            MedicalRecord.status == "submitted",
+        ).order_by(MedicalRecord.submitted_at.desc())
+    )).scalars().all()
+    wbr = (enc.his_external_ref or {}).get("writeback_records") or {}
+    pending = [
+        r for r in recs
+        if (wbr.get(f"{r.record_type}:{r.record_no if r.record_no is not None else '0'}")
+            or {}).get("status") != "success"
+    ]
+    targets = pending or recs[:1]
+    if targets:
+        for r in targets:
+            spawn(dispatch_writeback(encounter_id, current_user.id,
+                                     enc.visit_no or "", record_id=r.id),
+                  name=f"writeback:manual:{encounter_id}:{r.id}")
+    else:
+        # 无已签发文书：保留旧行为兜底（builder 自行择取，通常返回 skipped）
+        spawn(dispatch_writeback(encounter_id, current_user.id, enc.visit_no or ""),
+              name=f"writeback:manual:{encounter_id}")
+    n = max(len(targets), 1)
+    return ok({"status": "dispatched", "count": n,
+               "message": f"已发起 {n} 份文书回写，结果稍后推送"})

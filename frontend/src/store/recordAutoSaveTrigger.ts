@@ -23,7 +23,19 @@
 
 import { create } from 'zustand'
 
+/** auto-save 状态机（2026-08-29 离线审计：从 useAutoSaveDraft 移到这里定义，
+ *  避免 store→hook 循环导入；hook 原样 re-export 保持旧引用不变） */
+export type AutoSaveState = 'idle' | 'saving' | 'saved' | 'queued' | 'conflict'
+
 interface State {
+  /**
+   * auto-save 实时状态（2026-08-29 离线审计修复）：此前 useAutoSaveDraft
+   * 返回的 savingState 无任何组件消费，断网时保存失败入队，状态栏却仍显示
+   * 绿色"N 分钟前保存"——医生对"内容其实只在本机队列里"毫无感知。
+   * 镜像到全局 store 让 WorkbenchStatusBar 能直接读。
+   */
+  autoSaveState: AutoSaveState
+  setAutoSaveState: (s: AutoSaveState) => void
   /** 单调递增的信号；外部递增即触发 useAutoSaveDraft 立即落盘当前 recordContent */
   forceFlushSignal: number
   triggerFlush: () => void
@@ -40,6 +52,8 @@ interface State {
 }
 
 export const useRecordAutoSaveTrigger = create<State>(set => ({
+  autoSaveState: 'idle',
+  setAutoSaveState: autoSaveState => set({ autoSaveState }),
   forceFlushSignal: 0,
   triggerFlush: () => set(s => ({ forceFlushSignal: s.forceFlushSignal + 1 })),
   baselineSignal: 0,

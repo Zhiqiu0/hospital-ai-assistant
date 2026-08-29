@@ -124,8 +124,11 @@ async def quick_save_record(
             # 只被弱引用，签发响应返回后本地无引用，任务可能被 GC 中途取消致回写丢失。
             from app.his_adapter.bg_tasks import spawn
             from app.his_adapter.writeback_dispatch import dispatch_writeback
-            spawn(dispatch_writeback(enc.id, current_user.id, enc.visit_no or ""),
-                  name=f"writeback:{enc.id}")
+            # record_id 精确指定本次签发的文书（2026-08-29 粒度下沉）：住院
+            # 连续签发多份时，不带它会被 builder 重挑"最新一份"，早签的漏推
+            spawn(dispatch_writeback(enc.id, current_user.id, enc.visit_no or "",
+                                     record_id=record.id),
+                  name=f"writeback:{enc.id}:{record.id}")
             his_writeback = "dispatched"
     # submitted_at 回传（2026-08-28 时间审计）：打印件"签发时间"此前用医生
     # 电脑时钟兜底，与签名哈希链锁定的服务器时刻可不一致——法律文书时间

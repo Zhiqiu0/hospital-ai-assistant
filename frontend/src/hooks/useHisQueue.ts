@@ -57,6 +57,12 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
     handlersRef.current = { onAdmit, onWritebackResult }
   }, [onAdmit, onWritebackResult])
 
+  // 上次快照（2026-08-29 离线审计修复）：断线窗口内叫号的患者此前只会无声
+  // 出现在补拉列表里——提示音/横幅/自动接诊全挂在 SSE admit 事件上，错过就
+  // 永远错过。补拉后与上次快照 diff，把漏掉的叫号/回写失败补成同款通知。
+  // null = 首次加载（开页时队列里的存量患者不该触发一轮提示音轰炸）。
+  const prevItemsRef = useRef<Map<string, HisQueueItem> | null>(null)
+
   /** 拉今日队列（开页 + 每次重连成功后调用）。返回是否可用（503 → false）。 */
   const refresh = useCallback(async (): Promise<boolean> => {
     if (!token) return false
@@ -78,7 +84,31 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
       if (res.status === 403) return false
       if (!res.ok) return true // 瞬时错误：保持现状，等下次重连再拉
       const data = (await res.json()) as { items: HisQueueItem[] }
-      setItems(data.items || [])
+      const fresh = data.items || []
+      const prev = prevItemsRef.current
+      if (prev) {
+        for (const it of fresh) {
+          const old = prev.get(it.encounter_id)
+          // 断线窗口内的新叫号：补发 onAdmit（提示音/横幅/自动接诊与实时事件同款）
+          if (!old && it.status === 'in_progress') {
+            handlersRef.current.onAdmit?.(it)
+          }
+          // 断线窗口内的回写失败：补发红色驻留通知（回写失败要医生去 HIS 兜底，
+          // 错过通知只剩抽屉里的红标，医生不开抽屉就永远不知道）
+          const bad = it.writeback_status
+          if (bad && bad !== 'success' && old?.writeback_status !== bad) {
+            handlersRef.current.onWritebackResult?.({
+              type: 'writeback_result',
+              encounter_id: it.encounter_id,
+              ok: false,
+              status: bad,
+              message: '连接中断期间有病历回写未成功，请在叫号列表重试',
+            })
+          }
+        }
+      }
+      prevItemsRef.current = new Map(fresh.map(x => [x.encounter_id, x]))
+      setItems(fresh)
       setEnabled(true)
       return true
     } catch {
@@ -128,12 +158,17 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
                     item,
                     ...prev.filter(x => x.encounter_id !== item.encounter_id),
                   ])
+                  // 同步 diff 快照：实时事件已通知过，重连补拉不再重复通知
+                  prevItemsRef.current?.set(item.encounter_id, item)
                   // 重复推送（医生在 HIS 反复打开）不再横幅打扰
                   if (!ev.reused) handlersRef.current.onAdmit?.(item)
                   return
                 }
                 if (ev.type === 'writeback_result') {
                   handlersRef.current.onWritebackResult?.(ev)
+                  // 同步 diff 快照（同 admit：防重连补拉重复通知）
+                  const snap = prevItemsRef.current?.get(ev.encounter_id)
+                  if (snap) snap.writeback_status = ev.status
                   // 同步队列条目：成功则标记已签发；无论成败都记录回写状态
                   // （失败的条目在抽屉里显示红色标签 + 重试入口）
                   setItems(prev =>
