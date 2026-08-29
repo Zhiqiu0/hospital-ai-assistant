@@ -84,6 +84,24 @@ async def update_user(
     await assert_can_manage_target(db, current_user, target)
     if data.role is not None:
         assert_can_set_role(current_user, data.role)
+        # 跨科权限角色只能由院级授予（2026-08-29 第十轮收敛验证补口径）：
+        # create 路径的 assert_creation_scope 已确立"质控员/影像医师仅院级
+        # 可授"，update 通道此前缺同款守卫——dept_admin 可把本科室账号
+        # **改**成 qc_officer（=院级质控员，全院已签发病历只读），从修改
+        # 侧把建号守卫整个绕开。改角色与授角色是同一动作，同一口径。
+        if (data.role in ("qc_officer", "radiologist")
+                and data.role != target.role
+                and current_user.role not in ("hospital_admin", "super_admin")):
+            raise HTTPException(
+                status_code=403,
+                detail="质控员/影像医师为跨科室权限角色，请联系院级管理员调整")
+    # 科室迁移限制（同轮补）：dept_admin 只能在本科室范围内管理，
+    # 把账号改到他科等于跨科铸号的变体
+    if (data.department_id is not None
+            and data.department_id != target.department_id
+            and current_user.role == "dept_admin"):
+        raise HTTPException(
+            status_code=403, detail="科室管理员不能把账号迁往其他科室")
     # 降级唯一在用超管前的存活性守卫
     await assert_not_last_super_admin(
         db, target, will_deactivate=(data.is_active is False), new_role=data.role
