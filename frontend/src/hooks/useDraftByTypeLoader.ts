@@ -18,6 +18,7 @@
  */
 import { useEffect } from 'react'
 import api from '@/services/api'
+import { message } from '@/services/messageBridge'
 import { useRecordStore } from '@/store/recordStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
@@ -58,7 +59,13 @@ export function useDraftByTypeLoader(encounterId: string | null, recordType: str
         }
       })
       .catch(() => {
-        // 拉取失败静默——编辑器保持为空，医生手写或重新生成都不受影响
+        // 拉取失败必须告知（2026-08-29 离线审计修复）：静默留空正是本 hook
+        // 头注声明要防的事故的复活路——部署窗口/断网时切到"入院记录"拉取
+        // 失败 → 编辑器空 → 医生以为没写过、重写一份 → auto-save 以空基线
+        // 覆盖服务端原稿。明确提示"有稿没拉到"，医生就不会重写。
+        if (cancelled) return
+        if (useActiveEncounterStore.getState().encounterId !== encounterId) return
+        message.warning('草稿加载失败，可能已有内容未显示——请稍后切换文书重试，不要直接重写')
       })
     return () => {
       cancelled = true

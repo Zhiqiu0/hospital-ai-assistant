@@ -45,7 +45,7 @@ def ws_creds(monkeypatch):
     monkeypatch.setattr(settings, "his_inbound_app_id", "appHIS")
     monkeypatch.setattr(settings, "his_inbound_app_secret", "secret-key")
     # payload 构建打桩：绕开数据库，专测传输层
-    async def fake_build(db, encounter_id, app_version="1.0.0"):
+    async def fake_build(db, encounter_id, app_version="1.0.0", record_id=None):
         return dict(FAKE_PAYLOAD)
     monkeypatch.setattr(sender_module, "build_writeback_payload", fake_build)
     yield

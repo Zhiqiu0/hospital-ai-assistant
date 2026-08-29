@@ -87,7 +87,8 @@ async def test_quick_save_dispatches_his_writeback(client_ctx, async_db, monkeyp
 
     dispatched: list = []
 
-    async def fake_dispatch(encounter_id, doctor_id, visit_no):
+    async def fake_dispatch(encounter_id, doctor_id, visit_no, record_id=None):
+        # record_id 为 2026-08-29 粒度下沉新增参数，本用例不参与断言
         dispatched.append((encounter_id, doctor_id, visit_no))
 
     from app.his_adapter import writeback_dispatch
@@ -114,7 +115,7 @@ async def test_quick_save_normal_encounter_no_writeback(client_ctx, async_db, mo
 
     called: list = []
 
-    async def fake_dispatch(*args):
+    async def fake_dispatch(*args, **kwargs):
         called.append(args)
 
     from app.his_adapter import writeback_dispatch

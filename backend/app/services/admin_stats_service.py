@@ -73,11 +73,16 @@ async def get_quality_health(db: AsyncSession, days: int = 30) -> dict:
     for ref in enc_rows:
         if (ref or {}).get("source") != "admit_push":
             continue
-        wb = (ref or {}).get("writeback") or {}
-        st = wb.get("status")
-        if st is None:
-            continue  # 尚未触发回写（未签发）不计入
-        wb_by_status[st] = wb_by_status.get(st, 0) + 1
+        # 2026-08-29 粒度下沉：优先按文书级 writeback_records 逐份计数（住院
+        # 多文书各算一条，成功率才真实）；无文书级数据回落接诊级旧摘要
+        wbr = (ref or {}).get("writeback_records") or {}
+        entries = [e for e in wbr.values() if (e or {}).get("status")]
+        if not entries:
+            legacy = (ref or {}).get("writeback") or {}
+            entries = [legacy] if legacy.get("status") else []
+        for e in entries:
+            st = e["status"]
+            wb_by_status[st] = wb_by_status.get(st, 0) + 1
     wb_total = sum(wb_by_status.values())
     writeback = {
         "total": wb_total,

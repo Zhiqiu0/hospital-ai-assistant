@@ -75,8 +75,16 @@ export function useProgressNoteAutosave(params: {
       })
       savedRef.current = snapKey
     } catch {
-      // 自动保存失败不打扰医生（他随时可以点「保存草稿」拿到明确反馈）；
-      // 保留 savedRef 不变，下一轮防抖会再试一次。
+      // 失败必须把快照放回去（2026-08-29 离线审计修复）：flush 开头已把
+      // pendingRef 清空，原实现失败后不回填——"下一轮防抖会再试"只有正文
+      // **再次变化**才成立，医生写完停笔后这次失败的增量就永远丢了：切条目
+      // /关页时的 flush 读到的是空快照，直接早退。回填后，切条目/卸载/网络
+      // 恢复（下方 online 监听）的每次 flush 都能重试这份内容。
+      // 若失败期间医生又输入了新内容（pendingRef 已被新快照占据），
+      // 新快照本就包含全部最新正文，旧快照丢弃无损。
+      if (!pendingRef.current) {
+        pendingRef.current = pending
+      }
     }
   }, [])
 
@@ -105,12 +113,17 @@ export function useProgressNoteAutosave(params: {
     }
   }, [content, recordedAt, encounterId, itemId, recordType, disabled, flush])
 
-  // 卸载 / 关标签页：来不及等防抖，立刻 flush
+  // 卸载 / 关标签页：来不及等防抖，立刻 flush。
+  // online：断网期间失败回填的快照（见 flush catch）在网络恢复时自动补传，
+  // 医生停笔不动也能恢复（2026-08-29 离线审计）。
   useEffect(() => {
     const onHide = () => void flush()
+    const onOnline = () => void flush()
     window.addEventListener('pagehide', onHide)
+    window.addEventListener('online', onOnline)
     return () => {
       window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('online', onOnline)
       void flush()
     }
   }, [flush])

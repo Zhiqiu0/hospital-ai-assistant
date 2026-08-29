@@ -26,7 +26,8 @@ def executed(monkeypatch):
     """打桩 _execute_and_report，记录调用参数。"""
     calls: list = []
 
-    async def fake_execute(encounter_id, doctor_id):
+    async def fake_execute(encounter_id, doctor_id, record_id=None):
+        # record_id 是 2026-08-29 粒度下沉新增的第三参，这里不参与断言
         calls.append((encounter_id, doctor_id))
 
     monkeypatch.setattr(wd, "_execute_and_report", fake_execute)

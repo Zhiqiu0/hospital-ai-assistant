@@ -352,11 +352,23 @@ async def _resolve_department(
         )
         return fallback_department_id
 
+    # 列宽预检（2026-08-29 第五轮 HIS 契约审计）：Department.code String(50)/
+    # name String(100)，超长直插会 DataError 打挂整条接诊（与已修的姓名超长
+    # 同形态）。code 是匹配键，查找与落库用同一截断值保证自洽。
+    if len(code) > 50:
+        logger.warning("his_admit.dept: dept_code 超列宽截断 len=%d visit_no=%s",
+                       len(code), visit_id)
+        code = code[:50]
+
     dept = (await db.execute(
         select(Department).where(Department.code == code)
     )).scalar_one_or_none()
 
     name = (dept_name or "").strip() or f"HIS科室{code}"
+    if len(name) > 100:
+        logger.warning("his_admit.dept: dept_name 超列宽截断 len=%d visit_no=%s",
+                       len(name), visit_id)
+        name = name[:100]
     if dept is None:
         # 首次见到该科室：自动落一条（见上方"为什么不维护映射表"）
         dept = Department(name=name, code=code, is_active=True)
@@ -518,9 +530,22 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
             raw_bd = payload.birth_date.strip()
             if len(raw_bd) == 8 and raw_bd.isdigit():
                 raw_bd = f"{raw_bd[:4]}-{raw_bd[4:6]}-{raw_bd[6:]}"
+            # 常见厂商形态归一（2026-08-29 第五轮 HIS 契约审计）：
+            # "1968-05-20 00:00:00"（datetime 列序列化）→ 截前 10 位；
+            # "1968/05/20"、"1968.5.20" → 分隔符归一；
+            # "1968-5-20"（不补零）→ 拆段补零。fromisoformat 只认补零 ISO，
+            # 这些形态原先全部静默丢弃且无日志，年龄空缺联调无痕。
+            raw_bd = raw_bd[:10].strip().replace("/", "-").replace(".", "-").strip("-")
+            parts = raw_bd.split("-")
+            if len(parts) == 3 and all(p.isdigit() for p in parts):
+                raw_bd = f"{parts[0]}-{parts[1]:0>2}-{parts[2]:0>2}"
             birth_date = date.fromisoformat(raw_bd)
         except ValueError:
-            pass  # 解析不了就留空，不阻塞建档
+            # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢
+            logger.warning(
+                "his_admit.patient: birth_date 解析失败已丢弃 raw=%r visit_id=%s",
+                payload.birth_date, payload.visit_id,
+            )
 
     service = PatientService(db)
     # ── 三级查重，顺序：身份证 → patient_no → 手机号+姓名 ────────────────────

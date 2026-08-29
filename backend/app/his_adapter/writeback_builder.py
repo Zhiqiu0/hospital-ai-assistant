@@ -91,9 +91,18 @@ async def _build_diagnoses(db: AsyncSession, encounter_id: str, inq: Optional[In
 
 
 async def build_writeback_payload(
-    db: AsyncSession, encounter_id: str, app_version: str = "1.0.0"
+    db: AsyncSession, encounter_id: str, app_version: str = "1.0.0",
+    record_id: Optional[str] = None,
 ) -> dict:
-    """组装一次接诊的病历回写 payload（dict，结构见接口规范 3.2）。"""
+    """组装一次接诊的病历回写 payload（dict，结构见接口规范 3.2）。
+
+    record_id（2026-08-29 第五轮审计·回写粒度下沉）：指定要回写**哪一份文书**。
+    此前回写从头到尾只带 encounter_id，builder 执行时重挑"最新已签发的一份"，
+    住院多文书场景三连炸：连续签发只推最新一份、早签的那份静默漏推；
+    失败被后续成功覆盖；管理员修订早期文书后重推的仍是最新文书。
+    签发钩子/修订重推现在都精确传本次签发/修订的 record_id；
+    不传（对账兜底、旧调用）保持原"最新已签发优先"行为。
+    """
     encounter = await db.get(Encounter, encounter_id)
     if encounter is None:
         raise ValueError(f"encounter not found: {encounter_id}")
@@ -106,14 +115,18 @@ async def build_writeback_payload(
         .limit(1)
     )).scalar_one_or_none()
 
-    # 最新病历版本全文
+    # 指定文书 vs 最新病历版本全文（record_id 语义见函数 docstring）
+    _where = [RecordVersion.version_no == MedicalRecord.current_version]
+    if record_id:
+        # 精确定位本次签发/修订的那份文书；仍校验 encounter 归属防串接诊
+        _where += [MedicalRecord.id == record_id,
+                   MedicalRecord.encounter_id == encounter_id]
+    else:
+        _where += [MedicalRecord.encounter_id == encounter_id]
     picked = (await db.execute(
         select(RecordVersion, MedicalRecord)
         .join(MedicalRecord, RecordVersion.medical_record_id == MedicalRecord.id)
-        .where(
-            MedicalRecord.encounter_id == encounter_id,
-            RecordVersion.version_no == MedicalRecord.current_version,
-        )
+        .where(*_where)
         # 优先取「已签发」的那份（2026-08-13 第五轮审计修复）：
         # 原先只按 updated_at 倒序取最近更新的一份。住院一次接诊有入院记录/病程/
         # 出院小结等多份病历，医生刚签发出院小结、随后又碰了一下病程草稿，

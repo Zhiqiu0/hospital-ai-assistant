@@ -40,6 +40,12 @@ export default defineConfig({
   // 业务代码改动不影响 vendor chunk 的 hash，医院弱网环境二次访问全走缓存。
   // cornerstone 不用列：PACS 页已改路由级懒加载，rollup 自动把它分进异步 chunk
   build: {
+    // 兼容下限 Chrome 80（2026-08-29 第五轮浏览器兼容审计）：vite 8 默认
+    // target≈Chrome 107 不降级语法，antd/react 的 npm 产物里带 ||= 等
+    // Chrome 85+ 逻辑赋值运算符，医院老电脑 Chrome 80-84 会解析期
+    // SyntaxError 整站白屏，且 index.html 兜底横幅只探测可选链拦不住。
+    // 与 index.html 横幅承诺的"Chrome/Edge 80+"保持一致。
+    target: ['chrome80'],
     rollupOptions: {
       output: {
         // vite 8（rolldown 内核）只支持函数形式的 manualChunks（2026-06-11 升级适配）

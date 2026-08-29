@@ -83,6 +83,8 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
     doc = User(username=f"d{suffix}", password_hash="x", real_name="医生", role="doctor")
     db.add(doc)
     await db.flush()
+    # 2026-08-29 粒度下沉：对账判定改读文书级 writeback_records[type:no]，
+    # 夹具跟着把状态落到文书键上（record_no 模型默认 1 → 键尾恒 "1"）
     wb = None
     if writeback_status is not None:
         wb = {"status": writeback_status, "reconcile_attempts": attempts}
@@ -93,7 +95,7 @@ async def _mk_his_encounter(db, *, writeback_status, submitted=True, exhausted=F
         visit_no=f"V{suffix}", status="in_progress",
         visited_at=visited or datetime.now(),
         his_external_ref={"source": "admit_push", "hospital_code": "H1",
-                          **({"writeback": wb} if wb else {})},
+                          **({"writeback_records": {"outpatient:1": wb}} if wb else {})},
     )
     db.add(enc)
     await db.flush()
@@ -114,7 +116,7 @@ async def test_reconcile_finds_failed_writeback(async_db):
     from app.his_adapter.writeback_reconcile import _find_candidates
     eid = await _mk_his_encounter(async_db, writeback_status="write_failed")
     cands = await _find_candidates(async_db)
-    assert eid in [c.id for c in cands]
+    assert eid in [e.id for e, _rec in cands]
 
 
 @pytest.mark.asyncio
@@ -131,6 +133,54 @@ async def test_reconcile_skips_exhausted(async_db):
     from app.his_adapter.writeback_reconcile import _find_candidates
     await _mk_his_encounter(async_db, writeback_status="write_failed", exhausted=True)
     assert await _find_candidates(async_db) == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_masked_failure_still_candidate(async_db):
+    """住院多文书：后一份的 success 不得掩盖前一份的失败（2026-08-29 粒度下沉回归锁）。
+
+    粒度下沉前状态是接诊级一份：病程#3 write_failed 被 #4 的 success 覆写后，
+    对账永远看不到 #3，HIS 病案静默缺一份。现在逐文书判定，
+    失败的那份必须仍是候选。
+    """
+    from app.his_adapter.writeback_reconcile import _find_candidates
+    from app.models.encounter import Encounter
+    from app.models.medical_record import MedicalRecord
+    from app.models.patient import Patient
+    from app.models.user import User
+    from uuid import uuid4
+    suffix = uuid4().hex[:8]
+    p = Patient(name="多文书患者")
+    doc = User(username=f"m{suffix}", password_hash="x", real_name="医生", role="doctor")
+    async_db.add_all([p, doc])
+    await async_db.flush()
+    enc = Encounter(
+        patient_id=p.id, doctor_id=doc.id, visit_type="inpatient",
+        visit_no=f"V{suffix}", status="in_progress", visited_at=datetime.now(),
+        his_external_ref={
+            "source": "admit_push", "hospital_code": "H1",
+            # 病程 #3 失败、#4 成功——各自独立状态
+            "writeback_records": {
+                "course_record:3": {"status": "write_failed", "reconcile_attempts": 0},
+                "course_record:4": {"status": "success"},
+            },
+            # 接诊级旧摘要是最后一次（成功）——它不得参与对账判定
+            "writeback": {"status": "success"},
+        },
+    )
+    async_db.add(enc)
+    await async_db.flush()
+    for no in (3, 4):
+        async_db.add(MedicalRecord(
+            encounter_id=enc.id, record_type="course_record", record_no=no,
+            status="submitted", submitted_at=datetime.now(),
+        ))
+    await async_db.commit()
+
+    cands = await _find_candidates(async_db)
+    mine = [(e.id, _r.record_no) for e, _r in cands if e.id == enc.id]
+    assert (enc.id, 3) in mine, "失败的 #3 被后续成功掩盖，未列为对账候选"
+    assert (enc.id, 4) not in mine, "已成功的 #4 不该重投"
 
 
 @pytest.mark.asyncio
@@ -172,7 +222,7 @@ async def test_reconcile_attempts_accumulate_across_rounds(async_db, monkeypatch
         await wr.reconcile_once()
         enc = await async_db.get(Encounter_model(), eid)
         await async_db.refresh(enc)
-        wb = enc.his_external_ref["writeback"]
+        wb = enc.his_external_ref["writeback_records"]["outpatient:1"]
         assert wb["reconcile_attempts"] == expected, (
             f"第 {expected} 轮后计数应为 {expected}，实际 {wb.get('reconcile_attempts')}"
             "——回写落库又把对账计数抹掉了")
@@ -573,7 +623,8 @@ async def test_reconcile_covers_late_signed_inpatient_record(async_db):
         visit_no=f"V{suffix}", status="in_progress",
         visited_at=now - timedelta(days=10),
         his_external_ref={"source": "admit_push", "hospital_code": "H1",
-                          "writeback": {"status": "write_failed", "reconcile_attempts": 0}},
+                          "writeback_records": {"course_record:1": {
+                              "status": "write_failed", "reconcile_attempts": 0}}},
     )
     async_db.add(enc)
     await async_db.flush()
@@ -584,7 +635,7 @@ async def test_reconcile_covers_late_signed_inpatient_record(async_db):
     await async_db.commit()
 
     cands = await _find_candidates(async_db)
-    assert enc.id in [c.id for c in cands], (
+    assert enc.id in [e.id for e, _rec in cands], (
         "住院中后期签发的病历没被对账扫到——回写失败会永远不重投"
     )
 

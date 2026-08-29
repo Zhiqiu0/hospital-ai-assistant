@@ -7,9 +7,12 @@
  *
  * 只展示状态，不处理业务。
  */
+import { useEffect, useState } from 'react'
+
 import { StatusBar, StatusBarItem } from '@/components/shell/StatusBar'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
 import { useRecordStore } from '@/store/recordStore'
 
 function formatSavedAt(ts: number | null | undefined): string {
@@ -28,15 +31,42 @@ export default function WorkbenchStatusBar() {
   const inquirySavedAt = useInquiryStore(s => s.inquirySavedAt)
   const recordContent = useRecordStore(s => s.recordContent)
   const recordSavedAt = useRecordStore(s => s.recordSavedAt)
+  const autoSaveState = useRecordAutoSaveTrigger(s => s.autoSaveState)
+
+  // 离线感知（2026-08-29 离线审计修复）：此前断网后状态条仍显示绿色
+  // "N 分钟前保存"——那是断网前的旧时间戳，医生对"内容没在往服务器存"
+  // 毫无感知。监听 online/offline 事件实时切换。
+  const [online, setOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  )
+  useEffect(() => {
+    const up = () => setOnline(true)
+    const down = () => setOnline(false)
+    window.addEventListener('online', up)
+    window.addEventListener('offline', down)
+    return () => {
+      window.removeEventListener('online', up)
+      window.removeEventListener('offline', down)
+    }
+  }, [])
 
   const busy = !!currentEncounterId && !!currentPatient
   const hasDraft = !!recordContent
 
-  // 状态优先级：病历草稿 auto-save 时间 > 问诊保存时间 > "草稿未保存" > "未开始"
-  // 因为医生主要工作面是病历编辑器，auto-save 已保存比问诊保存更能反映"工作进度"
+  // 状态优先级：离线/暂存/冲突（异常态优先，医生必须先看到）>
+  // 病历草稿 auto-save 时间 > 问诊保存时间 > "草稿未保存" > "未开始"
   let savedLabel: string
   let dot: 'success' | 'warning' | 'info'
-  if (recordSavedAt) {
+  if (!online) {
+    savedLabel = '网络已断开，内容暂存本机，恢复后自动补传'
+    dot = 'warning'
+  } else if (autoSaveState === 'queued') {
+    savedLabel = '保存失败，已暂存本机稍后补传'
+    dot = 'warning'
+  } else if (autoSaveState === 'conflict') {
+    savedLabel = '检测到其他设备修改，正在覆盖保存'
+    dot = 'warning'
+  } else if (recordSavedAt) {
     savedLabel = `病历 ${formatSavedAt(recordSavedAt)}`
     dot = 'success'
   } else if (inquirySavedAt) {
