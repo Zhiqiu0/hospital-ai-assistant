@@ -61,13 +61,14 @@ export function useAutoSaveDraft({
   savingState: AutoSaveState
 } {
   const [savedAt, setSavedAt] = useState(0)
-  const [savingState, setSavingStateLocal] = useState<AutoSaveState>('idle')
-  // 状态同时镜像到全局 store（2026-08-29 离线审计）：此前返回值没人消费，
-  // 断网入队后状态栏仍显示绿色"已保存"，医生无从知道内容只在本机队列里
-  const setSavingState = (s: AutoSaveState) => {
-    setSavingStateLocal(s)
-    useRecordAutoSaveTrigger.getState().setAutoSaveState(s)
-  }
+  const [savingState, setSavingState] = useState<AutoSaveState>('idle')
+  // 状态镜像到全局 store（2026-08-29 离线审计）：此前返回值没人消费，
+  // 断网入队后状态栏仍显示绿色"已保存"，医生无从知道内容只在本机队列里。
+  // 用 effect 声明式镜像而不是包一层 setter——包装函数每次渲染重建会破坏
+  // eslint 对 performSave 的传递稳定性推断（exhaustive-deps 报 warning 挡 CI）
+  useEffect(() => {
+    useRecordAutoSaveTrigger.getState().setAutoSaveState(savingState)
+  }, [savingState])
   // 上次成功保存的内容快照——用于"内容没变就不重发"判断
   const lastSavedContentRef = useRef<string>('')
   // 上次保存返回的 updated_at——给乐观锁带回
