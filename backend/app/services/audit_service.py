@@ -59,6 +59,11 @@ async def log_action(
                        （中间件在每个请求开始时按 XFF → X-Real-IP → socket 写入）。
         status:        操作结果："ok" 表示成功，"fail" 表示失败（如登录失败）。
     """
+    # 列宽钳制（2026-08-29 收尾轮）：任一字段超列宽会让整条审计 INSERT 失败
+    # 并被下方兜底静默吞掉——审计宁可截断也绝不丢整条。宽度与模型列对齐。
+    action = (action or "")[:200]
+    if user_name:
+        user_name = user_name[:50]
     async with AsyncSessionLocal() as db:
         entry = AuditLog(
             action=action,
