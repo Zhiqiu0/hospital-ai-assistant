@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 音频回放专用子路由（2026-08-29 第八轮回归修复）：GET /voice-records/{id}/audio
+# 是为 <audio> 标签设计的 query-token 鉴权端点（audio 标签发不了 Authorization
+# 头）。第七轮把 _ai_role_gate（内含 Bearer 鉴权）挂到整个 voice 路由组时，
+# 它跟着要求 Bearer 头 → 全部回放 401。拆到独立 router，由 ai.py 只挂限速
+# 不挂角色门槛——安全性不降级：令牌颁发端点 audio-token 仍在门槛内，
+# 无权限角色拿不到 5 分钟短期令牌，本端点自身校验 aud=audio + 资源匹配。
+audio_router = APIRouter()
+
 # 接诊 ID 只允许 UUID 形态（36 位十六进制 + 连字符），杜绝路径穿越与脏值
 _SAFE_ID_RE = re.compile(r"[0-9a-fA-F-]{1,64}")
 
@@ -234,7 +242,7 @@ async def get_audio_token(
     return {"audio_token": audio_token}
 
 
-@router.get("/voice-records/{voice_record_id}/audio")
+@audio_router.get("/voice-records/{voice_record_id}/audio")
 async def get_voice_audio(
     voice_record_id: str,
     token: str = Query(..., description="短期音频令牌（由 /audio-token 端点颁发，有效期 5 分钟）"),

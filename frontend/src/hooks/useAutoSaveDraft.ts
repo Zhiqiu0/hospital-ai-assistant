@@ -204,8 +204,12 @@ export function useAutoSaveDraft({
       lastUpdatedAtRef.current = null
       setSavedAt(0)
       setSavingState('idle')
-      // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）
-      void flushDraftQueue(performSave)
+      // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）。
+      // 跳过刚切到的当前键：该接诊内容随后由水合+防抖保存最新稿（同 onOnline 口径）
+      void flushDraftQueue(performSave, {
+        skipEncounterId: encounterId ?? undefined,
+        skipRecordType: recordType,
+      })
     }
     // 只在接诊真的变化时跑。flushPending 每次渲染都会重建，但它读的全是 ref
     // （pendingRef / lastSavedContentRef），闭包再旧拿到的也是最新值。
@@ -242,7 +246,14 @@ export function useAutoSaveDraft({
     // 切接诊——断网期间积压的草稿要等医生换患者才补传，中间全程状态是
     // "已暂存本机"。online 事件一到就补，医生停笔也能自动恢复。
     const onOnline = () => {
-      void flushDraftQueue(performSave)
+      // 跳过当前编辑键 + 立即补发当前稿（2026-08-29 第八轮回归修复）：
+      // 恢复瞬间队列旧稿与防抖新稿并发在飞时，null 基线旧稿后落会静默
+      // 回滚新稿。当前键交给 triggerFlush 立即发最新内容，队列只补别的接诊。
+      void flushDraftQueue(performSave, {
+        skipEncounterId: lastEncounterRef.current ?? undefined,
+        skipRecordType: useRecordStore.getState().recordType,
+      })
+      useRecordAutoSaveTrigger.getState().triggerFlush()
     }
     window.addEventListener('pagehide', onHide)
     window.addEventListener('online', onOnline)

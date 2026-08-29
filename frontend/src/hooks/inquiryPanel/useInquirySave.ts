@@ -146,8 +146,27 @@ export function useInquirySave({
             sort_order: i.sort_order,
           })),
         })
-      } catch {
+      } catch (err) {
         savedOk = false
+        // 校验类 422 必须把后端 detail 透出（2026-08-29 第八轮回归修复）：
+        // 体征生理极限/血压填反等校验错误此前被无差别归因成"网络问题"，
+        // 医生反复重试无解。detail 是明确的中文纠错指引（"体温 45 超出…"）。
+        const e = err as { status?: number; detail?: unknown; response?: { status?: number } }
+        const status = e?.status ?? e?.response?.status
+        // pydantic 校验错的 detail 是数组 [{msg: "Value error, 体温 45 …"}]，
+        // 业务 HTTPException 的是字符串——两种形态都取出人话部分
+        let detail = ''
+        if (typeof e?.detail === 'string') {
+          detail = e.detail
+        } else if (Array.isArray(e?.detail) && e.detail.length) {
+          const msg = (e.detail[0] as { msg?: string })?.msg || ''
+          detail = msg.replace(/^Value error,\s*/, '')
+        }
+        if (status === 422 && detail) {
+          message.error(detail)
+          setSaving(false)
+          return
+        }
       }
     }
 

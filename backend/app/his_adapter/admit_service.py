@@ -230,12 +230,21 @@ async def _prefill_from_push(
     # 生理极限预检（2026-08-29 第七轮审计）：厂商推"体温 365"（漏小数点）、
     # 身高体重错位等出界值单独丢弃并留痕，其余字段照填——绝不因体征拒收
     # 接诊（与 birth_date 解析失败同哲学）。口径与问诊/住院路径共用 vital_limits。
-    from app.services.vital_limits import vital_out_of_range
+    from app.services.vital_limits import parse_vital_number, vital_out_of_range
     dropped = [k for k, v in vitals_data.items() if vital_out_of_range(k, v)]
     for k in dropped:
         logger.warning(
             "his_admit.prefill_vitals: %s=%r 超生理极限已丢弃 encounter=%s",
             k, vitals_data.pop(k), encounter_id)
+    # 血压交叉预检（2026-08-29 第八轮回归修复）：各自在界内但收缩≤舒张
+    # （80/120 错位形态）若照填，医生此后每次整表保存都会撞后端交叉校验
+    # 422 被卡死——预填口径必须与保存校验口径一致，错位对丢弃留痕
+    _sys = parse_vital_number(vitals_data.get("bp_systolic"))
+    _dia = parse_vital_number(vitals_data.get("bp_diastolic"))
+    if _sys is not None and _dia is not None and _sys <= _dia:
+        logger.warning(
+            "his_admit.prefill_vitals: 血压 %s/%s 收缩≤舒张（疑似错位）已丢弃 encounter=%s",
+            vitals_data.pop("bp_systolic"), vitals_data.pop("bp_diastolic"), encounter_id)
 
     try:
         if vitals_data:

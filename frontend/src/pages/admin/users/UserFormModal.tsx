@@ -9,6 +9,7 @@
 import { useEffect } from 'react'
 import { Modal, Form, Input, Select } from 'antd'
 import { ROLE_MAP, type UserRow, type DeptOption, type UserFormValues } from './types'
+import { useAuthStore } from '@/store/authStore'
 
 interface UserFormModalProps {
   /** 弹窗是否可见 */
@@ -31,6 +32,15 @@ export default function UserFormModal({
   onSubmit,
 }: UserFormModalProps) {
   const [form] = Form.useForm<UserFormValues>()
+  // 科室管理员建号范围适配（2026-08-29 第八轮回归修复）：后端已收紧
+  // dept_admin 只能建本科室账号、跨科角色与工号绑定仅院级可为——表单若
+  // 保持"科室可选/工号可选"的旧提示，dept_admin 留空或顺手填工号必撞 403。
+  // 前端按角色收窄可选项与提示，与后端 assert_creation_scope 口径一致。
+  const me = useAuthStore(s => s.user)
+  const isDeptAdmin = me?.role === 'dept_admin'
+  const roleOptions = Object.entries(ROLE_MAP)
+    .filter(([v]) => !(isDeptAdmin && (v === 'qc_officer' || v === 'radiologist')))
+    .map(([v, r]) => ({ value: v, label: r.label }))
 
   // form.resetFields / setFieldsValue 必须等 Modal 内的 Form 挂载之后再调，
   // 否则 useForm 实例没连接到任何 Form 元素，触发
@@ -74,22 +84,28 @@ export default function UserFormModal({
           <Input placeholder="真实姓名" />
         </Form.Item>
         <Form.Item label="角色" name="role" rules={[{ required: true }]}>
-          <Select
-            options={Object.entries(ROLE_MAP).map(([v, r]) => ({ value: v, label: r.label }))}
-          />
+          <Select options={roleOptions} />
         </Form.Item>
-        <Form.Item label="所属科室" name="department_id">
+        <Form.Item
+          label="所属科室"
+          name="department_id"
+          rules={isDeptAdmin ? [{ required: true, message: '科室管理员只能在本科室建号' }] : []}
+        >
           <Select
-            allowClear
-            placeholder="选择科室（可选）"
-            options={departments.map(d => ({ value: d.id, label: d.name }))}
+            allowClear={!isDeptAdmin}
+            placeholder={isDeptAdmin ? '科室管理员只能选本科室' : '选择科室（可选）'}
+            options={departments
+              .filter(d => !isDeptAdmin || d.id === me?.department_id)
+              .map(d => ({ value: d.id, label: d.name }))}
           />
         </Form.Item>
         {!editUser && (
           <>
-            <Form.Item label="工号" name="employee_no">
-              <Input placeholder="员工编号（可选）" />
-            </Form.Item>
+            {!isDeptAdmin && (
+              <Form.Item label="工号" name="employee_no">
+                <Input placeholder="员工编号（可选；HIS 派工映射用）" />
+              </Form.Item>
+            )}
             <Form.Item label="手机号" name="phone">
               <Input placeholder="手机号（可选）" />
             </Form.Item>

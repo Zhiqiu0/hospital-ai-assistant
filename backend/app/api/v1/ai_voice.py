@@ -27,4 +27,7 @@ from app.api.v1 import ai_voice_records, ai_voice_structure
 # 子路由不带额外 prefix，拼回后端点路径与原文件完全相同。
 router = APIRouter()
 router.include_router(ai_voice_records.router)
+# 音频回放子路由单独导出（见 ai_voice_records.audio_router 注释）：
+# 不并进本 router，由 ai.py 以不同依赖挂载
+audio_router = ai_voice_records.audio_router
 router.include_router(ai_voice_structure.router)
