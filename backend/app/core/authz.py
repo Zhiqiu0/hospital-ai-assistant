@@ -64,39 +64,15 @@ def assert_pacs_write(user) -> None:
         raise HTTPException(status_code=403, detail="仅影像科医生可操作 PACS")
 
 
-async def assert_patient_access(db: AsyncSession, patient_id: str, user) -> None:
-    """校验 user 对 patient 的访问权。
-
-    规则：
-      - admin 三角色 / radiologist 直通
-      - 其他角色（doctor/nurse）必须对该 patient 有过接诊关系（doctor_id 匹配）
-    """
-    role = getattr(user, "role", "")
-    if role in PACS_WRITE_ROLES:
-        return
-    # 反查：该医生是否曾给该患者接诊
-    stmt = (
-        select(EncounterModel.id)
-        .where(
-            EncounterModel.patient_id == patient_id,
-            EncounterModel.doctor_id == getattr(user, "id", ""),
-        )
-        .limit(1)
-    )
-    row = (await db.execute(stmt)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=403, detail="无权访问该患者的病历档案（只能查看你接诊过的患者）")
-
-
 async def assert_patient_write_access(db: AsyncSession, patient_id: str, user) -> None:
     """患者档案**写**操作的归属校验（2026-08-14 第六轮审计修复）。
 
-    与 assert_patient_access 的差别只有一点：**radiologist 不直通**。
+    要点：**radiologist 不直通**（读走 PACS 自有端点，写档案不属其职责）。
 
-    assert_patient_access 把 radiologist 放进直通名单，是为了让影像科医生能看
-    影像与对应患者信息；但那个函数同时被患者档案的写端点复用，于是影像科医生
-    可以改任意患者的过敏史/既往史——这些是临床用药依据，不该由不接诊的角色改动。
-    读放行、写按归属，两件事分开判。
+    历史：旧的 assert_patient_access（读写混用，radiologist 直通）曾被写端点
+    复用，影像科医生可改任意患者的过敏史/既往史——这些是临床用药依据，
+    不该由不接诊的角色改动。读放行（开放读+审计）、写按归属，两件事分开判。
+    旧函数已于 2026-08-29 第七轮审计删除（生产零调用的死码）。
     """
     role = getattr(user, "role", "")
     if role in ADMIN_ROLES:

@@ -90,6 +90,13 @@ def admission_missing_marital_or_menstrual_history(ctx: RecordContext) -> bool:
     """
     if not _is_admission_note(ctx):
         return False
+    # 婴幼儿豁免（2026-08-29 第七轮临床合理性审计）：原实现对所有年龄要求
+    # 婚育史，5 岁患儿缺婚育史照扣 1 分，还会引导 AI 批量补全往幼儿病历里
+    # 写"未婚未育"。儿科惯例以出生史/喂养史替代。<10 岁跳过本项，
+    # 与月经史 12 岁下限（is_in_reproductive_age）对称。
+    age = ctx.patient_meta.age_int()
+    if age is not None and age < 10:
+        return False
     has_marital = ctx.section("婚育史").is_filled()
     if not has_marital:
         return True

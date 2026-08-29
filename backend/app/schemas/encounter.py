@@ -158,6 +158,36 @@ class InquiryInputUpdate(BaseModel):
     visit_time: Optional[str] = None
     onset_time: Optional[str] = None
 
+    # ── 生命体征生理极限校验（2026-08-29 第七轮临床合理性审计）────────────
+    # 此前体征全是裸字符串零校验，体温 45℃/SpO2 120% 直通签发正文与 HIS
+    # 回写；住院体征表 2026-08-28 已加同款极限，问诊路径漏对齐。口径见
+    # vital_limits：只拦"可解析为数字且出生理极限"的值（真实极端病例如
+    # 低体温 25℃ 在界内不误伤），自由文本（带单位/备注）放行。
+    @field_validator("temperature", "pulse", "respiration", "bp_systolic",
+                     "bp_diastolic", "spo2", "height", "weight")
+    @classmethod
+    def _vital_in_physio_range(cls, v, info):
+        if v is None or not str(v).strip():
+            return v
+        from app.services.vital_limits import check_vital_range
+        err = check_vital_range(info.field_name, v)
+        if err:
+            raise ValueError(err)
+        return v
+
+    @model_validator(mode="after")
+    def _bp_cross_check(self):
+        """收缩压必须大于舒张压（两值均可解析时）：30/200 是两框填反的
+        典型形态，同臂同次测量物理上不可能，直接拒收让医生当场纠正。"""
+        from app.services.vital_limits import parse_vital_number
+        sys_v = parse_vital_number(self.bp_systolic)
+        dia_v = parse_vital_number(self.bp_diastolic)
+        if sys_v is not None and dia_v is not None and sys_v <= dia_v:
+            raise ValueError(
+                f"收缩压 {self.bp_systolic} 不应小于等于舒张压 {self.bp_diastolic}，"
+                "请核对两框是否填反")
+        return self
+
 
 class EncounterCancelRequest(BaseModel):
     """取消接诊请求体（POST /encounters/{id}/cancel）。

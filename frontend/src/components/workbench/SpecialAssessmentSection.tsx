@@ -7,6 +7,7 @@
  * 必须渲染在 Ant Design Form 上下文内。
  */
 import { Form, Input, Select, Slider } from 'antd'
+import { genderCode } from '@/utils/gender'
 
 const { TextArea } = Input
 
@@ -27,7 +28,10 @@ interface Props {
 }
 
 export default function SpecialAssessmentSection({ painMarks, patientGender }: Props) {
-  const isFemale = patientGender === 'female'
+  // 性别双口径兼容（2026-08-29 第七轮审计）：HIS 建档存中文「女」、手动建档
+  // 存英文 female，原严格等于 'female' 让 HIS 来源（生产主路径）的育龄女性
+  // 看不到月经史输入框 → 病历缺法定必填项且 QC 必扣分。统一走 genderCode。
+  const isFemale = genderCode(patientGender) === 'female'
   return (
     <>
       <Form.Item

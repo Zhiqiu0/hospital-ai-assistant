@@ -28,6 +28,9 @@ def calc_age(birth: Optional[date], today: Optional[date] = None) -> Optional[in
     if not birth:
         return None
     ref = today or date.today()
-    return ref.year - birth.year - (
+    years = ref.year - birth.year - (
         (ref.month, ref.day) < (birth.month, birth.day)
     )
+    # 负年龄兜底（2026-08-29 第七轮审计）：存量脏数据里的未来出生日期
+    # 返回 None（显示"未知"），别把 -2 岁写进病案首页
+    return years if years >= 0 else None

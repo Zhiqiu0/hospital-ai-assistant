@@ -42,6 +42,7 @@ async def analyze_study(
 ):
     """从 Orthanc 拉选中帧 → 千问 VL 分析 → 写报告。
 
+
     R1 改造：
       - 选中帧由 instance UID 标识（不再是文件名）
       - 帧数上限按 modality 自适应（CT/MR 18、X 光 4、超声 6 等）
@@ -106,6 +107,12 @@ async def analyze_image(
     current_user=Depends(get_current_user),
 ):
     """临床医生上传 JPG/PNG/DCM，直接送千问分析，返回结构化报告"""
+    # AI 影像分析角色门槛（2026-08-29 第七轮渗透审计）：付费千问 VL 通道，
+    # 临床医生/影像医师/管理角色可用，只读角色（qc_officer/nurse）不可
+    from app.core.authz import RECORD_WRITE_ROLES
+    _allowed = RECORD_WRITE_ROLES | {"radiologist"}
+    if getattr(current_user, "role", None) not in _allowed:
+        raise HTTPException(403, "当前角色无影像 AI 分析权限")
     allowed_img = {"image/jpeg", "image/png", "image/webp", "image/gif"}
     content_type = file.content_type or ""
     filename = file.filename or ""

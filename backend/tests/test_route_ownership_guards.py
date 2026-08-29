@@ -1,6 +1,6 @@
 """路由级归属校验回归（IDOR 修复）
 
-背景：core/authz.py 里的 assert_patient_access / assert_encounter_access 早就写好并
+背景：core/authz.py 里的 assert_encounter_access 等守卫早就写好并
 在 PACS 用对了，但 patients.py / encounters.py / medical_records.py 的一批端点当时
 「漏挂」——单元测试只测了 helper 本身，没测「路由是否真的调用了 helper」，导致越权
 （医生能读任意患者身份证号/PHI）在真实请求里长期存在。本文件用 HTTP 级请求覆盖这条
@@ -332,22 +332,17 @@ async def test_resolve_his_pending_cross_doctor_blocked(client_doc_me):
 async def test_radiologist_cannot_write_patient_profile(async_db):
     """影像科医生不能改患者档案（2026-08-14 第六轮审计修复）。
 
-    assert_patient_access 把 radiologist 放进直通名单是为了让他看影像与患者信息，
-    但该函数同时被患者档案的**写**端点复用——影像科医生因此能改任意患者的
-    过敏史/既往史，而这些是临床用药依据，不该由不接诊的角色改动。
-    读放行、写按归属，两件事分开判。
+    读走开放读+审计（旧 assert_patient_access 已删），写必须按归属拦——
+    影像科医生不能改任意患者的过敏史/既往史（临床用药依据）。
     """
     from fastapi import HTTPException
 
-    from app.core.authz import assert_patient_access, assert_patient_write_access
+    from app.core.authz import assert_patient_write_access
 
     radio = User(username="radio1", password_hash="x", real_name="影像科医生",
                  role="radiologist", is_active=True)
     async_db.add(radio)
     await async_db.commit()
-
-    # 读：仍然直通（看影像需要）
-    await assert_patient_access(async_db, "pat-other", radio)
 
     # 写：必须被拦住
     with pytest.raises(HTTPException) as exc:

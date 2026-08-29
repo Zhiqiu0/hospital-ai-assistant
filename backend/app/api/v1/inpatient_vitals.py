@@ -9,7 +9,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -41,6 +41,18 @@ class VitalSignIn(BaseModel):
     weight: Optional[float] = Field(None, ge=0.3, le=400)
     height: Optional[float] = Field(None, ge=20, le=260)
     notes: Optional[str] = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def _bp_cross_check(self):
+        """收缩压必须大于舒张压（2026-08-29 第七轮审计）：各自区间独立校验
+        放行了 30/200 这种两框填反的典型录入错，同臂同次测量物理上不可能，
+        拒收让护士/医生当场纠正（与问诊路径 InquiryInputUpdate 同口径）。"""
+        if (self.bp_systolic is not None and self.bp_diastolic is not None
+                and self.bp_systolic <= self.bp_diastolic):
+            raise ValueError(
+                f"收缩压 {self.bp_systolic} 不应小于等于舒张压 {self.bp_diastolic}，"
+                "请核对两框是否填反")
+        return self
 
 
 # ── 生命体征 ──────────────────────────────────────────────────────────────────

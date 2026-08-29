@@ -12,7 +12,7 @@
 所有端点均需登录认证（get_current_user）。
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.authz import assert_patient_write_access
@@ -80,7 +80,14 @@ async def create_patient(
 
     调用方在创建前应先调用 /patients?keyword= 或 /encounters/quick-start
     进行查重，避免重复建档。此端点本身不做查重拦截。
+
+    角色收口（2026-08-29 第七轮渗透审计）：此前零角色守卫，qc_officer
+    （书面契约"只读复核通道"）/nurse（口径对拍断言"无任何后端写权限"）
+    都能建档并进全院患者搜索——按建病历同口径收紧到医生+管理角色。
     """
+    from app.core.authz import RECORD_WRITE_ROLES
+    if getattr(current_user, "role", None) not in RECORD_WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="仅医生可建患者档案")
     service = PatientService(db)
     return await service.create(data)
 
@@ -154,7 +161,7 @@ async def get_patient_profile(
     /medical-records/by-patient 那条路本就对全院开放，拦这里挡不住任何信息，
     只换来一个临床安全缺口：结构化过敏史正是开药前工作台飘红警示的那个字段，
     代班/复诊换医生时 403 会让最该看到的人看不到。责任靠留痕不靠拦截。
-    **写入仍受归属保护**（PUT / confirm / resolve-his 保留 assert_patient_access）：
+    **写入仍受归属保护**（PUT / confirm / resolve-his 走 assert_patient_write_access）：
     真正知道患者新过敏史的是正在接诊的医生，他必然有归属；把写也放开只会让
     过敏史变成谁都能改的公共字段，改错是会出事的。
     """

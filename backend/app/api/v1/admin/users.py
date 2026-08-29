@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.admin._user_authz import (
     assert_can_manage_target,
     assert_can_set_role,
+    assert_creation_scope,
     assert_not_last_super_admin,
 )
 from app.core.security import require_admin
@@ -56,6 +57,11 @@ async def create_user(
 ):
     # 分级守卫：不得创建高于/等于自己权限的账号（防非超管造超管自我提权）
     assert_can_set_role(current_user, data.role)
+    # 建号范围守卫（2026-08-29 第七轮渗透审计）：dept_admin 限本科室、
+    # 跨科角色与 HIS 工号绑定仅院级可为——详见 assert_creation_scope
+    assert_creation_scope(current_user, role=data.role,
+                          department_id=data.department_id,
+                          employee_no=data.employee_no)
     service = UserService(db)
     return await service.create(data)
 
@@ -154,4 +160,10 @@ async def bulk_import_doctors(
     # 这等于把 PR#89 已修的提权洞开了个新入口。逐条校验，与 create_user 同一守卫。
     for item in data.items:
         assert_can_set_role(current_user, item.role)
+    # 批量开户带 HIS 工号（codes），且科室按名字任选——按建号范围守卫的
+    # 第 3 条口径，整个批量开户动作仅院级管理员可为（2026-08-29 第七轮审计）
+    if current_user.role not in ("hospital_admin", "super_admin"):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=403, detail="批量开户（含 HIS 工号绑定）仅院级管理员可操作")
     return await bulk_import_doctors_service(db, data, current_user)

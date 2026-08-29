@@ -47,6 +47,16 @@ class PatientCreate(BaseModel):
     contact_relation: Optional[str] = Field(None, max_length=20)  # 紧急联系人关系
     blood_type: Optional[str] = Field(None, max_length=10)      # 血型
 
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth_not_future(cls, v):
+        """出生日期不得晚于今天（2026-08-29 第七轮临床合理性审计）：未来
+        出生日期无任何合法场景，却会让 calc_age 算出负年龄进病案首页/AI
+        prompt/HIS 回写。前端 disabledDate 只防表单，API 直调/admin 页漏防。"""
+        if v is not None and v > datetime.date.today():
+            raise ValueError("出生日期不能晚于今天")
+        return v
     @field_validator("name")
     @classmethod
     def _clean_name(cls, v: str) -> str:
@@ -124,6 +134,16 @@ class PatientUpdate(BaseModel):
     contact_relation: Optional[str] = Field(None, max_length=20)
     blood_type: Optional[str] = Field(None, max_length=10)
 
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth_not_future(cls, v):
+        """出生日期不得晚于今天（2026-08-29 第七轮临床合理性审计）：未来
+        出生日期无任何合法场景，却会让 calc_age 算出负年龄进病案首页/AI
+        prompt/HIS 回写。前端 disabledDate 只防表单，API 直调/admin 页漏防。"""
+        if v is not None and v > datetime.date.today():
+            raise ValueError("出生日期不能晚于今天")
+        return v
     @field_validator("name")
     @classmethod
     def _clean_name(cls, v: Optional[str]) -> Optional[str]:
