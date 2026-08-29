@@ -22,7 +22,7 @@ from app.schemas.ai_request import (
     ExamSuggestionsRequest,
     InquirySuggestionsRequest,
 )
-from app.services.ai.ai_utils import safe_format
+from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import (
@@ -35,6 +35,53 @@ from app.services.ai.task_logger import log_ai_task
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _sanitize_llm_result(
+    result,
+    list_key: str,
+    item_keys: dict,
+    extra_keys: dict | None = None,
+) -> dict:
+    """LLM JSON 键白名单收口（2026-08-29 第六轮提示注入审计）。
+
+    此前三个建议端点把 json.loads 的结果零校验原样返回前端，并经
+    log_ai_task 的 output_result 落 JSONB、重登快照时再回放——LLM 被注入
+    或抽风时任意键/超大嵌套结构会长期驻留并污染前端 store。这里按前端
+    实际消费的契约键收口：白名单外的键丢弃、类型不符的值丢弃、列表与
+    字符串截断兜量。
+
+    Args:
+        item_keys: 列表项的 {键: 期望类型}（str/bool/list）
+        extra_keys: 顶层附加键的 {键: 期望类型}
+    """
+    if not isinstance(result, dict):
+        return {list_key: []}
+    out: dict = {}
+    items = result.get(list_key)
+    clean_items = []
+    if isinstance(items, list):
+        for it in items[:20]:
+            if not isinstance(it, dict):
+                continue
+            ci = {}
+            for k, t in item_keys.items():
+                v = it.get(k)
+                if t is str and isinstance(v, str):
+                    ci[k] = v[:2000]
+                elif t is bool and isinstance(v, bool):
+                    ci[k] = v
+                elif t is list and isinstance(v, list):
+                    ci[k] = [str(x)[:200] for x in v[:10]]
+            clean_items.append(ci)
+    out[list_key] = clean_items
+    for k, t in (extra_keys or {}).items():
+        v = result.get(k)
+        if t is str and isinstance(v, str):
+            out[k] = v[:500]
+        elif t is list and isinstance(v, list):
+            out[k] = [str(x)[:500] for x in v[:20]]
+    return out
 
 
 @router.post("/inquiry-suggestions")
@@ -80,6 +127,14 @@ async def inquiry_suggestions(
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],
         )
+        # 契约键收口（见 _sanitize_llm_result）：先收口再落库/返回，
+        # 快照回放的也是干净结构
+        result = _sanitize_llm_result(
+            result, "suggestions",
+            {"text": str, "priority": str, "category": str,
+             "options": list, "is_red_flag": bool},
+            {"known_info": list, "condition_type": str},
+        )
         usage = llm_client._last_usage
         await log_ai_task(
             "inquiry",
@@ -120,10 +175,17 @@ async def exam_suggestions(
         # log_ai_task 用独立会话，不受影响。
         await db.commit()
         result = await llm_client.chat_json_stream(
-            [{"role": "user", "content": prompt}],
+            # 注入守卫（2026-08-29 第六轮审计）：三端点中唯独本端点没有 system
+            # 消息，主诉/现病史直接混在指令里
+            guarded_messages(prompt),
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],
+        )
+        # 契约键收口（见 _sanitize_llm_result）
+        result = _sanitize_llm_result(
+            result, "suggestions",
+            {"exam_name": str, "category": str, "reason": str},
         )
         usage = llm_client._last_usage
         await log_ai_task(
@@ -179,6 +241,12 @@ async def diagnosis_suggestion(
             temperature=model_options["temperature"],
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],
+        )
+        # 契约键收口（见 _sanitize_llm_result）
+        result = _sanitize_llm_result(
+            result, "diagnoses",
+            {"name": str, "confidence": str, "reasoning": str,
+             "next_steps": str},
         )
         usage = llm_client._last_usage
         await log_ai_task(

@@ -19,6 +19,8 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createJSONStorage } from 'zustand/middleware'
+import { debouncedSafeLocalStorage } from '@/store/safeStorage'
 import { QCIssue, GradeScore, ScoreReport } from './types'
 
 interface QCState {
@@ -137,10 +139,14 @@ export const useQCStore = create<QCState>()(
       setQCWrittenIndices: indices => set({ qcWrittenIndices: indices }),
 
       markStale: () =>
-        set(state => ({
-          // 已经有结果时才标 stale；空 store 不闪 stale 角标
-          isQCStale: state.qcIssues.length > 0 || state.qcPass !== null ? true : state.isQCStale,
-        })),
+        set(state => {
+          // 已经有结果时才标 stale；空 store 不闪 stale 角标。
+          // 值不变时返回原状态对象（2026-08-29 资源泄漏审计）：markStale 被
+          // 编辑器每次按键调用，原实现即使值没变也生成新 partial 触发 persist
+          // 全量序列化写 localStorage——大质控结果每键白写一次
+          const next = state.qcIssues.length > 0 || state.qcPass !== null ? true : state.isQCStale
+          return next === state.isQCStale ? state : { isQCStale: next }
+        }),
 
       reset: () =>
         set({
@@ -159,6 +165,8 @@ export const useQCStore = create<QCState>()(
     }),
     {
       name: 'medassist-qc',
+      // 尾防抖写（2026-08-29 资源泄漏审计）：编辑器按键链路会触发本槽写
+      storage: createJSONStorage(() => debouncedSafeLocalStorage),
       // 瞬态字段（isQCing/qcLlmLoading/qcRunId）不持久化，否则刷新后按钮会卡在 loading
       partialize: state => ({
         // 归属必须随数据一起持久化（2026-08-29 对抗复核抓漏）：漏了它则每次

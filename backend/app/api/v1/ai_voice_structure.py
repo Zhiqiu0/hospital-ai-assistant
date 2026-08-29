@@ -134,6 +134,38 @@ async def voice_structure(
         # 「默认正常」的体征数值。语音又是医生最主要的输入路径，编出来的体温
         # 直接落进工作台输入框，医生签发后连同病历回写 HIS。
         # 这里做确定性后校验：数值必须在医生口述原文里字面出现才保留。
+        # ── inquiry 键白名单 + 类型强转（2026-08-29 第六轮提示注入审计）────
+        # LLM 输出的 inquiry 此前除 vital_signs 外零校验：编造的键、非字符串
+        # 值（dict/list）会 json.dumps 原样落 structured_inquiry，经工作台快照
+        # 回放后以 "[object Object]" 之类落进问诊表单。按 prompts_voice 的
+        # 契约键收口：白名单外丢弃、值统一转字符串（vital_signs 结构体除外，
+        # 其数值守卫在下方红线段）。inquiry 非 dict（LLM 返 list）时整体置空。
+        _INQUIRY_KEYS = {
+            "chief_complaint", "history_present_illness", "past_history",
+            "allergy_history", "personal_history", "marital_history",
+            "menstrual_history", "family_history", "current_medications",
+            "religion_belief", "physical_exam", "vital_signs",
+            "tcm_inspection", "tcm_auscultation", "tongue_coating",
+            "pulse_condition", "auxiliary_exam", "western_diagnosis",
+            "tcm_disease_diagnosis", "tcm_syndrome_diagnosis",
+            "treatment_method", "treatment_plan", "followup_advice",
+            "precautions", "observation_notes", "patient_disposition",
+            "initial_impression",
+        }
+        raw_inquiry = result.get("inquiry")
+        if isinstance(raw_inquiry, dict):
+            cleaned = {}
+            for k, v in raw_inquiry.items():
+                if k not in _INQUIRY_KEYS or v is None:
+                    continue
+                if k == "vital_signs":
+                    cleaned[k] = v if isinstance(v, dict) else {}
+                else:
+                    cleaned[k] = v if isinstance(v, str) else str(v)
+            result["inquiry"] = cleaned
+        else:
+            result["inquiry"] = {}
+
         inquiry_result = result.get("inquiry") or {}
         if isinstance(inquiry_result, dict) and inquiry_result.get("vital_signs"):
             kept, dropped = strip_unsubstantiated_vital_values(

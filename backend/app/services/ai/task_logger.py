@@ -222,11 +222,25 @@ async def save_qc_issues(
         # 尝试通过 encounter_id 找到最新病历，建立关联（可选，找不到不阻塞）
         medical_record_id = await _locate_medical_record(db, encounter_id, record_type)
 
+        # ── LLM 输出值钳制（2026-08-29 第六轮提示注入审计）──────────────
+        # issue 的值可能直接来自 LLM JSON：超出列宽（issue_type String(30)/
+        # risk_level String(10)/field_name String(50)/rule_code String(40)）
+        # 会让下面的单次 commit 在 PG 上整批回滚——**规则引擎的 issues 也
+        # 跟着全丢**（SQLite 测试库不校验列宽，CI 测不出来）。枚举列白名单
+        # 归一、字符串列截断，保证 commit 不可能因值超长失败。
+        def _clip(v, n):
+            return str(v)[:n] if v is not None else None
+
+        _RISK_LEVELS = {"high", "medium", "low"}
+
         for issue in issues:
             # BUG FIX: 原代码用 issue_type 是否存在来推断 source，
             # 导致有 issue_type 的 LLM 问题被错存为 "rule"。
             # 正确做法：直接使用调用方已设置的 source 字段。
             source = issue.get("source") or "rule"
+            risk = issue.get("risk_level")
+            if risk not in _RISK_LEVELS:
+                risk = "medium"  # LLM 编的等级不入库，兜到中风险
 
             qc = QCIssue(
                 ai_task_id=task_id,
@@ -234,14 +248,16 @@ async def save_qc_issues(
                 # 法定规则扣分默认归 "rubric" 类（2026-08-21 阶段0）：此前不带
                 # issue_type 的规则扣分全兜底成 "quality"，与 LLM 质量建议混桶，
                 # admin 统计的"问题类型分布"因此失真
-                issue_type=issue.get("issue_type") or ("rubric" if source == "rule" else "quality"),
-                risk_level=issue.get("risk_level") or "medium",
-                field_name=issue.get("field_name"),
-                issue_description=issue.get("issue_description") or "",
-                suggestion=issue.get("suggestion"),
+                issue_type=_clip(issue.get("issue_type"), 30)
+                or ("rubric" if source == "rule" else "quality"),
+                risk_level=risk,
+                field_name=_clip(issue.get("field_name"), 50),
+                issue_description=str(issue.get("issue_description") or ""),
+                suggestion=(str(issue.get("suggestion"))
+                            if issue.get("suggestion") is not None else None),
                 source=source,
                 # 法定扣分条款代码（LLM 建议无此值）——统计"最高频扣分条款"用
-                rule_code=issue.get("rule_code"),
+                rule_code=_clip(issue.get("rule_code"), 40),
             )
             db.add(qc)
 

@@ -279,6 +279,14 @@ class HisEventBus:
             except Exception:
                 pass
             self._client = None
+        # 订阅专用连接一并关（2026-08-29 资源泄漏审计：此前只关发布端，
+        # _sub_client 靠进程退出收尾——测试多次建/关时会残留连接）
+        if self._sub_client is not None:
+            try:
+                await self._sub_client.aclose()
+            except Exception:
+                pass
+            self._sub_client = None
 
 
 # 全局单例：WS 路由（接诊事件）、签发钩子（回写指令）、SSE 端点（订阅）共用

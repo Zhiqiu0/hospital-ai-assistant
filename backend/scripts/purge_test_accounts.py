@@ -63,6 +63,11 @@ TEST_USERNAMES = [
     "e2e_doctor",      # E2E 测试医生
     "叶主任测试1",      # 早期联调测试账号
     "audit_deptadmin_023725",  # 审计留下的 dept_admin（已停用，一并清）
+    # 质控员测试账号（2026-08-29 第六轮渗透审计补）：2026-08-21 质控复核台
+    # 上线时在生产手工建的 qc_officer，**晚于本名单定稿（08-17）4 天**故此前
+    # 漏列——它能只读全院已签发病历（PHI），带进开业生产等于留一个后门号。
+    # 教训：每上线一个新角色的测试账号，必须同步补进本名单。
+    "qctest",
 ]
 
 # ── 要清掉的测试科室（按 code 精确匹配）──────────────────────────────────────
@@ -91,6 +96,29 @@ async def _preview(db):
         WHERE code = ANY(:codes) ORDER BY code
     """), {"codes": TEST_DEPT_CODES})).all()
     return users, depts
+
+
+async def _suspicious_leftover_check(db) -> None:
+    """兜底扫描（2026-08-29 第六轮渗透审计）：名单是闭集，但测试账号可能在
+    名单定稿**之后**才手工建（qctest 就是这么漏的——08-17 定名单、08-21 建号）。
+    清完后按命名特征扫一遍库里剩下的疑似测试账号，打出来让操作者人工确认，
+    不自动删（闭集原则不破：自动删有误伤真实账号的不可逆风险）。"""
+    rows = (await db.execute(text("""
+        SELECT username, real_name, role, is_active FROM users
+        WHERE username != ALL(:names)
+          AND (username ILIKE '%test%' OR username ILIKE '%demo%'
+               OR username ILIKE 'e2e%' OR username ILIKE '%测试%'
+               OR real_name ILIKE '%测试%')
+        ORDER BY username
+    """), {"names": TEST_USERNAMES})).all()
+    print("\n【疑似测试账号扫描】（按命名特征，不在删除名单内，需人工确认）：")
+    if not rows:
+        print("    （未发现疑似测试账号）")
+        return
+    for username, real_name, role, is_active in rows:
+        state = "在用" if is_active else "已停用"
+        print(f"    🔶 {username:<24} {real_name or '':<12} {role:<12} {state}"
+              " —— 若是测试号请加进 TEST_USERNAMES 后重跑")
 
 
 async def _admin_password_check(db) -> None:
@@ -131,6 +159,8 @@ async def main(execute: bool) -> int:
 
         # 默认口令体检独立于删除逻辑——即便测试账号已清干净，admin 口令照样要看
         await _admin_password_check(db)
+        # 疑似漏网测试账号扫描（独立于删除逻辑，干跑也扫）
+        await _suspicious_leftover_check(db)
 
         if not users and not depts:
             print("\n无测试账号/科室可删（仍请落实上方 admin 口令体检）。")

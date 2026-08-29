@@ -63,6 +63,9 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
     }
     setSelectedFile(file)
     setAnalysisResult('')
+    // 换文件先释放旧 blob URL（2026-08-29 资源泄漏审计）：不 revoke 的话
+    // 旧文件字节被钉在内存里直到关页签，一天几十张翻拍件能积上百 MB
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
     if (isDcm) {
       setPreviewUrl(null) // 浏览器无法直接预览 DCM
     } else {
@@ -96,6 +99,8 @@ export default function ImagingUploadModal({ open, onClose }: Props) {
 
   const handleClose = () => {
     setSelectedFile(null)
+    // 关弹窗同样释放 blob URL（与换文件处同一泄漏，见 handleFileSelect 注释）
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
     setPreviewUrl(null)
     setImageType('')
     setAnalysisResult('')
