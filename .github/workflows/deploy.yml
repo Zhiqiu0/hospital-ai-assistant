@@ -36,7 +36,10 @@ jobs:
       # persist-credentials: false —— 不把 GITHUB_TOKEN 写进 .git/config。
       # .git 会随 rsync 同步到服务器（让服务器 git status/log 与部署版本一致），
       # 绝不能把凭证一起带过去；本流程 checkout 后只读不推，关掉无副作用。
-      - uses: actions/checkout@v4
+      # 第三方 action 一律 pin 到 commit SHA（2026-08-29 第八轮审计）：
+      # tag 可被维护者/盗号者移动，而 ssh-action 持生产私钥（服务器侧免密
+      # sudo）、action-release 持 Sentry token。SHA 内容寻址不可移动。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -52,7 +55,7 @@ jobs:
       # 在 SSH deploy 之前执行：保证应用启动后上报 event 时 release object 已存在
       # 否则 event 上的 release tag 会"挂空"，关联不到 commits
       - name: Create Sentry release
-        uses: getsentry/action-release@v1
+        uses: getsentry/action-release@a74facf8a080ecbdf1cb355f16743530d712abb7  # v1
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: mediscribe-s0
@@ -74,14 +77,17 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # host key 固定（2026-08-29 第八轮审计）：原 ssh-keyscan 现场取键
+          # 等于首次使用即信任，路径 MITM 可伪装服务器截获部署会话。
+          # 公钥非机密，硬编码即可；服务器重装换键时同步更新此行。
+          echo "${{ secrets.SERVER_HOST }} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILy2/IMn1STsfYeHb5QRBzq2gmPRA6UoSjUgGSbg+S2Q" >> ~/.ssh/known_hosts
           rsync -az --delete \
             --exclude='.env' --exclude='logs' \
             -e "ssh -i ~/.ssh/deploy_key" \
             ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/app/"
 
       - name: Deploy to server via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262  # v1.0.3
         # SENTRY_RELEASE 通过 envs 字段穿透到 ssh 脚本里，
         # 再 export 给 docker compose，docker-compose.yml 用 ${SENTRY_RELEASE:-} 接收
         env:
@@ -119,6 +125,11 @@ jobs:
             # 都重新拉。失败时降级到本地缓存，up -d 默认 --pull missing 不会
             # 二次尝试。代价：image 升级需要在 compose 文件里改 tag 触发重建。
             docker compose pull --ignore-buildable || echo "[deploy] WARN: 部分 image pull 失败，使用本地缓存继续"
+            # 回滚锚点（2026-08-29 第八轮审计）：健康检查失败时旧镜像已被
+            # 覆盖、无 tag 可指回。build 前把当前镜像打 :prev，失败后可手动
+            #   docker tag app-backend:prev app-backend:latest && docker compose up -d
+            docker tag app-backend:latest app-backend:prev 2>/dev/null || true
+            docker tag app-frontend:latest app-frontend:prev 2>/dev/null || true
             docker compose build backend frontend
 
             # 先单独起 db 等它 healthy（其他 service 都依赖 db；orthanc 需要 db
@@ -176,6 +187,8 @@ jobs:
             if [ "$backend_h" != "healthy" ] || [ "$frontend_h" != "healthy" ]; then
               echo "[deploy] FATAL: backend / frontend 未在 150s 内 healthy"
               docker compose logs --tail=50 backend frontend
+              echo "[deploy] 手动回滚命令（上一版镜像已打 :prev 标签）："
+              echo "  docker tag app-backend:prev app-backend:latest && docker tag app-frontend:prev app-frontend:latest && cd /app && docker compose up -d"
               exit 1
             fi
             # orthanc unhealthy 不 fatal（PACS 影像功能可单独修），仅 dump 日志便于排查

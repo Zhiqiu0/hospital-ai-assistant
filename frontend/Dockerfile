@@ -1,5 +1,6 @@
 # 走 daocloud 反代避开 docker.io 网络超时（国内服务器无法直连）
-FROM docker.m.daocloud.io/library/node:20-slim AS builder
+# tag@digest 双写（2026-08-29 第八轮审计），升级版本时同步更新 digest
+FROM docker.m.daocloud.io/library/node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS builder
 
 WORKDIR /app
 
@@ -23,7 +24,7 @@ COPY . .
 RUN npm run build
 
 # --- 生产镜像 ---
-FROM docker.m.daocloud.io/library/nginx:alpine
+FROM docker.m.daocloud.io/library/nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf

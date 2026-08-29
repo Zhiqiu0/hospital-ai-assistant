@@ -1,5 +1,6 @@
 # 走 daocloud 反代避开 docker.io 网络超时（国内服务器无法直连）
-FROM docker.m.daocloud.io/library/python:3.11-slim
+# tag@digest 双写（2026-08-29 第八轮审计）：反代链路无完整性校验，digest 防篡改
+FROM docker.m.daocloud.io/library/python:3.11-slim@sha256:1042b61448fef4ba92d16a8c7eb4996d027568ce64792a7877fd88511e0af7c6
 
 WORKDIR /app
 
