@@ -161,3 +161,49 @@ async def test_dept_admin_can_manage_own_department(api):
         res = await ac.post(f"/api/v1/admin/users/{mine.id}/reset-password",
                             json={"new_password": "NewPass@12345"})
     assert res.status_code == 200
+
+
+# ── #220 update 通道跨科角色守卫回归锁（2026-08-29 第十一轮收敛验证建议）──
+
+
+async def _mk_dept_user(db, *, username, role, department_id):
+    u = User(username=username, password_hash="x", real_name=username,
+             role=role, is_active=True, department_id=department_id)
+    db.add(u)
+    await db.commit()
+    await db.refresh(u)
+    return u
+
+
+@pytest.mark.asyncio
+async def test_dept_admin_cannot_promote_to_qc_officer(api):
+    """dept_admin 把本科室医生改成 qc_officer（跨科只读权限）必须 403。"""
+    db, as_user = api
+    dept = await _mk_dept_user(db, username="da1", role="dept_admin", department_id="D1")
+    doc = await _mk_dept_user(db, username="dc1", role="doctor", department_id="D1")
+    async with as_user(dept) as ac:
+        res = await ac.put(f"/api/v1/admin/users/{doc.id}", json={"role": "qc_officer"})
+    assert res.status_code == 403, "update 通道的跨科角色授予守卫被改坏"
+
+
+@pytest.mark.asyncio
+async def test_dept_admin_cannot_migrate_department(api):
+    """dept_admin 把账号（含自己）迁往他科必须 403——跨科铸号变体。"""
+    db, as_user = api
+    dept = await _mk_dept_user(db, username="da2", role="dept_admin", department_id="D1")
+    async with as_user(dept) as ac:
+        res = await ac.put(f"/api/v1/admin/users/{dept.id}", json={"department_id": "D2"})
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_same_value_role_and_dept_not_blocked(api):
+    """同值 role/department_id 提交不误拦（防 != 条件将来被改坏）。"""
+    db, as_user = api
+    dept = await _mk_dept_user(db, username="da3", role="dept_admin", department_id="D1")
+    doc = await _mk_dept_user(db, username="dc3", role="doctor", department_id="D1")
+    async with as_user(dept) as ac:
+        res = await ac.put(f"/api/v1/admin/users/{doc.id}",
+                           json={"role": "doctor", "department_id": "D1",
+                                 "real_name": "改名测试"})
+    assert res.status_code == 200, res.text
