@@ -6,7 +6,7 @@
  *  - patient_profile 缺失时不抛错
  *  - patient.gender 异常值（null / unknown 字符串）被收敛为 'unknown'
  *  - patient_reused=true 对应 isFirstVisit=false
- *  - applySnapshotResult 默认按复诊态处理
+ *  - applySnapshotResult 用快照里的 is_first_visit 真值（缺字段才回退复诊态）
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -80,7 +80,8 @@ describe('applyQuickStartResult', () => {
 })
 
 describe('applySnapshotResult', () => {
-  it('恢复接诊时默认按复诊态处理', () => {
+  it('快照缺 is_first_visit 时回退到保守的复诊态', () => {
+    // 老快照/字段缺失才走这条；正常情况下后端一直有下发，见下面两条
     applySnapshotResult({
       encounter_id: 'e2',
       patient: { id: 'p2', name: '王五' },
@@ -93,6 +94,32 @@ describe('applySnapshotResult', () => {
     expect(active.isFirstVisit).toBe(false)
     expect(active.isPatientReused).toBe(true)
     expect(usePatientCacheStore.getState().getProfile('p2')?.past_history).toBe('糖尿病')
+  })
+
+  // ── 初诊不得被改判成复诊（2026-09-01 端到端实测发现）─────────────────
+  // 原实现硬编码 isFirstVisit=false，理由是"恢复接诊时无法判定初诊/复诊"——
+  // 而后端 workspace 快照一直下发 is_first_visit（encounters 表的权威值）。
+  // 实测后果：新建患者的初诊接诊，医生刷新一次页面后界面改判为「复诊」并锁定，
+  // 质控按复诊标准误扣 5 分，AI 生成更会给首次就诊的患者写出"经治疗后症状较前
+  // 好转"——凭空编造一段不存在的诊疗史写进法定病历。
+  it('快照说是初诊就必须是初诊', () => {
+    applySnapshotResult({
+      encounter_id: 'e-first',
+      patient: { id: 'p-first', name: '初诊患者' },
+      visit_type: 'outpatient',
+      is_first_visit: true,
+    })
+    expect(useActiveEncounterStore.getState().isFirstVisit).toBe(true)
+  })
+
+  it('快照说是复诊就是复诊', () => {
+    applySnapshotResult({
+      encounter_id: 'e-return',
+      patient: { id: 'p-return', name: '复诊患者' },
+      visit_type: 'outpatient',
+      is_first_visit: false,
+    })
+    expect(useActiveEncounterStore.getState().isFirstVisit).toBe(false)
   })
 
   it('encounter_id 缺失时不写 active，但仍可写 patientCache', () => {
