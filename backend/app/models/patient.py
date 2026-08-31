@@ -87,6 +87,13 @@ class Patient(Base, TimestampMixin):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
     deleted_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"))
+    # 重复档案合并的去向（2026-09-01 数据更正流程审计新增）。
+    # 老人无身份证、儿童留家长手机、代挂号——查重强键全 miss 时会新建档案，
+    # 而此前"可事后人工合并"只写在注释里、功能并不存在，导致既往史/过敏史
+    # 分散在两份档案下（过敏史正是开药前飘红警示的那个字段）。
+    # 合并不可逆，故被合并掉的那份软删后由本列指向它被并进了哪一份：打开一份
+    # 空档案时要能立刻知道它去哪了，而不是去审计日志里按时间线翻。
+    merged_into: Mapped[Optional[str]] = mapped_column(String, index=True)
 
     # ── 病案首页扩展字段（住院病历必填）────────────────────────────────────────
     # 民族
