@@ -130,7 +130,21 @@ class UserService:
                 raise HTTPException(status_code=400, detail=f"工号 {code} 已被其他账号占用")
             self.db.add(DoctorCode(user_id=user.id, code=code, note="主工号"))
 
-        await self.db.commit()
+        # IntegrityError 转业务码（2026-08-31 并发矩阵审计）：上面的"先查后插"
+        # 在两个管理员同时用同一工号建号时会撞 ix_doctor_codes_code 唯一索引，
+        # 原实现未捕获 → 500，而同一函数上方已为该情形准备了 400 文案。
+        # 同类路径（bulk_import / department_service / _patient_write / auth）
+        # 都已捕获转业务码，唯独这里漏了。
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail="用户名或工号已被占用，请换一个再试",
+            )
         await self.db.refresh(user)
         return user
 

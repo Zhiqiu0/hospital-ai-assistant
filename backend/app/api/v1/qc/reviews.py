@@ -208,7 +208,11 @@ async def submit_review(
     """提交复核结论；退回必须附整改意见。"""
     if data.conclusion == "returned" and not (data.comment or "").strip():
         raise HTTPException(status_code=422, detail="退回整改必须填写整改意见")
-    rec = await db.get(MedicalRecord, data.medical_record_id)
+    # 行锁（2026-08-31 并发矩阵审计）：下面"最新一条相同结论即视为重复提交"
+    # 的防重是读后写 TOCTOU——双击提交时两个请求都查不到 latest 就各插一条，
+    # 而 qc_reviews 无唯一约束、stats 按行计数 → 月度通报的复核数虚增。
+    # 锁住被复核的病历行把同一份文书的复核提交串行化。
+    rec = await db.get(MedicalRecord, data.medical_record_id, with_for_update=True)
     if rec is None or rec.status != "submitted":
         raise HTTPException(status_code=404, detail="病历不存在或尚未签发")
     enc = await db.get(Encounter, rec.encounter_id) if rec.encounter_id else None

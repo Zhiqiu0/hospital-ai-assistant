@@ -173,6 +173,22 @@ async def latest_vital(db: AsyncSession, encounter_id: str) -> Optional[VitalSig
 
 # ── 问题列表 ──────────────────────────────────────────────────────────────────
 
+async def _lock_encounter(db: AsyncSession, encounter_id: str) -> None:
+    """锁接诊行，串行化同一接诊的主要诊断互斥写（2026-08-31 并发矩阵审计）。
+
+    ProblemItem 的"同接诊只能有一条 is_primary"此前既无锁也无 DB 约束：
+    读-清零-插新全程裸奔，READ COMMITTED 下两个并发"设为主要"各自看不到
+    对方刚插的行，结果两条都是主要诊断。对照 diagnoses 表的同一不变量——
+    既有接诊行锁（diagnosis_service.replace_all）又有部分唯一索引
+    uq_diag_primary_per_enc，这里两样都没有。锁序与全仓一致（encounter 在前）。
+    """
+    from app.models.encounter import Encounter
+
+    await db.execute(
+        select(Encounter.id).where(Encounter.id == encounter_id).with_for_update()
+    )
+
+
 async def _clear_primary_flags(db: AsyncSession, encounter_id: str, *, exclude_id: Optional[str] = None) -> None:
     """清除同一接诊下其他问题的 is_primary 标记（可选排除某条）。"""
     conds = [ProblemItem.encounter_id == encounter_id, ProblemItem.is_primary.is_(True)]
@@ -195,6 +211,7 @@ async def add_problem(
 ) -> ProblemItem:
     """新增一条问题/诊断；若标为主要诊断，清除同接诊其他主要诊断标记。"""
     if is_primary:
+        await _lock_encounter(db, encounter_id)
         await _clear_primary_flags(db, encounter_id)
 
     item = ProblemItem(
@@ -230,6 +247,9 @@ async def update_problem(
     is_primary: Optional[bool],
 ) -> ProblemItem:
     """更新问题状态/ICD/主要标记。"""
+    if is_primary:
+        # 同 add_problem：设为主要诊断前先锁接诊行串行化互斥写
+        await _lock_encounter(db, encounter_id)
     result = await db.execute(
         select(ProblemItem).where(
             ProblemItem.id == problem_id,
