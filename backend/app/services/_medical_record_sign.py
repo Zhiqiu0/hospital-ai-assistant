@@ -218,6 +218,9 @@ class MedicalRecordSignMixin:
                     "doctor_name": doctor_name,
                     "doctor_id": doctor_id,
                     "department_name": dept_name,
+                    # 就诊号（2026-08-31 导出产物审计）：法定病历文书的定位键，
+                    # 病案室按它归档。此前快照与打印首页都没有，只有患者编号。
+                    "visit_no": encounter.visit_no,
                 }
 
         # ── 电子签名防篡改哈希（2026-08-11 病历可信）─────────────────────────

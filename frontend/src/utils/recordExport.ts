@@ -1,3 +1,4 @@
+import { message } from '@/services/messageBridge'
 /**
  * 病历导出工具（utils/recordExport.ts）
  *
@@ -86,6 +87,9 @@ export interface RecordExportSnapshot {
   bed_no?: string | null
   doctor_name?: string | null
   department_name?: string | null
+  /** 就诊号（2026-08-31 导出审计）：签发快照里补存，打印首页作定位键。
+   *  存量快照没有该键，取值链会回落 ctx.visit_no。 */
+  visit_no?: string | null
 }
 
 /** 接诊/医生上下文（不在 patient 表里，由调用方从 encounter/doctor 传入）。 */
@@ -95,7 +99,20 @@ export interface RecordExportContext {
   bed_no?: string | null
   doctor_name?: string | null
   department_name?: string | null
+  /** 就诊号/住院号（HIS 流水号）——法定文书必需的定位键（2026-08-31 导出审计补） */
+  visit_no?: string | null
+  /** 签发医师：可能 !== 接诊医生（住院主管医生让管床医生代签发），
+   *  两者同栏显示会让纸面认不出责任主体 */
+  submitted_by_name?: string | null
+  /** 文书版本号：>1 表示经管理员修订过，打印件必须注明（病历书写规范要求
+   *  修改留痕、原记录清楚可辨；此前打印件把修订完全抹平，对外呈现为原始签发件） */
+  version_no?: number | null
 }
+
+/** 医院名称：打印件抬头（法定文书必需项）。
+ *  可用 VITE_HOSPITAL_NAME 覆盖，默认落地医院。 */
+export const HOSPITAL_NAME: string =
+  (import.meta.env?.VITE_HOSPITAL_NAME as string) || '安吉濮氏中西医结合医院'
 
 // ── 内部工具：把后端中英枚举/null 都翻成首页显示文本 ──────────────────────────
 const GENDER_LABEL: Record<string, string> = { male: '男', female: '女', unknown: '未知' }
@@ -175,6 +192,14 @@ function esc(v: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
+/** 换行归一：把 CRLF/CR 统一成 LF，避免残留 \r 在 pre-wrap 下多出空行 */
+function normalizeEol(text: string): string {
+  return text.replace(/\r\n?/g, chrLf())
+}
+function chrLf(): string {
+  return String.fromCharCode(10)
+}
+
 export function buildPatientHeaderHtml(
   patient: RecordExportPatient | null | undefined,
   snapshot: RecordExportSnapshot | null | undefined,
@@ -214,6 +239,10 @@ export function buildPatientHeaderHtml(
   const doctorName = pick(s.doctor_name, c.doctor_name) || '—'
   const deptName = pick(s.department_name, c.department_name) || '—'
   const birthText = fmtDate(birth) || '—'
+  // 就诊号与签发医师（2026-08-31 导出产物审计）：前者是法定文书的定位键，
+  // 后者在代签发场景下与接诊医生不是同一人——同栏显示会让纸面认不出责任主体
+  const visitNo = pick(s.visit_no, c.visit_no) || '—'
+  const signedBy = pick(c.submitted_by_name, s.doctor_name, c.doctor_name) || '—'
 
   // 两列对齐的首页表格——简单 table 兼容 Word/打印渲染最稳
   const row = (a: string, av: string, b: string, bv: string) =>
@@ -233,7 +262,8 @@ export function buildPatientHeaderHtml(
   ${row('紧急联系人', contactName, '联系人电话', contactPhone)}
   ${row('与患者关系', contactRelation, '患者编号', patientNo)}
   ${row('就诊类型', visitType, '床位号', bedNo)}
-  ${row('接诊医生', doctorName, '所属科室', deptName)}
+  ${row('就诊号', visitNo, '所属科室', deptName)}
+  ${row('接诊医生', doctorName, '签发医师', signedBy)}
   ${row('就诊时间', visitTime, '', '')}
 </table>`
 }
@@ -243,7 +273,17 @@ const HEADER_CSS = `
   .patient-header { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 12pt; }
   .patient-header td { border: 1px solid #cbd5e1; padding: 6px 10px; vertical-align: top; }
   .patient-header .hk { background: #f1f5f9; color: #475569; width: 14%; white-space: nowrap; }
-  .patient-header .hv { color: #1e293b; width: 36%; word-break: break-all; }
+  .patient-header .hv { color: #1e293b; width: 36%; word-break: normal; overflow-wrap: anywhere; }
+`
+
+/** 打印页码（2026-08-31 导出审计）：法定病历要求每页页码，住院入院记录
+ *  常有两三页。此前完全没有 @page 规则，靠浏览器默认页眉页脚（内容是
+ *  about:blank + 打印当天日期），不成立。 */
+const PAGE_CSS = `
+  @page {
+    margin: 1.6cm 1.4cm;
+    @bottom-center { content: "第 " counter(page) " 页 / 共 " counter(pages) " 页"; font-size: 10pt; color: #64748b; }
+  }
 `
 
 export function printRecord(
@@ -257,13 +297,19 @@ export function printRecord(
   const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
   // 先转义再换行：正文里的 < > 必须先变成 HTML 实体，否则 <script> 会在
   // document.write 出来的**同源**窗口里执行，直接读走 localStorage 里的登录 token
-  const formatted = esc(content).replace(/\n/g, '<br>')
+  // CRLF 先归一（2026-08-31 导出审计）：从 Word/HIS 粘贴来的正文含 \r，
+  // 不归一时 \r 残留 + pre-wrap 会让每行之间多出一个空行
+  const formatted = normalizeEol(esc(content)).replace(/\n/g, '<br>')
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
+  const revised = (ctx?.version_no ?? 0) > 1
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <title>${esc(typeLabel)} - ${esc(maskName(patient?.name))}</title>
 <style>
-  body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
+  /* 字体栈补 SimSun-ExtB：CJK 扩展 B 区生僻字姓名（如𰻝）在宋体/雅黑里缺字 */
+  body { font-family: 'PingFang SC','Microsoft YaHei','SimSun-ExtB',sans-serif; margin: 0; padding: 32px 48px; color: #1e293b; }
+  h1.hospital { text-align: center; font-size: 17px; font-weight: 700; margin: 0 0 6px; letter-spacing: 2px; }
   h2 { text-align: center; font-size: 20px; margin-bottom: 12px; }
+  .revised-note { text-align: center; font-size: 12px; color: #b45309; margin-bottom: 10px; }
   .signed { text-align: center; font-size: 12px; color: #64748b; margin-bottom: 16px; }
   .content { font-size: 14px; line-height: 2.0; white-space: pre-wrap; border-top: 1px solid #cbd5e1; padding-top: 14px; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 12px; color: #94a3b8; text-align: right; }
@@ -274,9 +320,12 @@ export function printRecord(
                   font-size: 15px; font-weight: 700; text-align: center; letter-spacing: 2px; }
   .footer.draft { color: #dc2626; font-weight: 600; }
   ${HEADER_CSS}
+  ${PAGE_CSS}
   @media print { body { padding: 20px 32px; } }
 </style></head><body>
+<h1 class="hospital">${esc(HOSPITAL_NAME)}</h1>
 <h2>${esc(typeLabel)}</h2>
+${revised ? '<div class="revised-note">本文书经修订（第 ' + String(ctx?.version_no) + ' 版），修订留痕见医院审计日志</div>' : ''}
 ${
   signedAt
     ? `<div class="signed">签发时间：${esc(signedAt)}</div>`
@@ -295,7 +344,12 @@ ${
   if (w) {
     w.document.write(html)
     w.document.close()
+    return true
   }
+  // 弹窗被拦截时必须告知（2026-08-31 导出审计）：原先静默失败，而调用方
+  // 已经先行上报了"已导出"审计——追责时的时间线是错的
+  message.error('打印窗口被浏览器拦截，请允许本站弹窗后重试')
+  return false
 }
 
 export function exportWordDoc(
@@ -308,7 +362,9 @@ export function exportWordDoc(
 ) {
   const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
-  const paragraphs = content
+  // 经修订的文书要在纸面注明（同 printRecord，见那里的注释）
+  const revised = (ctx?.version_no ?? 0) > 1
+  const paragraphs = normalizeEol(content)
     .split('\n')
     .map(line => {
       const isSectionHeader = /^【[^】]+】/.test(line.trim())
@@ -321,13 +377,17 @@ export function exportWordDoc(
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(typeLabel)}</title>
 <style>
-  body{font-family:'宋体',serif;font-size:12pt;line-height:1.8;margin:2cm;}
+  /* 字体栈补英文别名与扩展 B 区（2026-08-31 导出审计）：单写'宋体'在英文版
+     Office / WPS 海外版解析失败会回落西文字体渲染中文；SimSun-ExtB 供生僻字姓名 */
+  body{font-family:'宋体',SimSun,'Songti SC','SimSun-ExtB',serif;font-size:12pt;line-height:1.8;margin:2cm;}
   h1{text-align:center;font-size:16pt;margin-bottom:8pt;}
   .signed{text-align:center;color:#666;font-size:10pt;margin-bottom:12pt;}
   ${HEADER_CSS}
 </style>
 </head><body>
+<p style="text-align:center;font-size:14pt;font-weight:bold;letter-spacing:2pt;margin:0 0 6pt;">${esc(HOSPITAL_NAME)}</p>
 <h1>${esc(typeLabel)}</h1>
+${revised ? '<p style="text-align:center;color:#b45309;font-size:10pt;margin-bottom:8pt;">本文书经修订（第 ' + String(ctx?.version_no) + ' 版），修订留痕见医院审计日志</p>' : ''}
 ${
   signedAt
     ? `<p class="signed">签发时间：${esc(signedAt)}</p>`
