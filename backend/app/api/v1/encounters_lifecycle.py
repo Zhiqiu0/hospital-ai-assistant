@@ -55,8 +55,14 @@ async def discharge_encounter(
       - 重复调用幂等：已 completed 的接诊不报错，直接返回
       - 关闭后失效 my_encounters 缓存 + 接诊快照缓存
     """
+    # 行锁（2026-08-31 并发矩阵审计）：本端点是全仓唯一无锁的
+    # encounters.status 写路径——签发（_medical_record_sign）与取消
+    # （_encounter_cancel，2026-08-28 刚为同一形态修过）都已加锁。
+    # 无锁时：本请求读到 in_progress → 取消请求拿锁置 cancelled 并提交 →
+    # 本请求照样落 completed，下面那条"已取消不能被出院复活"的守卫当场失效，
+    # 已取消接诊重新出现在病区列表与统计口径里。
     result = await db.execute(
-        select(EncounterModel).where(EncounterModel.id == encounter_id)
+        select(EncounterModel).where(EncounterModel.id == encounter_id).with_for_update()
     )
     encounter = result.scalar_one_or_none()
     if not encounter:

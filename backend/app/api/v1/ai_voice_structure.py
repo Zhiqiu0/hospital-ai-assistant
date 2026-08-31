@@ -183,7 +183,24 @@ async def voice_structure(
         # 病历文本统一走 render_record；响应键保留空串兼容旧客户端。
 
         if voice_record:
-            voice_record.raw_transcript = transcript
+            # 重读并加锁后再写（2026-08-31 并发矩阵审计）：本请求在最长 270s
+            # 的 LLM 调用之前就把 voice_record 读进内存了，期间医生可能"继续
+            # 录音"，实时 ASR 经 save_voice_transcript 把**更长**的转写落库。
+            # 原实现拿请求发起时的旧 transcript 整体覆写 → 后半段口述原文永久
+            # 丢失（该字段无版本、无 append 语义，是口述原文的唯一副本）。
+            # 只在库里的值不比本次更长时才覆写原文；结构化结果照写。
+            from app.models.voice_record import VoiceRecord as _VR
+            fresh = await db.get(_VR, voice_record.id, with_for_update=True)
+            if fresh is not None:
+                voice_record = fresh
+            db_text = voice_record.raw_transcript or ""
+            if len(transcript) >= len(db_text):
+                voice_record.raw_transcript = transcript
+            else:
+                logger.warning(
+                    "voice.structure: 库内转写更长（%d>%d），保留库内原文不覆写 id=%s",
+                    len(db_text), len(transcript), voice_record.id,
+                )
             voice_record.transcript_summary = result.get("transcript_summary", "")
             voice_record.speaker_dialogue = json.dumps(result.get("speaker_dialogue", []), ensure_ascii=False)
             voice_record.structured_inquiry = json.dumps(result.get("inquiry", {}), ensure_ascii=False)

@@ -140,6 +140,14 @@ class MedicalRecordSignMixin:
         encounter_closed = False
         if encounter and encounter.visit_type != "inpatient":
             encounter.status = "completed"
+            # 同时写结束时刻（2026-08-31 生产数据体检修复）：completed_at 此前
+            # 只有住院办理出院那条路径写，门急诊签发只改 status——生产库里
+            # 18 条 status=completed 却 completed_at 为 NULL 全出自这里。
+            # 现有指标恰好只对住院用它（出院记录时效），所以没炸；但
+            # "已结束却没有结束时刻"语义不自洽，未来任何按 completed_at
+            # 判断接诊何时结束的新代码都会在门急诊上拿到 NULL。
+            if encounter.completed_at is None:
+                encounter.completed_at = datetime.now()
             encounter_closed = True
 
         # ── 病案首页快照（合规要求，2026-05-16 加）─────────────────────────

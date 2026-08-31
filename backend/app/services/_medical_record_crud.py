@@ -120,12 +120,19 @@ class MedicalRecordCrudMixin:
         Returns:
             {"ok": True, "version_no": 新版本号}
         """
-        # 行锁查询：联表 Encounter 校验归属权 + 加锁防并发
+        # 行锁查询：联表 Encounter 校验归属权 + 加锁防并发。
+        # of=MedicalRecord 必须显式指定（2026-08-31 并发矩阵审计）：
+        # PG 的 FOR UPDATE 不带 OF 会锁住 FROM 里**所有**表的行，本查询
+        # 驱动表是 medical_records（PK 命中），实际锁序变成 record→encounter，
+        # 与全仓约定的 encounter→record（quick_save/auto_save_draft/save_ai_draft/
+        # create 四处）正好相反 → 对同一 (encounter, record) 并发即死锁环，
+        # PG 检测后 abort 其一，医生侧 500 且该次写入丢失。
+        # 只锁病历行既消除倒置，也不再无谓阻塞签发/取消/出院。
         result = await self.db.execute(
             select(MedicalRecord)
             .join(Encounter, Encounter.id == MedicalRecord.encounter_id)
             .where(MedicalRecord.id == record_id, Encounter.doctor_id == user_id)
-            .with_for_update()
+            .with_for_update(of=MedicalRecord)
         )
         record = result.scalar_one_or_none()
         if not record:

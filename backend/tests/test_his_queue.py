@@ -108,6 +108,26 @@ async def test_quick_save_dispatches_his_writeback(client_ctx, async_db, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_outpatient_sign_sets_completed_at(client_ctx, async_db):
+    """门急诊签发关闭接诊时必须同时写 completed_at（2026-08-31 数据体检回归锁）。
+
+    此前只有住院办理出院那条路径写 completed_at，门急诊签发只改 status——
+    生产库里因此积了 18 条 status=completed 却 completed_at 为 NULL 的接诊，
+    "已结束却没有结束时刻"语义不自洽，后续按该字段判断接诊结束的代码会踩空。
+    """
+    client, doctor = client_ctx
+    enc = await _mk_encounter(async_db, doctor, his=False, visit_no="V-ct")
+
+    res = await client.post("/api/v1/medical-records/quick-save", json={
+        "encounter_id": enc.id, "record_type": "outpatient", "content": "主诉：测试。",
+    })
+    assert res.status_code == 200
+    await async_db.refresh(enc)
+    assert enc.status == "completed"
+    assert enc.completed_at is not None, "门急诊签发关闭了接诊却没写 completed_at"
+
+
+@pytest.mark.asyncio
 async def test_quick_save_normal_encounter_no_writeback(client_ctx, async_db, monkeypatch):
     """普通 SaaS 接诊签发 → 不派发回写，his_writeback 为 null。"""
     client, doctor = client_ctx
