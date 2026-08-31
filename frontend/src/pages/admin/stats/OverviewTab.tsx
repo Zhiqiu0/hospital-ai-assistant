@@ -199,6 +199,11 @@ export default function OverviewTab({ overview, loading }: OverviewTabProps) {
             loading={loading}
             styles={{ body: { padding: '12px 20px' } }}
           >
+            {aiFeatureData.length === 0 && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                暂无 AI 调用记录
+              </Text>
+            )}
             {aiFeatureData.map(item => (
               <div
                 key={item.key}

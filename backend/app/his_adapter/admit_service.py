@@ -90,12 +90,20 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
     # 过滤的 visit_no 裸列毫无关系，visit_no 当时**没有任何索引**，
     # 每次患者叫号都在 advisory lock 里全表扫 encounters。
     # 已由迁移 j20260814hotidx 补上 idx_encounters_visit_no。
+    # 行锁（2026-08-31 并发矩阵审计·中高）：上面的 advisory lock 只串行
+    # "同一条推送"，挡不住医生侧签发。原实现读到 status='in_progress' 的
+    # 旧快照后，医生 quick_save 拿 encounter 行锁置 completed 并提交，
+    # 本请求的 UPDATE 解除阻塞后照样把已签发接诊改派给新医生——正是本
+    # 函数下方注释宣称已堵住的"责任归属错乱"场景（守卫写了、锁没加）。
+    # 附带损失：ref = dict(enc.his_external_ref) 用的是签发前的 JSONB 快照，
+    # 会把签发钩子刚写进去的 writeback/writeback_records 整体抹掉。
+    # 锁序与 quick_save 一致（encounter 在前），无死锁环。
     candidates = (await db.execute(
         select(Encounter).where(
             Encounter.visit_no == payload.visit_id,
             Encounter.status != "cancelled",
             Encounter.his_external_ref.isnot(None),
-        ).order_by(Encounter.created_at.desc())
+        ).order_by(Encounter.created_at.desc()).with_for_update()
     )).scalars().all()
     enc = next(
         (e for e in candidates

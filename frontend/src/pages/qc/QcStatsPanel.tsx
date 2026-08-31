@@ -14,9 +14,11 @@ import { useAuthStore } from '@/store/authStore'
 interface DeptStat {
   department: string
   count: number
-  avg_score: number
-  grade_a_rate: number
-  pass_rate: number
+  // 零样本时后端返回 null（2026-08-31）：与 archive_proxy.rate 同口径，
+  // 渲染成"无样本"而不是 0%——0% 会被月度通报读成"该科全不合格"
+  avg_score: number | null
+  grade_a_rate: number | null
+  pass_rate: number | null
 }
 interface RuleStat {
   rule_code: string
@@ -122,9 +124,24 @@ export default function QcStatsPanel() {
           columns={[
             { title: '科室', dataIndex: 'department' },
             { title: '评分文书数', dataIndex: 'count', width: 110 },
-            { title: '平均分', dataIndex: 'avg_score', width: 90 },
-            { title: '甲级率', dataIndex: 'grade_a_rate', width: 90, render: v => `${v}%` },
-            { title: '合格率', dataIndex: 'pass_rate', width: 90, render: v => `${v}%` },
+            {
+              title: '平均分',
+              dataIndex: 'avg_score',
+              width: 90,
+              render: (v: number | null) => (v == null ? '无样本' : v),
+            },
+            {
+              title: '甲级率',
+              dataIndex: 'grade_a_rate',
+              width: 90,
+              render: (v: number | null) => (v == null ? '无样本' : `${v}%`),
+            },
+            {
+              title: '合格率',
+              dataIndex: 'pass_rate',
+              width: 90,
+              render: (v: number | null) => (v == null ? '无样本' : `${v}%`),
+            },
           ]}
         />
       </Card>

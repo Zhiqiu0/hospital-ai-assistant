@@ -105,9 +105,14 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
             {
                 "department": b["department"],
                 "count": b["count"],
-                "avg_score": round(b["score_sum"] / b["count"], 1) if b["count"] else 0,
-                "grade_a_rate": round(b["grade_a"] / b["graded"] * 100, 1) if b["graded"] else 0,
-                "pass_rate": round(b["passed"] / b["count"] * 100, 1) if b["count"] else 0,
+                # 零样本返回 None 而不是 0（2026-08-31 空系统冷启动审计）：
+                # 甲级分母只算三级体系文书，纯门诊科室 graded=0 会显示
+                # "甲级率 0%"——医务科月度通报会读成"该科全不合格"，
+                # 而真相是"无三级评级样本"。与同一响应里 archive_proxy.rate
+                # 的 None 口径统一，前端渲染成"无样本"。
+                "avg_score": round(b["score_sum"] / b["count"], 1) if b["count"] else None,
+                "grade_a_rate": round(b["grade_a"] / b["graded"] * 100, 1) if b["graded"] else None,
+                "pass_rate": round(b["passed"] / b["count"] * 100, 1) if b["count"] else None,
             }
             for b in by_dept.values()
         ),
@@ -206,7 +211,14 @@ async def stats_export(
         dept_name 自动建档带入，= + - @ 开头会被 Excel 当公式执行。
         危险首字符前置单引号（Excel 显示原文不执行）。"""
         s = str(v)
-        return f"'{s}" if s[:1] in ("=", "+", "-", "@") else v
+        # 首字符集含 TAB/CR（2026-08-31 导出产物审计补全）：Excel 会跳过
+        # 前导空白再解析首个可见字符，制表符开头的 =cmd|... 可绕过只查
+        # =+-@ 的守卫。注入源确凿——科室名可由 HIS dept_name 自动建档
+        # 带入，而姓名清洗不作用于科室名。
+        # 用 chr() 构造控制字符：源码里写字面转义序列会被编辑链路的
+        # 传输层解析成真实字符（本行就踩过一次，见记忆库教训）。
+        _FORMULA_PREFIXES = ("=", "+", "-", "@", chr(9), chr(13))
+        return f"'{s}" if s[:1] in _FORMULA_PREFIXES else v
 
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -214,8 +226,11 @@ async def stats_export(
     w.writerow([])
     w.writerow(["科室", "评分文书数", "平均分", "甲级率%", "合格率%"])
     for d in data["dept_stats"]:
-        w.writerow([_csv_safe(d["department"]), d["count"], d["avg_score"],
-                    d["grade_a_rate"], d["pass_rate"]])
+        # 零样本写"无样本"而非空（同 UI 口径，避免 Excel 里空格被读成 0）
+        w.writerow([_csv_safe(d["department"]), d["count"],
+                    d["avg_score"] if d["avg_score"] is not None else "无样本",
+                    d["grade_a_rate"] if d["grade_a_rate"] is not None else "无样本",
+                    d["pass_rate"] if d["pass_rate"] is not None else "无样本"])
     w.writerow([])
     w.writerow(["高频扣分条款", "次数", "条款说明"])
     for r in data["top_rules"]:

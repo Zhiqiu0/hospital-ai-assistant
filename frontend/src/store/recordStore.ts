@@ -228,6 +228,9 @@ export const useRecordStore = create<RecordState>()(
               // 按类型暂存的草稿同样属于上一个接诊，一并丢弃——
               // 否则跨患者污染的口子从 draftsByType 又开了一个
               draftsByType: {},
+              // 首页快照同理（2026-08-31 导出产物审计）：归属对不上就不能
+              // 留着给下一位患者的打印件当首页数据源
+              patientSnapshot: null,
             })
           }
           set({ ownerEncounterId: encounterId })
@@ -250,6 +253,13 @@ export const useRecordStore = create<RecordState>()(
           recordSavedAt: 0,
           // 按类型暂存的草稿也要清——不清会跨患者残留（PHI）
           draftsByType: {},
+          // 病案首页快照同样必须清（2026-08-31 导出产物审计·高危）：
+          // 它是打印件/Word 首页的**优先**取值源（recordExport 的 pick(s,p)），
+          // 漏清则下一位患者的打印件会印上前一位的姓名/身份证/住址/电话——
+          // 既是废纸也是 PHI 泄漏。而且它进了 partialize，跨刷新存活。
+          // 触发路径是门诊主流程：切接诊 reset 把 recordType 置回 outpatient，
+          // 随后 setRecordType('outpatient') 因类型没变提前返回，清不到它。
+          patientSnapshot: null,
         }),
     }),
     {

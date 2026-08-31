@@ -106,12 +106,26 @@ async def upsert_analysis_report(
     - 没有 report → 新建，radiologist_id 记当前分析人
     - study 状态流转为 analyzed，最后统一 commit
     """
-    result = await db.execute(select(ImagingReport).where(ImagingReport.study_id == study_id))
+    result = await db.execute(
+        select(ImagingReport).where(ImagingReport.study_id == study_id).with_for_update()
+    )
     report = result.scalar_one_or_none()
 
     if report:
         report.selected_frames = selected
         report.ai_analysis = ai_result
+        # ── 已发布报告绝不覆盖正文（2026-08-31 并发矩阵审计·高危）────────
+        # 原实现无条件覆写 final_report 并把 study.status 退回 analyzed，
+        # 三重后果：①放射科医生签发的正式报告正文被 AI 原文冲掉且该表无
+        # 版本历史，永久丢失；②status 退回后 list_patient_published_reports
+        # 按 published 过滤，临床医生侧该报告凭空消失；③delete_study 的
+        # "已发布不可删"守卫判据正是 status=='published'，退回后已发布报告
+        # 连同 Orthanc 原始影像可被物理删除——而那条守卫的存在理由写的是
+        # "医疗审计合规要求保留追溯链"。
+        # 已发布时只更新 AI 侧字段，正文与状态一律不动。
+        if report.is_published:
+            await db.commit()
+            return report
         report.final_report = ai_result
     else:
         report = ImagingReport(
@@ -125,6 +139,7 @@ async def upsert_analysis_report(
 
     study.status = "analyzed"
     await db.commit()
+    return report
 
 
 async def list_patient_published_reports(
