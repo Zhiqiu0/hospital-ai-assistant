@@ -135,6 +135,12 @@ class MedicalRecordQueryMixin:
                 # （2026-08-14 第六轮审计曾报"不返回 patient 兜底字段"，
                 #   核查后不成立：字段在、前端 viewableRecord.ts 也确实在消费。）
                 "patient_snapshot": record.patient_snapshot,
+                # 打印件法定要件（2026-08-31 导出产物审计）：就诊号是病案室
+                # 归档定位键；current_version>1 表示经管理员修订，打印件必须
+                # 注明（否则修订后的文书对外呈现为原始签发件，与规范要求的
+                # "修改留痕、原记录清楚可辨"相悖）。
+                "visit_no": encounter.visit_no,
+                "current_version": record.current_version,
             }
             if include_patient_no:
                 item["patient_no"] = patient.patient_no

@@ -35,6 +35,9 @@ export interface ViewableRecord {
   patient_age?: number | null
   doctor_name?: string | null
   submitted_by_name?: string | null
+  /** 就诊号与当前版本号（2026-08-31 导出产物审计：打印件法定要件） */
+  visit_no?: string | null
+  current_version?: number | null
   // ── 病案首页扩展字段（2026-05-16 加）────────────────────────────────
   // 优先用 patient_snapshot（签发时冻结）；为空回落到 patient_xxx 实时字段
   patient_snapshot?: RecordExportSnapshot | null
@@ -86,6 +89,12 @@ export function toExportCtx(r: ViewableRecord): RecordExportContext {
     bed_no: r.bed_no ?? null,
     doctor_name: r.doctor_name ?? null,
     department_name: r.department_name ?? null,
+    // 打印件法定要件（2026-08-31 导出产物审计）：就诊号是病案室归档定位键；
+    // 签发医师在代签发场景下与接诊医生不是同一人，同栏显示纸面认不出责任主体；
+    // 版本号 >1 说明经管理员修订，打印件必须注明（否则对外呈现为原始签发件）。
+    visit_no: r.visit_no ?? null,
+    submitted_by_name: r.submitted_by_name ?? null,
+    version_no: r.current_version ?? null,
   }
 }
 
