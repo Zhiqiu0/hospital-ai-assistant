@@ -59,6 +59,8 @@ export interface QuickStartResult extends EncounterIntakePayload {
 
 /** snapshot 响应专用：含 active_record / inquiry，可能 inquiry 为 null */
 export interface SnapshotResult extends EncounterIntakePayload {
+  /** 是否初诊——数据库里的权威值，后端 workspace 快照一直有下发 */
+  is_first_visit?: boolean
   /** 接诊问诊数据（医生填的字段） */
   inquiry?: Partial<InquiryData> | null
   /** 诊断条目（结构化权威源，2026-08-21 阶段1b）——恢复时整组灌 diagnosisEntriesStore */
@@ -154,8 +156,9 @@ export function applyQuickStartResult(res: QuickStartResult): void {
  *   latest_qc_issues / latest_ai_suggestions 一并灌回前端 store，
  *   做到"DB 有什么 → 前端就显示什么"。
  *
- * 与 applyQuickStartResult 相比，snapshot 没有 patient_reused 概念，
- * 这里默认按"复诊场景"处理（isFirstVisit=false），等待调用方按业务再修正。
+ * 与 applyQuickStartResult 相比，snapshot 没有 patient_reused 概念，但**有
+ * is_first_visit**（数据库里的权威值，后端 _encounter_snapshot 一直在下发），
+ * 直接用它即可——见下面 setActive 处的说明。
  */
 export function applySnapshotResult(res: SnapshotResult): void {
   syncPatientToCache(res)
@@ -164,8 +167,23 @@ export function applySnapshotResult(res: SnapshotResult): void {
       patientId: res.patient.id,
       encounterId: res.encounter_id,
       visitType: normalizeVisitType(res.visit_type),
-      // 恢复接诊时无法判定初诊/复诊，沿用最保守的复诊态，避免误清空 previous_record
-      isFirstVisit: false,
+      // 用快照里的真值（2026-09-01 端到端实测发现）。
+      //
+      // 原实现硬编码 false，理由写的是"恢复接诊时无法判定初诊/复诊，沿用最保守
+      // 的复诊态"——但这个前提早就不成立了：后端 workspace 快照一直下发
+      // is_first_visit，那是 encounters 表里的权威值。
+      //
+      // 硬编码的代价比"误清空 previous_record"严重得多。实测：新建患者的初诊
+      // 接诊，医生刷新一次页面（或重新登录、切回接诊）后：
+      //   · 界面把「初诊」改判成「复诊」且锁定不可改；
+      //   · 现病史提示变成"【必填】上次治疗后症状变化"，还红字警告"否则质控
+      //     不通过"；
+      //   · 质控按复诊标准判，「复诊无症状改变记录扣 5 分」平白误扣；
+      //   · 最要命的是 AI 生成也拿这个值（useRecordGenerate → is_first_visit），
+      //     于是给一个**首次就诊**的患者写出"经治疗后症状较前好转"——
+      //     凭空编造出一段不存在的诊疗史，而且是写进法定病历。
+      // 取不到时才回退到保守的 false（老快照/字段缺失）。
+      isFirstVisit: res.is_first_visit ?? false,
       isPatientReused: true,
       previousRecordContent: null,
     })
