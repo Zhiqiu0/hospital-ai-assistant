@@ -51,6 +51,9 @@ backend/etc/
 .mcp.json
 .mcp.json.bak
 .playwright-mcp/
+# Playwright 快照落到仓库根的产物（browser_snapshot 的 filename 参数）
+/*.snapshot.md
+inquiry-form.md
 
 # 截图与临时文档
 *.png
