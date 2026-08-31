@@ -541,6 +541,12 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
         logger.warning("his_admit.patient: 姓名不可清洗，使用占位名 visit_id=%s",
                        payload.visit_id)
         cleaned_name = "未知患者"
+    # 间隔号归一（2026-08-31 姓名边界审计）：与 PatientCreate._clean_name 同口径，
+    # 否则厂商推 U+30FB 而我方存 U+00B7，跨就诊查重的姓名比对必 miss → 重复建档
+    from app.utils.pinyin import SEPARATOR_CHARS
+    for _sep in SEPARATOR_CHARS:
+        if _sep != chr(0x00B7):
+            cleaned_name = cleaned_name.replace(_sep, chr(0x00B7))
     if len(cleaned_name) > 50:
         logger.warning("his_admit.patient: 姓名超列宽截断 len=%d", len(cleaned_name))
         cleaned_name = cleaned_name[:50]

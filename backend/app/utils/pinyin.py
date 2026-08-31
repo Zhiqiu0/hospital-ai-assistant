@@ -58,6 +58,25 @@ def _dedupe(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
+# 间隔号类字符（2026-08-31 姓名边界审计）：少数民族姓名「买买提·艾力」里的
+# 分隔符有多种码点写法——U+00B7（GB18030 规定用法）、U+2027、U+30FB（日文）、
+# U+FF65（半角片假名）、U+2022（项目符号，微信/OCR 粘贴常见）、U+0387。
+# 算拼音前必须剔除：否则 pypinyin 把它当一个'字'原样保留，索引存成
+# 'maimaiti·aili'，而查询侧的 is_ascii_alpha 闸门又把带点关键词挡在拼音列外
+# ——全拼、首字母、带点三种输入全部 miss，这类患者只能用汉字搜。
+SEPARATOR_CHARS = (
+    chr(0x00B7) + chr(0x2027) + chr(0x30FB) + chr(0xFF65) + chr(0x2022) + chr(0x0387)
+)
+
+
+def strip_separators(name: str) -> str:
+    """去掉姓名里的各种间隔号，供拼音索引与查重比对使用。"""
+    if not name:
+        return name
+    for ch in SEPARATOR_CHARS:
+        name = name.replace(ch, "")
+    return name
+
 def _heteronym_lazy(name: str, style: Style) -> list[list[str]]:
     """对每个汉字按指定 style 取所有读音。
 
@@ -71,7 +90,10 @@ def _heteronym_lazy(name: str, style: Style) -> list[list[str]]:
     # 去重 + 小写，pypinyin 偶尔返回大写或空字符串，统一兜底
     cleaned: list[list[str]] = []
     for g in groups:
-        items = [s.lower() for s in g if s]
+        # 丢弃仍是非 ASCII 的读音（2026-08-31 姓名边界审计）：pypinyin 对
+        # 无拼音数据的扩展区汉字（如 U+3402 㐂，"喜"的异体，真实姓氏用字）
+        # 原样返回汉字本身，写进拼音列会污染索引、让该患者拼音搜索永远 miss。
+        items = [x.lower() for x in g if x and x.isascii()]
         cleaned.append(_dedupe(items) or [""])
     return cleaned
 
@@ -94,6 +116,12 @@ def compute_pinyin(name: str) -> tuple[str, str]:
         full_text 仍是该字符串小写形态（"tom"），
         initials_text 取每段首字母（"t"）。这样英文姓名也能匹配。
     """
+    if not name:
+        return ("", "")
+
+    # 先剔除间隔号（见 SEPARATOR_CHARS 注释）：索引产出纯字母组合，
+    # 医生输 maimaitiaili / mmtal / mmt·al 三种形态都能命中
+    name = strip_separators(name)
     if not name:
         return ("", "")
 

@@ -68,7 +68,15 @@ class PatientCreate(BaseModel):
         # ​/‌/‍ 零宽空格系、﻿ BOM、⁠ 词连接符、\x00 NUL
         for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
             v = v.replace(ch, "")
-        v = v.replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
+        v = v.replace(chr(10), " ").replace(chr(13), " ").replace(chr(9), " ").strip()
+        # 间隔号归一（2026-08-31 姓名边界审计）：少数民族姓名的分隔符有多种
+        # 码点写法，医生手打 U+00B7、HIS 推 U+30FB、微信粘贴 U+2022——查重的
+        # "手机号+姓名"是精确匹配，码点不同即 miss，同一患者会被建两份档案。
+        # 统一成 GB18030 规定的 U+00B7。
+        from app.utils.pinyin import SEPARATOR_CHARS
+        for ch in SEPARATOR_CHARS:
+            if ch != chr(0x00B7):
+                v = v.replace(ch, chr(0x00B7))
         if not v:
             raise ValueError("患者姓名不能为空")
         return v

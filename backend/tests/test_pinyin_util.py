@@ -87,3 +87,40 @@ def test_is_ascii_alpha_false_cases():
     assert is_ascii_alpha("zhang3") is False        # 含数字
     assert is_ascii_alpha("zh ang") is False        # 含空格
     assert is_ascii_alpha("zhang-san") is False     # 含连字符
+
+
+# ── 少数民族姓名与生僻字（2026-08-31 姓名边界审计回归锁）──────────────
+
+
+def test_pinyin_ignores_name_separator():
+    """含间隔号的姓名，全拼与首字母都要能搜到。
+
+    修前：pypinyin 把间隔号当一个'字'原样保留，索引存成 maimaiti<sep>aili；
+    而查询侧的 is_ascii_alpha 闸门又把带点关键词挡在拼音列外——全拼、
+    首字母、带点三种输入全 miss，这类患者只能用汉字搜，急诊复诊找不到人。
+    """
+    from app.utils.pinyin import compute_pinyin
+
+    full, initials = compute_pinyin('买买提' + chr(0x00B7) + '艾力')
+    assert "maimaitiaili" in full, full[:120]
+    assert "mmtal" in initials, initials[:120]
+    assert chr(0x00B7) not in full and chr(0x00B7) not in initials
+
+
+def test_pinyin_drops_non_ascii_readings():
+    """无拼音数据的扩展区汉字不得把汉字本身写进拼音列（污染索引）。"""
+    from app.utils.pinyin import compute_pinyin
+
+    full, initials = compute_pinyin(chr(0x3402) + '姌')
+    assert chr(0x3402) not in full
+    assert chr(0x3402) not in initials
+
+
+def test_name_separator_normalized_on_create():
+    """三种间隔号码点写法建档时归一到 U+00B7，否则同一患者会被建两份档案。"""
+    from app.schemas.patient import PatientCreate
+
+    target = '买买提' + chr(0x00B7) + '艾力'
+    for sep in (chr(0x30FB), chr(0x2022), chr(0x2027), chr(0x00B7)):
+        got = PatientCreate(name='买买提' + sep + '艾力').name
+        assert got == target, (sep, got)
