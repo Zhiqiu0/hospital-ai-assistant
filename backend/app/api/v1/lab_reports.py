@@ -20,6 +20,7 @@ from app.core.authz import assert_encounter_access
 from app.core.upload_limits import MAX_LAB_BYTES, read_upload_capped
 from app.database import get_db
 from app.services import lab_reports_service
+from app.services.audit_service import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +93,55 @@ async def delete_lab_report(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """删除检验报告（通过 encounter_id 反查权限）。"""
+    """删除检验报告（通过 encounter_id 反查权限）。
+
+    合规约束（2026-08-31 法规逐条对照审计）：检验报告是**客观病历资料**，
+    《医疗纠纷预防和处理条例》明令不得隐匿、销毁；《电子病历应用管理规范》
+    第二十四条要求门诊病历至少保存 15 年。而本端点此前是**硬删除**（磁盘原图
+    连同数据库行一起没），且是全仓唯一一类既不可逆、又完全不留审计痕迹的操作。
+
+    典型出事场景：病历正文写着"血常规示 WBC 12.3×10⁹/L 支持感染诊断"，
+    对应化验单原图被某位轮转医生误删。三年后发生纠纷，法院要求提交客观检验
+    资料——文件和数据库行都不在了，审计日志里也查不到任何人删过它，医院既拿不
+    出证据，也说不清是谁销毁的。
+
+    这里补两道，与 PACS 报告删除（pacs_reports.py 已发布报告 409 拒删）对齐：
+      ① 该接诊已有签发病历时拒删——病历一旦成为正式病案，它依据的客观资料
+         就不能再销毁；
+      ② 无论成功与否都写审计日志，删除必须留痕。
+    """
     report = await lab_reports_service.get_report(db, report_id)
     if not report:
         raise HTTPException(404, "报告不存在")
     if report.encounter_id:
         await assert_encounter_access(db, report.encounter_id, current_user)
+        # ① 已签发病历的客观资料不得销毁
+        from sqlalchemy import select
+
+        from app.models.medical_record import MedicalRecord
+        signed = (await db.execute(
+            select(MedicalRecord.id).where(
+                MedicalRecord.encounter_id == report.encounter_id,
+                MedicalRecord.status == "submitted",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if signed:
+            await log_action(
+                action="delete_lab_report",
+                user_id=current_user.id,
+                user_name=getattr(current_user, "real_name", None)
+                or getattr(current_user, "username", None),
+                user_role=getattr(current_user, "role", None),
+                resource_type="lab_report",
+                resource_id=report_id,
+                detail=f"删除被拒（该接诊病历已签发）接诊ID：{report.encounter_id}",
+                status="denied",
+            )
+            raise HTTPException(
+                409,
+                "该接诊的病历已签发，检验报告作为客观病历资料不能删除"
+                "（医疗纠纷预防和处理条例要求保留）。如报告有误，请联系管理员处理。",
+            )
     else:
         # 孤儿报告（未挂接诊）原先直接放行删除（2026-08-13 第二轮审计修复）：
         # 任何登录医生可删任意孤儿报告，且删除不可撤销。收紧为仅上传者本人或
@@ -107,5 +151,18 @@ async def delete_lab_report(
         is_admin = getattr(current_user, "role", "") in ADMIN_ROLES
         if not is_admin and (owner_id is None or str(owner_id) != str(current_user.id)):
             raise HTTPException(403, "无权删除该检验报告（非本人上传）")
+    # ② 先取待记录的信息再删——删完 report 对象的属性就取不到了
+    _detail = (f"删除检验报告 {getattr(report, 'original_filename', None) or report_id}，"
+               f"接诊ID：{report.encounter_id or '(无)'}")
     await lab_reports_service.delete_report(db, report)
+    await log_action(
+        action="delete_lab_report",
+        user_id=current_user.id,
+        user_name=getattr(current_user, "real_name", None)
+        or getattr(current_user, "username", None),
+        user_role=getattr(current_user, "role", None),
+        resource_type="lab_report",
+        resource_id=report_id,
+        detail=_detail,
+    )
     return {"ok": True}

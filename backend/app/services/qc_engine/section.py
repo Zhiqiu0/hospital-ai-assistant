@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.utils.text_clean import strip_invisible
+
 # ─── 占位符常量（与 record_schemas.PLACEHOLDER 保持同步） ───────────────
 #
 # 这些值视为"未填写"——即使 raw_value 非空字符串。
@@ -57,8 +59,19 @@ class Section:
 
     @property
     def normalized(self) -> str:
-        """去除首尾空白后的内容（不修剪行内换行）。"""
-        return self.raw_value.strip()
+        """判定用的规范化副本：剥不可见字符 + 去首尾空白（不修剪行内换行）。
+
+        2026-08-31 极端输入审计：光靠 str.strip() 不够——它清得掉全角空格和
+        NBSP，清不掉零宽字符系，导致「视觉空白却判定已填写」（详见
+        app/utils/text_clean.py 的模块说明）。剥离只作用于**这份判定副本**，
+        raw_value 保持原文不动：病历正文是法定记录，系统不得静默改写医生
+        写下的内容——只是不拿不可见字符当「填写过」的证据。
+
+        is_filled() 与 contains() 都走这里，所以关键词检查也一并免疫
+        （「现病史里必须含起病时间」这类规则，此前会被夹在词中间的零宽字符
+        打断匹配而误扣分）。
+        """
+        return strip_invisible(self.raw_value).strip()
 
     def is_filled(self) -> bool:
         """全项目唯一权威：判定该 Section 是否真有医生填写的内容。

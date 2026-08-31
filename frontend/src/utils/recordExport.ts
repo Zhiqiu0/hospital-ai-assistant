@@ -27,8 +27,19 @@ function maskName(name?: string | null): string {
   const keep = chars.length >= 3 ? 2 : 1
   return chars.slice(0, keep).join('') + '*'.repeat(chars.length - keep)
 }
+/**
+ * 病历类型 → 打印/导出件标题。
+ *
+ * 键必须与后端 medical_records.record_type 枚举逐字一致（该值同时原样回写
+ * HIS），缺键会让标题栏直接印出英文 key。2026-08-31 法规形式要件审计发现
+ * 本表漏了 emergency——急诊接诊会由 activeEncounterStore 按 visitType 设成
+ * 'emergency'，于是急诊病历打印出来标题赫然是 "emergency"、导出文件名也是
+ * emergency_张*.doc，这份纸交给患者转诊或提交医调委即形式要件不合格。
+ * 契约测试 recordExport.labels.test.ts 已锁住「与后端枚举一一对应」。
+ */
 export const RECORD_TYPE_LABEL: Record<string, string> = {
   outpatient: '门诊病历',
+  emergency: '急诊病历',
   admission_note: '入院记录',
   first_course_record: '首次病程记录',
   course_record: '日常病程记录',

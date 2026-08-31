@@ -29,6 +29,7 @@
 """
 import argparse
 import asyncio
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.core.storage_paths import UPLOADS_ROOT  # noqa: E402
 from app.database import AsyncSessionLocal  # noqa: E402
 
 # 删除顺序 = 外键依赖的逆序（子表在前，父表在后）。
@@ -81,6 +83,22 @@ PURGE_ORDER = [
 KEEP = ["users", "doctor_codes", "departments", "qc_rules", "revoked_tokens",
         "diagnosis_codes"]
 
+# ── 磁盘上的 PHI 文件（2026-08-31 冷启动审计新增）────────────────────────────
+# 本脚本此前**只清数据库**。但语音录音、检验单原图、DICOM 解压件是落在磁盘上
+# 的独立文件（uploads 挂载卷），表清空后它们就成了没有任何 DB 记录指向的孤儿：
+#   · 列表看不到、审计查不到，全仓也没有孤儿文件清理任务 → 没人会再发现它们；
+#   · 却仍被 backup.sh 每日打包上传 OSS，按 180 天留存策略继续复制扩散。
+# 医院跑完清库会认为「测试数据清干净了」，实际联调期患者的医患对话录音和
+# 检验单原图原封不动留在生产卷里——**虚假的清洁感比不清更危险**。
+# 子目录名与写入端一一对应：voice_records 见 api/v1/ai_voice_records.py，
+# lab_reports 见 services/lab_reports_service.py，imaging 见 models/imaging.py。
+# 新增任何写 uploads 的功能都必须在此登记（契约测试 test_purge_coverage.py 锁）。
+STORAGE_DIRS = [
+    ("voice_records", "语音录音（医患真实对话）"),
+    ("lab_reports", "检验报告原图"),
+    ("imaging", "影像文件（DICOM 解压件）"),
+]
+
 CONFIRM_PHRASE = "确认清空临床数据"
 
 
@@ -91,6 +109,40 @@ async def _counts(db) -> list[tuple[str, str, int]]:
         n = (await db.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar() or 0
         out.append((table, desc, n))
     return out
+
+
+def _storage_counts() -> list[tuple[str, str, int, int]]:
+    """统计 uploads 下各类 PHI 文件的数量与占用字节（干跑与真删前都要看）。"""
+    out = []
+    for sub, desc in STORAGE_DIRS:
+        d = UPLOADS_ROOT / sub
+        files = [p for p in d.rglob("*") if p.is_file()] if d.is_dir() else []
+        out.append((sub, desc, len(files), sum(p.stat().st_size for p in files)))
+    return out
+
+
+def _purge_storage() -> int:
+    """删除 uploads 下三类 PHI 文件，返回删除的文件数。
+
+    **为什么放在数据库提交之后**：文件删除不可回滚。若先删文件而 DB 事务随后
+    回滚，会留下「DB 里有记录、磁盘上文件已消失」的坏状态（比不删难收拾得多）；
+    反过来 DB 已清而文件没删掉，最坏只是孤儿文件仍在，重跑一次即可收拾。
+    """
+    removed = 0
+    for sub, _desc, n, _size in _storage_counts():
+        d = UPLOADS_ROOT / sub
+        if not d.is_dir() or not n:
+            continue
+        # 只清目录内容、保留顶层子目录本身：写入端虽然都会 mkdir(parents=True)，
+        # 但留着目录不会有坏处，也免得挂载卷上出现属主/权限差异。
+        for child in d.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink(missing_ok=True)
+        removed += n
+        print(f"  已清空 uploads/{sub}（{n} 个文件）")
+    return removed
 
 
 async def _sanity_report(db) -> None:
@@ -126,10 +178,24 @@ async def main(execute: bool) -> int:
         for table, desc, n in counts:
             print(f"  {table:<24} {n:>7} 行   {desc}")
         print(f"  {'合计':<24} {total:>7} 行")
-        print(f"\n  保留不动：{', '.join(KEEP)}")
 
-        if total == 0:
-            print("\n库里没有临床数据，无需清理。")
+        # 磁盘上的 PHI 文件与库表分开统计——它们不受任何 DELETE 影响，
+        # 必须单独看一眼（见 STORAGE_DIRS 处的说明）。
+        storage = _storage_counts()
+        file_total = sum(n for _, _, n, _ in storage)
+        print("\n开业前清场 · 将清空的磁盘文件（uploads 卷）")
+        for sub, desc, n, size in storage:
+            print(f"  uploads/{sub:<16} {n:>7} 个   {size / 1024:>8.1f} KB   {desc}")
+        print(f"  {'合计':<24} {file_total:>7} 个")
+
+        print(f"\n  保留不动：{', '.join(KEEP)}")
+        # Orthanc 里的 DICOM 归 PACS 服务自己管，本脚本不越界直连外部服务，
+        # 只把它点出来交给人工：漏了它等于把联调期影像连同患者姓名留在生产。
+        print("  ⚠ Orthanc(PACS) 里的 DICOM 本脚本不碰，需人工确认："
+              "docker compose exec orthanc curl -s http://localhost:8042/studies")
+
+        if total == 0 and file_total == 0:
+            print("\n库里没有临床数据、磁盘上也没有 PHI 文件，无需清理。")
             return 0
 
         await _sanity_report(db)
@@ -173,8 +239,13 @@ async def main(execute: bool) -> int:
                 print(f"  已清空 {table}（{n} 行）")
         await db.commit()
 
+        # 数据库已提交，再动磁盘（顺序理由见 _purge_storage 的 docstring）
+        if file_total:
+            _purge_storage()
+
         left = sum(n for _, _, n in await _counts(db))
-        print(f"\n清理完成，临床数据剩余 {left} 行。")
+        left_files = sum(n for _, _, n, _ in _storage_counts())
+        print(f"\n清理完成，临床数据剩余 {left} 行、磁盘 PHI 文件剩余 {left_files} 个。")
         print("账号、科室、提示词、质控规则均未改动，可直接投入使用。")
         return 0
 

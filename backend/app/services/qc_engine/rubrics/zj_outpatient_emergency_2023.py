@@ -192,16 +192,26 @@ def _missing_auxiliary_exam(ctx: RecordContext) -> bool:
 def _missing_tcm_diagnosis(ctx: RecordContext) -> bool:
     """中医诊断缺失（疾病诊断 + 证候诊断至少有疾病诊断）。
 
-    PDF："有中医治疗的病历无中医诊断扣 10 分"——这里宽松判定为"无中医疾病诊断扣"。
+    PDF 原文："**有中医治疗的病历**无中医诊断扣 10 分"——前提是「有中医治疗」。
     急诊豁免：急诊模板是扁平的【诊断】章节，不分中西医。
+    纯西医豁免（2026-08-31 中医语义审计补）：此前只实现了急诊豁免、把 PDF 写死
+    的「有中医治疗的」前提整个丢了，导致纯西医门诊（外科清创等）被扣 10 分。
     """
     if ctx.encounter_meta.is_emergency:
+        return False
+    if not ctx.has_tcm_treatment():
         return False
     return not ctx.section("中医疾病诊断").is_filled()
 
 
 def _incomplete_tcm_diagnosis(ctx: RecordContext) -> bool:
-    """中医诊断不全扣 2 分（疾病 + 证候 缺其一）。急诊豁免，理由同上。"""
+    """中医诊断不全扣 2 分（疾病 + 证候 缺其一）。急诊豁免，理由同上。
+
+    与上一条同源：PDF 那句「有中医治疗的病历无中医诊断扣 10 分，中医诊断
+    不全扣 2 分」是一句话里的两个扣分档，共用同一个「有中医治疗的」前提。
+    """
+    if not ctx.has_tcm_treatment():
+        return False
     if ctx.encounter_meta.is_emergency:
         return False
     has_disease = ctx.section("中医疾病诊断").is_filled()
@@ -248,9 +258,14 @@ def _missing_followup_advice(ctx: RecordContext) -> bool:
 def _missing_treatment_method(ctx: RecordContext) -> bool:
     """治则治法缺失——中医治疗规范要求"辨证施治"，应有治则治法。
 
+    PDF 原文：检查内容第 3 条「**实施中医治疗的**应当遵循辨证论治的原则」，
+    对应扣分「治则治法与证型不符扣 5 分」。前提写在检查内容那一栏里。
     急诊豁免：急诊是西医急救流程，模板里没有治则治法子行。
+    纯西医豁免（2026-08-31 中医语义审计补）：理由同 _missing_tcm_diagnosis。
     """
     if ctx.encounter_meta.is_emergency:
+        return False
+    if not ctx.has_tcm_treatment():
         return False
     return not ctx.section("治则治法").is_filled()
 

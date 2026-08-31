@@ -25,6 +25,7 @@ from app.his_adapter.event_bus import his_event_bus
 from app.his_adapter.models import AdmitPushRequest
 from app.models.encounter import Encounter
 from app.models.patient import Patient
+from app.utils.text_clean import strip_invisible
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -557,9 +558,7 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
     # 绝不因脏数据拒收接诊）：剥零宽/BOM/NUL、压平换行、超过列宽 50 截断——
     # 不清洗的话零宽字符会让该患者拼音/汉字搜索双双 miss（医生重复建档），
     # 超长则打穿到 PG DataError 落 ack 50000，该患者每次复诊都推不进来。
-    cleaned_name = payload.patient_name or ""
-    for _ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
-        cleaned_name = cleaned_name.replace(_ch, "")
+    cleaned_name = strip_invisible(payload.patient_name or "")  # 清单见 utils/text_clean
     cleaned_name = (cleaned_name.replace("\n", " ").replace("\r", " ")
                     .replace("\t", " ").strip())
     # 清洗后为空（纯零宽/纯空白姓名）用占位名，绝不回退未清洗原值——

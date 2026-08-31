@@ -5,6 +5,7 @@
 """
 from typing import Optional
 
+from app.utils.text_clean import strip_invisible
 from pydantic import BaseModel, field_validator
 
 # 与 HIS 回写 diagnoses[].category 枚举一致
@@ -40,8 +41,7 @@ class DiagnosisItemIn(BaseModel):
         只取首行——第二条诊断对质控完全隐形；HIS 回写单行字段也会收到
         换行。压平换行/制表，顺带剥零宽字符与 NUL。
         """
-        for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
-            v = (v or "").replace(ch, "")
+        v = strip_invisible(v or "")  # 清单见 utils/text_clean
         v = v.replace("\n", " ").replace("\r", " ").replace("\t", " ").strip()
         if not v:
             raise ValueError("诊断名称不能为空")
