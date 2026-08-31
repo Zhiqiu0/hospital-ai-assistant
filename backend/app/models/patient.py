@@ -53,6 +53,17 @@ class Patient(Base, TimestampMixin):
             postgresql_where=text("id_card IS NOT NULL AND is_deleted = false"),
             sqlite_where=text("id_card IS NOT NULL AND is_deleted = false"),
         ),
+        # 合并去向索引（2026-09-01，迁移 o20260901merge 同名建）。
+        # 必须与迁移里的定义**逐字一致**，否则 alembic check 会判模型漂移：
+        # 列上写 index=True 会自动生成 ix_patients_merged_into 这个**普通**索引，
+        # 与迁移建的部分索引既不同名也不同定义（CI 已实测抓到这一点）。
+        # 用部分索引的理由：绝大多数档案从未被合并过，只索引非空值又小又准。
+        Index(
+            "idx_patients_merged_into",
+            "merged_into",
+            postgresql_where=text("merged_into IS NOT NULL"),
+            sqlite_where=text("merged_into IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -93,7 +104,7 @@ class Patient(Base, TimestampMixin):
     # 分散在两份档案下（过敏史正是开药前飘红警示的那个字段）。
     # 合并不可逆，故被合并掉的那份软删后由本列指向它被并进了哪一份：打开一份
     # 空档案时要能立刻知道它去哪了，而不是去审计日志里按时间线翻。
-    merged_into: Mapped[Optional[str]] = mapped_column(String, index=True)
+    merged_into: Mapped[Optional[str]] = mapped_column(String)
 
     # ── 病案首页扩展字段（住院病历必填）────────────────────────────────────────
     # 民族

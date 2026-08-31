@@ -34,9 +34,10 @@ export default function DoctorCodePanel() {
     setLoading(true)
     try {
       const q = (code ?? keyword).trim()
-      const res = (await api.get(
-        `/admin/doctor-codes${q ? `?code=${encodeURIComponent(q)}` : ''}`
-      )) as CodeRow[]
+      // 这里刻意不用嵌套模板字符串：CI 的前后端契约检查器用正则扫调用路径，
+      // 内层反引号会让它把路径截断，判定为"前端调了后端没有的端点"。
+      // 空 code 后端视为不过滤（falsy 判断），所以可以无条件带上这个参数。
+      const res = (await api.get(`/admin/doctor-codes?code=${encodeURIComponent(q)}`)) as CodeRow[]
       setRows(res || [])
       if (q && (!res || res.length === 0)) {
         message.info(`工号 ${q} 未绑定任何账号（HIS 推它会被拒收）`)
