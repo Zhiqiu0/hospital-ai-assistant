@@ -15,6 +15,7 @@
 import datetime
 from typing import Optional
 
+from app.utils.text_clean import strip_invisible
 from pydantic import BaseModel, Field, field_validator
 
 # 集中校验：身份证号走 GB 11643 校验码 + 出生日期合法性；手机号走 1[3-9]\d{9}
@@ -65,9 +66,7 @@ class PatientCreate(BaseModel):
           与汉字搜索双双静默 miss，医生以为没建过档而重复建档
         - 压平换行/制表（单行字段）
         """
-        # ​/‌/‍ 零宽空格系、﻿ BOM、⁠ 词连接符、\x00 NUL
-        for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u2060", "\x00"):
-            v = v.replace(ch, "")
+        v = strip_invisible(v)  # 零宽空格系/BOM/词连接符/NUL，清单见 utils/text_clean
         v = v.replace(chr(10), " ").replace(chr(13), " ").replace(chr(9), " ").strip()
         # 间隔号归一（2026-08-31 姓名边界审计）：少数民族姓名的分隔符有多种
         # 码点写法，医生手打 U+00B7、HIS 推 U+30FB、微信粘贴 U+2022——查重的

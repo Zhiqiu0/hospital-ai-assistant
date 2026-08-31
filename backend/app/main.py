@@ -214,10 +214,22 @@ async def health_check_deep():
     # 不做真实 LLM 调用（会拖慢监控探测并烧 token），只查凭证是否配齐。
     deps["ai_credential"] = "ok" if settings.deepseek_api_key else "missing"
 
+    # 节假日日历覆盖（2026-08-31 跨年边界审计）：与 ai_credential 同一类问题——
+    # 日历过期后系统照常跑、健康检查照常绿，但「7 个工作日内归档」这类**法定
+    # 时限**会把节假日当工作日算，医务科对外通报的质控指标随之失真。这是启动
+    # 即可判定的静态配置，纳入深度检查；expiring 只提示（运维有 60 天余量去查
+    # 国办发布的次年安排），expired 才算关键故障。
+    from app.services.workdays import calendar_status
+    _cal, _days_left = calendar_status()
+    deps["holiday_calendar"] = (
+        _cal if _cal != "ok" else f"ok（覆盖至年末，剩 {_days_left} 天）"
+    )
+
     critical_down = (
         deps.get("db") == "error"
         or deps.get("redis") == "error"
         or deps.get("ai_credential") == "missing"
+        or _cal == "expired"
     )
     body = {
         "status": "degraded" if critical_down else "ok",

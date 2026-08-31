@@ -50,13 +50,52 @@ EXTRA_WORKDAYS: frozenset[date] = frozenset({
 })
 
 
+# 已经告警过的年份——同一年只喊一次，避免逐日循环调用把 error.log 刷爆
+_WARNED_YEARS: set[int] = set()
+
+
 def is_workday(d: date) -> bool:
-    """是否工作日：调休上班的周末算、法定节假日不算、普通周末不算。"""
+    """是否工作日：调休上班的周末算、法定节假日不算、普通周末不算。
+
+    日历覆盖告警（2026-08-31 跨年边界审计补）：本表只维护到 _CALENDAR_YEAR 年，
+    超出覆盖的年份会**静默退化**成"只看周末"——2027 年的元旦、春节、国庆全被
+    当成工作日。add_workdays 早就有这层告警，但 inpatient_service 的病区保留期
+    是「逐日回退直接调 is_workday」，绕过了那条路径，2027 年起会零信号地持续
+    算错：已出院但文书没写完的接诊，会比真实 7 个工作日更早从医生的病区视图
+    消失——而病区列表是住院端唯一的接诊入口。
+    """
+    if d.year > _CALENDAR_YEAR and d.year not in _WARNED_YEARS:
+        _WARNED_YEARS.add(d.year)
+        logger.warning(
+            "workdays.calendar: %d 年的法定节假日未录入（日历只到 %d 年），"
+            "该年份的节假日会被当成工作日 → 时限判定与质控指标失真。"
+            "请更新 services/workdays.py 的 HOLIDAYS/EXTRA_WORKDAYS",
+            d.year, _CALENDAR_YEAR,
+        )
     if d in EXTRA_WORKDAYS:
         return True
     if d in HOLIDAYS:
         return False
     return d.weekday() < 5
+
+
+def calendar_status(today: date | None = None) -> tuple[str, int]:
+    """节假日日历的覆盖状态，供深度健康检查提前预警。
+
+    国办通常在上一年 11 月才发布次年的节假日安排，所以这里不预置未来年份，
+    改为「快到期就提醒运维去查国办通知」。
+
+    Returns:
+        (状态, 距覆盖年末的天数)；状态取值：
+          ok       — 还早
+          expiring — 覆盖年末已在 60 天内，该去查国办通知了
+          expired  — 已经跨出覆盖年份，此刻所有工作日计算都在失真
+    """
+    d = today or date.today()
+    if d.year > _CALENDAR_YEAR:
+        return "expired", 0
+    days_left = (date(_CALENDAR_YEAR, 12, 31) - d).days
+    return ("expiring" if days_left <= 60 else "ok"), days_left
 
 
 def add_workdays(start: datetime, n: int) -> datetime:

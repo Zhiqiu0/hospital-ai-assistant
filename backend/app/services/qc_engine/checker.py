@@ -146,6 +146,17 @@ class FrontPageData:
     loaded: bool = False
 
 
+# 明确专属中医的治疗手段关键词（has_tcm_treatment 用）。
+# 刻意不收「颗粒」「丸」「散」「膏」这类中西药通用剂型字，避免把西医病历
+# 误判成中医病历后扣回中医专项分——那正是本次要修的问题的反面。
+TCM_TREATMENT_KEYWORDS: tuple[str, ...] = (
+    "中药", "中成药", "汤剂", "水煎", "煎服", "代煎",
+    "先煎", "后下", "包煎", "烊化", "冲服", "膏方",
+    "针灸", "针刺", "电针", "艾灸", "推拿", "拔罐",
+    "刮痧", "穴位", "耳穴", "埋线", "辨证", "证型",
+)
+
+
 @dataclass(frozen=True)
 class RecordContext:
     """评分上下文——按 FHIR R5 三资源分层。
@@ -184,6 +195,37 @@ class RecordContext:
         """病历原文是否包含关键词。"""
         return keyword in self.record_text
 
+    def has_tcm_treatment(self) -> bool:
+        """本次诊疗是否含中医内容——中医专项扣分的法定前提。
+
+        为什么需要它（2026-08-31 中医语义审计）：
+        《浙江省中医门、急诊病历评分标准》诊断项原文是「**有中医治疗的病历**
+        无中医诊断扣 10 分」、治疗意见项原文是「**实施中医治疗的**应当遵循
+        辨证论治的原则」——两处扣分都以「有/实施中医治疗」为前提。系统此前
+        只豁免了急诊，把前提整个丢了，于是本院最常见的**纯西医门诊**（外科
+        清创、皮肤科、五官科）会被扣掉中医诊断 10 分 + 治则治法 5 分，一份
+        写得完整的清创病历只能得 87 分 → 判不合格 → 签发按钮置灰。医生要么
+        编一个中医病名和证型，要么学会「别点质控直接签」——前者是病历造假，
+        后者让质控体系形同虚设。
+
+        判据取保守方向（宁可判成中医病历、宁可扣分）：只要出现任一中医要素
+        就按中医病历全套判。医生想躲开中医扣分，必须一个中医字都不写，而那
+        时它本来就是西医病历——正是标准原文的意思。
+
+        Returns:
+            True  : 病历里有中医诊断/证候/治则治法/舌脉，或治疗里有中医疗法
+            False : 通篇没有任何中医要素，视为纯西医诊疗
+        """
+        if self.any_section_filled(
+            "中医疾病诊断", "中医证候诊断", "治则治法",
+            "舌象", "脉象", "辨证分析", "中医辨证依据",
+        ):
+            return True
+        # 治疗手段里的中医疗法：只收明确专属中医的词，不用「颗粒」「丸」这类
+        # 中西药通用的剂型字眼（西药也有蒙脱石散颗粒，误判会把西医病历判成
+        # 中医病历、扣回那 15 分）。
+        return any(kw in self.record_text for kw in TCM_TREATMENT_KEYWORDS)
+
     def inquiry_field_filled(self, field_name: str) -> bool:
         """问诊字典里指定字段是否非空且非占位符。
 
@@ -195,7 +237,10 @@ class RecordContext:
         if not value or not isinstance(value, str):
             return False
         from app.services.qc_engine.section import PLACEHOLDERS
-        v = value.strip()
+        from app.utils.text_clean import strip_invisible
+        # 与 Section.normalized 同口径：先剥不可见字符再判空，否则粘贴带进来的
+        # 一个零宽空格就能让本字段冒充「已填写」（见 app/utils/text_clean.py）。
+        v = strip_invisible(value).strip()
         return bool(v) and v not in PLACEHOLDERS
 
 

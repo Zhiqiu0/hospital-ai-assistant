@@ -60,6 +60,18 @@ class MedicalRecord(Base, TimestampMixin):
         # 此索引是最后兜底（迁移 k20260828integrity 同名建，含存量顺延清理）
         Index("uq_medrec_enc_type_no", "encounter_id", "record_type", "record_no",
               unique=True),
+        # 规模热路径索引（2026-08-31 数据规模审计，迁移 n20260831medrecidx 同名建）：
+        # 质控复核台/全院病历列表都是 WHERE status='submitted' [ORDER BY submitted_at
+        # DESC]，而 status 单列选择性极差（运行一年后绝大多数行都是这个终态），
+        # 必须把 submitted_at 带进来 PG 才能沿索引直接取头部、不排序全表。
+        # （用 text 而非 submitted_at.desc()：__table_args__ 在类体顶部求值，
+        #   那时列属性还没定义）
+        Index("idx_medrec_status_submitted", "status", text("submitted_at DESC")),
+        # 未签发草稿的部分索引：不等值查询用不上普通 B-tree，而"没签发的"在任何
+        # 时刻都只是极少数，部分索引又小又准——服务病区列表那个
+        # `status != 'submitted'` 子查询（住院医生进入接诊的唯一入口）。
+        Index("idx_medrec_pending", "encounter_id",
+              postgresql_where=text("status <> 'submitted'")),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
