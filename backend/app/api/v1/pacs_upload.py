@@ -8,6 +8,7 @@ PACS 上传子路由（POST /upload）
 """
 # ── 标准库 ────────────────────────────────────────────────────────────────────
 import asyncio
+import logging
 import shutil
 import tempfile
 from datetime import datetime
@@ -26,6 +27,8 @@ from app.services.orthanc_client import orthanc_client
 # Round 5/6：PACS 业务逻辑服务包（解压/帧查询/渲染缓存/报告 ORM）
 from app.services.pacs import dicom_service, frame_service, render_cache, report_service
 from app.services.pacs.dicom_service import AUTO_ANALYZE_THRESHOLD
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -127,9 +130,29 @@ async def upload_study(
         # 8) 写业务表 ImagingStudy（已下沉 report_service）
         # 注：上面 asyncio.gather 已经把所有 instance 的缩略图 + 高清预览
         # 用 pydicom 本地渲染并写入 Redis 完毕。此处不再额外预热。
-        study = await report_service.create_imaging_study(
-            db, patient_id, current_user.id, study_uid, meta
-        )
+        # 写业务表失败要补偿删除 Orthanc 侧影像（2026-08-31 半成功状态审计）：
+        # DICOM 此时已 physically 落进 Orthanc，而这里失败会直接 500 冒泡、
+        # Orthanc 不回滚。医生看到"上传失败"若就此放弃重传，那份患者影像
+        # 永久游离在业务系统之外——列表/审计都看不到它，全仓也没有孤儿清理
+        # 任务，等于系统不知道自己持有这份 PHI。
+        try:
+            study = await report_service.create_imaging_study(
+                db, patient_id, current_user.id, study_uid, meta
+            )
+        except Exception:
+            logger.exception(
+                "pacs.upload: 业务表写入失败，回滚 Orthanc 侧影像 study_uid=%s",
+                study_uid,
+            )
+            try:
+                await orthanc_client.delete_study(study_uid)
+            except Exception:
+                # 删不掉也要留痕：这条日志是人工核对孤儿影像的唯一线索
+                logger.error(
+                    "pacs.upload: **Orthanc 孤儿影像未能清理**，需人工处理 "
+                    "study_uid=%s patient_id=%s", study_uid, patient_id,
+                )
+            raise
 
         return {
             "study_id": study.id,

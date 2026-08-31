@@ -113,7 +113,16 @@ async def upload_voice_record(
         status="uploaded",
     )
     db.add(record)
-    await db.commit()
+    # 落盘先于 commit，commit 失败要删掉孤儿音频（2026-08-31 半成功状态审计）：
+    # 磁盘上留着无 DB 引用的录音既是垃圾也是无人知晓的 PHI。
+    try:
+        await db.commit()
+    except Exception:
+        try:
+            (target_dir / file_name).unlink(missing_ok=True)
+        except Exception:
+            logger.warning("voice.upload: 孤儿音频清理失败 path=%s", rel_path)
+        raise
     await db.refresh(record)
     # 工作台快照含 latest_voice_record，新上传需失效缓存
     from app.services.encounter_service import invalidate_encounter_snapshot

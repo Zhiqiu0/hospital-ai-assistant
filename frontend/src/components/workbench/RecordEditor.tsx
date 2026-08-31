@@ -63,6 +63,8 @@ export default function RecordEditor() {
     recordType,
     recordContent,
     isFinal,
+    // 生成中不让防抖把半截 AI 正文当医生手写落库（见 hook 内注释）
+    isGenerating,
   })
 
   // 切文书类型且编辑器为空时，从服务端拉该 (接诊, 类型) 的草稿——
