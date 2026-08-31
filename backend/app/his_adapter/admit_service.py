@@ -128,7 +128,16 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
         elif enc.doctor_id != doctor.id:
             prev_doctor_id = enc.doctor_id
             enc.doctor_id = doctor.id
-            enc.department_id = doctor.department_id
+            # 科室同样以**挂号科室**为准（2026-08-31 审计 M4）：与下方新建
+            # 分支的 2026-08-14 决策对齐（dept_code 是本次接诊的科室、不是
+            # 医生编制科室）。原实现直接取医生编制科室，转科时会把接诊科室
+            # 写成接手医生的编制科室（他可能编制在急诊科但坐诊外科），
+            # 医生无科室时更会写成 NULL 落进"未挂科室"——病案首页科室、
+            # 质控科室统计、复核队列过滤三处同时错。
+            enc.department_id = await _resolve_department(
+                db, payload.dept_code, payload.dept_name, doctor.department_id,
+                visit_id=payload.visit_id,
+            )
             ref = dict(enc.his_external_ref or {})
             ref["doctor_code"] = payload.doctor_code
             enc.his_external_ref = ref
@@ -436,11 +445,29 @@ async def _map_doctor(db: AsyncSession, doctor_code: Optional[str]) -> User:
     # assert_can_write_record 强制，这里是第三处、也是唯一的自动化入口。
     role_ok = User.role.in_(tuple(RECORD_WRITE_ROLES))
 
-    doctor = (await db.execute(
+    # 归属先于状态（2026-08-31 权限状态变迁审计 H1·高危）：三级兜底原先
+    # 全带 is_active 过滤，导致「A 离职→工号落到同名 username 的新人 B→
+    # A 被重新启用→工号又跳回 A」——归属随一个与工号无关的开关来回翻转，
+    # 接诊派错人、病历署错名。改为先不看状态定位归属：doctor_codes 里
+    # 挂着谁就是谁，停用了就明确报错，绝不静默换人。
+    owner = (await db.execute(
         select(User)
         .join(DoctorCode, DoctorCode.user_id == User.id)
-        .where(DoctorCode.code == code, User.is_active.is_(True), role_ok)
-    )).scalars().first()
+        .where(DoctorCode.code == code)
+    )).scalars().all()
+    if len(owner) > 1:
+        raise AdmitError(40007, f"工号 {code} 挂在多个账号下，请联系管理员清理后重试")
+    if owner:
+        _o = owner[0]
+        if not _o.is_active:
+            raise AdmitError(
+                40007, f"工号 {code} 对应的账号已停用，请联系管理员改派或启用")
+        if _o.role not in RECORD_WRITE_ROLES:
+            raise AdmitError(
+                40007, f"工号 {code} 对应的账号不是临床医生角色，请联系管理员核对")
+        return _o
+
+    doctor = None
     if doctor is None:
         # 多行命中显式报错（2026-08-28 完整性审计）：users.employee_no 无唯一
         # 约束（历史工号可能重复，不宜硬加 DB 约束），原 .first() 会按执行计划

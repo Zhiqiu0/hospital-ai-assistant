@@ -54,12 +54,15 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     # 1. 鉴权：WebSocket 不能用 Authorization 头，token 走 query 参数
     try:
         payload_iat = None
+        payload_jti = None
         user_id = verify_token_str(token)
-        # 取签发时刻用于密码水印比对（见下方）
+        # 取签发时刻用于密码水印比对、jti 用于吊销校验（见下方）
         from jose import jwt as _jwt
 
         from app.config import settings as _st
-        payload_iat = _jwt.decode(token, _st.secret_key, algorithms=["HS256"]).get("iat")
+        _claims = _jwt.decode(token, _st.secret_key, algorithms=["HS256"])
+        payload_iat = _claims.get("iat")
+        payload_jti = _claims.get("jti")
     except Exception as exc:
         # FastAPI 要求 accept 之后才能 close；这里用 1008 表示策略违规
         await websocket.close(code=1008, reason=f"auth failed: {exc}")
@@ -71,8 +74,20 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     from app.database import AsyncSessionLocal
     from app.models.user import User
 
+    from app.core.security import is_token_revoked
+
     async with AsyncSessionLocal() as db:
         user = await db.get(User, user_id)
+        # 吊销校验（2026-08-31 权限变迁审计 H3·高危）：第 15 轮为叫号 SSE
+        # 补过同款检查，本端点漏了——verify_token_str 只验签不查库，其注释
+        # 写的"吊销检查在后续业务接口完成"在这里不成立（本端点自己就是服务）。
+        # 后果：医生登出后 HTTP 全线 401，却仍能用同一个旧 token 连上语音流，
+        # 把口述的主诉/查体/诊断实时回传并消耗付费 ASR 额度。
+        # 复用这次已经打开的会话，零额外开销。
+        revoked = await is_token_revoked(db, payload_jti)
+    if revoked:
+        await websocket.close(code=1008, reason="token revoked")
+        return
     if user is None or not user.is_active or user.must_change_password:
         await websocket.close(code=1008, reason="account not ready")
         return

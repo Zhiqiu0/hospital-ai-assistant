@@ -142,6 +142,30 @@ async def build_writeback_payload(
     full_text = _parse_record_text(row.content) if row else ""
 
     his_ref = encounter.his_external_ref or {}
+
+    # 责任医师工号取**签发快照**（2026-08-31 审计 M3·中高）：
+    # his_external_ref.doctor_code 在转科改派时会被就地覆盖，而回写 payload
+    # 每次重新组装（对账补投、修订重推都会重来）——8/2 A 医生签发的入院记录
+    # 若在 8/10 转科后由对账补投，HIS 病案里的责任医师就变成了 B。
+    # 医院的法定病案是 HIS 那一份，署名必须锁定签发瞬间的那个人。
+    # patient_snapshot.doctor_id 是签发时冻结且进签名哈希的，是权威来源。
+    signer_code = ""
+    _snap = getattr(record_row, "patient_snapshot", None) if record_row is not None else None
+    _signer_id = (_snap or {}).get("doctor_id") if isinstance(_snap, dict) else None
+    if _signer_id:
+        from app.models.user import DoctorCode, User
+
+        _row = (await db.execute(
+            select(DoctorCode.code)
+            .where(DoctorCode.user_id == _signer_id)
+            .order_by(DoctorCode.id)
+            .limit(1)
+        )).scalar_one_or_none()
+        if not _row:
+            _row = (await db.execute(
+                select(User.employee_no).where(User.id == _signer_id)
+            )).scalar_one_or_none()
+        signer_code = _row or ""
     visit_id = his_ref.get("his_visit_no") or encounter.visit_no or ""
     # 回写的 record_type 取**病历自己的类型**（2026-08-13 第五轮审计修复）：
     # 原先只按接诊 visit_type 三分，住院会落进 else 被当成 outpatient 推给 HIS——
@@ -196,7 +220,8 @@ async def build_writeback_payload(
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             # 接诊推送落的 doctor_code（2026-08-11 联动后唯一来源；
             # 旧 embed 会话的 his_doctor_no 兜底已随 embed 下线删除，无存量数据）
-            "doctor_code": his_ref.get("doctor_code") or "",
+            # 签发医师工号优先（见上方 signer_code 注释），取不到才回落接诊上的值
+            "doctor_code": signer_code or his_ref.get("doctor_code") or "",
             "app_version": app_version,
         },
     }

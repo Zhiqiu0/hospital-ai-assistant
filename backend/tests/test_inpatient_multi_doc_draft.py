@@ -152,7 +152,12 @@ async def test_长期住院出院后仍留在病区列表(async_db):
 
 @pytest.mark.asyncio
 async def test_出院超过保留期才移出列表(async_db):
-    """防过度放开：出院很久的接诊不该一直堆在病区列表里。"""
+    """防过度放开：出院很久的接诊不该一直堆在病区列表里。
+
+    保留期 2026-08-31 改为 **7 个工作日**（与归档考核 add_workdays 同口径，
+    原先 7 自然日会让接诊先于考核截止消失）。7 工作日往回推约 10 个自然日，
+    所以这里用 30 天前，稳稳落在窗口外，同时语义不变。
+    """
     from datetime import timedelta
     from app.services.inpatient_service import list_active_ward
 
@@ -162,7 +167,7 @@ async def test_出院超过保留期才移出列表(async_db):
         id="enc-old", patient_id="p-old", doctor_id="doc-1",
         visit_type="inpatient", status="completed",
         visited_at=now - timedelta(days=40),
-        completed_at=now - timedelta(days=10),  # 10 天前出院，超出 7 天保留期
+        completed_at=now - timedelta(days=30),  # 30 天前出院，远超保留期
     ))
     await async_db.commit()
 
@@ -188,3 +193,41 @@ async def test_save_ai_draft返回落库时间供前端同步乐观锁基线(asy
         expected_updated_at=baseline,
     )
     assert res2["record_id"], "带 save_ai_draft 返回的基线保存被误判为冲突"
+
+
+@pytest.mark.asyncio
+async def test_有草稿残留时出院记录已签发也要留在病区列表(async_db):
+    """S4 回归锁（2026-08-31 整本病历产物链审计）。
+
+    原实现：出院记录一签发就把接诊移出病区列表。而住院端唯一的接诊入口
+    就是这个列表（/encounters/my 只返 in_progress、历史病历只列 submitted），
+    于是本子里写了一半的入院记录草稿**永久失去书写入口**，病历就此残缺，
+    归档指标还恰好看不见它。只要还有任何未签发文书就必须继续保留。
+    """
+    from datetime import timedelta
+    from app.services.inpatient_service import list_active_ward
+
+    now = datetime.now()
+    async_db.add(Patient(id="p-draft", name="赵六", birth_date=date(1970, 1, 1)))
+    async_db.add(Encounter(
+        id="enc-draft", patient_id="p-draft", doctor_id="doc-1",
+        visit_type="inpatient", status="completed",
+        visited_at=now - timedelta(days=5),
+        completed_at=now - timedelta(hours=2),
+    ))
+    # 出院记录已签发
+    async_db.add(MedicalRecord(
+        id="rec-dis", encounter_id="enc-draft", record_type="discharge_record",
+        status="submitted", submitted_at=now, current_version=1, record_no=1,
+    ))
+    # 但入院记录还是草稿——这本病历没写完
+    async_db.add(MedicalRecord(
+        id="rec-adm", encounter_id="enc-draft", record_type="admission_note",
+        status="draft", current_version=1, record_no=1,
+    ))
+    await async_db.commit()
+
+    rows = await list_active_ward(async_db, "doc-1")
+    assert any(r["encounter_id"] == "enc-draft" for r in rows), (
+        "出院记录已签发但入院记录还是草稿，接诊却被移出病区列表——医生再也进不去，这本病历永久残缺"
+    )

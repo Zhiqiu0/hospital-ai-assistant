@@ -38,8 +38,14 @@ from app.utils.age import calc_age
 
 # ── 病区视图 ──────────────────────────────────────────────────────────────────
 
-# 已出院但出院记录未签发时，接诊在病区列表里保留多久（天）
-_DISCHARGED_PENDING_DAYS = 7
+# 已出院但文书未完成时，接诊在病区列表里保留多久。
+# 用**工作日**口径（2026-08-31 整本病历产物链审计 S5）：归档考核算的是
+# add_workdays(completed_at, 7)，而这里原先是 7 个自然日——周五出院时
+# 考核截止在约 11 个自然日后，接诊却在第 7 个自然日就从病区列表消失，
+# 中间几天医生想补写进不去，随后被判归档超期。跨春节/国庆更极端
+# （7 工作日可达 16 自然日）。两处必须同一口径，否则是系统自己关掉窗口
+# 再惩罚医生。
+_DISCHARGED_PENDING_WORKDAYS = 7
 
 
 async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
@@ -54,12 +60,29 @@ async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
     **出院后 24 小时内**完成，医生这时候已经没有任何入口进这个接诊补写了。
     保留到出院记录签发为止（最多 7 天，避免列表被历史堆满）。
     """
-    discharge_cutoff = datetime.now() - timedelta(days=_DISCHARGED_PENDING_DAYS)
+    # 保留窗口下界：从现在往回推 _DISCHARGED_PENDING_WORKDAYS 个工作日
+    # （add_workdays 只支持正向，这里逐日回退并跳过非工作日，口径同源）
+    from app.services.workdays import is_workday
 
-    # 已签发出院记录的接诊 id（这些不再需要留在列表里）
+    _d = datetime.now().date()
+    _left = _DISCHARGED_PENDING_WORKDAYS
+    while _left > 0:
+        _d = _d - timedelta(days=1)
+        if is_workday(_d):
+            _left -= 1
+    discharge_cutoff = datetime.combine(_d, datetime.min.time())
+
+    # 已签发出院记录的接诊 id
     discharged_done = select(MedicalRecord.encounter_id).where(
         MedicalRecord.record_type == "discharge_record",
         MedicalRecord.status == "submitted",
+    )
+    # 还有任何未签发文书（草稿/编辑中）的接诊 id（2026-08-31 审计 S4）：
+    # 出院记录一签发就把接诊移出病区列表，会让本子里其余写了一半的文书
+    # **永久失去入口**（住院端唯一的接诊入口就是这个列表），病历就此残缺。
+    # 只要还有草稿残留就继续保留，与出院记录签没签无关。
+    has_pending_draft = select(MedicalRecord.encounter_id).where(
+        MedicalRecord.status != "submitted",
     )
 
     stmt = (
@@ -83,7 +106,11 @@ async def list_active_ward(db: AsyncSession, doctor_id: str) -> list[dict]:
                     # completed_at 兜底用 visited_at：极老数据可能没有该字段。
                     func.coalesce(Encounter.completed_at, Encounter.visited_at)
                     >= discharge_cutoff,
-                    Encounter.id.not_in(discharged_done),
+                    # 出院记录未签发 **或** 还有其它文书是草稿 → 都要留着
+                    or_(
+                        Encounter.id.not_in(discharged_done),
+                        Encounter.id.in_(has_pending_draft),
+                    ),
                 ),
             ),
         )

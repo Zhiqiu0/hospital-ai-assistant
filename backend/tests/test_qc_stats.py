@@ -89,10 +89,19 @@ async def test_archive_proxy_caliber(async_db):
                            completed_at=datetime.now()))
     await async_db.flush()
     svc = MedicalRecordService(async_db)
-    rec = await svc.quick_save(encounter_id="ok", record_type="discharge_record",
-                               content="【出院诊断】\n愈", doctor_id="doc")
-    # 手动把签发时间放到出院次日（quick_save 用 now）
-    rec.submitted_at = datetime(2026, 8, 11, 9, 0)
+    # 必需三件套全部签发，这本病历才算齐（2026-08-31 齐套性修复 S2）：
+    # 原夹具只签一份出院记录，按现实标准那本病历根本不齐——旧口径算的是
+    # "建了的那几份都签了"，所以它能过。现在缺一件即不达标。
+    for _rt, _c in (
+        ("admission_note", "【主诉】胸闷 3 天"),
+        ("first_course_record", "【病例特点】中年男性，急性起病"),
+        ("discharge_record", "【出院诊断】冠心病，好转"),
+    ):
+        _r = await svc.quick_save(encounter_id="ok", record_type=_rt,
+                                  content=_c, doctor_id="doc")
+        # 手动把签发时间放到出院次日（quick_save 用 now）
+        _r.submitted_at = datetime(2026, 8, 11, 9, 0)
+    rec = _r
     await svc.auto_save_draft("pending", "discharge_record", "草稿", "doc")
     await async_db.commit()
 
@@ -120,5 +129,42 @@ async def test_export_csv_has_bom_and_sections(async_db):
         body = r.content.decode("utf-8")
         assert body.startswith("﻿"), "缺 BOM，Excel 打开中文会乱码"
         assert "高频扣分条款" in body and "归档时效" in body
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_archive_counts_zero_doc_and_missing_required(async_db):
+    """S1+S2 回归锁（2026-08-31 整本病历产物链审计）。
+
+    S1：出院很久却**一份文书都没写**——病案不齐的最坏形态，原实现
+        `if not recs: continue` 让它既不进分子也不进分母，指标对最该
+        报警的病例完全免疫。时限已过必须计入分母且判不达标。
+    S2：只签出院记录、入院记录与首程一份没建——原实现照样算达标。
+    """
+    async_db.add(Patient(id="p2", name="李四", birth_date=date(1965, 1, 1)))
+    async_db.add(Encounter(id="empty", patient_id="p2", doctor_id="doc",
+                           visit_type="inpatient", status="completed",
+                           visited_at=datetime(2026, 7, 1),
+                           completed_at=datetime(2026, 7, 20, 9, 0)))
+    async_db.add(Encounter(id="partial", patient_id="p2", doctor_id="doc",
+                           visit_type="inpatient", status="completed",
+                           visited_at=datetime(2026, 7, 2),
+                           completed_at=datetime(2026, 7, 21, 9, 0)))
+    await async_db.flush()
+    svc = MedicalRecordService(async_db)
+    _p = await svc.quick_save(encounter_id="partial", record_type="discharge_record",
+                              content="【出院诊断】愈", doctor_id="doc")
+    _p.submitted_at = datetime(2026, 7, 22, 9, 0)
+    await async_db.commit()
+
+    app.dependency_overrides[get_db] = lambda: async_db
+    app.dependency_overrides[get_current_user] = lambda: _user()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+            r = await ac.get("/api/v1/qc/stats/summary?days=90")
+            ap = r.json()["archive_proxy"]
+        assert ap["total"] >= 2, f"零文书/缺件的出院病历必须进分母：{ap}"
+        assert ap["ok"] == 0, f"零文书与缺必需件都不该算达标：{ap}"
     finally:
         app.dependency_overrides.clear()
