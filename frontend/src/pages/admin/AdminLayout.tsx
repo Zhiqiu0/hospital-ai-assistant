@@ -30,6 +30,7 @@ import {
   ThunderboltOutlined,
   TeamOutlined,
   AuditOutlined,
+  ToolOutlined,
   AudioOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
@@ -47,6 +48,7 @@ import RecordsPage from './RecordsPage'
 import TokenUsagePage from './TokenUsagePage'
 import PatientsPage from './PatientsPage'
 import AuditLogsPage from './AuditLogsPage'
+import DataFixPage from './DataFixPage'
 import VoiceRecordsPage from './VoiceRecordsPage'
 
 const { Sider, Content } = Layout
@@ -89,6 +91,7 @@ export default function AdminLayout() {
     { key: '/admin/stats', icon: <BarChartOutlined />, label: '数据统计' },
     { key: '/admin/records', icon: <FileTextOutlined />, label: '病历管理' },
     { key: '/admin/patients', icon: <TeamOutlined />, label: '患者档案' },
+    { key: '/admin/data-fix', icon: <ToolOutlined />, label: '数据更正' },
     { key: '/admin/audit-logs', icon: <AuditOutlined />, label: '操作日志' },
     { key: '/admin/token-usage', icon: <ThunderboltOutlined />, label: 'Token 用量' },
     { key: '/admin/voice-records', icon: <AudioOutlined />, label: '语音记录' },
@@ -255,6 +258,7 @@ export default function AdminLayout() {
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/records" element={<RecordsPage />} />
             <Route path="/patients" element={<PatientsPage />} />
+            <Route path="/data-fix" element={<DataFixPage />} />
             <Route path="/audit-logs" element={<AuditLogsPage />} />
             <Route path="/token-usage" element={<TokenUsagePage />} />
             <Route path="/voice-records" element={<VoiceRecordsPage />} />
