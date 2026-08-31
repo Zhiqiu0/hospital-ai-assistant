@@ -49,6 +49,12 @@ export interface UseAutoSaveDraftOptions {
   recordContent: string
   /** 病历是否已签发——签发后只读，不再 auto-save */
   isFinal: boolean
+  /** AI 是否正在流式生成（2026-08-31 半成功状态审计）：生成期间跳过防抖。
+   *  LLM 卡顿超 5 秒时防抖会先于流结束触发，把半截 AI 正文当作医生手写的
+   *  doctor_edited 草稿落库；若流随后报错，前端把 UI 回滚到生成前内容，
+   *  却不知道也不撤销那条半截记录。流结束后 save_ai_draft + baselineSignal
+   *  已负责落库与基线同步，生成期间无需防抖介入。 */
+  isGenerating?: boolean
 }
 
 export function useAutoSaveDraft({
@@ -56,6 +62,7 @@ export function useAutoSaveDraft({
   recordType,
   recordContent,
   isFinal,
+  isGenerating = false,
 }: UseAutoSaveDraftOptions): {
   savedAt: number
   savingState: AutoSaveState
@@ -272,6 +279,8 @@ export function useAutoSaveDraft({
   useEffect(() => {
     if (!encounterId) return
     if (isFinal) return
+    // 生成期间不排防抖（见 isGenerating 注释）
+    if (isGenerating) return
     if (!recordContent) return
     if (recordContent === lastSavedContentRef.current) return
 
@@ -293,7 +302,7 @@ export function useAutoSaveDraft({
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [recordContent, encounterId, recordType, isFinal])
+  }, [recordContent, encounterId, recordType, isFinal, isGenerating])
 
   // ── 服务端基线同步信号（2026-08-21 第四轮走查）──────────────────────────
   // AI 生成完成时后端已落库（save_ai_draft），done 事件带回 updated_at。
