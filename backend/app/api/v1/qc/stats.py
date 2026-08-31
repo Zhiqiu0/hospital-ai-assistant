@@ -144,11 +144,22 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
     if discharged:
         rec_rows = (await db.execute(
             select(MedicalRecord.encounter_id, MedicalRecord.status,
-                   MedicalRecord.submitted_at)
+                   MedicalRecord.submitted_at, MedicalRecord.record_type)
             .where(MedicalRecord.encounter_id.in_([e.id for e in discharged]))
         )).all()
-        for eid, s, t in rec_rows:
-            recs_by_enc.setdefault(eid, []).append((s, t))
+        for eid, st, t, rtype in rec_rows:
+            recs_by_enc.setdefault(eid, []).append((st, t, rtype))
+
+    # 齐套性判据（2026-08-31 整本病历产物链审计 S2）：本指标口径写的是
+    # "全部文书签发完成"，原实现算的却是"**建了的**那几份都签了"——只签一份
+    # 入院记录、首程与出院记录一份没建，照样计入达标。齐套性是归档最核心的
+    # 判据，而 RECORD_DEADLINES 里的 required=True 声明了却全仓零消费。
+    # 这里把它接上：必需类型没建 = 未完成。
+    from app.services.record_deadlines import RECORD_DEADLINES
+
+    required_types = {
+        r["record_type"] for r in RECORD_DEADLINES if r.get("required")
+    }
     archive_total = archive_ok = 0
     now = datetime.now()
     for enc in discharged:
@@ -158,11 +169,21 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
         from datetime import time as _time
         deadline = datetime.combine(add_workdays(enc.completed_at, 7).date(), _time.max)
         recs = recs_by_enc.get(enc.id, [])
+        # 零文书**不再静默跳过**（2026-08-31 审计 S1）：一份都没写是"病案不齐"
+        # 的最坏形态，原实现让它既不进分子也不进分母——指标对最该报警的病例
+        # 完全免疫，分母越干净指标越假。时限已过就计入分母且判为不达标；
+        # 仍在时限内的照旧不计（既不达标也不违约，避免误伤在途）。
         if not recs:
+            if now > deadline:
+                archive_total += 1
             continue
         archive_total += 1
-        all_signed = all(s == "submitted" and t is not None for s, t in recs)
-        latest_sign = max((t for _, t in recs if t), default=None)
+        signed_types = {rt for st, t, rt in recs if st == "submitted" and t is not None}
+        all_signed = (
+            all(st == "submitted" and t is not None for st, t, _ in recs)
+            and required_types.issubset(signed_types)
+        )
+        latest_sign = max((t for _, t, _ in recs if t), default=None)
         if all_signed and latest_sign and latest_sign <= deadline:
             archive_ok += 1
         elif not all_signed and now <= deadline:
