@@ -6,6 +6,7 @@
   - save_ai_draft   : AI 生成完毕的批次保存，upsert record 并追加新版本
 由 MedicalRecordService 组合，依赖宿主类提供 self.db。
 """
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +14,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.models.medical_record import MedicalRecord, RecordVersion
+
+logger = logging.getLogger(__name__)
 
 
 class MedicalRecordDraftMixin:
@@ -49,6 +52,7 @@ class MedicalRecordDraftMixin:
         content: str,
         user_id: str,
         expected_updated_at: Optional[datetime] = None,
+        force_overwrite: bool = False,
         recorded_at: Optional[datetime] = None,
     ) -> dict:
         """医生编辑器输入 / auto-save 防抖触发——把当前内容覆写到 draft 版本。
@@ -185,6 +189,33 @@ class MedicalRecordDraftMixin:
                     triggered_by=user_id,
                 ))
                 record.current_version = new_no
+            elif force_overwrite and (current_version.content or {}).get("text") != content:
+                # 多设备冲突后的强制覆盖（2026-09-01 多设备并发审计）：同样另起一版。
+                #
+                # 为什么不能原地覆写：auto-save 平时是 UPSERT 当前版本的 content，
+                # 医生在诊室电脑和护士站电脑同时开着同一份病历时，落后的一方撞 409
+                # 后会清空乐观锁基线继续保存（不这么做医生后续输入就永久不落库了），
+                # 于是下一次 5 秒防抖把整段内容原地覆写——**另一端刚写的内容就此从
+                # 库里彻底消失**，赢的一方毫无提示，输的一方也不知道自己盖掉了什么。
+                #
+                # 改为爆一版之后，被覆盖的内容留在旧版本行里（record_versions 只追加、
+                # 永不删除），最坏情况也只是"要人工从版本历史里捞"，而不是永久丢失。
+                # 版本号不会爆炸：只有撞过 409 的那一次带 force_overwrite，
+                # 且内容确实不同才走这里，属于罕见路径。
+                new_no = record.current_version + 1
+                self.db.add(RecordVersion(
+                    medical_record_id=record.id,
+                    version_no=new_no,
+                    content={"text": content},
+                    source="doctor_edited",
+                    triggered_by=user_id,
+                ))
+                record.current_version = new_no
+                logger.warning(
+                    "record.autosave: 多设备冲突强制覆盖 record_id=%s 旧版本=%s 新版本=%s "
+                    "user_id=%s——被覆盖内容保留在旧版本",
+                    record.id, new_no - 1, new_no, user_id,
+                )
             else:
                 current_version.content = {"text": content}
             record.status = "editing"

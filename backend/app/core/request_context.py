@@ -31,6 +31,26 @@ _access_logger = logging.getLogger("app.access")
 # 不打访问日志的路径（高频探活/静态资源会刷屏）
 _ACCESS_LOG_SKIP = ("/health", "/api/v1/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico")
 
+# ── 设计上就慢的端点（2026-09-01 可观测性审计）────────────────────────────
+# 慢请求会被升级成 WARNING 以便 grep，而 WARNING 及以上会进 error.log。问题是
+# 下面这些端点**本来就要跑 5～270 秒**（LLM 调用、流式生成、整段语音转写，
+# record_gen_v2_service 里专门写了 15 秒一次的心跳保活来扛 270 秒），于是
+# **全院医生每一次正常成功的 AI 生成都会往 error.log 灌一条 WARNING**。
+# 而 error.log 存在的全部意义就是"排查线上问题时只看它、信噪比高"
+# （logging_config 的设计说明 + 本项目铁律"查 bug 先看 error.log"）——
+# 这条升级规则等于自己把自己的设计目标破坏掉：真正的报错被正常业务淹没。
+# 这些路径改用一个宽得多的阈值：仍然会在真的异常久时告警（LLM 卡死/超时），
+# 但正常耗时不再进 error.log。
+_SLOW_BY_DESIGN_PREFIXES = (
+    "/api/v1/ai/",        # 病历生成/续写/补全/润色/语音结构化
+    "/api/v1/qc/",        # 质控扫描（含 LLM 旁路）
+)
+# 普通端点：超过 1 秒就值得看一眼
+_SLOW_THRESHOLD_MS = 1000
+# 设计上就慢的端点：给到 LLM 单次调用上限（record_gen_v2 的 270s）之上，
+# 超过这个数说明真的卡住了，那时的 WARNING 才有信息量
+_SLOW_BY_DESIGN_THRESHOLD_MS = 300_000
+
 # 当前请求的 ID。中间件 set，handler 内任意位置 get（含异步嵌套调用）。
 # 默认 "-" 表示"非请求上下文"，例如启动钩子 / 后台任务。
 _request_id: ContextVar[str] = ContextVar("request_id", default="-")
@@ -222,8 +242,14 @@ class RequestIDMiddleware:
             duration_ms = int((time.perf_counter() - start) * 1000)
             path = scope.get("path", "")
             if scope_type == "http" and not any(path.startswith(p) for p in _ACCESS_LOG_SKIP):
-                # 慢请求（>1s）升级到 warning，方便 grep
-                level = logging.WARNING if duration_ms > 1000 else logging.INFO
+                # 慢请求升级到 warning 方便 grep；但"设计上就慢"的端点用宽阈值，
+                # 否则正常的 AI 生成会把 error.log 淹掉（见 _SLOW_BY_DESIGN_PREFIXES）
+                _threshold = (
+                    _SLOW_BY_DESIGN_THRESHOLD_MS
+                    if path.startswith(_SLOW_BY_DESIGN_PREFIXES)
+                    else _SLOW_THRESHOLD_MS
+                )
+                level = logging.WARNING if duration_ms > _threshold else logging.INFO
                 _access_logger.log(
                     level,
                     "request.access: method=%s path=%s status=%d duration_ms=%d",

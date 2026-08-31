@@ -214,6 +214,19 @@ async def health_check_deep():
     # 不做真实 LLM 调用（会拖慢监控探测并烧 token），只查凭证是否配齐。
     deps["ai_credential"] = "ok" if settings.deepseek_api_key else "missing"
 
+    # Orthanc / PACS 影像服务器（2026-09-01 可观测性审计）：
+    # orthanc_client.health_check() 早就写好了，却**只在手工冒烟脚本里被调用过**，
+    # 从未接进任何自动探活。于是 Orthanc 容器挂掉时：uptime-kuma（只测前端+API）
+    # 绿、/health/deep 绿，而全院影像上传/查看已经失效——医生看到的只是泛化的
+    # "服务器内部错误，请稍后重试"，运维只能等人投诉才知道，期间可能已经数小时。
+    # 与 db/redis/ai_credential 同口径纳入关键依赖。
+    try:
+        from app.services.orthanc_client import orthanc_client
+        deps["orthanc"] = "ok" if await orthanc_client.health_check() else "error"
+    except Exception as exc:
+        logger.error("health.deep.orthanc: failed err=%s", exc)
+        deps["orthanc"] = "error"
+
     # 节假日日历覆盖（2026-08-31 跨年边界审计）：与 ai_credential 同一类问题——
     # 日历过期后系统照常跑、健康检查照常绿，但「7 个工作日内归档」这类**法定
     # 时限**会把节假日当工作日算，医务科对外通报的质控指标随之失真。这是启动
@@ -229,6 +242,7 @@ async def health_check_deep():
         deps.get("db") == "error"
         or deps.get("redis") == "error"
         or deps.get("ai_credential") == "missing"
+        or deps.get("orthanc") == "error"
         or _cal == "expired"
     )
     body = {

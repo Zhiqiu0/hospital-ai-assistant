@@ -115,3 +115,35 @@ def assert_can_write_record(user) -> None:
             status_code=403,
             detail="当前角色无权书写或签发病历（病历署名须为接诊医生本人）",
         )
+
+
+# ── 患者 PHI 读取角色（2026-09-01 数据边界审计）──────────────────────────
+# 背景：patients.py 的三个读端点注释一直写「任意登录**医生**可读，靠审计留痕
+# 追责」，实现却只挂了 get_current_user——**任意登录角色**都能按姓名批量浏览
+# 全院患者的身份证、住址、紧急联系人、过敏史。完全同款的问题
+# （注释说医生、实现放行全角色）2026-08-29 已在 medical_records 的 by-patient
+# 端点修过，patients.py 没有同步。
+#
+# "全院共享不拦读"这个设计取舍本身是成立的，但它的论证前提是**面向医生**：
+# 代班、转诊、复诊换医生都是常态，拦读会挡住正常诊疗。这个论证不适用于
+# qc_officer（本该被 /qc/* 的 _dept_scope 限在本科室）和 nurse（无病历读写职责）。
+PATIENT_READ_ROLES = {"doctor", *ADMIN_ROLES}
+# 影像科额外保留**列表**权限：PACS 工作台上传影像时要在下拉里选患者
+# （frontend/src/pages/PacsWorkbenchPage.tsx）。列表项不含身份证/住址，
+# 只有姓名性别年龄这类选人必需的最小字段；详情与纵向档案仍不对它开放。
+PATIENT_LIST_ROLES = PATIENT_READ_ROLES | {"radiologist"}
+
+
+def assert_can_read_patient(user, *, list_only: bool = False) -> None:
+    """患者 PHI 读取守卫。
+
+    Args:
+        user: 当前登录用户。
+        list_only: True 表示这是列表端点（影像科选患者需要）。
+
+    Raises:
+        HTTPException 403: 角色不在白名单内。
+    """
+    allowed = PATIENT_LIST_ROLES if list_only else PATIENT_READ_ROLES
+    if getattr(user, "role", None) not in allowed:
+        raise HTTPException(status_code=403, detail="无权查阅患者信息")

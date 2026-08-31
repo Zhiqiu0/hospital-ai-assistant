@@ -314,9 +314,39 @@ async def _handle_admit(
     if not first_time:
         logger.info("his_ws.duplicate_admit: msg_id=%s 内容相同，幂等回成功 ack",
                     env.msg_id)
+        # 补 encounter_id（2026-09-01 HIS 联调失败模式审计）：规范 3.1 承诺
+        # "成功 ack 的 data 含 visit_id 与 encounter_id"，正常分支两个都给，
+        # 唯独这条幂等重复分支只回了 visit_id。厂商若用强类型 DTO 反序列化 data
+        # 并对 encounter_id 做非空断言，**超时重发的那一次**会在他们侧抛异常——
+        # 而超时重发恰恰是最需要这条 ack 正常工作的场景。
+        # 按与 admit_service 相同的幂等键（visit_no + source + hospital_code）反查。
+        _vid = str(env.payload.get("visit_id") or "")
+        _eid = ""
+        if _vid:
+            from sqlalchemy import select
+
+            from app.database import AsyncSessionLocal
+            from app.models.encounter import Encounter
+            with suppress(Exception):
+                async with AsyncSessionLocal() as _db:
+                    _rows = (await _db.execute(
+                        select(Encounter).where(
+                            Encounter.visit_no == _vid,
+                            Encounter.status != "cancelled",
+                            Encounter.his_external_ref.isnot(None),
+                        ).order_by(Encounter.created_at.desc())
+                    )).scalars().all()
+                    _hit = next(
+                        (e for e in _rows
+                         if (e.his_external_ref or {}).get("source") == "admit_push"
+                         and (e.his_external_ref or {}).get("hospital_code")
+                         == env.payload.get("hospital_code")),
+                        None,
+                    )
+                    _eid = _hit.id if _hit is not None else ""
         await websocket.send_text(
             wp.build_ack(env.msg_id, 0, "重复消息，此前已处理", aid, secret,
-                         data={"visit_id": env.payload.get("visit_id", "")})
+                         data={"visit_id": _vid, "encounter_id": _eid})
         )
         return
     # 失败释放 msg_id 去重占位（2026-08-11 审计修复）：claim_nonce 是「先占后处理」，

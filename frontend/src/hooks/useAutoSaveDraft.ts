@@ -84,6 +84,12 @@ export function useAutoSaveDraft({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 切接诊时重置基线
   const lastEncounterRef = useRef<string | null>(null)
+  // 撞过 409 之后的一次性强制覆盖标记（2026-09-01 多设备并发审计）。
+  // 冲突后本地基线被清空、下一次保存会盖掉另一端刚写的内容；带上这个标记让
+  // 后端**另起一版**而不是原地覆写，被盖掉的内容留在历史版本里不至于永久消失。
+  // 不放进 DraftPayload：它要进 IndexedDB 队列，而这个标记只对"当前接诊的
+  // 下一次保存"有意义，补发旧草稿时不该带。
+  const forceOverwriteRef = useRef(false)
 
   // 实际保存逻辑（被防抖 + 失败队列 flush 共用）
   // 必须声明在 useEffect 之前——effect 闭包里引用 performSave，
@@ -97,6 +103,9 @@ export function useAutoSaveDraft({
         record_type: payload.record_type,
         content: payload.content,
         expected_updated_at: payload.expected_updated_at,
+        // 仅当这次发的正是当前接诊、且刚撞过 409 时才置真（见 forceOverwriteRef）
+        force_overwrite:
+          payload.encounter_id === lastEncounterRef.current && forceOverwriteRef.current,
       })) as { updated_at?: string } | null
       // 基线守卫（2026-08-11 审计修复）：flush 补发的可能是「上一个接诊」的旧草稿，
       // 若无条件更新乐观锁基线，会把旧草稿的 updated_at 写进当前接诊，导致当前接诊
@@ -105,6 +114,7 @@ export function useAutoSaveDraft({
       if (payload.encounter_id === lastEncounterRef.current) {
         lastSavedContentRef.current = payload.content
         lastUpdatedAtRef.current = res?.updated_at ?? null
+        forceOverwriteRef.current = false // 一次性：覆盖已完成，恢复正常乐观锁
         const now = Date.now()
         setSavedAt(now)
         setSavingState('saved')
@@ -138,6 +148,8 @@ export function useAutoSaveDraft({
           // 类型，基线仍会错行。直接置 null 等价且永远正确：下次保存不带
           // expected → 后端跳过乐观锁校验 → 后写覆盖（医生正在写就该存下来）。
           lastUpdatedAtRef.current = null
+          // 下一次保存告诉后端"这是冲突覆盖"，让它爆一版保住被盖掉的内容
+          forceOverwriteRef.current = true
           message.warning('病历已被其他设备修改，你的后续编辑将继续保存并覆盖')
         }
         return false
@@ -164,7 +176,14 @@ export function useAutoSaveDraft({
         await enqueueDraft(payload)
         setSavingState('queued')
       } catch {
-        // IndexedDB 也挂了——只能记日志，下次防抖触发还是会试
+        // IndexedDB 也挂了（隐私模式/存储配额满）。此前这里**只打 console.warn**，
+        // 而 savingState 还停在 performSave 开头设的 'saving'——它不匹配状态栏里
+        // 任何一个异常分支，最终落回"病历 X 分钟前保存"的绿色成功态。
+        // 也就是说：内容服务端没有、本地队列也没有，界面却告诉医生已经保存好了。
+        // 内容此刻只剩 recordStore 的 localStorage 副本（同设备刷新还能捞回来，
+        // 换台电脑或清缓存就真没了），医生必须看见这件事。
+        setSavingState('failed')
+        // 下次防抖触发还是会重试
 
         // 只打状态与消息（2026-08-28 PHI 审计）：整个 AxiosError 展开即见
         // config.data（病历正文）与 Authorization 头，而触发场景（弱网）正是
@@ -209,6 +228,7 @@ export function useAutoSaveDraft({
       lastEncounterRef.current = encounterId
       lastSavedContentRef.current = ''
       lastUpdatedAtRef.current = null
+      forceOverwriteRef.current = false
       setSavedAt(0)
       setSavingState('idle')
       // 顺便尝试把上次会话堆积的失败队列发出去（网络刚恢复 / 重新登录场景）。

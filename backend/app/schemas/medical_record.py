@@ -74,6 +74,11 @@ class AutoSaveDraftRequest(BaseModel):
 
     _rt = field_validator("record_type")(_validate_record_type)
     expected_updated_at: Optional[datetime] = None  # 上次保存返回的 updated_at，乐观锁凭证
+    # 冲突后的强制覆盖（2026-09-01 多设备并发审计）：前端撞 409 后会清空乐观锁
+    # 基线继续保存（否则医生后续输入永久不落库），此时带上本标记告诉后端
+    # "这一次是覆盖别人写的内容"——后端据此**另起一版**而不是原地覆写，
+    # 让被覆盖的内容留在历史版本里，不至于从库里彻底消失。
+    force_overwrite: bool = False
     # 记录时间（临床相关时点）。住院文书用它表达"这份病程记的是哪天的事"；
     # 门急诊当场书写不必传。与系统录入时间差得多会被标为补记，
     # 不是可以随意改的时间线 —— 规范依据见 services/record_time.py。
