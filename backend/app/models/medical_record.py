@@ -137,12 +137,17 @@ class MedicalRecord(Base, TimestampMixin):
 class RecordVersion(Base):
     """病历版本历史表（每次生成/修改产生新版本，不可覆盖）。
 
-    source 说明：
-      "ai_generate" : AI 一键生成
-      "ai_polish"   : AI 润色
-      "ai_supplement": AI 补全缺失项
-      "manual"      : 医生手动编辑
-      "final"       : 出具最终病历时的最终版本
+    source 说明（2026-09-01 核对全仓实际写入值后更正——原注释列的
+    ai_generate/ai_polish/ai_supplement/manual/final **一个都不存在**，
+    照着它写 `source == "manual"` 的判断会永远不成立）：
+      "ai_generated" : AI 生成的草稿（一键生成/补全/润色都落这个值）
+      "doctor_edited": 医生编辑的草稿（auto-save 与冲突覆盖都写它）
+      "doctor_signed": 签发版本，带 sign_hash/prev_hash 参与签名链
+      "admin_revise" : 管理员走修订通道产生的版本
+
+    注意 `source.startswith("ai_")` 这个判断（见 _medical_record_draft）刻意
+    保留前缀匹配而非等值比较：将来若细分 ai_polish/ai_supplement，"AI 版本
+    不可被医生编辑覆写"这条不变量仍自动成立。
     """
 
     __tablename__ = "record_versions"

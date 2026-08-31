@@ -60,6 +60,10 @@ export default function WorkbenchStatusBar() {
   if (!online) {
     savedLabel = '网络已断开，内容暂存本机，恢复后自动补传'
     dot = 'warning'
+  } else if (autoSaveState === 'failed') {
+    // 比 queued 更危险：连本机暂存队列都没写进去，内容仅存于浏览器 localStorage
+    savedLabel = '保存失败！内容仅存于本机浏览器，请勿关闭页面并联系管理员'
+    dot = 'warning'
   } else if (autoSaveState === 'queued') {
     savedLabel = '保存失败，已暂存本机稍后补传'
     dot = 'warning'

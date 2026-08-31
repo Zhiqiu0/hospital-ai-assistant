@@ -72,6 +72,8 @@ async def auto_save_draft(
         content=data.content,
         user_id=current_user.id,
         expected_updated_at=data.expected_updated_at,
+        # 冲突强制覆盖标记（见 schema 说明）
+        force_overwrite=data.force_overwrite,
         # 记录时间（临床相关时点，住院文书用；见 services/record_time.py）
         recorded_at=data.recorded_at,
     )

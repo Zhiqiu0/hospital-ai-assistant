@@ -79,7 +79,47 @@ class EncounterInquiryMixin:
 
         Returns:
             包含保存成功信息和更新后版本号的字典。
+
+        Raises:
+            HTTPException 403: 病历已签发（门急诊）/ 已出院（住院）后不得再改。
         """
+        # ── 签发冻结守卫（2026-09-01 数据更正流程审计）────────────────────
+        # 为什么必须有：HIS 回写的 payload 里 record.* / vitals.* 不是从签发正文里
+        # 抄的，而是**推送那一刻从 InquiryInput 实时重建**（his_adapter/
+        # writeback_builder.py）。而 sign_hash 只覆盖病历正文与患者快照，**不覆盖
+        # 结构化问诊字段**。于是签发后改这里会造成两个后果：
+        #   ① 我方签发件写着血压 180/85（进了哈希、锁死），HIS 病案（医院的法定
+        #      病案）在任何一次对账补投或管理员修订重推后拿到 130/85——两边永久
+        #      不一致，而 /admin/records/signature-integrity 仍显示"全部通过"；
+        #   ② 这等于一条**绕过防篡改体系的写通道**：改不了正文，但能改被回写出去
+        #      的结构化数据。
+        # 病历草稿（_medical_record_draft）和诊断条目（diagnosis_service）早就有
+        # 这道守卫，唯独问诊输入漏了。口径逐字照抄诊断那边，避免三处各有各的说法：
+        #   门急诊：一次接诊一份病历，已签发即冻结
+        #   住院：多文书持续录入，出院（encounter completed）后才冻结
+        from fastapi import HTTPException
+
+        from app.models.encounter import Encounter
+        from app.models.medical_record import MedicalRecord
+        enc = await self.db.get(Encounter, encounter_id)
+        if enc is not None:
+            if enc.visit_type == "inpatient":
+                if enc.status == "completed":
+                    raise HTTPException(
+                        status_code=403, detail="已出院，问诊与体征数据不可再修改")
+            else:
+                signed = (await self.db.execute(
+                    select(MedicalRecord.id).where(
+                        MedicalRecord.encounter_id == encounter_id,
+                        MedicalRecord.status == "submitted",
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if signed is not None:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="病历已签发，问诊与体征数据不可再修改"
+                               "（如需更正请走病历修订通道）")
+
         # (encounter_id) 无唯一约束，并发首次保存可能各插一条造成多行；
         # 读侧一律 order_by+取最新，这里也必须一致——
         # 不能用 scalar_one_or_none()，多行会抛 MultipleResultsFound 让此后每次保存都 500。

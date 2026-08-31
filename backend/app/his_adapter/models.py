@@ -146,11 +146,20 @@ class AdmitVitals(BaseModel):
 
 
 class AdmitPushRequest(BaseModel):
-    """接诊推送请求体（HIS→我方）。visit_id/hospital_code/patient_name 必填，其余容错可空。"""
+    """接诊推送请求体（HIS→我方）。visit_id/hospital_code 必填，其余容错可空。"""
 
     visit_id: str
     hospital_code: str
-    patient_name: str
+    # 姓名放宽为可空（2026-09-01 HIS 联调失败模式审计）：
+    # 规范 3.1 的容错承诺是「贵方按 HIS 原生类型推送即可，**不会因类型/编码差异
+    # 导致整条推送被拒**」，而原先 `patient_name: str` 遇到 null / 缺字段直接
+    # ValidationError → 40004 拒收，与该承诺矛盾。
+    # 更要命的是场景：**急诊三无人员/无名氏在 HIS 里姓名列就是 NULL**，那时患者
+    # 根本推不进工作台，医生看不到这个接诊——恰恰是最需要马上接诊的人。
+    # admit_service 里其实早就写好了"姓名不可清洗 → 占位名『未知患者』+ 告警"的
+    # 降级路径（本函数的头号不变量是「绝不因脏数据拒收接诊」），只是被模型层
+    # 挡在前面永远走不到。放开后由那条路径接管，医生在工作台里手工补名即可。
+    patient_name: Optional[str] = None
     # HIS 侧患者主索引号（病案号 / 患者主索引 / 居民健康档案号，贵方取哪个都行，
     # 只要「同一个人历次就诊恒定不变」即可）。2026-08-15 补接：
     # 此前我方跨就诊认人只靠 id_card 或 phone+姓名，两者都缺的患者每次就诊

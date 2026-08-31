@@ -25,7 +25,13 @@ import { create } from 'zustand'
 
 /** auto-save 状态机（2026-08-29 离线审计：从 useAutoSaveDraft 移到这里定义，
  *  避免 store→hook 循环导入；hook 原样 re-export 保持旧引用不变） */
-export type AutoSaveState = 'idle' | 'saving' | 'saved' | 'queued' | 'conflict'
+/**
+ * 自动保存状态。
+ * 'queued'  服务端保存失败但已暂存进 IndexedDB 队列，等待补传（内容安全）
+ * 'failed'  服务端与 IndexedDB **双双失败**——内容此刻只活在本机 localStorage，
+ *           关掉浏览器/换台电脑就没了。必须让医生看见（2026-09-01 可观测性审计）
+ */
+export type AutoSaveState = 'idle' | 'saving' | 'saved' | 'queued' | 'conflict' | 'failed'
 
 interface State {
   /**

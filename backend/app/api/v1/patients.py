@@ -15,7 +15,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.authz import assert_patient_write_access
+from app.core.authz import assert_patient_write_access, assert_can_read_patient
 from app.core.security import get_current_user
 from app.database import get_db
 from app.schemas.patient import (
@@ -56,6 +56,12 @@ async def list_patients(
     """
     # 空关键词=枚举全院患者，属"批量浏览"而非临床检索，留痕便于事后追溯
     # （按姓名检索是高频常规操作，逐次审计会淹没日志，故只审计枚举行为）
+    # 角色收口（2026-09-01 数据边界审计）：此前只挂 get_current_user，任意登录
+    # 角色都能按姓名浏览全院患者名单。本端点返回的是精简项（不含身份证/住址，
+    # 那些在 GET /{id}），但"全院患者姓名列表"本身也是 PHI。影像科保留本端点
+    # ——PACS 上传要在下拉里选患者；详情与纵向档案不对它开放。
+    assert_can_read_patient(current_user, list_only=True)
+
     if not keyword.strip():
         from app.services.audit_service import log_action
         await log_action(
@@ -105,7 +111,15 @@ async def get_patient(
     转诊、复诊换医生都是常态，拦读只会挡住正常诊疗。身份证/住址这类敏感字段
     靠**每次查阅写审计**追责（admin 在操作日志页可追溯谁何时看了谁），不靠拦截。
     写入（PUT）仍受归属保护。
+
+    角色收口（2026-09-01 数据边界审计）：上面"任意登录**医生**"这段论证一直没有
+    对应实现——本端点返回身份证/住址/紧急联系人，此前**任意登录角色**都能读。
+    完全同款的问题（注释说医生、实现放行全角色）2026-08-29 已在 medical-records
+    的 by-patient 端点修过，这里没有同步。"全院共享不拦读"的论证前提是面向医生
+    （代班/转诊/复诊换医生是常态），不适用于 qc_officer（本该被 /qc/* 的
+    _dept_scope 限在本科室）和 nurse（无病历读写职责）。
     """
+    assert_can_read_patient(current_user)
     # PHI 访问留痕（2026-08-11 分级评审）：本端点返回身份证/住址等敏感字段，
     # 每次查阅写审计（谁在何时看了哪位患者的档案），供事后追溯。
     from app.services.audit_service import log_action
@@ -164,7 +178,11 @@ async def get_patient_profile(
     **写入仍受归属保护**（PUT / confirm / resolve-his 走 assert_patient_write_access）：
     真正知道患者新过敏史的是正在接诊的医生，他必然有归属；把写也放开只会让
     过敏史变成谁都能改的公共字段，改错是会出事的。
+
+    角色收口（2026-09-01 数据边界审计）：同 GET /{id}——"任意登录医生"此前没有
+    对应实现，过敏史/既往史/用药史此前任意角色可读。
     """
+    assert_can_read_patient(current_user)
     from app.services.audit_service import log_action
     await log_action(
         action="view_patient_profile",
