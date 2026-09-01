@@ -274,9 +274,12 @@ async def my_returned_records(
         .group_by(QCReview.medical_record_id)
         .subquery()
     )
+    from app.models.patient import Patient
+
     rows = (await db.execute(
-        select(MedicalRecord, QCReview, Encounter)
+        select(MedicalRecord, QCReview, Encounter, Patient)
         .join(Encounter, MedicalRecord.encounter_id == Encounter.id)
+        .join(Patient, Encounter.patient_id == Patient.id)
         .join(latest_review_at, latest_review_at.c.rid == MedicalRecord.id)
         .join(QCReview, (QCReview.medical_record_id == MedicalRecord.id)
               & (QCReview.created_at == latest_review_at.c.mx))
@@ -308,11 +311,17 @@ async def my_returned_records(
             "record_type": rec.record_type,
             "visit_type": enc.visit_type,
             "patient_id": enc.patient_id,
+            # 患者姓名与就诊时间（2026-09-02 质控闭环实测补）：原先只给
+            # record_type + 整改意见 + 复核人，医生一天看几十个门诊病人，
+            # 提醒里说不出是哪一位——想整改只能凭复核时间倒推，或挨个翻历史
+            # 病历。整改意见本身也常是"现病史过简"这类通用措辞，认不出人。
+            "patient_name": pat.name,
+            "visited_at": enc.visited_at.isoformat() if enc.visited_at else None,
             "returned_at": rv.created_at.isoformat(),
             "reviewer_name": rv.reviewer_name,
             "comment": rv.comment,
         }
-        for rec, rv, enc in rows
+        for rec, rv, enc, pat in rows
     ]
 
 
