@@ -106,7 +106,11 @@ class MedicalRecordSignMixin:
         if not record:
             # 首次签发，病历记录尚未创建（极少数情况：直接签发跳过了 AI 生成步骤）
             record = MedicalRecord(
-                encounter_id=encounter_id, record_type=record_type, record_no=next_no
+                encounter_id=encounter_id, record_type=record_type, record_no=next_no,
+                # 记录时间兜底（2026-09-02）：见 _medical_record_draft 处的说明——
+                # 缺了它 is_late_entry() 永远返回 False，补记标识形同虚设。
+                # 用 func.now() 而非 datetime.now()，与 created_at 同一时钟源。
+                recorded_at=func.now(),
             )
             self.db.add(record)
             await self.db.flush()  # 获取数据库生成的 id，后续 RecordVersion 需要引用

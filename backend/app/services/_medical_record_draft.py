@@ -155,7 +155,8 @@ class MedicalRecordDraftMixin:
                 # 同类型第几份（住院多份文书的区分键，与签发路径同一算法）
                 record_no=await self._next_record_no(encounter_id, record_type),
                 # 临床相关时间；与 created_at 差得多即判为补记（见 record_time.py）
-                recorded_at=recorded_at,
+                # 缺省取当下，理由见 save_ai_draft 处的说明
+                recorded_at=recorded_at or func.now(),
             )
             self.db.add(record)
             await self.db.flush()
@@ -335,6 +336,21 @@ class MedicalRecordDraftMixin:
                 status="editing",
                 current_version=0,
                 record_no=await self._next_record_no(encounter_id, record_type),
+                # 记录时间兜底（2026-09-02 住院支线实测补）：缺省取当下。
+                # 此前四个建记录点里只有 auto_save_draft 一处传 recorded_at，
+                # 而前端新建病程时明确「不发 recorded_at：留服务器取 now」——
+                # 服务器却从来没取。结果生产库 46 份病历 recorded_at **全为 NULL**，
+                # 而 is_late_entry() 遇 None 直接 return False，整条补记判定链路
+                # （record_time.py 声称的「一定把它标出来」）从未激活过一次。
+                # 缺省取 now 后：正常书写 recorded_at≈created_at 不判补记；
+                # 医生把它改成更早的诊疗时点，差值超阈值才标补记——机制才真正活。
+                # 记录时间兜底用 func.now()，与 created_at **同一个时钟源**（2026-09-02）：
+                # created_at 由 TimestampMixin 的 func.now() 在数据库端生成，若这里改用
+                # 应用进程的 datetime.now()，两个值就来自两台机器的两个时钟，而
+                # is_late_entry() 恰恰是拿它们相减——生产上靠「PG 连接设了
+                # timezone=Asia/Shanghai、应用容器也是北京时间」才勉强对齐，任一侧
+                # 配置漂了就是 8 小时系统性偏移（SQLite 测试库正是如此）。同源则恒等。
+                recorded_at=func.now(),
             )
             self.db.add(record)
             await self.db.flush()  # 拿到 record.id
