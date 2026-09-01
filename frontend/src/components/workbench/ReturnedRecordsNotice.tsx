@@ -16,6 +16,9 @@ interface ReturnedItem {
   encounter_id: string
   record_type: string
   visit_type: string
+  /** 患者姓名与就诊时间：医生据此认出是哪一位（2026-09-02 质控闭环实测补） */
+  patient_name?: string | null
+  visited_at?: string | null
   returned_at: string
   reviewer_name: string | null
   comment: string | null
@@ -100,12 +103,20 @@ export default function ReturnedRecordsNotice() {
                 fontSize: 13,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <Tag color="orange">{TYPE_LABEL[it.record_type] || it.record_type}</Tag>
-                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>
-                  {it.returned_at.replace('T', ' ').slice(0, 16)} · 复核人：
-                  {it.reviewer_name || '—'}
-                </span>
+                {/* 患者姓名放第一位：整改意见常是"现病史过简"这类通用措辞，
+                    没有姓名医生认不出是哪一位，只能挨个翻历史病历 */}
+                <strong>{it.patient_name || '—'}</strong>
+                {it.visited_at && (
+                  <span style={{ color: 'var(--text-3)', fontSize: 12 }}>
+                    就诊 {it.visited_at.replace('T', ' ').slice(0, 16)}
+                  </span>
+                )}
+              </div>
+              <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 6 }}>
+                退回 {it.returned_at.replace('T', ' ').slice(0, 16)} · 复核人：
+                {it.reviewer_name || '—'}
               </div>
               <div style={{ marginBottom: 8 }}>整改意见：{it.comment || '（未填写）'}</div>
               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
