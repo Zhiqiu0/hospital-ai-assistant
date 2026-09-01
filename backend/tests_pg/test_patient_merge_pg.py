@@ -22,11 +22,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.encounter import Encounter
 from app.models.patient import Patient
+from app.models.user import User
 from app.services import patient_merge_service as svc
 
 
 def _session_factory(engine):
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def _mk_operator(db) -> str:
+    """建一个真实操作者账号。
+
+    patients.deleted_by 有外键指向 users——真 PG 强制它，而 tests/ 用的 SQLite
+    默认不开外键检查，随手传个 "admin" 字符串在那边一路绿灯。这类只在真库上
+    炸的约束正是本目录存在的理由。
+    """
+    uid = str(uuid.uuid4())
+    db.add(User(id=uid, username=f"op_{uid[:8]}", password_hash="x",
+                real_name="数据管理员", role="admin"))
+    await db.flush()
+    return uid
 
 
 async def test_合并时身份证补空不撞唯一索引(alembic_pg):
@@ -37,6 +52,7 @@ async def test_合并时身份证补空不撞唯一索引(alembic_pg):
     id_card = "330523194001011234"
 
     async with Session() as db:
+        operator = await _mk_operator(db)
         db.add_all([
             Patient(id=tid, name="王大爷", gender="male"),
             Patient(id=sid, name="王大爷", gender="male", id_card=id_card,
@@ -47,7 +63,7 @@ async def test_合并时身份证补空不撞唯一索引(alembic_pg):
 
     async with Session() as db:
         await svc.merge(db, target_id=tid, source_id=sid,
-                        confirm_name="王大爷", operator_id="admin")
+                        confirm_name="王大爷", operator_id=operator)
 
     async with Session() as db:
         t = await db.get(Patient, tid)
@@ -65,6 +81,7 @@ async def test_接诊与档案一起搬且源档案退出查重(alembic_pg):
     tid, sid = str(uuid.uuid4()), str(uuid.uuid4())
 
     async with Session() as db:
+        operator = await _mk_operator(db)
         db.add_all([
             Patient(id=tid, name="李奶奶", gender="female"),
             Patient(id=sid, name="李奶奶", gender="female"),
@@ -76,7 +93,7 @@ async def test_接诊与档案一起搬且源档案退出查重(alembic_pg):
 
     async with Session() as db:
         res = await svc.merge(db, target_id=tid, source_id=sid,
-                              confirm_name="李奶奶", operator_id="admin")
+                              confirm_name="李奶奶", operator_id=operator)
         assert res["moved"]["encounters"] == 1
 
     async with Session() as db:
