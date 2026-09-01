@@ -53,8 +53,13 @@ interface State {
    *   信号携带 {updatedAt, content}：hook 收到后把两个基线 ref 一起对齐。
    */
   baselineSignal: number
-  baselinePayload: { updatedAt: string; content: string } | null
-  syncBaseline: (updatedAt: string, content: string) => void
+  /**
+   * adoptContent=false 表示「只对齐乐观锁基线，不接管正文状态」——用于本地
+   * 已有内容、但仍需知道服务端版本号的场景（多设备）。此时不能 markSaved：
+   * 医生本地那份还没上传，状态条不该显示"已保存"。
+   */
+  baselinePayload: { updatedAt: string; content: string; adoptContent: boolean } | null
+  syncBaseline: (updatedAt: string, content: string, adoptContent?: boolean) => void
 }
 
 export const useRecordAutoSaveTrigger = create<State>(set => ({
@@ -64,9 +69,9 @@ export const useRecordAutoSaveTrigger = create<State>(set => ({
   triggerFlush: () => set(s => ({ forceFlushSignal: s.forceFlushSignal + 1 })),
   baselineSignal: 0,
   baselinePayload: null,
-  syncBaseline: (updatedAt, content) =>
+  syncBaseline: (updatedAt, content, adoptContent = true) =>
     set(s => ({
       baselineSignal: s.baselineSignal + 1,
-      baselinePayload: { updatedAt, content },
+      baselinePayload: { updatedAt, content, adoptContent },
     })),
 }))

@@ -349,6 +349,11 @@ export function useAutoSaveDraft({
     if (!payload) return
     lastUpdatedAtRef.current = payload.updatedAt
     lastSavedContentRef.current = payload.content
+    // adoptContent=false：本地已有医生正在写的内容，这里**只**对齐乐观锁基线
+    // （2026-09-02 多设备实测补）。本地那份还没上传，既不能作废待发快照、
+    // 也不能 markSaved 让状态条显示"已保存"——它会被随后的防抖带着正确基线
+    // 发出去；若服务端已被另一台改过，那一发撞 409 走冲突流程，而不是无声覆盖。
+    if (payload.adoptContent === false) return
     // 流式生成期间防抖排下的待发快照携带旧基线且内容已在服务端——作废
     pendingRef.current = null
     if (debounceTimerRef.current) {
