@@ -60,6 +60,150 @@ class AdmitResult:
     reused: bool  # True=visit_id 已有接诊，本次为重复推送（幂等复用）
 
 
+def _parse_his_birth_date(raw: Optional[str], visit_id: str):
+    """把 HIS 各种形态的出生日期解析成 date；解析不了返回 None 并留痕。
+
+    2026-09-02 从 _find_or_create_patient 内联段抽出（纯搬移，行为逐字不变），
+    供首次建档与重推补空两处共用——两边各写一份必然漂移。
+    """
+    if not raw:
+        return None
+    try:
+        # 兼容 YYYYMMDD 紧凑写法：CSRQ 在 HIS 里常是 date/int 列，
+        # 序列化出来就是 19680520。入参容错已让它不再被拒收，但若这里
+        # 解析不了就等于静默丢掉出生日期——年龄影响用药与诊断判断，
+        # 不能默默丢。补一次紧凑格式转换即可，不放宽其它规则。
+        raw_bd = raw.strip()
+        if len(raw_bd) == 8 and raw_bd.isdigit():
+            raw_bd = f"{raw_bd[:4]}-{raw_bd[4:6]}-{raw_bd[6:]}"
+        # 常见厂商形态归一（2026-08-29 第五轮 HIS 契约审计）：
+        # "1968-05-20 00:00:00"（datetime 列序列化）→ 截前 10 位；
+        # "1968/05/20"、"1968.5.20" → 分隔符归一；
+        # "1968-5-20"（不补零）→ 拆段补零。fromisoformat 只认补零 ISO，
+        # 这些形态原先全部静默丢弃且无日志，年龄空缺联调无痕。
+        raw_bd = raw_bd[:10].strip().replace("/", "-").replace(".", "-").strip("-")
+        parts = raw_bd.split("-")
+        if len(parts) == 3 and all(x.isdigit() for x in parts):
+            raw_bd = f"{parts[0]}-{parts[1]:0>2}-{parts[2]:0>2}"
+        parsed = date.fromisoformat(raw_bd)
+        # 未来出生日期丢弃留痕（2026-08-29 第七轮审计）：负年龄会进病案
+        # 首页与回写，无合法场景；与解析失败同口径不拒收接诊
+        if parsed > date.today():
+            logger.warning(
+                "his_admit.patient: birth_date 在未来已丢弃 raw=%r visit_id=%s",
+                raw, visit_id)
+            return None
+        return parsed
+    except ValueError:
+        # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢
+        logger.warning(
+            "his_admit.patient: birth_date 解析失败已丢弃 raw=%r visit_id=%s",
+            raw, visit_id,
+        )
+        return None
+
+
+# 重推时可补空的患者字段：(payload 字段, Patient 列)。
+# 只收「跨就诊认人」与「病历署名」真正要用的那几个，不做全量同步——
+# 重推的语义是"同一次就诊又推了一遍"，不是"以 HIS 为准全量覆盖档案"。
+_REPUSH_FILLABLE = (
+    ("patient_no", "patient_no"),
+    ("id_card", "id_card"),
+    ("phone", "phone"),
+    ("birth_date", "birth_date"),
+)
+# 建档降级时用的占位名，重推补齐真名时按"空"处理（见 _find_or_create_patient）
+_PLACEHOLDER_NAME = "未知患者"
+
+
+def _field_acceptable(col: str, value) -> bool:
+    """单字段是否通过建档校验——与 _find_or_create_patient 的逐字段试探同口径。"""
+    if col not in ("id_card", "phone"):
+        return True
+    from app.schemas.patient import PatientCreate   # 与建档路径同一处局部导入
+    try:
+        PatientCreate(name="校验探针", gender="未知", **{col: value})
+        return True
+    except ValidationError:
+        return False
+
+
+async def _refresh_patient_from_repush(db, patient, payload, enc) -> None:
+    """同 visit_id 重推时更新患者信息（2026-09-02 HIS 异常面演练补）。
+
+    原实现在幂等复用分支里只处理医生改派，患者信息一个字段都不看——同一个
+    visit_id 推来不同的姓名/身份证，静默忽略且无任何告警。两个现实后果：
+
+      ① **急诊无名氏补不回来**。本模块明确写了"姓名不可清洗 → 占位名『未知
+         患者』+ 告警"的降级路径（头号不变量是绝不因脏数据拒收接诊），而 HIS
+         侧补齐姓名后重推同一 visit_id，正是最自然的补救方式——被忽略后那位
+         患者永远叫"未知患者"，身份证也补不进来，于是跨就诊认人（靠 id_card /
+         patient_no）也一并失效，他下次来还是新建档案。
+      ② **挂错号纠正后我方不跟**。HIS 侧把张三改成李四重推，工作台仍显示张三，
+         医生对着错的患者写病历，署名与病案首页全错。
+
+    处理口径与档案合并（patient_merge_service）一致：**补空不覆盖**。
+      · 我方为空（姓名为占位名也算空）而 HIS 有值 → 补上；
+      · 两边都有值且不同 → **不静默覆盖**，记 warning + 在 his_external_ref
+        里留痕。覆盖与否涉及"以谁为准"的业务口径，不该由这段代码替医院决定，
+        但必须让人查得到"HIS 说是李四、我方记的是张三"。
+    """
+    filled: list[str] = []
+    conflicts: list[str] = []
+
+    # 姓名单独处理：占位名视为空
+    new_name = (payload.patient_name or "").strip()
+    if new_name and new_name != patient.name:
+        if not patient.name or patient.name == _PLACEHOLDER_NAME:
+            patient.name = new_name[:50]     # 与列宽对齐，超长截断不报错
+            filled.append("name")
+        else:
+            conflicts.append(f"name:{patient.name}->{new_name}")
+
+    for src, col in _REPUSH_FILLABLE:
+        val = getattr(payload, src, None)
+        val = val.strip() if isinstance(val, str) else val
+        if not val:
+            continue
+        cur = getattr(patient, col, None)
+        if not cur:
+            # birth_date 是 Date 列，payload 里是字符串，复用建档时那套解析
+            parsed = (_parse_his_birth_date(val, payload.visit_id)
+                      if col == "birth_date" else val)
+            # 走建档同一套字段校验（2026-09-02 自查补）：首次建档时 id_card /
+            # phone 要过 PatientCreate（身份证含 GB 11643 校验位），不过就单独
+            # 丢弃该字段。补空若直接 setattr 就绕过了这层——校验位错误的身份证
+            # 会从重推这条路径溜进档案，而它正是跨就诊认人的强键，错的比没有更糟。
+            if parsed and not _field_acceptable(col, parsed):
+                logger.warning(
+                    "his_admit.repush: %s 未通过校验，不补入档案 visit_id=%s",
+                    col, payload.visit_id)
+                continue
+            if parsed:
+                setattr(patient, col, parsed)
+                filled.append(col)
+        elif str(cur) != str(val):
+            conflicts.append(f"{col}:{cur}->{val}")
+
+    if conflicts:
+        # 留痕进接诊的 HIS 引用，运维/医务科事后能查到这次冲突
+        ref = dict(enc.his_external_ref or {})
+        ref["patient_conflicts"] = conflicts
+        enc.his_external_ref = ref
+        flag_modified(enc, "his_external_ref")
+        logger.warning(
+            "his_admit.patient_conflict: visit_id=%s 重推的患者信息与本地不一致，"
+            "未覆盖：%s", payload.visit_id, "; ".join(conflicts),
+        )
+    if filled or conflicts:
+        await db.commit()
+        from app.services.patient_cache import _invalidate_patient_cache
+        await _invalidate_patient_cache(patient.id)
+        if filled:
+            logger.info("his_admit.patient_filled: visit_id=%s 补齐 %s",
+                        payload.visit_id, ",".join(filled))
+
+
 async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitResult:
     """接诊推送 → 医生映射 + 患者建档 + 接诊创建（visit_id 幂等）。
 
@@ -158,6 +302,8 @@ async def process_admit(db: AsyncSession, payload: AdmitPushRequest) -> AdmitRes
             logger.info("his_admit.reassigned: visit_id=%s 改派医生 %s",
                         payload.visit_id, doctor.username)
         patient = await db.get(Patient, enc.patient_id)
+        if patient is not None:
+            await _refresh_patient_from_repush(db, patient, payload, enc)
         return AdmitResult(
             encounter_id=enc.id, patient_id=enc.patient_id,
             patient_name=patient.name if patient else payload.patient_name,
@@ -578,39 +724,7 @@ async def _find_or_create_patient(db: AsyncSession, payload: AdmitPushRequest) -
         cleaned_name = cleaned_name[:50]
     payload = payload.model_copy(update={"patient_name": cleaned_name})
 
-    birth_date: Optional[date] = None
-    if payload.birth_date:
-        try:
-            # 兼容 YYYYMMDD 紧凑写法：CSRQ 在 HIS 里常是 date/int 列，
-            # 序列化出来就是 19680520。入参容错已让它不再被拒收，但若这里
-            # 解析不了就等于静默丢掉出生日期——年龄影响用药与诊断判断，
-            # 不能默默丢。补一次紧凑格式转换即可，不放宽其它规则。
-            raw_bd = payload.birth_date.strip()
-            if len(raw_bd) == 8 and raw_bd.isdigit():
-                raw_bd = f"{raw_bd[:4]}-{raw_bd[4:6]}-{raw_bd[6:]}"
-            # 常见厂商形态归一（2026-08-29 第五轮 HIS 契约审计）：
-            # "1968-05-20 00:00:00"（datetime 列序列化）→ 截前 10 位；
-            # "1968/05/20"、"1968.5.20" → 分隔符归一；
-            # "1968-5-20"（不补零）→ 拆段补零。fromisoformat 只认补零 ISO，
-            # 这些形态原先全部静默丢弃且无日志，年龄空缺联调无痕。
-            raw_bd = raw_bd[:10].strip().replace("/", "-").replace(".", "-").strip("-")
-            parts = raw_bd.split("-")
-            if len(parts) == 3 and all(p.isdigit() for p in parts):
-                raw_bd = f"{parts[0]}-{parts[1]:0>2}-{parts[2]:0>2}"
-            birth_date = date.fromisoformat(raw_bd)
-            # 未来出生日期丢弃留痕（2026-08-29 第七轮审计）：负年龄会进病案
-            # 首页与回写，无合法场景；与解析失败同口径不拒收接诊
-            if birth_date > date.today():
-                logger.warning(
-                    "his_admit.patient: birth_date 在未来已丢弃 raw=%r visit_id=%s",
-                    payload.birth_date, payload.visit_id)
-                birth_date = None
-        except ValueError:
-            # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢
-            logger.warning(
-                "his_admit.patient: birth_date 解析失败已丢弃 raw=%r visit_id=%s",
-                payload.birth_date, payload.visit_id,
-            )
+    birth_date = _parse_his_birth_date(payload.birth_date, payload.visit_id)
 
     service = PatientService(db)
     # ── 三级查重，顺序：身份证 → patient_no → 手机号+姓名 ────────────────────
