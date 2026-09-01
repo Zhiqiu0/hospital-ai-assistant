@@ -87,7 +87,7 @@ async def test_接诊与档案一起搬且源档案退出查重(alembic_pg):
             Patient(id=sid, name="李奶奶", gender="female"),
         ])
         await db.flush()
-        db.add(Encounter(patient_id=sid, doctor_id="doc-1",
+        db.add(Encounter(patient_id=sid, doctor_id=operator,
                          visit_type="outpatient"))
         await db.commit()
 

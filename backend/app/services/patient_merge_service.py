@@ -162,20 +162,33 @@ async def merge(db: AsyncSession, *, target_id: str, source_id: str,
         .values(patient_id=target_id)
     )
 
-    # ② 档案补空（不覆盖）：target 是保留下来的那份，以它为准；
+    # ② source 先软删并**立即 flush**，然后才能补空——顺序不能反。
+    #
+    #    2026-09-02 真 PG 用例抓到：身份证的唯一性由部分索引保证——
+    #        uq_patients_id_card_active UNIQUE (id_card)
+    #        WHERE id_card IS NOT NULL AND is_deleted = false
+    #    补空若排在前面，SQLAlchemy 会先 UPDATE target 把 source 的身份证写上，
+    #    而此刻 source 还是 is_deleted=false，两行同时活跃持有同一个身份证，
+    #    PG 在这条语句后就判唯一冲突，整个合并 500 回滚。
+    #    而这恰恰是最典型的重复档案形态：老人第一次挂号没带身份证（建了无证
+    #    档案），第二次带了（建了有证档案）——正是这个功能要合的那种。
+    #    SQLite 不检查部分索引的这个瞬间态，tests/ 那边一路绿灯。
+    #
+    #    **不动任何已签发病历的 patient_snapshot**——那是签发瞬间冻结、进了
+    #    sign_hash 的法定署名，改它等于篡改法律文书。
+    source.is_deleted = True
+    source.deleted_at = datetime.datetime.now()
+    source.deleted_by = operator_id
+    source.merged_into = target_id
+    await db.flush()
+
+    # ③ 档案补空（不覆盖）：target 是保留下来的那份，以它为准；
     #    只有它没填而 source 填了的字段才搬过去。
     filled: list[str] = []
     for field in _IDENTITY_FIELDS + _PROFILE_FIELDS:
         if getattr(target, field, None) in (None, "") and getattr(source, field, None):
             setattr(target, field, getattr(source, field))
             filled.append(field)
-
-    # ③ source 软删并留下去向。**不动任何已签发病历的 patient_snapshot**——
-    #    那是签发瞬间冻结、进了 sign_hash 的法定署名，改它等于篡改法律文书。
-    source.is_deleted = True
-    source.deleted_at = datetime.datetime.now()
-    source.deleted_by = operator_id
-    source.merged_into = target_id
 
     await db.commit()
 
