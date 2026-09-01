@@ -144,13 +144,15 @@ describe('selector 行为', () => {
     expect(keys).not.toContain('patient_disposition')
   })
 
-  it('pickEmergencyInquiry 含急诊去向但不含中医/住院专属', () => {
+  it('pickEmergencyInquiry 含急诊去向但不含中医四诊/住院专属', () => {
     const out = pickEmergencyInquiry(FULL_INQUIRY)
     const keys = Object.keys(out)
     expect(keys).toContain('observation_notes')
     expect(keys).toContain('patient_disposition')
     expect(keys).toContain('treatment_plan') // 急诊处置共用 treatment_plan
-    // 不应有：中医四诊
+    // 不应有：中医四诊（急诊不做望闻问切）
+    // 注意区分：中医**诊断**字段是要发的——医生填了就该写进病历，
+    // 质控对急诊豁免的是不强制要求填，不是填了也不要。见文件末尾那组用例。
     expect(keys).not.toContain('tongue_coating')
     expect(keys).not.toContain('pulse_condition')
     // 不应有：住院评估
@@ -176,5 +178,48 @@ describe('selector 行为', () => {
     expect(out.chief_complaint).toBe('cc')
     expect(out.tongue_coating).toBe('tc')
     expect(out.treatment_method).toBe('tm')
+  })
+})
+
+// ─── 急诊 payload 必须带诊断（2026-09-01 急诊支线端到端实测发现）──────────
+//
+// 西医诊断原先被放在 TCM_DIAGNOSIS_FIELDS 组里。急诊要豁免中医内容，于是整组
+// 被排除，**连西医诊断一起丢了**：急诊表单照常显示并保存诊断（inquiry_inputs
+// 与 diagnoses 表都有值、HIS 回写也拿得到），唯独发给 AI 生成的 payload 里没有，
+// 于是急诊病历正文的【诊断】章节恒为「[未填写，需补充]」。
+// 实测：填「社区获得性肺炎」，抓 quick-generate 请求体，里面连字段名都没有。
+describe('急诊生成 payload 必须包含诊断字段', () => {
+  const full = {
+    chief_complaint: '发热伴咳嗽3天',
+    western_diagnosis: '社区获得性肺炎',
+    tcm_disease_diagnosis: '风温肺热病',
+    tcm_syndrome_diagnosis: '痰热壅肺证',
+    initial_impression: '待排肺结核',
+    treatment_plan: '头孢替安静滴',
+    observation_notes: '留观2小时体温降至37.2℃',
+    patient_disposition: '回家观察',
+  } as never
+
+  it('西医诊断不能被过滤掉', () => {
+    const picked = pickEmergencyInquiry(full) as Record<string, unknown>
+    expect(picked.western_diagnosis).toBe('社区获得性肺炎')
+  })
+
+  it('中医诊断填了也要发——豁免的是「不强制要求」，不是「填了也不要」', () => {
+    const picked = pickEmergencyInquiry(full) as Record<string, unknown>
+    expect(picked.tcm_disease_diagnosis).toBe('风温肺热病')
+    expect(picked.tcm_syndrome_diagnosis).toBe('痰热壅肺证')
+  })
+
+  it('急诊专属字段仍在', () => {
+    const picked = pickEmergencyInquiry(full) as Record<string, unknown>
+    expect(picked.observation_notes).toBe('留观2小时体温降至37.2℃')
+    expect(picked.patient_disposition).toBe('回家观察')
+  })
+
+  it('门诊同样带全三个诊断字段（回归保护）', () => {
+    const picked = pickOutpatientInquiry(full) as Record<string, unknown>
+    expect(picked.western_diagnosis).toBe('社区获得性肺炎')
+    expect(picked.tcm_disease_diagnosis).toBe('风温肺热病')
   })
 })
