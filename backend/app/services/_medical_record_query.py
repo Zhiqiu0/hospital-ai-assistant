@@ -8,6 +8,7 @@ from sqlalchemy import and_, desc, func, select
 
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
+from app.services.record_time import describe_record_time
 from app.utils.age import calc_age
 
 
@@ -144,6 +145,12 @@ class MedicalRecordQueryMixin:
                 "is_first_visit": encounter.is_first_visit,
                 # 管理员修订次数——打印件的法定「经修订」标识只认它（见上方说明）
                 "revision_count": revision_map.get(record.id, 0),
+                # 补记三元组（2026-09-02 补）：记录时点 / 系统录入时点 / 是否补记。
+                # 《病历书写基本规范》要求补记「据实补记，**并加以注明**」——注明的
+                # 载体是归档病历本身，而归档的是打印件。此前只有住院工作台时间轴的
+                # 屏幕徽标消费它，纸面和管理端病历列表一个字都没有：病案室翻纸质
+                # 病历、法庭调阅病案，都看不出这份文书是隔天补写的。
+                **describe_record_time(record.recorded_at, record.created_at),
                 "visit_type": encounter.visit_type,
                 # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
                 "visit_sequence": int(visit_sequence) if visit_sequence else 1,
