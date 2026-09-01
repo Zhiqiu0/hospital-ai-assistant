@@ -35,14 +35,54 @@ async def test_quick_save_rejects_cancelled_encounter(async_db):
 
 @pytest.mark.asyncio
 async def test_quick_save_idempotent_on_submitted(async_db):
-    """已签发门诊病历重复签发 → 幂等返回原记录，不改写。"""
+    """已签发门诊病历**同内容**重复签发 → 幂等返回原记录，不改写。
+
+    这是前端双击/网络重试的真实场景：同一份正文提交两次，第二次不该涨版本。
+    """
     enc_id, doc_id = await _mk_encounter(async_db)
     service = MedicalRecordService(async_db)
     r1 = await service.quick_save(enc_id, "outpatient", "第一次", doc_id)
     v1 = r1.current_version
-    r2 = await service.quick_save(enc_id, "outpatient", "第二次改写", doc_id)
+    r2 = await service.quick_save(enc_id, "outpatient", "第一次", doc_id)
     assert r2.id == r1.id
     assert r2.current_version == v1  # 版本号未涨，未重复改写
+
+
+@pytest.mark.asyncio
+async def test_quick_save_已签发门诊改内容必须报错而不是假装成功(async_db):
+    """内容变了还回 ok，是 2026-09-02 质控复核台实测抓到的断链点。
+
+    原实现对已签发门急诊病历无条件 return record，于是「质控退回 → 医生整改
+    → 重新签发」这条闭环是这样断的：医生按整改意见改完正文，点签发，接口回
+    {"ok": true}，医生以为交差了——而整改内容一个字都没落库，版本表里还是被
+    退回的那一版。队列收不到（没产生新签发版本），医生端退回横幅也不消
+    （判据同源）。实测中质控员随后"复核通过"的，正是那份没改过的病历。
+
+    「不改写已签发病历」是对的，必须保持；错的是不告诉医生。
+    """
+    from fastapi import HTTPException
+
+    enc_id, doc_id = await _mk_encounter(async_db)
+    service = MedicalRecordService(async_db)
+    r1 = await service.quick_save(enc_id, "outpatient", "被退回的劣质病历", doc_id)
+    v1 = r1.current_version
+
+    with pytest.raises(HTTPException) as exc:
+        await service.quick_save(enc_id, "outpatient", "整改后的完整病历", doc_id)
+    assert exc.value.status_code == 409
+    assert "修订" in exc.value.detail, "报错要指出整改该走哪条通道"
+
+    # 正文确实没被改写——法定文书不因一次被拒的写入而变样
+    from sqlalchemy import select
+
+    from app.models.medical_record import RecordVersion
+    row = (await async_db.execute(
+        select(RecordVersion.content).where(
+            RecordVersion.medical_record_id == r1.id,
+            RecordVersion.version_no == v1,
+        )
+    )).scalar_one()
+    assert row["text"] == "被退回的劣质病历"
 
 
 @pytest.mark.asyncio
