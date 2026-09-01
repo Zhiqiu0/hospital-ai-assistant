@@ -54,8 +54,17 @@ jobs:
       # 创建 Sentry release：自动关联本次 commits、finalize、标记 production 部署
       # 在 SSH deploy 之前执行：保证应用启动后上报 event 时 release object 已存在
       # 否则 event 上的 release tag 会"挂空"，关联不到 commits
+      # continue-on-error（2026-09-01 实测事故后加）：本步骤排在 rsync 推码之前，
+      # 它**一失败整个 job 就停在这里，代码根本推不到服务器**。当天真实发生过：
+      # Sentry API 返回 504 gateway timeout（对方服务端抖动，与我方代码/凭证无关），
+      # 部署判 failure，而生产上跑的还是上一版代码——外表毫无异样：容器健康、
+      # 页面能开、/health 返回 200，只有进容器 grep 源码才看得出没更新。
+      # 那次的急诊诊断修复就这样「部署成功」却从未生效。
+      # Sentry 是可观测性**辅助**，挂掉最多让本次 release 关联不上 commits，
+      # 绝不该阻断生产发版。故显式降级为不阻断。
       - name: Create Sentry release
         uses: getsentry/action-release@a74facf8a080ecbdf1cb355f16743530d712abb7  # v1
+        continue-on-error: true
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: mediscribe-s0
