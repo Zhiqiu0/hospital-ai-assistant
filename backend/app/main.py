@@ -12,6 +12,7 @@ FastAPI 应用入口（main.py）
   容器内通过 uvicorn app.main:app 启动，健康检查端点由 Docker/K8s 探活使用。
 """
 
+from datetime import datetime
 import logging
 from contextlib import asynccontextmanager
 
@@ -237,6 +238,38 @@ async def health_check_deep():
     deps["holiday_calendar"] = (
         _cal if _cal != "ok" else f"ok（覆盖至年末，剩 {_days_left} 天）"
     )
+
+    # 数据库时钟与应用时钟的偏差（2026-09-02 时间口径审计）。
+    #
+    # 本系统里两种时钟源并存：created_at / recorded_at / completed_at 由数据库端
+    # func.now() 生成，visited_at / submitted_at 由应用进程 datetime.now() 生成，
+    # 而好几处法定判定要拿这两类值直接相减：
+    #   · 补记标识    is_late_entry(recorded_at, created_at)
+    #   · 补记判据②  recorded_at > completed_at（出院后才落笔）
+    #   · 时效达标率  submitted_at - completed_at（出院记录 24h）
+    #   · 文书倒计时  now() - completed_at
+    # 两边对齐靠的是「PG 连接设了 timezone=Asia/Shanghai（database.py）+ 应用
+    # 容器 TZ 也是北京时间」这一配置前提。前提一旦漂了，系统照常跑、日志无痕，
+    # 但补记会整片漏标、出院记录时效达标率会整体偏 8 小时——而这些数字要拿去
+    # 考核医生。让它可发现，好过等医务科拿着通报来问。
+    # 判据取 5 秒：正常网络往返远小于它；越过说明是时区或 NTP 层面的问题。
+    clock_skew = None
+    try:
+        from sqlalchemy import text as _text
+
+        from app.database import engine as _engine
+        async with _engine.connect() as _c:
+            _db_now = (await _c.execute(_text("SELECT now()"))).scalar()
+        if _db_now is not None:
+            _db_naive = _db_now.replace(tzinfo=None) if _db_now.tzinfo else _db_now
+            clock_skew = abs((datetime.now() - _db_naive).total_seconds())
+            deps["clock_skew"] = (
+                f"ok（{clock_skew:.1f}s）" if clock_skew <= 5
+                else f"skewed（应用与数据库时钟相差 {clock_skew:.0f} 秒，"
+                     f"补记标识与时效达标率会失真）"
+            )
+    except Exception as exc:
+        deps["clock_skew"] = f"error: {type(exc).__name__}"
 
     critical_down = (
         deps.get("db") == "error"
