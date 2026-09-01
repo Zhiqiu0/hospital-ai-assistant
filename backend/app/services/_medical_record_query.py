@@ -85,6 +85,27 @@ class MedicalRecordQueryMixin:
         )
         rows = (await self.db.execute(main_q)).all()
 
+        # ── 2.5 管理员修订次数批量（2026-09-01 打印件实测修正）────────────
+        # 打印件上那句「本文书经修订（第 N 版）」是法定修订标识，此前判据是
+        # `current_version > 1`——而**正常签发流程本身就会产生 3 个版本**
+        # （AI 生成 v1 → 医生编辑 v2 → 签发 v3），于是每一份普通病历都被印上
+        # 「经修订」。标识因此完全失去意义：真正被改过的病历反而无法与常规病历
+        # 区分，而病案室/法庭看到的是「所有病历都被修改过」。
+        # 真正的修订只有一条通道：管理员走 /admin/records/{id}/revise，
+        # 产出 source='admin_revise' 的版本。这里按它计数。
+        revision_map: dict[str, int] = {}
+        if rows:
+            _rec_ids = [r[0].id for r in rows]
+            _rev_rows = (await self.db.execute(
+                select(RecordVersion.medical_record_id, func.count())
+                .where(
+                    RecordVersion.medical_record_id.in_(_rec_ids),
+                    RecordVersion.source == "admin_revise",
+                )
+                .group_by(RecordVersion.medical_record_id)
+            )).all()
+            revision_map = {rid: int(n) for rid, n in _rev_rows}
+
         # ── 3. 医生名字批量 ───────────────────────────────────────────
         user_map: dict[str, str] = {}
         if include_doctor_name:
@@ -121,6 +142,8 @@ class MedicalRecordQueryMixin:
                 "encounter_id": encounter.id,
                 # 前端历史病历列表需要用 is_first_visit 标"初诊/复诊"Tag
                 "is_first_visit": encounter.is_first_visit,
+                # 管理员修订次数——打印件的法定「经修订」标识只认它（见上方说明）
+                "revision_count": revision_map.get(record.id, 0),
                 "visit_type": encounter.visit_type,
                 # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
                 "visit_sequence": int(visit_sequence) if visit_sequence else 1,

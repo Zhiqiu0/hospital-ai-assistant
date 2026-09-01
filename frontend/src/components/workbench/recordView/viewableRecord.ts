@@ -38,6 +38,8 @@ export interface ViewableRecord {
   /** 就诊号与当前版本号（2026-08-31 导出产物审计：打印件法定要件） */
   visit_no?: string | null
   current_version?: number | null
+  /** 管理员修订次数（source='admin_revise' 的版本数），打印件「经修订」标识只认它 */
+  revision_count?: number | null
   // ── 病案首页扩展字段（2026-05-16 加）────────────────────────────────
   // 优先用 patient_snapshot（签发时冻结）；为空回落到 patient_xxx 实时字段
   patient_snapshot?: RecordExportSnapshot | null
@@ -91,10 +93,14 @@ export function toExportCtx(r: ViewableRecord): RecordExportContext {
     department_name: r.department_name ?? null,
     // 打印件法定要件（2026-08-31 导出产物审计）：就诊号是病案室归档定位键；
     // 签发医师在代签发场景下与接诊医生不是同一人，同栏显示纸面认不出责任主体；
-    // 版本号 >1 说明经管理员修订，打印件必须注明（否则对外呈现为原始签发件）。
+    // 经管理员修订的病历打印件必须注明（否则对外呈现为原始签发件）——判据是
+    // revision_count 而非版本号，理由见下方与 recordExport 里的说明。
     visit_no: r.visit_no ?? null,
     submitted_by_name: r.submitted_by_name ?? null,
     version_no: r.current_version ?? null,
+    // 打印件的「经修订」标识只看管理员修订次数，不看 current_version
+    // （正常签发流程就会产生 3 个版本，见 recordExport 里的说明）
+    revision_count: r.revision_count ?? 0,
   }
 }
 
