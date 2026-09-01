@@ -259,10 +259,15 @@ async def health_check_deep():
 
         from app.database import engine as _engine
         async with _engine.connect() as _c:
-            _db_now = (await _c.execute(_text("SELECT now()"))).scalar()
+            # 必须是 now()::timestamp 而不是裸 now()（2026-09-02 自查修正）：
+            # now() 返回 timestamptz，asyncpg 给回的是 **UTC** 时区的 aware
+            # datetime，直接砍掉 tzinfo 会稳定报出 8 小时假偏差。而落库到
+            # DateTime（无时区）列时，PG 是按连接 timezone 转成本地 naive 再存
+            # ——`::timestamp` 走的正是这条转换，与 created_at 的落库值同一口径，
+            # 也正是这里要比的那个东西。（探针写错会天天喊狼来了，比不查更糟。）
+            _db_now = (await _c.execute(_text("SELECT now()::timestamp"))).scalar()
         if _db_now is not None:
-            _db_naive = _db_now.replace(tzinfo=None) if _db_now.tzinfo else _db_now
-            clock_skew = abs((datetime.now() - _db_naive).total_seconds())
+            clock_skew = abs((datetime.now() - _db_now).total_seconds())
             deps["clock_skew"] = (
                 f"ok（{clock_skew:.1f}s）" if clock_skew <= 5
                 else f"skewed（应用与数据库时钟相差 {clock_skew:.0f} 秒，"
