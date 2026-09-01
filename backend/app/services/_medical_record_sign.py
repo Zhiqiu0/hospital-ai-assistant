@@ -156,7 +156,8 @@ class MedicalRecordSignMixin:
             # "已结束却没有结束时刻"语义不自洽，未来任何按 completed_at
             # 判断接诊何时结束的新代码都会在门急诊上拿到 NULL。
             if encounter.completed_at is None:
-                encounter.completed_at = datetime.now()
+                # 同上：与 recorded_at 同一时钟源，见 encounters_lifecycle 的说明
+                encounter.completed_at = func.now()
             encounter_closed = True
 
         # ── 病案首页快照（合规要求，2026-05-16 加）─────────────────────────

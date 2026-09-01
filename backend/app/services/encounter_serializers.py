@@ -53,8 +53,18 @@ def _parse_record_content(content: Any) -> str:
     return ""
 
 
-def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -> dict:
-    """单条病历 → 工作台快照里的字典。"""
+def _serialize_record(
+    record: MedicalRecord,
+    version: Optional[RecordVersion],
+    *,
+    discharged_at=None,
+    visit_type: Optional[str] = None,
+) -> dict:
+    """单条病历 → 工作台快照里的字典。
+
+    discharged_at / visit_type 供补记判定用：住院患者出院之后才落笔的文书
+    （出院记录除外）按定义就是补记，见 record_time.is_late_entry。
+    """
     return {
         "record_id": record.id,
         "record_type": record.record_type,
@@ -70,7 +80,12 @@ def _serialize_record(record: MedicalRecord, version: Optional[RecordVersion]) -
         "created_at": record.created_at.isoformat() if record.created_at else None,
         # 记录时间三元组（第八轮审计后按行业标准）：临床相关时间 / 系统录入时间 /
         # 是否补记。补记必须让前端看得见——见 services/record_time.py 的规范依据。
-        **describe_record_time(record.recorded_at, record.created_at),
+        **describe_record_time(
+            record.recorded_at, record.created_at,
+            discharged_at=discharged_at,
+            record_type=record.record_type,
+            visit_type=visit_type,
+        ),
         "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         "content": _parse_record_content(version.content if version else None),
         # 病案首页快照：签发瞬间冻结的患者完整身份 + 接诊信息。

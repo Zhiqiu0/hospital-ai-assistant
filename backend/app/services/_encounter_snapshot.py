@@ -105,7 +105,16 @@ class EncounterSnapshotMixin:
             .where(MedicalRecord.encounter_id == encounter_id)
             .order_by(desc(MedicalRecord.updated_at), desc(MedicalRecord.submitted_at))
         )).all()
-        record_items = [_serialize_record(record, version) for record, version in rows]
+        record_items = [
+            _serialize_record(
+                record, version,
+                # 补记判定要看出院时点（2026-09-02）：出院后才落笔的住院文书
+                # 按定义是补记，见 record_time.is_late_entry 的判据 ②
+                discharged_at=encounter.completed_at,
+                visit_type=encounter.visit_type,
+            )
+            for record, version in rows
+        ]
 
         # ── 4. 最新语音录音 ─────────────────────────────────────────────
         latest_voice = (await self.db.execute(

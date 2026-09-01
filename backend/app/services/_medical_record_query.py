@@ -150,7 +150,13 @@ class MedicalRecordQueryMixin:
                 # 载体是归档病历本身，而归档的是打印件。此前只有住院工作台时间轴的
                 # 屏幕徽标消费它，纸面和管理端病历列表一个字都没有：病案室翻纸质
                 # 病历、法庭调阅病案，都看不出这份文书是隔天补写的。
-                **describe_record_time(record.recorded_at, record.created_at),
+                **describe_record_time(
+                    record.recorded_at, record.created_at,
+                    # 出院后才落笔的住院文书按定义是补记（判据 ② 见 record_time）
+                    discharged_at=encounter.completed_at,
+                    record_type=record.record_type,
+                    visit_type=encounter.visit_type,
+                ),
                 "visit_type": encounter.visit_type,
                 # 同患者同 visit_type 下的就诊次序（1=初诊，2=复诊1，3=复诊2…）
                 "visit_sequence": int(visit_sequence) if visit_sequence else 1,
