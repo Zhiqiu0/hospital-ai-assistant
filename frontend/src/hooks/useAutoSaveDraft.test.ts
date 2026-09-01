@@ -202,3 +202,50 @@ describe('useAutoSaveDraft 的抢救落盘', () => {
     expect(saved[0].content).toBe('还没落库的入院内容')
   })
 })
+
+// ─── 400 视为永久性拒绝（2026-09-02 住院支线实测补）───────────────────────
+//
+// 给后端加了「文书类型必须与就诊类型相容」的守卫后，存量脏数据（住院接诊挂着
+// outpatient 病历）立刻让 auto-save 每 5 秒 400 一次，而 400 当时不在永久拒绝
+// 名单里 → 全部进重试队列 → 队列条目永远补发不成功，后续草稿全堵在它后面。
+// 守卫本身是对的，但不配前端这一手，就等于把 2026-08-13 修过的「草稿链路被
+// 永久毒化」又造了一遍。
+describe('永久性拒绝不得进重试队列', () => {
+  it('400 不入队列，并把后端说明透传给医生', async () => {
+    const { enqueueDraft, removeDraftByKey } = await import('@/services/draftQueue')
+    const { message } = await import('@/services/messageBridge')
+    ;(enqueueDraft as ReturnType<typeof vi.fn>).mockClear()
+    ;(message.warning as ReturnType<typeof vi.fn>).mockClear()
+    postMock.mockRejectedValueOnce({
+      status: 400,
+      detail: '文书类型与就诊类型不符：这是一次住院接诊，不能写入「outpatient」类文书。',
+    })
+
+    const { rerender } = renderHook(p => useAutoSaveDraft(p), { initialProps: base })
+    rerender({ ...base, recordContent: '医生写的内容' })
+    await act(async () => {
+      vi.advanceTimersByTime(6000)
+      await Promise.resolve()
+    })
+
+    expect(enqueueDraft).not.toHaveBeenCalled()
+    expect(removeDraftByKey).toHaveBeenCalled()
+    const warned = (message.warning as ReturnType<typeof vi.fn>).mock.calls.flat().join(' ')
+    expect(warned).toContain('文书类型与就诊类型不符')
+  })
+
+  it('网络类错误仍然入队列重试（不能误伤真正该重试的）', async () => {
+    const { enqueueDraft } = await import('@/services/draftQueue')
+    ;(enqueueDraft as ReturnType<typeof vi.fn>).mockClear()
+    postMock.mockRejectedValueOnce({ status: 500 })
+
+    const { rerender } = renderHook(p => useAutoSaveDraft(p), { initialProps: base })
+    rerender({ ...base, recordContent: '断网时写的内容' })
+    await act(async () => {
+      vi.advanceTimersByTime(6000)
+      await Promise.resolve()
+    })
+
+    expect(enqueueDraft).toHaveBeenCalled()
+  })
+})
