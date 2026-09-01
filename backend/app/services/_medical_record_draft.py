@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
+from app.services._record_type_guard import assert_record_type_matches
 from app.models.medical_record import MedicalRecord, RecordVersion
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,19 @@ class MedicalRecordDraftMixin:
             select(Encounter.visit_type).where(Encounter.id == encounter_id)
         )).scalar_one_or_none()
         return visit_type == "inpatient"
+
+    async def _assert_type_ok(self, encounter_id: str, record_type: str) -> None:
+        """文书类型必须与就诊类型相容（2026-09-01 住院支线实测补）。
+
+        与签发路径同一口径——草稿这条也要拦：脏数据一旦落成草稿，医生看到的
+        工作台就已经是错的了，等到签发再拦为时已晚。
+        """
+        from app.models.encounter import Encounter
+
+        visit_type = (await self.db.execute(
+            select(Encounter.visit_type).where(Encounter.id == encounter_id)
+        )).scalar_one_or_none()
+        assert_record_type_matches(visit_type, record_type)
 
     async def _next_record_no(self, encounter_id: str, record_type: str) -> int:
         """同类型文书的下一个序号（与 _medical_record_sign 同一算法）。"""
@@ -110,6 +124,8 @@ class MedicalRecordDraftMixin:
                 record = None
             else:
                 raise HTTPException(status_code=403, detail="病历已签发，不可再编辑")
+
+        await self._assert_type_ok(encounter_id, record_type)
 
         # 乐观锁校验（只在传入预期值时启用——AI 生成那次首发不需要）
         if expected_updated_at is not None and record is not None and record.updated_at:

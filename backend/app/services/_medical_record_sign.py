@@ -10,6 +10,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 
 from app.models.encounter import Encounter
+from app.services._record_type_guard import assert_record_type_matches
 from app.models.medical_record import MedicalRecord, RecordVersion
 
 # 模块级 logger：病历签发是核心业务里程碑，单独 INFO 级埋点便于运维复盘
@@ -59,6 +60,10 @@ class MedicalRecordSignMixin:
             raise ValueError("接诊不存在，无法签发")
         if enc_locked.status == "cancelled":
             raise ValueError("接诊已取消，无法签发病历")
+        # 文书类型必须与就诊类型相容（2026-09-01 住院支线实测补）：
+        # 三个工作台共用 activeEncounterStore，切系统时不清当前接诊，
+        # 于是能在住院工作台里对着一个急诊接诊写住院文书。详见守卫模块说明。
+        assert_record_type_matches(enc_locked.visit_type, record_type)
 
         result = await self.db.execute(
             select(MedicalRecord).where(
