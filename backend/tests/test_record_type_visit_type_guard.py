@@ -108,3 +108,44 @@ async def test_门诊接诊正常存门诊病历(async_db):
         encounter_id=enc_id, record_type="outpatient",
         content="门诊病历正文", user_id="d1")
     assert res["record_id"]
+
+
+# ── AI 生成写入路径（第三条，最初漏掉的那条）─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_住院接诊不能存门诊病历_AI生成路径(async_db):
+    """实测就是从这条漏进去的：住院工作台新建接诊后 recordType 保持默认
+    'outpatient'，医生直接填问诊点生成，AI 落库走 save_ai_draft——而当时守卫
+    只加在 auto_save_draft 与 quick_save 上，这条没拦，于是住院接诊下真的躺了
+    一份 record_type='outpatient' 的病历。三条写入路径必须同口径。"""
+    enc_id = await _mk_encounter(async_db, "inpatient")
+    with pytest.raises(HTTPException) as ei:
+        await MedicalRecordService(async_db).save_ai_draft(
+            encounter_id=enc_id, record_type="outpatient",
+            content="AI 生成的门诊病历正文", user_id="d1")
+    assert ei.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_住院接诊AI生成入院记录正常(async_db):
+    enc_id = await _mk_encounter(async_db, "inpatient")
+    res = await MedicalRecordService(async_db).save_ai_draft(
+        encounter_id=enc_id, record_type="admission_note",
+        content="入院记录正文", user_id="d1")
+    assert res["record_id"]
+
+
+@pytest.mark.asyncio
+async def test_三条写入路径同口径(async_db):
+    """草稿 / AI 生成 / 签发——任一条漏了守卫，脏数据都能进来。"""
+    svc = MedicalRecordService(async_db)
+    enc_id = await _mk_encounter(async_db, "emergency")
+    for call in (
+        lambda: svc.auto_save_draft(encounter_id=enc_id, record_type="admission_note",
+                                    content="x", user_id="d1"),
+        lambda: svc.save_ai_draft(encounter_id=enc_id, record_type="admission_note",
+                                  content="x", user_id="d1"),
+    ):
+        with pytest.raises(HTTPException) as ei:
+            await call()
+        assert ei.value.status_code == 400

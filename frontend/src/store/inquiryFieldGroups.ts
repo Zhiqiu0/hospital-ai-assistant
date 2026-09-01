@@ -55,6 +55,20 @@ export function isCourseRecordType(rt: string): rt is CourseRecordType {
   return (COURSE_RECORD_TYPES as readonly string[]).includes(rt)
 }
 
+/**
+ * 住院场景的全部文书类型（入院记录 + 病程类）。
+ * 与后端 services/_record_type_guard.ALLOWED_RECORD_TYPES['inpatient'] 一一对应，
+ * 改动须两端同步——后端那份是写入守卫，这份决定前端默认选哪种文书。
+ */
+export const INPATIENT_RECORD_TYPES = ['admission_note', ...COURSE_RECORD_TYPES] as const
+
+export type InpatientRecordType = (typeof INPATIENT_RECORD_TYPES)[number]
+
+/** 判断是否是住院文书——住院接诊不该停留在门诊/急诊类型上。 */
+export function isInpatientRecordType(rt: string): rt is InpatientRecordType {
+  return (INPATIENT_RECORD_TYPES as readonly string[]).includes(rt)
+}
+
 // ─── 分组常量（扁平字段名清单，按场景归类） ────────────────────────
 
 /** 元信息：时间、初步印象（跨所有 record_type 共用） */

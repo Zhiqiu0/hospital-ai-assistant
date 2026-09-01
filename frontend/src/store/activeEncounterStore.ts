@@ -21,6 +21,7 @@ import { persist } from 'zustand/middleware'
 import type { Patient, VisitType } from '@/domain/medical'
 import { useInquiryStore } from './inquiryStore'
 import { useRecordStore } from './recordStore'
+import { isInpatientRecordType } from './inquiryFieldGroups'
 import { useQCStore } from './qcStore'
 import { useAISuggestionStore } from './aiSuggestionStore'
 import { useDiagnosisEntriesStore } from './diagnosisEntriesStore'
@@ -130,8 +131,19 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
         // 靠"每个页面自己记得设"这种约定必然会漏，改为由接诊类型单点推导。
         // 住院例外：一次住院有入院记录/病程/出院小结等多种文书，具体类型由
         // ComplianceBar 按待办项切换，这里不覆盖医生已选的住院文书类型。
+        //
+        // 但「不覆盖」不等于「不给默认」（2026-09-01 住院支线实测修）：原实现对
+        // 住院直接跳过，于是 recordType 保持 recordStore 的默认值 outpatient
+        // ——新建住院接诊后直接填问诊、点生成，落库的就是一份 record_type=
+        // 'outpatient' 的病历挂在住院接诊下。章节按门诊模板渲染（缺婚育史/月经史/
+        // 诊疗计划，还多出【辨证分析】）、质控按门诊评分表判、HIS 回写也是门诊类型。
+        // 这正是本段注释里描述的 2026-08-13 那个急诊 bug，只是当时把住院排除在外。
+        // 改为：住院时若当前类型不是住院文书，给出住院的第一份文书 admission_note
+        // 作默认；已经是住院文书（医生在 ComplianceBar 切过）则原样保留。
         if (input.visitType !== 'inpatient') {
           useRecordStore.getState().setRecordType(input.visitType)
+        } else if (!isInpatientRecordType(useRecordStore.getState().recordType)) {
+          useRecordStore.getState().setRecordType('admission_note')
         }
         set({
           patientId: input.patientId,
