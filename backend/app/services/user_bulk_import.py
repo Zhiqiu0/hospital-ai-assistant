@@ -30,6 +30,25 @@ from app.schemas.user import (
 from app.services.audit_service import log_action
 
 
+def _dept_warning(item, dept_map: dict) -> str:
+    """科室名没匹配上时给出可见提示（2026-09-02 开业配置动线实测补）。
+
+    原实现 department_id=dept_map.get(name)，匹配不上就静静落 None，而这一行
+    的 status 仍是 created、message 为空——管理员看到的是"全部成功"。
+
+    名单里的科室名与系统里的建制不完全一致是常态（"内一科"对"内科"、带括号
+    的"外科（普外）"、多写一个空格），40 位医生一次导入，管理员没有任何线索
+    知道哪几位落了空科室。而空科室的后果不是显示问题：科室质控员按
+    department_id 限定复核范围（qc/reviews._dept_scope），看不到这些医生的
+    病历；科室维度的达标率统计同样漏掉他们。
+    """
+    name = (item.department_name or "").strip()
+    if not name:
+        return "（未指定科室）"
+    if name not in dept_map:
+        return f"（科室「{name}」在系统中不存在，已留空——请先建科室或核对名称）"
+    return ""
+
 async def bulk_import_doctors(
     db: AsyncSession,
     data: BulkImportRequest,
@@ -130,7 +149,7 @@ async def bulk_import_doctors(
                 batch_usernames.add(username)
                 batch_codes.update(codes)
                 entry.status = "created"
-                entry.message = "预览（未落库）"
+                entry.message = "预览（未落库）" + _dept_warning(item, dept_map)
                 created += 1
                 results.append(entry)
                 continue
@@ -159,6 +178,7 @@ async def bulk_import_doctors(
             batch_usernames.add(username)
             batch_codes.update(codes)
             entry.status = "created"
+            entry.message = _dept_warning(item, dept_map) or None
             created += 1
             results.append(entry)
 
