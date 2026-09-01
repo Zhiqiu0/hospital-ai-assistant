@@ -300,6 +300,13 @@ const HEADER_CSS = `
  *  about:blank + 打印当天日期），不成立。 */
 const PAGE_CSS = `
   @page {
+    /* 显式声明 A4（2026-09-01 真机打印实测补）：此前只写了 margin，纸张交给
+       浏览器默认——Chromium 的默认是**美制 Letter（216×279mm）**。实测导出的
+       PDF 就是 Letter，且因为 Letter 比 A4 矮，同一份门诊病历被多挤出一页
+       （3 页 vs 2 页），分页位置也跟着错。
+       中国的病历文书与病案室归档一律用 A4，不能靠"打印机默认恰好是 A4"兜底：
+       导出 PDF 归档这条路径根本不经过打印机设置。 */
+    size: A4;
     margin: 1.6cm 1.4cm;
     @bottom-center { content: "第 " counter(page) " 页 / 共 " counter(pages) " 页"; font-size: 10pt; color: #64748b; }
   }
