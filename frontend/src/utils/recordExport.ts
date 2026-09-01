@@ -118,6 +118,14 @@ export interface RecordExportContext {
   /** 文书版本号：>1 表示经管理员修订过，打印件必须注明（病历书写规范要求
    *  修改留痕、原记录清楚可辨；此前打印件把修订完全抹平，对外呈现为原始签发件） */
   version_no?: number | null
+  /**
+   * 管理员修订次数（source='admin_revise' 的版本数）。
+   * 打印件的法定「经修订」标识只认这个——**不能用 version_no**：正常签发
+   * 流程本身就会产生 3 个版本（AI 生成 → 医生编辑 → 签发），拿它判断会给
+   * 每一份普通病历都印上「经修订」，标识随即失去意义。
+   * 2026-09-01 打印件实测发现，当时一份从没改过的病历被印成「经修订（第 3 版）」。
+   */
+  revision_count?: number | null
 }
 
 /** 医院名称：打印件抬头（法定文书必需项）。
@@ -312,7 +320,8 @@ export function printRecord(
   // 不归一时 \r 残留 + pre-wrap 会让每行之间多出一个空行
   const formatted = normalizeEol(esc(content)).replace(/\n/g, '<br>')
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
-  const revised = (ctx?.version_no ?? 0) > 1
+  const revisionCount = ctx?.revision_count ?? 0
+  const revised = revisionCount > 0
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <title>${esc(typeLabel)} - ${esc(maskName(patient?.name))}</title>
 <style>
@@ -336,7 +345,7 @@ export function printRecord(
 </style></head><body>
 <h1 class="hospital">${esc(HOSPITAL_NAME)}</h1>
 <h2>${esc(typeLabel)}</h2>
-${revised ? '<div class="revised-note">本文书经修订（第 ' + String(ctx?.version_no) + ' 版），修订留痕见医院审计日志</div>' : ''}
+${revised ? '<div class="revised-note">本文书经修订（共 ' + String(revisionCount) + ' 次），修订留痕见医院审计日志</div>' : ''}
 ${
   signedAt
     ? `<div class="signed">签发时间：${esc(signedAt)}</div>`
@@ -374,7 +383,8 @@ export function exportWordDoc(
   const typeLabel = RECORD_TYPE_LABEL[recordType] || recordType
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
   // 经修订的文书要在纸面注明（同 printRecord，见那里的注释）
-  const revised = (ctx?.version_no ?? 0) > 1
+  const revisionCount = ctx?.revision_count ?? 0
+  const revised = revisionCount > 0
   const paragraphs = normalizeEol(content)
     .split('\n')
     .map(line => {
@@ -398,7 +408,7 @@ export function exportWordDoc(
 </head><body>
 <p style="text-align:center;font-size:14pt;font-weight:bold;letter-spacing:2pt;margin:0 0 6pt;">${esc(HOSPITAL_NAME)}</p>
 <h1>${esc(typeLabel)}</h1>
-${revised ? '<p style="text-align:center;color:#b45309;font-size:10pt;margin-bottom:8pt;">本文书经修订（第 ' + String(ctx?.version_no) + ' 版），修订留痕见医院审计日志</p>' : ''}
+${revised ? '<p style="text-align:center;color:#b45309;font-size:10pt;margin-bottom:8pt;">本文书经修订（共 ' + String(revisionCount) + ' 次），修订留痕见医院审计日志</p>' : ''}
 ${
   signedAt
     ? `<p class="signed">签发时间：${esc(signedAt)}</p>`
