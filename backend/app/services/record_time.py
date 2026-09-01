@@ -25,25 +25,68 @@ from typing import Optional
 LATE_ENTRY_THRESHOLD = timedelta(hours=12)
 
 
+# 出院之后落笔仍算「当场书写」的文书类型。
+#
+# 出院记录天然在出院之后写（规范给的就是「出院后 24 小时内完成」），把它算成
+# 补记是误标。其余住院文书没有这个豁免——见 is_late_entry 里的说明。
+POST_DISCHARGE_EXEMPT_TYPES: frozenset[str] = frozenset({"discharge_record"})
+
+
 def is_late_entry(
-    recorded_at: Optional[datetime], created_at: Optional[datetime]
+    recorded_at: Optional[datetime],
+    created_at: Optional[datetime],
+    *,
+    discharged_at: Optional[datetime] = None,
+    record_type: Optional[str] = None,
+    visit_type: Optional[str] = None,
 ) -> bool:
     """这份文书是否属于「补记」。
 
+    两条判据，命中任一即是：
+
+    ① 记录时点明显早于系统录入时点（差值达到 LATE_ENTRY_THRESHOLD）。
+       典型场景：医生今天补写昨天的查房。
+
+    ② 住院文书的记录时点晚于出院时点（出院记录除外）。
+       2026-09-02 住院支线实测补的盲区：患者出院后，医生新建一份「日常病程」
+       或「手术记录」补齐遗漏——补齐本身合法且临床常见，不该拦。但这份文书的
+       recorded_at 兜底取的是**落笔当下**，于是 created_at 与它几乎相等，判据 ①
+       算出来差值为 0，系统认定它是「当场书写」，纸面上与真正当场写的完全一样。
+       而患者那一刻已经不在院，该次诊疗不可能正在发生——这份文书按定义就是
+       事后补的。实测：一份出院后 2 分钟新建的日常病程，is_late_entry 为 False。
+       出院记录豁免，因为它本就该在出院之后写。
+       限住院：门急诊签发时也会写 completed_at（见 _medical_record_sign），
+       不限定的话每一份门诊病历都会被这条误伤。
+
     Args:
-        recorded_at: 医生填写的记录时间（临床相关时点）；未填时不算补记。
-        created_at:  系统录入时间（不可改）。
+        recorded_at:   医生填写的记录时间（临床相关时点）；未填时不算补记。
+        created_at:    系统录入时间（不可改）。
+        discharged_at: 出院时点（encounters.completed_at），住院才有意义。
+        record_type:   文书类型，用于豁免出院记录。
+        visit_type:    接诊类型，判据 ② 仅对 'inpatient' 生效。
 
     Returns:
-        True 表示记录时间明显早于系统录入时间，按规范应标注为补记。
+        True 表示按规范应标注为补记。
     """
     if recorded_at is None or created_at is None:
         return False
-    return (created_at - recorded_at) >= LATE_ENTRY_THRESHOLD
+    if (created_at - recorded_at) >= LATE_ENTRY_THRESHOLD:
+        return True
+    return (
+        visit_type == "inpatient"
+        and discharged_at is not None
+        and record_type not in POST_DISCHARGE_EXEMPT_TYPES
+        and recorded_at > discharged_at
+    )
 
 
 def describe_record_time(
-    recorded_at: Optional[datetime], created_at: Optional[datetime]
+    recorded_at: Optional[datetime],
+    created_at: Optional[datetime],
+    *,
+    discharged_at: Optional[datetime] = None,
+    record_type: Optional[str] = None,
+    visit_type: Optional[str] = None,
 ) -> dict:
     """给前端的记录时间三元组：记录时间 / 系统录入时间 / 是否补记。
 
@@ -53,5 +96,8 @@ def describe_record_time(
     return {
         "recorded_at": recorded_at.isoformat() if recorded_at else None,
         "entered_at": created_at.isoformat() if created_at else None,
-        "is_late_entry": is_late_entry(recorded_at, created_at),
+        "is_late_entry": is_late_entry(
+            recorded_at, created_at,
+            discharged_at=discharged_at, record_type=record_type, visit_type=visit_type,
+        ),
     }
