@@ -222,16 +222,34 @@ async def submit_review(
 
     # 幂等防重（2026-08-28 体检）：双击提交/复核"已是最新同结论"的文书时
     # 直接返回既有复核，不再插行——stats 的复核数按行计数，重复插入会虚增
-    # 月度通报指标。判据：最新一条复核结论相同且晚于当前签发时间（重签后
-    # 允许再核，与队列口径一致）。
+    # 月度通报指标。
+    #
+    # 基线取「这份文书最近一次被签发或修订的时刻」，**不能用 submitted_at**
+    # （2026-09-02 质控闭环实测修正）：submitted_at 是**首次**签发时间，只写
+    # 一次、之后永不更新（sign_hash 的哈希输入依赖它，覆写会让所有历史版本
+    # 被永久判为已篡改，见 _medical_record_sign 的说明）。拿它当基线的后果：
+    #   质控员退回 → 管理员按意见修订 → 医生还是没改到点上 → 质控员再次退回
+    #   同样意见 → latest.created_at >= submitted_at 恒成立 → 判为"重复提交"
+    #   吞掉。质控员看到成功提示，而医生端的退回提醒**消失**（my-returned 认
+    #   最新那条 review，它早于修订时刻，被判已整改出清单）。双方都以为事情
+    #   在推进，实际停摆在没改好的那一版上，且月度通报少记一次退回。
+    # 用最新版本时刻作基线后：有过新的签发/修订就允许再核；真·双击（两次提交
+    # 之间没有新版本）仍然幂等。
+    last_content_at = (await db.execute(
+        select(func.max(RecordVersion.created_at)).where(
+            RecordVersion.medical_record_id == rec.id,
+            RecordVersion.source.in_(("doctor_signed", "admin_revise")),
+        )
+    )).scalar()
+    review_baseline = last_content_at or rec.submitted_at
     latest = (await db.execute(
         select(QCReview).where(QCReview.medical_record_id == rec.id)
         .order_by(QCReview.created_at.desc()).limit(1)
     )).scalar_one_or_none()
     if (latest is not None and latest.conclusion == data.conclusion
             and (latest.comment or "") == ((data.comment or "").strip() or "")
-            and rec.submitted_at is not None
-            and latest.created_at >= rec.submitted_at):
+            and review_baseline is not None
+            and latest.created_at >= review_baseline):
         return {"ok": True, "review_id": latest.id, "duplicate": True}
 
     review = QCReview(
