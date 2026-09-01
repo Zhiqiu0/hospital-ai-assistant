@@ -40,6 +40,10 @@ export interface ViewableRecord {
   current_version?: number | null
   /** 管理员修订次数（source='admin_revise' 的版本数），打印件「经修订」标识只认它 */
   revision_count?: number | null
+  /** 补记三元组：记录时点 / 系统录入时点 / 是否补记（后端 describe_record_time） */
+  recorded_at?: string | null
+  entered_at?: string | null
+  is_late_entry?: boolean | null
   // ── 病案首页扩展字段（2026-05-16 加）────────────────────────────────
   // 优先用 patient_snapshot（签发时冻结）；为空回落到 patient_xxx 实时字段
   patient_snapshot?: RecordExportSnapshot | null
@@ -101,6 +105,11 @@ export function toExportCtx(r: ViewableRecord): RecordExportContext {
     // 打印件的「经修订」标识只看管理员修订次数，不看 current_version
     // （正常签发流程就会产生 3 个版本，见 recordExport 里的说明）
     revision_count: r.revision_count ?? 0,
+    // 补记标注要上纸面（2026-09-02）：《病历书写基本规范》要求补记「据实补记，
+    // 并加以注明」，而归档进病案室的是打印件，不是屏幕上的徽标。
+    recorded_at: r.recorded_at ?? null,
+    entered_at: r.entered_at ?? null,
+    is_late_entry: r.is_late_entry === true,
   }
 }
 

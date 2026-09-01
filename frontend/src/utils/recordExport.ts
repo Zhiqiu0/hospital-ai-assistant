@@ -126,6 +126,16 @@ export interface RecordExportContext {
    * 2026-09-01 打印件实测发现，当时一份从没改过的病历被印成「经修订（第 3 版）」。
    */
   revision_count?: number | null
+  /**
+   * 补记标注（2026-09-02 补）。《病历书写基本规范》：因抢救急危患者未能及时
+   * 书写的，应在抢救结束后 6 小时内**据实补记，并加以注明**。「注明」的载体是
+   * 归档病历本身——而归档进病案室、被法庭调阅的是打印件。此前补记徽标只在
+   * 住院工作台的屏幕时间轴上，纸面一个字都没有：一份隔天补写的病程，打出来
+   * 与当场书写的完全无法区分。
+   */
+  recorded_at?: string | null
+  entered_at?: string | null
+  is_late_entry?: boolean | null
 }
 
 /** 医院名称：打印件抬头（法定文书必需项）。
@@ -329,6 +339,12 @@ export function printRecord(
   const headerHtml = buildPatientHeaderHtml(patient, snapshot, ctx)
   const revisionCount = ctx?.revision_count ?? 0
   const revised = revisionCount > 0
+  // 补记注明（见 RecordExportContext 里的规范依据）：两个时间都要露出来，
+  // 「原记录保持可见」正是规范对补记的要求，只写「补记」二字不够。
+  const lateNote =
+    ctx?.is_late_entry === true
+      ? `本文书为补记：记录时间 ${fmtDateTime(ctx?.recorded_at)}，系统录入时间 ${fmtDateTime(ctx?.entered_at)}`
+      : ''
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <title>${esc(typeLabel)} - ${esc(maskName(patient?.name))}</title>
 <style>
@@ -353,6 +369,7 @@ export function printRecord(
 <h1 class="hospital">${esc(HOSPITAL_NAME)}</h1>
 <h2>${esc(typeLabel)}</h2>
 ${revised ? '<div class="revised-note">本文书经修订（共 ' + String(revisionCount) + ' 次），修订留痕见医院审计日志</div>' : ''}
+${lateNote ? '<div class="revised-note">' + esc(lateNote) + '</div>' : ''}
 ${
   signedAt
     ? `<div class="signed">签发时间：${esc(signedAt)}</div>`
@@ -392,6 +409,12 @@ export function exportWordDoc(
   // 经修订的文书要在纸面注明（同 printRecord，见那里的注释）
   const revisionCount = ctx?.revision_count ?? 0
   const revised = revisionCount > 0
+  // 补记注明（见 RecordExportContext 里的规范依据）：两个时间都要露出来，
+  // 「原记录保持可见」正是规范对补记的要求，只写「补记」二字不够。
+  const lateNote =
+    ctx?.is_late_entry === true
+      ? `本文书为补记：记录时间 ${fmtDateTime(ctx?.recorded_at)}，系统录入时间 ${fmtDateTime(ctx?.entered_at)}`
+      : ''
   const paragraphs = normalizeEol(content)
     .split('\n')
     .map(line => {
@@ -416,6 +439,7 @@ export function exportWordDoc(
 <p style="text-align:center;font-size:14pt;font-weight:bold;letter-spacing:2pt;margin:0 0 6pt;">${esc(HOSPITAL_NAME)}</p>
 <h1>${esc(typeLabel)}</h1>
 ${revised ? '<p style="text-align:center;color:#b45309;font-size:10pt;margin-bottom:8pt;">本文书经修订（共 ' + String(revisionCount) + ' 次），修订留痕见医院审计日志</p>' : ''}
+${lateNote ? '<p style="text-align:center;color:#b45309;font-size:10pt;margin-bottom:8pt;">' + esc(lateNote) + '</p>' : ''}
 ${
   signedAt
     ? `<p class="signed">签发时间：${esc(signedAt)}</p>`
