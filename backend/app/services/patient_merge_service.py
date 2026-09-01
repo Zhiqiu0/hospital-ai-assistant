@@ -27,6 +27,7 @@ import logging
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.encounter import Encounter
 from app.models.imaging import ImagingStudy
@@ -34,8 +35,25 @@ from app.models.patient import Patient
 
 logger = logging.getLogger(__name__)
 
-# 档案类纵向字段：合并时按"补空不覆盖"规则处理
-_PROFILE_FIELDS = (
+# 档案类纵向字段的**真实存储**是 patients.profile 这个 JSONB 列，结构为
+#     {"allergy_history": {"value": "头孢过敏", "updated_at": ..., "updated_by": ...}, ...}
+# 与 _patient_profile.PROFILE_FIELDS 一致（月经史已移出——它是时变信息，
+# 每次接诊在 inquiry_inputs 重填，不属于纵向档案）。
+_JSONB_PROFILE_FIELDS = (
+    "past_history", "allergy_history", "family_history", "personal_history",
+    "current_medications", "marital_history", "religion_belief",
+)
+
+# JSONB 重构前的旧扁平列。**已无任何代码往里写**（生产 70 份档案里仅 1 份
+# 还留着重构前的值，而 JSONB 里有值的是 13 份）。留着只为把那些历史残值也
+# 一并搬过去，不作为主路径。
+#
+# 2026-09-02 生产实测抓到的 bug 就在这里：原实现只搬这组扁平列，于是合并
+# 对**真实档案数据完全无效**——过敏史、既往史全留在被软删的 source 上。
+# 后果比不合并更糟：合并前医生在两份档案里各能看到一半，合并后 source 一
+# 软删，它那一半直接从视野里消失。而这个功能存在的唯一理由，正是
+# 「过敏史分散在两份档案下，医生只看得到一半」。
+_LEGACY_PROFILE_COLUMNS = (
     "profile_past_history", "profile_allergy_history", "profile_family_history",
     "profile_personal_history", "profile_current_medications",
     "profile_marital_history", "profile_menstrual_history", "profile_religion_belief",
@@ -70,6 +88,15 @@ async def _counts(db: AsyncSession, patient_id: str) -> dict:
     return {"encounters": enc, "imaging_studies": img}
 
 
+def _profile_value(p: Patient, field: str) -> str | None:
+    """取档案某字段的当前值：JSONB 优先，回落到重构前的旧扁平列。"""
+    entry = (p.profile or {}).get(field) or {}
+    value = entry.get("value")
+    if value:
+        return value
+    return getattr(p, f"profile_{field}", None)
+
+
 def _brief(p: Patient) -> dict:
     """档案摘要，供预览时人眼比对"这两份到底是不是同一个人"。"""
     return {
@@ -80,7 +107,10 @@ def _brief(p: Patient) -> dict:
         "id_card": p.id_card,
         "phone": p.phone,
         "patient_no": p.patient_no,
-        "allergy_history": p.profile_allergy_history,
+        # 过敏史读 JSONB（2026-09-02 修）：原先读的是已废弃的扁平列，预览页上
+        # 两份档案的过敏史一律显示为空——操作员在唯一那道人眼防线上，根本看不见
+        # 「这份档案有过敏史」，也就无从发现合并把它搬丢了。
+        "allergy_history": _profile_value(p, "allergy_history"),
     }
 
 
@@ -183,12 +213,34 @@ async def merge(db: AsyncSession, *, target_id: str, source_id: str,
     await db.flush()
 
     # ③ 档案补空（不覆盖）：target 是保留下来的那份，以它为准；
-    #    只有它没填而 source 填了的字段才搬过去。
+    #    只有它没填而 source 填了的字段才搬过去。合并不该悄悄改掉医生已经
+    #    确认过的过敏史。
     filled: list[str] = []
-    for field in _IDENTITY_FIELDS + _PROFILE_FIELDS:
+    for field in _IDENTITY_FIELDS + _LEGACY_PROFILE_COLUMNS:
         if getattr(target, field, None) in (None, "") and getattr(source, field, None):
             setattr(target, field, getattr(source, field))
             filled.append(field)
+
+    #    档案纵向字段走 JSONB（2026-09-02 修，见 _JSONB_PROFILE_FIELDS 处的说明）。
+    #    整条 entry 一起搬，把 updated_at / updated_by 的溯源信息也带过去——
+    #    档案上每个字段是谁什么时候确认的，合并后仍要能追。
+    target_profile = dict(target.profile or {})
+    source_profile = source.profile or {}
+    profile_changed = False
+    for field in _JSONB_PROFILE_FIELDS:
+        if (target_profile.get(field) or {}).get("value"):
+            continue                      # target 已有值：保留，不覆盖
+        source_entry = (source_profile.get(field) or {})
+        if not source_entry.get("value"):
+            continue                      # source 也没有：无事可做
+        target_profile[field] = dict(source_entry)
+        filled.append(field)
+        profile_changed = True
+    if profile_changed:
+        target.profile = target_profile
+        # JSONB 被原地改动时 SQLAlchemy 不标记 dirty，必须显式 flag_modified
+        # （与 _patient_profile.update_profile 同一处理）
+        flag_modified(target, "profile")
 
     await db.commit()
 

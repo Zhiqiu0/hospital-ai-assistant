@@ -106,3 +106,76 @@ async def test_接诊与档案一起搬且源档案退出查重(alembic_pg):
                                   Patient.is_deleted == False)  # noqa: E712
         )).scalars().all()
         assert len(active) == 1, "源档案没退出活跃集合，下次挂号还会查到它"
+
+
+async def test_过敏史真的被合并过来(alembic_pg):
+    """档案纵向字段的真实存储是 patients.profile 这个 JSONB 列。
+
+    2026-09-02 生产实测抓到：合并原本只搬 profile_allergy_history 等**旧扁平
+    列**——那是 JSONB 重构后就没有任何代码再写的字段（生产 70 份档案里仅 1 份
+    还留着重构前的残值，而 JSONB 里有值的是 13 份）。于是合并对真实档案数据
+    完全无效：过敏史、既往史全留在被软删掉的 source 上。
+
+    后果比不合并更糟——合并前医生在两份档案里各能看到一半，合并后 source 一
+    软删，它那一半直接从视野里消失。而「过敏史分散在两份档案下，医生只看得到
+    一半」正是这个功能存在的唯一理由。
+    """
+    Session = _session_factory(alembic_pg)
+    tid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+
+    async with Session() as db:
+        operator = await _mk_operator(db)
+        db.add_all([
+            # target 只有既往史，没有过敏史
+            Patient(id=tid, name="陈大爷", gender="male", profile={
+                "past_history": {"value": "高血压10年", "updated_at": "2026-08-01T09:00:00",
+                                 "updated_by": "doc-a"},
+            }),
+            # source 有过敏史——合并后必须出现在 target 上
+            Patient(id=sid, name="陈大爷", gender="male", profile={
+                "allergy_history": {"value": "头孢过敏，用药前务必核对",
+                                    "updated_at": "2026-08-20T14:30:00",
+                                    "updated_by": "doc-b"},
+                "past_history": {"value": "（这条不该覆盖 target 已有的）",
+                                 "updated_at": "2026-08-20T14:30:00", "updated_by": "doc-b"},
+            }),
+        ])
+        await db.commit()
+
+    async with Session() as db:
+        res = await svc.merge(db, target_id=tid, source_id=sid,
+                              confirm_name="陈大爷", operator_id=operator)
+        assert "allergy_history" in res["filled_fields"]
+
+    async with Session() as db:
+        t = await db.get(Patient, tid)
+        allergy = (t.profile or {}).get("allergy_history") or {}
+        assert allergy.get("value") == "头孢过敏，用药前务必核对", "过敏史没被合并过来"
+        # 溯源信息要一起搬：档案上每个字段是谁什么时候确认的，合并后仍要能追
+        assert allergy.get("updated_by") == "doc-b"
+        assert allergy.get("updated_at") == "2026-08-20T14:30:00"
+        # 补空不覆盖：target 已确认过的既往史不能被 source 悄悄改掉
+        assert (t.profile["past_history"])["value"] == "高血压10年"
+
+
+async def test_预览页能看见过敏史(alembic_pg):
+    """预览是执行合并前唯一的人眼防线。原实现读的是已废弃的扁平列，两份档案的
+    过敏史一律显示为空——操作员看不见「这份档案有过敏史」，也就无从发现合并
+    把它搬丢了。"""
+    Session = _session_factory(alembic_pg)
+    tid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+
+    async with Session() as db:
+        await _mk_operator(db)
+        db.add_all([
+            Patient(id=tid, name="周奶奶", gender="female"),
+            Patient(id=sid, name="周奶奶", gender="female", profile={
+                "allergy_history": {"value": "青霉素过敏", "updated_at": None,
+                                    "updated_by": None},
+            }),
+        ])
+        await db.commit()
+
+    async with Session() as db:
+        prev = await svc.preview(db, target_id=tid, source_id=sid)
+        assert prev["source"]["allergy_history"] == "青霉素过敏",             "预览看不到源档案的过敏史，人眼防线形同虚设"
