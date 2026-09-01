@@ -144,6 +144,13 @@ async def merge(db: AsyncSession, *, target_id: str, source_id: str,
 
     moved = await _counts(db, source_id)
 
+    # 搬之前先记下要搬哪些接诊、归属哪些医生——搬完就查不到了，而这两份
+    # 名单是下面失效缓存用的（见函数末尾）。
+    moving_rows = (await db.execute(
+        select(Encounter.id, Encounter.doctor_id)
+        .where(Encounter.patient_id == source_id)
+    )).all()
+
     # ① 数据搬家：只有 encounters / imaging_studies 直接挂 patient_id，
     #    病历/检验/语音都经 encounter 关联，搬了接诊它们自然跟过去。
     await db.execute(
@@ -155,7 +162,27 @@ async def merge(db: AsyncSession, *, target_id: str, source_id: str,
         .values(patient_id=target_id)
     )
 
-    # ② 档案补空（不覆盖）：target 是保留下来的那份，以它为准；
+    # ② source 先软删并**立即 flush**，然后才能补空——顺序不能反。
+    #
+    #    2026-09-02 真 PG 用例抓到：身份证的唯一性由部分索引保证——
+    #        uq_patients_id_card_active UNIQUE (id_card)
+    #        WHERE id_card IS NOT NULL AND is_deleted = false
+    #    补空若排在前面，SQLAlchemy 会先 UPDATE target 把 source 的身份证写上，
+    #    而此刻 source 还是 is_deleted=false，两行同时活跃持有同一个身份证，
+    #    PG 在这条语句后就判唯一冲突，整个合并 500 回滚。
+    #    而这恰恰是最典型的重复档案形态：老人第一次挂号没带身份证（建了无证
+    #    档案），第二次带了（建了有证档案）——正是这个功能要合的那种。
+    #    SQLite 不检查部分索引的这个瞬间态，tests/ 那边一路绿灯。
+    #
+    #    **不动任何已签发病历的 patient_snapshot**——那是签发瞬间冻结、进了
+    #    sign_hash 的法定署名，改它等于篡改法律文书。
+    source.is_deleted = True
+    source.deleted_at = datetime.datetime.now()
+    source.deleted_by = operator_id
+    source.merged_into = target_id
+    await db.flush()
+
+    # ③ 档案补空（不覆盖）：target 是保留下来的那份，以它为准；
     #    只有它没填而 source 填了的字段才搬过去。
     filled: list[str] = []
     for field in _IDENTITY_FIELDS + _PROFILE_FIELDS:
@@ -163,14 +190,32 @@ async def merge(db: AsyncSession, *, target_id: str, source_id: str,
             setattr(target, field, getattr(source, field))
             filled.append(field)
 
-    # ③ source 软删并留下去向。**不动任何已签发病历的 patient_snapshot**——
-    #    那是签发瞬间冻结、进了 sign_hash 的法定署名，改它等于篡改法律文书。
-    source.is_deleted = True
-    source.deleted_at = datetime.datetime.now()
-    source.deleted_by = operator_id
-    source.merged_into = target_id
-
     await db.commit()
+
+    # ④ 失效缓存（2026-09-02 数据更正流程实测补）。原实现落库后什么都不清，
+    #    而全仓其他改患者/接诊的路径（_patient_write / _patient_profile /
+    #    _encounter_cancel / discharge）都清。三处都会读到脏数据，其中第一处
+    #    直接废掉这个功能存在的理由：
+    #      · target 的档案缓存——合并刚把 source 的过敏史补进 target，而工作台
+    #        开药前的飘红警示读的就是这份缓存。不清则医生看到的仍是那份没有
+    #        过敏史的旧档案，合并等于没做。
+    #      · 被搬走的每条接诊的工作台快照——快照里带着患者信息，不清则那条
+    #        接诊仍显示已被合并掉的旧档案。
+    #      · 相关医生的「我的进行中接诊」列表——同理。
+    #    source 自身的缓存一并清掉，避免已合并的档案还能从缓存里被查出来。
+    from app.services.encounter_cache import (
+        invalidate_encounter_snapshot,
+        invalidate_my_encounters,
+    )
+    from app.services.patient_cache import _invalidate_patient_cache
+
+    await _invalidate_patient_cache(target_id)
+    await _invalidate_patient_cache(source_id)
+    for enc_id, _doc_id in moving_rows:
+        await invalidate_encounter_snapshot(enc_id)
+    for doctor_id in {d for _e, d in moving_rows if d}:
+        await invalidate_my_encounters(doctor_id)
+
     logger.warning(
         "patient.merge: source=%s -> target=%s 接诊%d 影像%d 补空字段%d 操作人=%s",
         source_id, target_id, moved["encounters"], moved["imaging_studies"],
