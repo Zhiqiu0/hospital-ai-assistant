@@ -5,6 +5,8 @@
 由 MedicalRecordService 组合，依赖宿主类提供 self.db。
 """
 import logging
+
+from fastapi import HTTPException
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -97,12 +99,39 @@ class MedicalRecordSignMixin:
         else:
             next_no = record.record_no if record is not None else 1
         # 已签发病历幂等守卫：门诊/急诊一次接诊一份病历，已 submitted 则不重复改写
-        # （前端双击/重试会重复调）；直接返回现有记录，天然幂等。
-        if record is not None and record.status == "submitted" \
-                and enc_locked.visit_type != "inpatient":
-            logger.info("record.sign: 幂等跳过已签发 record_id=%s encounter_id=%s",
-                        record.id, encounter_id)
-            return record
+        # （前端双击/重试会重复调）；内容一致时直接返回现有记录，天然幂等。
+        #
+        # **内容不一致必须报错，不能假装成功**（2026-09-02 质控复核台实测补）。
+        # 原实现无条件 return record，于是「质控退回 → 医生整改 → 重新签发」这条
+        # 闭环在门急诊上是这样断的：医生按整改意见改完正文，点签发 → 接口回
+        # {"ok": true} → 医生以为交差了，而**整改内容一个字都没落库**，版本表里
+        # 还是被退回的那一版；质控队列收不到（没产生新签发版本），医生端的退回
+        # 横幅也不消（判据同源）。实测里质控员随后"复核通过"的，正是那份没改过
+        # 的病历。
+        # 门急诊的整改通道是管理员修订（/admin/records/{id}/revise，产出
+        # source='admin_revise' 版本，队列与横幅两处都认它）。这里把话说清楚，
+        # 而不是让医生对着一个骗人的成功提示白改一遍。
+        if record is not None and record.status == "submitted"                 and enc_locked.visit_type != "inpatient":
+            current = (await self.db.execute(
+                select(RecordVersion.content).where(
+                    RecordVersion.medical_record_id == record.id,
+                    RecordVersion.version_no == record.current_version,
+                )
+            )).scalar_one_or_none()
+            current_text = (current or {}).get("text") if isinstance(current, dict) else None
+            if current_text == content:
+                logger.info("record.sign: 幂等跳过已签发 record_id=%s encounter_id=%s",
+                            record.id, encounter_id)
+                return record
+            logger.warning(
+                "record.sign: 拒绝改写已签发门急诊病历 record_id=%s encounter_id=%s",
+                record.id, encounter_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="该病历已签发，正文不能再改。质控退回的整改请联系管理员走"
+                       "病历修订通道——修订会留痕并重新进入质控复核队列。",
+            )
         if not record:
             # 首次签发，病历记录尚未创建（极少数情况：直接签发跳过了 AI 生成步骤）
             record = MedicalRecord(
