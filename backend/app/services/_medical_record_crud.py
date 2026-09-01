@@ -64,6 +64,9 @@ class MedicalRecordCrudMixin:
             encounter_id=data.encounter_id,
             record_type=data.record_type,
             record_no=next_no,
+            # 记录时间兜底（2026-09-02）：见 _medical_record_draft 处的说明。
+            # 用 func.now() 而非 datetime.now()，与 created_at 同一时钟源。
+            recorded_at=func.now(),
         )
         self.db.add(record)
         await self.db.commit()

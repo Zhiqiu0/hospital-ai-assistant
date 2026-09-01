@@ -124,5 +124,11 @@ async def test_门诊不填记录时间不受影响(async_db):
     )).scalar_one()
 
     payload = _serialize_record(rec, None)
-    assert payload["recorded_at"] is None
+    # 2026-09-02 修正：原断言是 `recorded_at is None`，那锁住的是一个 bug——
+    # 服务端从来不给 recorded_at 兜底，全库 46 份病历该字段**全为 NULL**，
+    # 于是 is_late_entry() 第一行就 return False，补记判定整条链路从未激活。
+    # 这条用例真正要守的是「门急诊当场书写不被误判成补记」，那一点不变：
+    # 兜底取 now 后 recorded_at≈created_at，差值远小于阈值。
+    assert payload["recorded_at"] is not None
+    assert abs((rec.recorded_at - rec.created_at).total_seconds()) < 5
     assert payload["is_late_entry"] is False
