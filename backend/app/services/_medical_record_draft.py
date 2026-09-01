@@ -285,6 +285,12 @@ class MedicalRecordDraftMixin:
             {"record_id": ..., "version_no": ..., "saved": bool}
             saved=False 表示已签发跳过保存。
         """
+        # 文书类型必须与就诊类型相容（2026-09-01 住院支线实测补）。
+        # 这是第三条写入路径——auto_save_draft 与 quick_save 都拦了，唯独 AI
+        # 生成这条当时漏了，于是住院接诊里照样落进了一份 record_type='outpatient'
+        # 的病历。三条写入路径必须同口径，漏一条守卫就等于没有。
+        await self._assert_type_ok(encounter_id, record_type)
+
         # NUL 剥离（2026-08-28 极端字符审计）：PG JSONB 拒收 \u0000，
         # PDF 复制粘贴偶带 NUL → 每次保存都 DataError 500。剥掉无信息损失。
         content = content.replace("\x00", "")

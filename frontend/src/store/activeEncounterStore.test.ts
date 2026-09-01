@@ -194,3 +194,55 @@ describe('切换病历类型不丢内容（2026-08-14 第七轮审计修复）',
     expect(useRecordStore.getState().draftsByType).toEqual({})
   })
 })
+
+// ─── 住院接诊必须给住院文书类型作默认（2026-09-01 住院支线实测发现）────────
+//
+// 原实现对住院直接跳过 setRecordType，理由是「具体类型由 ComplianceBar 切换」。
+// 但「不覆盖医生选择」不等于「不给默认」：新建住院接诊后 recordType 保持
+// recordStore 的默认值 outpatient，医生直接填问诊点生成，落库的就是一份
+// record_type='outpatient' 的病历挂在住院接诊下——章节按门诊模板渲染（缺婚育史/
+// 月经史/诊疗计划，还多出【辨证分析】）、质控按门诊评分表判、HIS 回写也是门诊。
+// 这正是 2026-08-13 修过的那个急诊 bug，只是当时把住院排除在外了。
+describe('住院接诊的默认病历类型', () => {
+  it('新建住院接诊时，门诊类型要被换成入院记录', async () => {
+    const { useRecordStore } = await import('./recordStore')
+    useRecordStore.getState().setRecordType('outpatient')
+    useActiveEncounterStore.getState().setActive({
+      patientId: 'p-ip',
+      encounterId: 'e-ip',
+      visitType: 'inpatient',
+      isFirstVisit: true,
+      isPatientReused: false,
+    })
+    expect(useRecordStore.getState().recordType).toBe('admission_note')
+  })
+
+  it('同一接诊内医生已切到病程记录时不覆盖他的选择', async () => {
+    // 注意前提：encounterId 不变才谈得上「不覆盖」——换接诊时 setActive 会先
+    // reset 四个子 store（防跨患者串味），那是更优先的不变量，此时给默认才对。
+    const { useRecordStore } = await import('./recordStore')
+    const same = {
+      patientId: 'p-ip2',
+      encounterId: 'e-ip2',
+      visitType: 'inpatient' as const,
+      isFirstVisit: false,
+      isPatientReused: false,
+    }
+    useActiveEncounterStore.getState().setActive(same)
+    useRecordStore.getState().setRecordType('course_record')
+    useActiveEncounterStore.getState().setActive(same) // 同一接诊再次进入
+    expect(useRecordStore.getState().recordType).toBe('course_record')
+  })
+
+  it('门诊/急诊仍按接诊类型直接设置', async () => {
+    const { useRecordStore } = await import('./recordStore')
+    useActiveEncounterStore.getState().setActive({
+      patientId: 'p-er',
+      encounterId: 'e-er',
+      visitType: 'emergency',
+      isFirstVisit: true,
+      isPatientReused: false,
+    })
+    expect(useRecordStore.getState().recordType).toBe('emergency')
+  })
+})
