@@ -36,8 +36,18 @@ export function useDraftByTypeLoader(encounterId: string | null, recordType: str
   useEffect(() => {
     if (!encounterId || !recordType) return
     const store = useRecordStore.getState()
-    if (store.recordContent) return
     if (store.isGenerating) return
+    // 本地已有内容时**仍然要拉**（2026-09-02 多设备实测修正）：只是不灌正文，
+    // 而是把服务端那份的 updated_at 取回来当乐观锁基线。
+    //
+    // 原实现在这里直接 return，于是"本地有缓存内容"的那台设备根本不知道服务端
+    // 版本号，它的乐观锁基线是 null，而后端对 expected_updated_at 为空的请求会
+    // 跳过校验直接 UPSERT。实测复现：诊室电脑写好整份病历并保存，平板（本地缓存
+    // 里只有两个字）一次自动保存就把它整份顶掉，两边都是 200，医生毫无察觉。
+    // 「本地优先」是对的——不能打断正在写字的医生；但本地优先不等于不知道服务端
+    // 到哪一版了。基线对齐后，那一发若撞上另一台的改动会得到 409，走既有的冲突
+    // 提示 + forceOverwrite 另起一版流程，被盖内容留在历史版本里。
+    const localHasContent = !!store.recordContent
     let cancelled = false
     api
       .get(
@@ -47,10 +57,18 @@ export function useDraftByTypeLoader(encounterId: string | null, recordType: str
         if (cancelled) return
         const d = res as unknown as DraftByTypeRes | null
         if (!d?.exists || !d.content) return
-        // 迟到守卫：请求在途时医生可能已切类型 / 开始手写 / 换了接诊——丢弃
+        // 迟到守卫：请求在途时医生可能已切类型 / 换了接诊——丢弃
         const cur = useRecordStore.getState()
-        if (cur.recordType !== recordType || cur.recordContent) return
+        if (cur.recordType !== recordType) return
         if (useActiveEncounterStore.getState().encounterId !== encounterId) return
+        // 本地有内容（发起时就有，或请求在途时医生开始手写）：只对齐基线，
+        // 绝不覆盖医生正在写的字
+        if (localHasContent || cur.recordContent) {
+          if (d.updated_at) {
+            useRecordAutoSaveTrigger.getState().syncBaseline(d.updated_at, d.content, false)
+          }
+          return
+        }
         cur.setRecordContent(d.content)
         cur.setFinal(d.status === 'submitted', d.submitted_at ?? null)
         cur.markSaved(d.content, Date.now())
