@@ -94,11 +94,19 @@ export const TCM_FOUR_DIAG_FIELDS = [
 ] as const
 
 /** 中医诊断三项 + 西医诊断（中医门诊用） */
-export const TCM_DIAGNOSIS_FIELDS = [
-  'tcm_disease_diagnosis',
-  'tcm_syndrome_diagnosis',
-  'western_diagnosis',
-] as const
+/**
+ * 西医诊断——**所有就诊场景通用**，独立成组（2026-09-01 急诊实测修复）。
+ *
+ * 它原先被放在 TCM_DIAGNOSIS_FIELDS 里。急诊要豁免中医内容，于是整组被排除，
+ * **连西医诊断一起丢了**：急诊表单照常显示并保存诊断（inquiry_inputs 和
+ * diagnoses 表都有值、HIS 回写也拿得到），唯独发给 AI 生成的 payload 里没有，
+ * 于是急诊病历正文的【诊断】章节恒为「[未填写，需补充]」。
+ * 一个纯粹由分组命名造成的数据丢失——西医诊断本来就不属于"中医诊断字段"。
+ */
+export const WESTERN_DIAGNOSIS_FIELDS = ['western_diagnosis'] as const
+
+/** 中医诊断 2 项（病名 + 证候） */
+export const TCM_DIAGNOSIS_FIELDS = ['tcm_disease_diagnosis', 'tcm_syndrome_diagnosis'] as const
 
 /** 治疗意见 4 项（中医门诊场景） */
 export const TREATMENT_FIELDS = [
@@ -140,6 +148,7 @@ export const ALL_FIELD_GROUPS = [
   VITAL_FIELDS,
   AUXILIARY_FIELDS,
   TCM_FOUR_DIAG_FIELDS,
+  WESTERN_DIAGNOSIS_FIELDS,
   TCM_DIAGNOSIS_FIELDS,
   TREATMENT_FIELDS,
   INPATIENT_PROFILE_FIELDS,
@@ -207,6 +216,7 @@ const OUTPATIENT_KEYS = [
   ...VITAL_FIELDS,
   ...AUXILIARY_FIELDS,
   ...TCM_FOUR_DIAG_FIELDS,
+  ...WESTERN_DIAGNOSIS_FIELDS,
   ...TCM_DIAGNOSIS_FIELDS,
   ...TREATMENT_FIELDS,
 ] as const
@@ -217,6 +227,13 @@ const EMERGENCY_KEYS = [
   'menstrual_history',
   ...VITAL_FIELDS,
   ...AUXILIARY_FIELDS,
+  // 诊断（2026-09-01 急诊实测补）：此前急诊完全不发诊断字段，病历正文的
+  // 【诊断】章节永远是占位符。急诊表单本来就显示这三个字段、医生填了也会
+  // 落库，没有理由在发给 AI 时把它们过滤掉。
+  // 中医两项一并带上：质控对急诊豁免中医规则（不填不扣分），但**填了就得写
+  // 进病历**——豁免的是"不强制要求"，不是"填了也不要"。
+  ...WESTERN_DIAGNOSIS_FIELDS,
+  ...TCM_DIAGNOSIS_FIELDS,
   ...EMERGENCY_FIELDS,
   'treatment_plan',
 ] as const
