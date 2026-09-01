@@ -52,6 +52,35 @@ NEW_ARCH_RECORD_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _compose_emergency_diagnosis(req: Any) -> str:
+    """急诊【诊断】章节的取值——扁平一行，不分中西医。
+
+    2026-09-01 急诊支线端到端实测修复。原实现是：
+
+        f"诊断：{coalesce_field(getattr(req, 'initial_impression', None))}"
+
+    取的是「初步印象（补充）」那个**可选**输入框，而医生真正填的西医诊断、
+    中医疾病/证候诊断三个字段一个都没进 prompt。于是 LLM 看到的诊断永远是空，
+    急诊病历正文的【诊断】章节恒为「[未填写，需补充]」——除非医生恰好在那个
+    补充框里把诊断又抄了一遍。
+
+    实测：填了西医「急性下壁心肌梗死」（ICD10 I21.103）+ 中医「胸痹」，
+    diagnoses 表两条都正确落库、HIS 回写的 diagnoses[] 也有值，唯独**病历正文
+    诊断栏是空的**——结构化数据与法定文书正文不一致，而急诊恰恰是最需要明确
+    诊断的场景（心梗、卒中）。
+
+    顺序：西医诊断在前（急诊以西医诊断为主），中医病名/证候次之，
+    「初步印象」作为补充缀在最后（它本来就是"暂时无法明确时的印象或鉴别方向"）。
+    """
+    parts: list[str] = []
+    for attr in ("western_diagnosis", "tcm_disease_diagnosis",
+                 "tcm_syndrome_diagnosis", "initial_impression"):
+        v = getattr(req, attr, None)
+        if v and str(v).strip():
+            parts.append(str(v).strip())
+    return "；".join(parts) if parts else PLACEHOLDER
+
+
 def _build_request_block(req: Any, *, include_tcm: bool) -> str:
     """组装"医生录入"段落（患者信息 + 问诊数据），供 prompt 注入。
 
@@ -104,7 +133,7 @@ def _build_request_block(req: Any, *, include_tcm: bool) -> str:
         # 留观记录可空（仅留院观察才填），故传 '' 兜底而非 PLACEHOLDER，
         # 让 LLM 看到"无要求"而不是"必须补"。
         lines.extend([
-            f"诊断：{coalesce_field(getattr(req, 'initial_impression', None))}",
+            f"诊断：{_compose_emergency_diagnosis(req)}",
             f"急诊处置：{coalesce_field(getattr(req, 'treatment_plan', None))}",
             f"留观记录：{coalesce_field(getattr(req, 'observation_notes', None), '')}",
             f"患者去向：{coalesce_field(getattr(req, 'patient_disposition', None))}",
