@@ -26,7 +26,10 @@ from app.services.ai.record_prompts import (
     build_polish_prompt,
     build_record_prompt,
 )
-from app.services.ai.output_guards import strip_unsubstantiated_vitals
+from app.services.ai.output_guards import (
+    strip_unsourced_copy_fields,
+    strip_unsubstantiated_vitals,
+)
 from app.services.ai.record_renderer import render_record
 from app.services.ai.task_logger import log_ai_task
 
@@ -255,6 +258,17 @@ async def _stream_json_pipeline(
 
     # 2.5 数值真实性守卫：剔除 AI 编造、医生录入里查无出处的生命体征数值（病历安全红线）
     _guard_vitals_in_result(result, req)
+    # 照抄类字段守卫（2026-09-02 AI 输出安全面）：诊断 / 治则治法 / 处理意见 /
+    # 注意事项在 prompt 里要求"严格照抄，不改写"，医生没录入就不该凭空出现。
+    # 拦两类东西：被 prompt 注入诱导写出的假诊断与危险医嘱（实测三条全中，
+    # 且 prompt 侧的定界与声明挡不住），以及模型自行"补全"出的一套诊疗方案
+    # ——后者更常见，看起来完全合理，最容易被医生直接签发。
+    reverted = strip_unsourced_copy_fields(result, req)
+    if reverted:
+        logger.warning(
+            "record_gen.guard: 医生未录入却被 AI 填出内容，已回退为占位符 fields=%s",
+            ",".join(reverted),
+        )
 
     # 3+5. 渲染 + 分片 SSE（需要先拿到 record_text 用于审计；这里复制 render 逻辑而非调 helper）
     meta = _meta_from_req(req)

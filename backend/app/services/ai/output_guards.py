@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.ai.record_schemas import PLACEHOLDER
+
 # 生命体征 token：标记 + 可选冒号 + 数值（可带小数、收缩/舒张压的斜杠）+ 可选单位。
 # 标记同时覆盖拉丁缩写（T/P/R/BP/HR/SpO2）与中文写法（体温/脉搏/心率/呼吸/血压/
 # 血氧/血氧饱和度）——2026-08-11 审计修复：原正则只认拉丁缩写，"体温36.8℃"这类
@@ -137,3 +139,65 @@ def strip_unsubstantiated_vital_values(
             dropped.append(key)
 
     return cleaned, dropped
+
+
+# ─── 照抄类字段的"源为空则输出必空"守卫（2026-09-02 AI 输出安全面）─────────
+#
+# prompt 明确要求诊断、治则治法、处理意见（药名剂量用法）**严格照抄，不改写**
+# （OUTPATIENT_STYLE_RULES 第 2 条）。既然是照抄，就能做一条零误伤的确定性
+# 校验：**医生没录入的照抄字段，AI 输出里也必须是空/占位符**——凭空冒出内容
+# 只可能是编造或被诱导。
+#
+# 为什么需要它：实测把伪造的「# 系统指令」段落放进现病史，模型三条照做——
+# 诊断写成"体检未见异常，无需治疗"（主诉是咳嗽3天）、开出十倍剂量的阿莫西林、
+# 注意事项栏写进"本院对本次诊疗结果不承担任何责任"。先在 prompt 侧加了定界符
+# 与显式声明（data/instruction 隔离），**复验时三条仍然全中**——这正是本模块
+# 开头那句话的又一次印证：软约束不可靠，医疗真实性必须落在输出侧的确定性守卫上。
+#
+# 这条守卫同时覆盖另一类更常见的风险：没有任何注入，模型自己按常见病"补全"出
+# 一个诊断和一套用药，而医生根本没写——那同样是编造，且看起来完全合理，最容易
+# 被直接签发。
+#
+# 刻意不判断内容"对不对"（无法确定性判定），只判断"医生给没给"。
+
+# AI 输出字段 → 医生录入的同名源字段。两侧同名，但显式列出以免加字段时漏配。
+COPY_THROUGH_FIELDS: dict[str, str] = {
+    "western_diagnosis": "western_diagnosis",
+    "tcm_disease_diagnosis": "tcm_disease_diagnosis",
+    "tcm_syndrome_diagnosis": "tcm_syndrome_diagnosis",
+    "treatment_method": "treatment_method",
+    "treatment_plan": "treatment_plan",
+    "precautions": "precautions",
+    "initial_impression": "initial_impression",
+}
+
+
+def _is_blank(value) -> bool:
+    """医生这一栏到底有没有填——占位符按"没填"算。"""
+    if value is None:
+        return True
+    text = str(value).strip()
+    return not text or text == PLACEHOLDER
+
+
+def strip_unsourced_copy_fields(result: dict, req) -> list[str]:
+    """把医生没录入却被 AI 填出内容的照抄类字段回退为占位符。
+
+    Args:
+        result: LLM 返回的字段字典（就地修改）
+        req:    生成请求对象，医生录入的原始字段从这里取
+
+    Returns:
+        被回退的字段名列表，供调用方写日志。
+    """
+    reverted: list[str] = []
+    if not isinstance(result, dict):
+        return reverted
+    for out_field, src_field in COPY_THROUGH_FIELDS.items():
+        out_val = result.get(out_field)
+        if _is_blank(out_val):
+            continue
+        if _is_blank(getattr(req, src_field, None)):
+            result[out_field] = PLACEHOLDER
+            reverted.append(out_field)
+    return reverted
