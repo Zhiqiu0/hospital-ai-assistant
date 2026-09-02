@@ -172,6 +172,18 @@ COPY_THROUGH_FIELDS: dict[str, str] = {
 }
 
 
+# 英文 schema key → 病历正文里的子行名（供双源判据查正文）
+_FIELD_CN_NAME: dict[str, str] = {
+    "western_diagnosis": "西医诊断",
+    "tcm_disease_diagnosis": "中医诊断",
+    "tcm_syndrome_diagnosis": "中医证候诊断",
+    "treatment_method": "治则治法",
+    "treatment_plan": "处理意见",
+    "precautions": "注意事项",
+    "initial_impression": "初步诊断",
+}
+
+
 def _is_blank(value) -> bool:
     """医生这一栏到底有没有填——占位符按"没填"算。"""
     if value is None:
@@ -193,13 +205,20 @@ def strip_unsourced_copy_fields(result: dict, req) -> list[str]:
     reverted: list[str] = []
     if not isinstance(result, dict):
         return reverted
+    body = (getattr(req, "current_content", None)
+            or getattr(req, "current_record", None) or "")
     for out_field, src_field in COPY_THROUGH_FIELDS.items():
         out_val = result.get(out_field)
         if _is_blank(out_val):
             continue
-        if _is_blank(getattr(req, src_field, None)):
-            result[out_field] = PLACEHOLDER
-            reverted.append(out_field)
+        if not _is_blank(getattr(req, src_field, None)):
+            continue                      # 问诊面板里医生填了
+        # 正文里医生自己写的也算出处（与逐条修复、数值守卫同口径）：正文是本
+        # 产品的主编辑入口，医生在正文里改完不会回左侧面板同步
+        if not _is_blank(line_value(body, _FIELD_CN_NAME.get(out_field, ""))):
+            continue
+        result[out_field] = PLACEHOLDER
+        reverted.append(out_field)
     return reverted
 
 
@@ -218,16 +237,46 @@ COPY_THROUGH_CN_FIELDS: dict[str, str] = {
 }
 
 
-def is_unsourced_copy_field(field_name: str, req) -> bool:
-    """补全给出的这一条，是不是"医生没录入却要替他填"的照抄类字段。
+def line_value(record_text: str, field_name: str) -> str | None:
+    """从病历正文里取某个子行字段的当前值（"西医诊断：急性支气管炎" → 后半段）。
 
-    2026-09-02：补全链路是主生成守卫的绕行路径——主生成被拦下后，医生随手点
-    「补全缺失项」，注入指令仍留在病历正文（current_content 会进 prompt），
-    实测补全照样返回"体检未见异常，无需治疗"和十倍剂量的阿莫西林。
-
-    诊断与用药是医疗决策，医生没写就不该由模型代填，无论从哪条链路进来。
+    返回 None 表示正文里根本没有这一行——与"有这行但值为空"要区分开。
     """
-    src = COPY_THROUGH_CN_FIELDS.get((field_name or "").strip())
+    if not record_text or not field_name:
+        return None
+    for raw in str(record_text).splitlines():
+        line = raw.strip()
+        for prefix in (f"{field_name}：", f"{field_name}:"):
+            if line.startswith(prefix):
+                return line[len(prefix):].strip()
+    return None
+
+
+def is_unsourced_copy_field(field_name: str, req) -> bool:
+    """这一条，是不是"医生没录入却要替他填"的照抄类字段。
+
+    2026-09-02：补全与逐条修复都是主生成守卫的绕行路径——主生成被拦下后，
+    医生随手点「补全缺失项」或「一键修复」，注入指令仍留在病历正文里
+    （current_content / current_record 会进 prompt），实测补全照样返回
+    "体检未见异常，无需治疗"和十倍剂量的阿莫西林。诊断与用药是医疗决策，
+    医生没写就不该由模型代填，无论从哪条链路进来。
+
+    **判据必须双源**：问诊面板的字段 + 病历正文里的那一行。正文是本产品的
+    主编辑入口，医生直接在正文里写诊断后不会回左侧面板同步——只看面板字段
+    会把"医生已经写了、质控只是说表述不规范"的正常修复一起拦掉。这正是
+    生命体征数值守卫早就采用的口径（它的 source_text 含 current_record），
+    这里保持一致。
+    """
+    name = (field_name or "").strip()
+    src = COPY_THROUGH_CN_FIELDS.get(name)
     if not src:
         return False
-    return _is_blank(getattr(req, src, None))
+    # ① 问诊面板录入
+    if not _is_blank(getattr(req, src, None)):
+        return False
+    # ② 病历正文里医生自己写的
+    text = (getattr(req, "current_content", None)
+            or getattr(req, "current_record", None) or "")
+    if not _is_blank(line_value(text, name)):
+        return False
+    return True

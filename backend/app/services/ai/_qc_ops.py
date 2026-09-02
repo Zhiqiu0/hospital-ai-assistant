@@ -22,7 +22,10 @@ from app.services.ai._qc_rubric import _deductions_to_issues, _select_rubric, ge
 from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
-from app.services.ai.output_guards import strip_unsubstantiated_vitals
+from app.services.ai.output_guards import (
+    is_unsourced_copy_field,
+    strip_unsubstantiated_vitals,
+)
 from app.services.ai.prompts import QC_FIX_PROMPT
 from app.services.ai.task_logger import log_ai_task, save_qc_report
 from app.services.ai._qc_frontpage import load_front_page
@@ -76,6 +79,14 @@ async def run_qc_fix(db: AsyncSession, req: QCFixRequest) -> dict:
                 req.current_record, req.chief_complaint, req.history_present_illness
             ) if x
         )
+        # 照抄类字段守卫（2026-09-02 AI 输出安全面）：三条 LLM 链路（主生成 /
+        # 批量补全 / 逐条修复）守同一条红线——诊断与用药是医疗决策，医生没录入
+        # 就不该由模型代填。判据与另两条共用 output_guards，不另写一份。
+        # 修复链路同样是注入的入口：注入载荷留在 current_record 里会进 prompt。
+        if is_unsourced_copy_field(req.field_name or "", req):
+            logger.warning(
+                "ai.qc_fix.guard: 医生未录入的照抄字段不代填 field=%s", req.field_name)
+            return {"fix_text": "", "degraded": False, "error": None}
         cleaned = strip_unsubstantiated_vitals(content.strip(), source_text)
         if cleaned != content.strip():
             logger.warning("ai.qc_fix.guard: stripped_fabricated_vitals field=%s",
