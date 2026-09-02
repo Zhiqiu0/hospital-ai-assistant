@@ -103,3 +103,70 @@ async def test_响应带回request_id():
     headers = dict(sent[0]["headers"])
     assert b"x-request-id" in headers
     assert len(headers[b"x-request-id"]) >= 8
+
+
+# ─── 4xx 拒绝原因必须留痕 ────────────────────────────────────────────
+#
+# 排障演练发现的盲区：医生报障最常见的三种形态是"打不开""看不到""保存不了"，
+# 对应 403/404/422，而访问日志里只有一行 status=403——运维看不出是角色不对、
+# 归属不对还是账号状态问题。detail 里恰恰写着答案，只是从没被记下来过。
+
+from fastapi import HTTPException as FastAPIHTTPException
+from fastapi.exceptions import RequestValidationError
+
+from app.main import http_exception_logger, validation_exception_logger
+
+
+def _req(path="/api/v1/x", method="GET"):
+    return SimpleNamespace(method=method, url=SimpleNamespace(path=path))
+
+
+@pytest.mark.asyncio
+async def test_403拒绝原因进日志(caplog):
+    with caplog.at_level(logging.INFO):
+        resp = await http_exception_logger(
+            _req("/api/v1/qc/review-queue"),
+            FastAPIHTTPException(status_code=403, detail="需要质控员权限"))
+    assert resp.status_code == 403
+    assert any("需要质控员权限" in r.getMessage() and "status=403" in r.getMessage()
+               for r in caplog.records), "403 的拒绝原因没进日志"
+
+
+@pytest.mark.asyncio
+async def test_5xx记error而4xx记info(caplog):
+    """4xx 是用户/前端做了不该做的事，混进 error.log 会把真故障淹掉。"""
+    with caplog.at_level(logging.INFO):
+        await http_exception_logger(_req(), FastAPIHTTPException(404, "接诊不存在"))
+        await http_exception_logger(_req(), FastAPIHTTPException(503, "上游不可用"))
+    levels = {r.getMessage().split("status=")[1][:3]: r.levelno
+              for r in caplog.records if "app.http_error" in r.getMessage()}
+    assert levels.get("404") == logging.INFO
+    assert levels.get("503") == logging.ERROR
+
+
+@pytest.mark.asyncio
+async def test_422记字段但不记输入值(caplog):
+    """input 里可能是患者姓名、病历正文这类 PHI，绝不能进日志。"""
+    exc = RequestValidationError([{
+        "type": "string_type", "loc": ("body", "patient_name"),
+        "msg": "Input should be a valid string", "input": "张三的敏感信息",
+    }])
+    with caplog.at_level(logging.INFO):
+        resp = await validation_exception_logger(_req(method="POST"), exc)
+    assert resp.status_code == 422
+    line = next(r.getMessage() for r in caplog.records if "app.validation_error" in r.getMessage())
+    assert "body.patient_name" in line and "string_type" in line
+    assert "张三" not in line, "PHI 进了日志"
+
+
+@pytest.mark.asyncio
+async def test_422响应体仍可序列化():
+    """pydantic v2 的 errors() 里 ctx 会带原始 ValueError 对象，直接塞进
+    JSONResponse 会 TypeError——必须走 jsonable_encoder（写这段时正是这么挂的）。"""
+    exc = RequestValidationError([{
+        "type": "value_error", "loc": ("body", "recorded_at"),
+        "msg": "记录时间不能晚于当前时间", "input": "2099-01-01",
+        "ctx": {"error": ValueError("记录时间不能晚于当前时间")},
+    }])
+    resp = await validation_exception_logger(_req(method="POST"), exc)
+    assert resp.status_code == 422 and resp.body
