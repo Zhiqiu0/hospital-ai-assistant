@@ -118,3 +118,20 @@ def setup_logging(log_level: str = "INFO") -> None:
     # 噪音淹没。压到 ERROR 级：库真出错时仍看得见。
     logging.getLogger("python_multipart").setLevel(logging.ERROR)
     logging.getLogger("multipart").setLevel(logging.ERROR)
+
+
+def mask_name(name: str | None) -> str:
+    """姓名脱敏，供日志使用（2026-09-02 可观测性专项）。
+
+    本项目的既定口径是**日志里用 ID 不用姓名**——审计日志的 detail 全部写
+    UUID，正是为此。但个别排障日志（如同名同生日查重提示）确实需要一点人可读
+    的线索，完全去掉会让那条日志失去意义。折中为保留首字：
+
+        张三 → 张*      欧阳明月 → 欧***      无 → -
+
+    首字 + 长度足以让运维在几个候选里对上号，又不构成可识别的个人信息。
+    """
+    text = (name or "").strip()
+    if not text:
+        return "-"
+    return text[0] + "*" * (len(text) - 1)
