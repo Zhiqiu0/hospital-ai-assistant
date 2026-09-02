@@ -250,10 +250,21 @@ class RequestIDMiddleware:
                     else _SLOW_THRESHOLD_MS
                 )
                 level = logging.WARNING if duration_ms > _threshold else logging.INFO
+                # path 用**路由模板**而不是实际路径（2026-09-02 可观测性专项，
+                # 与 audit_dep 同一处修正）：实际路径带资源 UUID，
+                # /api/v1/encounters/<每个接诊都不同>/workspace 每条都是新值，
+                # 想回答"系统变慢时哪类请求最慢"就没法按 path 聚合——而那正是
+                # 医生报"系统很卡"时的第一步。路由匹配发生在本中间件包裹的 app
+                # 内部，所以 finally 里 scope["route"] 已经就位；取不到就退回
+                # 实际路径（404 等未匹配到路由的请求）。
+                route = scope.get("route")
+                tmpl = getattr(route, "path", None) or path
+                # 慢请求额外带上实际路径：聚合看模板，定位到具体那一次看这个
                 _access_logger.log(
                     level,
-                    "request.access: method=%s path=%s status=%d duration_ms=%d",
-                    scope.get("method", "?"), path, captured["status"], duration_ms,
+                    "request.access: method=%s path=%s status=%d duration_ms=%d%s",
+                    scope.get("method", "?"), tmpl, captured["status"], duration_ms,
+                    f" slow_raw={path}" if level == logging.WARNING and tmpl != path else "",
                 )
             # 必须 reset，否则 contextvar 会污染同 worker 后续请求
             _request_id.reset(rid_token)

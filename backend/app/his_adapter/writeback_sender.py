@@ -13,6 +13,7 @@
   - body_raw 固定序列化一次，签名与发送用同一份；重试时只换 timestamp/nonce/sign。
   - 写入成功后再调刷新（刷新地址未配置则跳过，由 HIS 自动刷新场景兼容）。
 """
+import logging
 import json
 import asyncio
 import time
@@ -28,6 +29,8 @@ from app.his_adapter import ws_protocol as wp
 from app.his_adapter.signing import compute_sign
 from app.his_adapter.writeback_builder import build_writeback_payload
 from app.his_adapter.ws_manager import his_ws_manager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -299,6 +302,10 @@ async def _send_payload(
                 request_id=req_id,
             )
         except httpx.HTTPError as exc:
+            # 回写失败必须进 error.log（2026-09-02 可观测性专项）：状态虽已落库，
+            # 但运维排查的第一入口是 error.log，那里查不到就只能翻数据库。
+            # req_id 里带着 visit_id/record_type/record_no，一条足以定位到具体文书。
+            logger.error("his_writeback.http: 写入网络异常 req=%s err=%s", req_id, exc)
             return WritebackResult(ok=False, status="write_failed", message=f"网络异常：{exc}")
         if resp.status_code != 200:
             return WritebackResult(
@@ -333,6 +340,10 @@ async def _send_payload(
                     request_id=f"{req_id}:refresh",
                 )
             except httpx.HTTPError as exc:
+                # 刷新失败与写入失败要分开记：写入成功而刷新失败时，病历其实已经
+                # 进了 HIS，只是对方界面没刷新——处置动作完全不同
+                logger.error("his_writeback.http: 刷新网络异常 req=%s doc=%s err=%s",
+                             req_id, his_doc_id, exc)
                 return WritebackResult(
                     ok=False, status="refresh_failed",
                     message=f"刷新网络异常：{exc}", his_doc_id=his_doc_id,
@@ -362,6 +373,8 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
         ack = await his_ws_manager.send_with_ack(
             wp.MSG_WRITEBACK, payload, aid, secret, prefer_visit=payload["visit_id"])
     except ConnectionError as exc:
+        logger.error("his_writeback.ws: 写入发送失败 visit_id=%s type=%s err=%s",
+                     payload.get("visit_id"), payload.get("record_type"), exc)
         return WritebackResult(ok=False, status="write_failed", message=f"WS 发送失败：{exc}")
     code = _coerce_code(ack.get("code", -1))  # 与 HTTP 通道同口径，见 _coerce_code
     if code != 0:
@@ -382,6 +395,8 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
         rack = await his_ws_manager.send_with_ack(
             wp.MSG_REFRESH, refresh_payload, aid, secret, prefer_visit=payload["visit_id"])
     except ConnectionError as exc:
+        logger.error("his_writeback.ws: 刷新发送失败 visit_id=%s doc=%s err=%s",
+                     payload.get("visit_id"), his_doc_id, exc)
         return WritebackResult(
             ok=False, status="refresh_failed",
             message=f"刷新 WS 发送失败：{exc}", his_doc_id=his_doc_id,

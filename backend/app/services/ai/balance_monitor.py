@@ -18,12 +18,15 @@ import logging
 import httpx
 
 from app.config import settings
+from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 6 * 3600   # 每 6 小时查一次（余额变化慢，够用且不扰民）
 WARN_THRESHOLD_CNY = 100.0          # 低于此值告警：按现价约 1300 次接诊的余量
 BALANCE_URL = "https://api.deepseek.com/user/balance"
+# 多 worker 单实例锁的键（见 balance_monitor_loop 里的说明）
+_MONITOR_LOCK_KEY = "ai:balance:monitor:lock"
 # 每次接诊估算成本（元）。按 DeepSeek 2026-08 价目 × 实测用量（约 9200 输入
 # + 3300 输出 token/接诊）折算 ≈ 0.076 元。价目调整时同步更新此数——
 # 2026-08-29 对抗复核发现旧值 0.045 用的是降价前价目，剩余次数虚高近一倍。
@@ -65,6 +68,18 @@ async def balance_monitor_loop() -> None:
     """
     while True:
         try:
+            # 单实例保护（2026-09-02 可观测性专项）：生产用 --workers 2，
+            # 每个 worker 的 lifespan 都会起一个本任务，于是同一次余额告警在
+            # error.log 与 Sentry 里各出现两条。同目录的另两个常驻任务
+            # （writeback_dispatch 用 SET NX 抢占、writeback_reconcile 用
+            # acquire_lock）早就处理了这件事，只有本任务漏了。
+            # 锁 TTL 取检查间隔的一半：够长到能挡住同一轮的另一个 worker，
+            # 又短到进程崩溃后下一轮仍能接上。
+            if not await redis_cache.acquire_lock(
+                _MONITOR_LOCK_KEY, ttl=CHECK_INTERVAL_SECONDS // 2
+            ):
+                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+                continue
             balance = await check_balance_once()
             if balance is None:
                 pass  # 查不到就跳过本轮，原因已在 check_balance_once 里记过
