@@ -30,6 +30,7 @@ import {
 import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
@@ -182,12 +183,20 @@ export default function InpatientWorkbenchPage() {
             marginRight: 10,
           }}
         >
-          <WardView
-            onNewEncounter={() => setModalOpen(true)}
-            onSelectPatient={handleSelectWardPatient}
-            refreshSignal={wardRefresh}
-            selectedEncounterId={currentEncounterId}
-          />
+          {/* 局部错误边界（2026-09-03 前端崩溃保护）：住院工作台此前一个
+              ErrorBoundary 都没有，任何外围面板抛错都冒到根边界、整页变成
+              「页面发生错误」——而住院医生正在写的入院记录/病程恰恰是内容最多
+              的时候。门诊工作台的检验/AI建议/叫号队列早就各包一层，这边漏了。
+              编辑器本身不包：它崩了包了也没法继续写，交给根边界 + 刷新恢复
+              （正文有 localStorage persist 与服务端 auto-save 两层兜底）。 */}
+          <ErrorBoundary label="病区列表" compact>
+            <WardView
+              onNewEncounter={() => setModalOpen(true)}
+              onSelectPatient={handleSelectWardPatient}
+              refreshSignal={wardRefresh}
+              selectedEncounterId={currentEncounterId}
+            />
+          </ErrorBoundary>
         </div>
 
         {/* 右侧主工作区（竖向：时效栏 + 三栏面板） */}
@@ -201,7 +210,9 @@ export default function InpatientWorkbenchPage() {
           }}
         >
           {/* 时效合规提醒栏 */}
-          <ComplianceBar encounterId={currentEncounterId} />
+          <ErrorBoundary label="文书时效栏" compact>
+            <ComplianceBar encounterId={currentEncounterId} />
+          </ErrorBoundary>
 
           {/* 三栏面板 */}
           <div
@@ -224,19 +235,23 @@ export default function InpatientWorkbenchPage() {
                 boxShadow: 'var(--shadow-sm)',
               }}
             >
-              <InpatientInquiryPanel />
+              <ErrorBoundary label="入院问诊" compact>
+                <InpatientInquiryPanel />
+              </ErrorBoundary>
             </div>
 
             {/* 中间编辑区（入院记录 or 病程记录） */}
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>{renderCenterEditor()}</div>
 
             {/* 右侧：AI建议 + 病程记录 + 问题列表 + 体征 */}
-            <InpatientRightPanel
-              selectedNote={selectedNote}
-              setSelectedNote={setSelectedNote}
-              timelineRefresh={timelineRefresh}
-              setTimelineRefresh={setTimelineRefresh}
-            />
+            <ErrorBoundary label="右侧面板" compact>
+              <InpatientRightPanel
+                selectedNote={selectedNote}
+                setSelectedNote={setSelectedNote}
+                timelineRefresh={timelineRefresh}
+                setTimelineRefresh={setTimelineRefresh}
+              />
+            </ErrorBoundary>
           </div>
         </div>
 
