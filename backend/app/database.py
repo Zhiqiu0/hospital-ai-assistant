@@ -21,9 +21,12 @@
          ...
 """
 
+import logging as _logging
+from time import perf_counter as _perf_counter
 import asyncio
 import os as _os
 
+from sqlalchemy import event as _sa_event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -40,6 +43,8 @@ async_db_url = settings.database_url.replace(
 # echo: 默认关闭 SQL 打印！每条 SQL stdout 输出会阻塞 asyncio event loop，
 #       PACS 单端点叠加 4 个表查询时实测延迟 5s+ 都来自这里。需要 SQL 调试时
 #       设环境变量 DB_ECHO=true 临时打开（仅排障用）
+_db_logger = _logging.getLogger("app.db")
+
 _db_echo = _os.environ.get("DB_ECHO", "").lower() in {"1", "true", "yes"}
 
 # pool_size/max_overflow 仅 PostgreSQL/MySQL 等支持连接池的驱动适用；
@@ -67,6 +72,45 @@ if not async_db_url.startswith("sqlite"):
     _engine_kwargs["pool_pre_ping"] = True
     _engine_kwargs["pool_recycle"] = 3600
 engine = create_async_engine(async_db_url, **_engine_kwargs)
+
+
+# ── 慢 SQL 日志（2026-09-02 可观测性专项）────────────────────────────────────
+#
+# 排障链路此前断在这里：应用层的访问日志能回答"哪个接口慢"（request.access 的
+# duration_ms），但接下来"为什么慢、是哪条 SQL"就查不到了——DB_ECHO 是全开
+# 全关的开关，而它每条 SQL 都往 stdout 写、会阻塞 asyncio event loop（见上方
+# 注释里那次 PACS 端点 5s+ 的教训），生产上不能开；PG 侧的
+# log_min_duration_statement 也是关的（实测 -1），且那边的日志既不在 /app/logs、
+# 也没有 rid 可以和请求关联。
+#
+# 这里只在**超过阈值时**记一条，量极小，不构成 event loop 负担；日志自动带上
+# 当前请求的 rid/uid（RequestIDMiddleware 的 contextvar），于是"这个请求慢"
+# 和"这条 SQL 慢"能直接串起来。
+#
+# **绝不记 parameters**：SQLAlchemy 的 statement 是带占位符的模板（可聚合），
+# 而参数里是患者姓名、身份证、病历正文这些 PHI。只记模板还有个额外好处——
+# 同一条慢查询在日志里是同一个字符串，能直接统计出现次数。
+_SLOW_SQL_MS = float(_os.environ.get("SLOW_SQL_MS", "500"))
+
+
+@_sa_event.listens_for(engine.sync_engine, "before_cursor_execute")
+def _sql_timer_start(conn, cursor, statement, parameters, context, executemany):
+    conn.info.setdefault("_q_start", []).append(_perf_counter())
+
+
+@_sa_event.listens_for(engine.sync_engine, "after_cursor_execute")
+def _sql_timer_end(conn, cursor, statement, parameters, context, executemany):
+    stack = conn.info.get("_q_start")
+    if not stack:
+        return
+    elapsed_ms = (_perf_counter() - stack.pop()) * 1000
+    if elapsed_ms >= _SLOW_SQL_MS:
+        _db_logger.warning(
+            "db.slow_query: %dms rows=%s sql=%s",
+            int(elapsed_ms),
+            getattr(cursor, "rowcount", -1),
+            " ".join(statement.split())[:400],
+        )
 
 # ── Session 工厂 ──────────────────────────────────────────────────────────────
 # expire_on_commit=False: commit 后 ORM 对象不失效，避免访问属性时触发额外查询
