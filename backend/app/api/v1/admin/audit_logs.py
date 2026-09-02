@@ -11,6 +11,7 @@
   等操作的用户信息、资源标识和 IP 地址。
 """
 
+from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,13 @@ router = APIRouter()
 async def list_audit_logs(
     keyword: str = Query(default="", description="搜索用户名、操作或详情关键词"),
     action: str = Query(default="", description="按操作类型精确过滤（如 login / sign_record）"),
+    # 时间范围与对象过滤（2026-09-02 审计日志专项补）：审计页原先只有关键词 +
+    # 操作类型，而按时间倒序翻页——40 位医生开业后一个月上万条，医务科要查
+    # "上个月谁改过病历"只能一页页翻，实际用不了。纠纷追溯更需要
+    # "这份病历/这个患者被谁碰过"，那正是 resource_id 维度。
+    start_date: str = Query(default="", description="起始日期 YYYY-MM-DD（含当天）"),
+    end_date: str = Query(default="", description="结束日期 YYYY-MM-DD（含当天）"),
+    resource_id: str = Query(default="", description="按操作对象精确过滤（病历/患者/账号 ID）"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -46,6 +54,25 @@ async def list_audit_logs(
         )
     if action:
         query = query.where(AuditLog.action == action)
+    if resource_id:
+        query = query.where(AuditLog.resource_id == resource_id)
+    # 日期按**当天整日**解释：结束日取到 23:59:59，否则"查 8月31日"会漏掉
+    # 那天所有非零点的记录——这类边界错在审计场景下等于漏证。
+    # 解析不了的日期直接忽略该条件，不让一次手滑把整页查询变成 500。
+    if start_date:
+        try:
+            query = query.where(
+                AuditLog.created_at >= datetime.combine(
+                    date.fromisoformat(start_date), time.min))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            query = query.where(
+                AuditLog.created_at <= datetime.combine(
+                    date.fromisoformat(end_date), time.max))
+        except ValueError:
+            pass
 
     # 先统计总数，再查分页数据
     count_result = await db.execute(select(func.count()).select_from(query.subquery()))

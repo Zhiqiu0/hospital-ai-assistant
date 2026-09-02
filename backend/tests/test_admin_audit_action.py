@@ -87,3 +87,71 @@ async def test_端点抛异常也要留痕且标记失败():
         with pytest.raises(RuntimeError):
             await gen.athrow(RuntimeError("越权被拒"))
     assert spy.await_args.kwargs["status"] == "fail"
+
+
+# ─── 审计检索：时间范围与对象过滤 ────────────────────────────────────
+#
+# 审计页原先只有关键词 + 操作类型，列表按时间倒序翻页——开业后 40 位医生一个月
+# 上万条，医务科要查"上个月谁改过病历"只能一页页翻，实际用不了。纠纷追溯更需要
+# "这份病历被谁碰过"，那正是 resource_id 维度（#265 刚让它有值）。
+
+from datetime import date, datetime, time, timedelta
+
+from app.models.audit_log import AuditLog
+
+
+@pytest.mark.asyncio
+async def test_日期范围含当天整日(async_db):
+    """结束日必须取到 23:59:59。只比日期零点的话，"查 8月31 日"会漏掉那天所有
+    非零点的记录——审计场景下漏记录等于漏证。"""
+    from app.api.v1.admin.audit_logs import list_audit_logs
+
+    today = date.today()
+    async_db.add_all([
+        AuditLog(id="a1", user_id="u1", user_name="张三", user_role="doctor",
+                 action="sign_record", created_at=datetime.combine(today, time(23, 59, 30))),
+        AuditLog(id="a2", user_id="u1", user_name="张三", user_role="doctor",
+                 action="sign_record",
+                 created_at=datetime.combine(today - timedelta(days=5), time(9, 0))),
+    ])
+    await async_db.commit()
+
+    res = await list_audit_logs(
+        keyword="", action="", start_date=today.isoformat(),
+        end_date=today.isoformat(), resource_id="", page=1, page_size=20,
+        db=async_db, current_user=None)
+    ids = {i["id"] for i in res["items"]}
+    assert "a1" in ids, "当天 23:59 的记录被日期上界漏掉了"
+    assert "a2" not in ids, "范围外的记录被带了进来"
+
+
+@pytest.mark.asyncio
+async def test_按操作对象过滤(async_db):
+    """纠纷追溯的典型查询：这份病历被谁碰过。"""
+    from app.api.v1.admin.audit_logs import list_audit_logs
+
+    async_db.add_all([
+        AuditLog(id="b1", user_id="u1", user_name="张三", user_role="doctor",
+                 action="revise_record", resource_id="rec-42", created_at=datetime.now()),
+        AuditLog(id="b2", user_id="u2", user_name="李四", user_role="admin",
+                 action="revise_record", resource_id="rec-99", created_at=datetime.now()),
+    ])
+    await async_db.commit()
+    res = await list_audit_logs(
+        keyword="", action="", start_date="", end_date="", resource_id="rec-42",
+        page=1, page_size=20, db=async_db, current_user=None)
+    assert [i["id"] for i in res["items"]] == ["b1"]
+
+
+@pytest.mark.asyncio
+async def test_日期填错不炸只忽略(async_db):
+    """管理员手滑输入非法日期，不该让整页查询变成 500。"""
+    from app.api.v1.admin.audit_logs import list_audit_logs
+
+    async_db.add(AuditLog(id="c1", user_id="u1", user_name="张三", user_role="doctor",
+                          action="login", created_at=datetime.now()))
+    await async_db.commit()
+    res = await list_audit_logs(
+        keyword="", action="", start_date="2026-13-99", end_date="不是日期",
+        resource_id="", page=1, page_size=20, db=async_db, current_user=None)
+    assert res["total"] >= 1
