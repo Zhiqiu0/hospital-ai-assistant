@@ -111,3 +111,10 @@ def setup_logging(log_level: str = "INFO") -> None:
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     # httpx: LLM 客户端每次请求都输出 DEBUG 日志
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # python_multipart（2026-09-02 可观测性专项）：每次带文件的表单上传都会打一条
+    # WARNING "Skipping data after last boundary"——那是浏览器 multipart 编码的
+    # 正常尾部，不是错误。它以 WARNING 级进 error.log，而 error.log 是本项目排障
+    # 的**第一入口**（语音录音、影像上传、批量导入都会触发），真正的故障会被这类
+    # 噪音淹没。压到 ERROR 级：库真出错时仍看得见。
+    logging.getLogger("python_multipart").setLevel(logging.ERROR)
+    logging.getLogger("multipart").setLevel(logging.ERROR)
