@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── 本地模块 ──────────────────────────────────────────────────────────────────
 from app.core.authz import assert_can_write_record
 from app.core.security import get_current_user
+from app.core.logging_config import mask_name
 from app.database import get_db
 from app.schemas.encounter import EncounterCreate, QuickStartRequest
 from app.schemas.patient import PatientCreate
@@ -67,7 +68,10 @@ async def _quick_start_inner(data, db, current_user):
         try:
             birth_date_val = date.fromisoformat(data.birth_date)
         except ValueError:
-            logger.warning("encounter.quick_start: invalid birth_date=%r ignored", data.birth_date)
+            # 记的是**非法**的原始输入（如 "1990/13/45"），用于排查前端或 HIS
+            # 传了什么格式；非法值本身不构成可识别信息。截断防超长串刷屏。
+            logger.warning("encounter.quick_start: invalid birth_date=%r ignored",
+                           str(data.birth_date)[:20])
 
     patient_service = PatientService(db)
 
@@ -99,9 +103,13 @@ async def _quick_start_inner(data, db, current_user):
                 name=data.patient_name, birth_date=birth_date_val
             )
             if similar_patients:
+                # 姓名脱敏入日志（2026-09-02 可观测性专项）：app.log 保留 30 天，
+                # 而本项目既定口径是日志里用 ID 不用姓名（审计日志 detail 全是
+                # UUID）。这条日志的价值在于知道"发生了同名查重"，首字足够运维
+                # 在几个候选里对上号，全名则是没有必要的个人信息留存。
                 logger.info(
                     "encounter.quick_start: 同名同生日候选 %d 位，已交前端确认 name=%s",
-                    len(similar_patients), data.patient_name,
+                    len(similar_patients), mask_name(data.patient_name),
                 )
 
     if not patient:

@@ -14,6 +14,7 @@
  *   - 响应拦截中 response.data 被直接返回，调用方无需写 .data 解包
  */
 
+import * as Sentry from '@sentry/react'
 import axios from 'axios'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
@@ -56,6 +57,17 @@ api.interceptors.response.use(
     const status: number | undefined = error.response?.status
     const requestUrl: string = error.config?.url || ''
     const isLoginRequest = requestUrl.includes('/auth/login')
+    // 后端每个响应都回 X-Request-ID（CORS 也配了 expose_headers），它是把
+    // 医生的 F12 截图和服务端日志串起来的唯一钥匙——运维拿到 rid 一条 grep
+    // 就能看到整条链路（含 4xx 的拒绝原因）。此前前端从没读过它，报障只能
+    // 靠"大概几点、大概哪个页面"去猜。
+    const rid: string = error.response?.headers?.['x-request-id'] || '-'
+    // 同步给 Sentry：前端异常在后台能直接跳到对应的后端日志
+    try {
+      Sentry.setTag('backend_request_id', rid)
+    } catch {
+      /* Sentry 未初始化不影响主流程 */
+    }
 
     if (status === 401 && !isLoginRequest) {
       // Token 失效或未登录 → 清除登录态并跳转，不弹 toast（页面即将刷新）
@@ -95,11 +107,11 @@ api.interceptors.response.use(
       }
     } else if (status === 404) {
       // 404 由调用方决定是否提示（有些 404 是正常业务流程），这里只记录
-      console.warn(`[api] 404 Not Found: ${sanitizeUrlForLog(requestUrl)}`)
+      console.warn(`[api] 404 Not Found: ${sanitizeUrlForLog(requestUrl)} rid=${rid}`)
     } else if (status != null && status >= 500) {
       message.error('服务器内部错误，请稍后重试或联系管理员')
       console.error(
-        `[api] ${status} Server Error: ${sanitizeUrlForLog(requestUrl)}`,
+        `[api] ${status} Server Error: ${sanitizeUrlForLog(requestUrl)} rid=${rid}`,
         error.response?.data
       )
     } else if (!status) {
@@ -115,7 +127,7 @@ api.interceptors.response.use(
       const errCode = (error as { code?: string }).code || 'unknown'
       const errMsg = (error as { message?: string }).message || ''
       console.error(
-        `[api 网络断连] url=${sanitizedUrl} method=${(error.config?.method || 'GET').toUpperCase()} code=${errCode} msg="${errMsg}" lastSuccess=${sinceLastSuccess} navType=${(performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type || 'unknown'} online=${navigator.onLine}`
+        `[api 网络断连] rid=${rid} url=${sanitizedUrl} method=${(error.config?.method || 'GET').toUpperCase()} code=${errCode} msg="${errMsg}" lastSuccess=${sinceLastSuccess} navType=${(performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type || 'unknown'} online=${navigator.onLine}`
       )
       // 超时与断网分文案（2026-08-28 弱网审计）：ECONNABORTED 是"网络通、
       // 服务器慢"——引导医生"立即重试"只会加倍压服务器，且把运维排查方向
