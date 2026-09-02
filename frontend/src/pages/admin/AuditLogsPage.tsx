@@ -11,7 +11,7 @@
  * 后端按 action_time DESC 排序，支持 cursor-based 分页（page/page_size）。
  */
 import { useEffect, useState, useCallback } from 'react'
-import { Table, Input, Space, Tag, Typography, Select, Button } from 'antd'
+import { Table, Input, Space, Tag, Typography, Select, Button, DatePicker } from 'antd'
 import { SearchOutlined, AuditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 
@@ -81,10 +81,14 @@ export default function AuditLogsPage() {
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
   const [actionFilter, setActionFilter] = useState('')
+  // 日期范围（2026-09-02 审计专项补）：原先只有关键词 + 操作类型，而列表按时间
+  // 倒序翻页——开业后 40 位医生一个月上万条，医务科要查"上个月谁改过病历"只能
+  // 一页页翻。存 YYYY-MM-DD 字符串直接透传后端，不引入 dayjs 类型依赖。
+  const [dateRange, setDateRange] = useState<[string, string] | null>(null)
   const [loading, setLoading] = useState(false)
 
   const loadLogs = useCallback(
-    async (p = page, kw = keyword, act = actionFilter) => {
+    async (p = page, kw = keyword, act = actionFilter, range = dateRange) => {
       setLoading(true)
       try {
         const params = new URLSearchParams({
@@ -92,6 +96,8 @@ export default function AuditLogsPage() {
           page_size: '20',
           keyword: kw,
           action: act,
+          start_date: range?.[0] ?? '',
+          end_date: range?.[1] ?? '',
         })
         const data = (await api.get(`/admin/audit-logs?${params}`)) as {
           items?: AuditLogRow[]
@@ -103,7 +109,7 @@ export default function AuditLogsPage() {
         setLoading(false)
       }
     },
-    [page, keyword, actionFilter]
+    [page, keyword, actionFilter, dateRange]
   )
 
   useEffect(() => {
@@ -115,7 +121,7 @@ export default function AuditLogsPage() {
 
   const handleSearch = () => {
     setPage(1)
-    loadLogs(1, keyword, actionFilter)
+    loadLogs(1, keyword, actionFilter, dateRange)
   }
 
   const columns = [
@@ -238,6 +244,17 @@ export default function AuditLogsPage() {
           </Title>
         </Space>
         <Space>
+          <DatePicker.RangePicker
+            // 选完立即查：审计检索是"定位到某天"的动作，再点一次搜索是多余步骤
+            onChange={(_, strs) => {
+              const next = strs?.[0] && strs?.[1] ? ([strs[0], strs[1]] as [string, string]) : null
+              setDateRange(next)
+              setPage(1)
+              loadLogs(1, keyword, actionFilter, next)
+            }}
+            style={{ width: 240 }}
+            placeholder={['起始日期', '结束日期']}
+          />
           <Select
             placeholder="操作类型"
             value={actionFilter || undefined}
