@@ -201,3 +201,33 @@ def strip_unsourced_copy_fields(result: dict, req) -> list[str]:
             result[out_field] = PLACEHOLDER
             reverted.append(out_field)
     return reverted
+
+
+# 补全链路（supplement）用的中文字段名 → 医生录入的源字段。
+# 补全返回的是 {field_name: 中文名, value: ...}，与主生成的英文 schema key 不同，
+# 但要守的是同一条红线，所以两边共用本模块的判据。
+COPY_THROUGH_CN_FIELDS: dict[str, str] = {
+    "西医诊断": "western_diagnosis",
+    "中医诊断": "tcm_disease_diagnosis",
+    "中医疾病诊断": "tcm_disease_diagnosis",
+    "中医证候诊断": "tcm_syndrome_diagnosis",
+    "证候诊断": "tcm_syndrome_diagnosis",
+    "治则治法": "treatment_method",
+    "处理意见": "treatment_plan",
+    "初步诊断": "initial_impression",
+}
+
+
+def is_unsourced_copy_field(field_name: str, req) -> bool:
+    """补全给出的这一条，是不是"医生没录入却要替他填"的照抄类字段。
+
+    2026-09-02：补全链路是主生成守卫的绕行路径——主生成被拦下后，医生随手点
+    「补全缺失项」，注入指令仍留在病历正文（current_content 会进 prompt），
+    实测补全照样返回"体检未见异常，无需治疗"和十倍剂量的阿莫西林。
+
+    诊断与用药是医疗决策，医生没写就不该由模型代填，无论从哪条链路进来。
+    """
+    src = COPY_THROUGH_CN_FIELDS.get((field_name or "").strip())
+    if not src:
+        return False
+    return _is_blank(getattr(req, src, None))

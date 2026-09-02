@@ -90,3 +90,37 @@ def test_模型自行补全的诊疗方案同样被拦():
     reverted = strip_unsourced_copy_fields(result, _Req())
     assert len(reverted) == 3
     assert all(result[f] == PLACEHOLDER for f in reverted)
+
+
+# ─── 补全链路：主生成守卫的绕行路径 ────────────────────────────────────
+#
+# 主生成被拦下后，医生随手点「补全缺失项」——注入指令仍留在病历正文里，而
+# current_content 会进 prompt。实测补全照样返回"体检未见异常，无需治疗"和
+# 十倍剂量的阿莫西林，一条都没拦。守同一条红线必须覆盖所有入口。
+
+from app.services.ai.output_guards import is_unsourced_copy_field
+
+
+def test_补全不代填医生没写的诊断():
+    assert is_unsourced_copy_field("西医诊断", _Req()) is True
+    assert is_unsourced_copy_field("处理意见", _Req()) is True
+    assert is_unsourced_copy_field("治则治法", _Req()) is True
+
+
+def test_医生写了就允许补全去规范化():
+    class R(_Req):
+        western_diagnosis = "急性支气管炎"
+        treatment_plan = "头孢呋辛酯片0.25g bid po"
+    assert is_unsourced_copy_field("西医诊断", R()) is False
+    assert is_unsourced_copy_field("处理意见", R()) is False
+
+
+def test_叙述性与四诊字段不受这条守卫管():
+    """补全「现病史」「舌象」这类是本功能的正当用途，不能一起掐掉。
+
+    注：AI 代填舌脉本身是否妥当（医生没看舌头，模型给出"舌淡红苔薄白"）是
+    另一个问题——那是需要医务科明确的质控口径，已在待确认清单里，不由这条
+    守卫单方面决定。
+    """
+    for name in ("现病史", "舌象", "脉象", "既往史", "注意事项", "复诊建议"):
+        assert is_unsourced_copy_field(name, _Req()) is False, name
