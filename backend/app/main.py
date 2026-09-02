@@ -17,7 +17,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -132,6 +135,55 @@ app.include_router(api_v1_router, prefix="/api/v1")
 # 未被路由层捕获的异常（500 Internal Server Error）会落到这里。
 # logger.exception 写堆栈到 error.log；Sentry LoggingIntegration 会自动转成 event。
 # 不再手工 traceback.format_exc()——SDK 自带堆栈采集，避免双写。
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_logger(request: Request, exc: StarletteHTTPException):
+    """4xx/5xx 的拒绝原因留痕（2026-09-02 可观测性专项）。
+
+    排障演练发现的盲区：医生报障最常见的三种形态是"打不开""看不到""保存不了"，
+    对应 403/404/422，而访问日志里只有一行 status=403——运维看不出是角色不对、
+    归属不对，还是账号状态问题。detail 里恰恰写着答案（"该接诊不属于当前医生"
+    "仅可复核本科室病历"…），只是从没被记下来过。
+
+    级别刻意分开：4xx 是"用户/前端做了不该做的事"，记 INFO 进 app.log 供 grep，
+    不进 error.log——403/404 在正常使用中也会出现（前端探测、token 过期），
+    混进 error.log 会把真故障淹掉。5xx 才是服务端的错，记 ERROR。
+
+    detail 是我方写死的提示文案（不含患者姓名等 PHI），可以安全入日志；
+    422 的字段级错误由 FastAPI 的 RequestValidationError 处理器单独记。
+    响应体保持 FastAPI 默认形状不变——前端依赖 detail 字段。
+    """
+    code = exc.status_code
+    if code >= 400:
+        logger.log(
+            logging.ERROR if code >= 500 else logging.INFO,
+            "app.http_error: status=%d method=%s path=%s detail=%s",
+            code, request.method, request.url.path, exc.detail,
+        )
+    headers = getattr(exc, "headers", None)
+    return JSONResponse(status_code=code, content={"detail": exc.detail},
+                        headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_logger(request: Request, exc: RequestValidationError):
+    """422 记到字段级：只记 loc 与 type，**不记 input 值**——那里可能是患者姓名、
+    病历正文这类 PHI。前端联调与 HIS 厂商对接时，知道"哪个字段、什么类型不对"
+    就够定位了。"""
+    fields = [
+        {"loc": ".".join(str(x) for x in e.get("loc", ())), "type": e.get("type")}
+        for e in exc.errors()[:8]
+    ]
+    logger.info(
+        "app.validation_error: method=%s path=%s fields=%s",
+        request.method, request.url.path, fields,
+    )
+    # 必须走 jsonable_encoder：pydantic v2 的 errors() 里 ctx 会带原始
+    # ValueError 对象，直接塞进 JSONResponse 会 TypeError（全量测试抓到）。
+    # 这也是 FastAPI 默认处理器的做法，响应体因此与默认完全一致。
+    return JSONResponse(status_code=422,
+                        content={"detail": jsonable_encoder(exc.errors())})
+
+
 @app.exception_handler(Exception)
 async def catch_all_exception_handler(request: Request, exc: Exception):
     logger.exception(
