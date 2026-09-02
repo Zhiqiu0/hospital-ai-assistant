@@ -20,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
-from app.services.ai.output_guards import strip_unsubstantiated_vitals
+from app.services.ai.output_guards import (
+    is_unsourced_copy_field,
+    strip_unsubstantiated_vitals,
+)
 from app.services.ai.prompts_qc import QC_FIX_BATCH_PROMPT
 from app.services.ai.task_logger import log_ai_task
 
@@ -215,6 +218,17 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
     ) if hasattr(req, "model_dump") else (getattr(req, "current_content", "") or "")
     guarded: list[dict] = []
     for item in items:
+        # 照抄类字段守卫（2026-09-02 AI 输出安全面）：诊断与用药是医疗决策，
+        # 医生没录入就不该由模型代填。本条同时堵住注入的绕行路径——主生成被
+        # 拦下后医生点「补全缺失项」，注入指令仍在病历正文里（current_content
+        # 会进 prompt），实测补全照样返回"体检未见异常，无需治疗"和十倍剂量的
+        # 阿莫西林。判据与主生成同源，见 output_guards。
+        if is_unsourced_copy_field(item["field_name"], req):
+            logger.warning(
+                "supplement_batch.guard: 医生未录入的照抄字段不代填 field=%s",
+                item["field_name"],
+            )
+            continue
         cleaned = strip_unsubstantiated_vitals(item["value"], source_text)
         if cleaned != item["value"]:
             logger.warning(
