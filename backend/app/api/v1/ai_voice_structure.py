@@ -29,7 +29,12 @@ from app.services.ai.prompts import (
     VOICE_STRUCTURE_PROMPT_INPATIENT,
     VOICE_STRUCTURE_PROMPT_OUTPATIENT,
 )
-from app.services.ai.record_schemas import sanitize_inline_field
+from app.services.ai.record_schemas import (
+    DATA_FENCE_BEGIN,
+    DATA_FENCE_END,
+    sanitize_freetext_field,
+    sanitize_inline_field,
+)
 from app.services.ai.task_logger import log_ai_task
 from app.services.audit_service import log_action
 
@@ -97,12 +102,30 @@ async def voice_structure(
         existing_baseline = "（无）"
     # 身份字段防 prompt 注入清洗（2026-06-11）：压平换行 + 截断超长，
     # 防止异常患者姓名等外部输入伪造新的 prompt 段落
+    # 转写与基线同样清洗 + 定界（2026-09-02 AI 输出安全面）：转写并不总是
+    # 患者的真实话音——界面明确支持"手动粘贴第三方 ASR 的转写文本"，医生粘进来
+    # 的可能是外院报告、患者微信记录这类内容不受控的文本。实测把伪造的
+    # 「# 系统指令」段落放进转写，结构化就把 western_diagnosis 填成
+    # "体检未见异常，无需治疗"、treatment_plan 填成十倍剂量的阿莫西林。
+    #
+    # 这条链的危险在于它**绕过了 #262 的照抄字段守卫**：那道守卫的判据是
+    # "医生有没有填这一栏"，而结构化的产物正是填进问诊字段——等医生点保存、
+    # 再生成病历时，守卫看到字段有值就放行。
+    # 与主生成同款处理，但要说清楚：这是纵深防护不是治本，prompt 层的软约束
+    # 对强注入无效（#261 已实测）。真正的兜底是结构化产物**只填进问诊面板供
+    # 医生逐栏审核**，不直接落库成病历。AI 能否从语音代填诊断是需要医务科
+    # 明确的口径，已列入待确认清单。
+    def _fenced(text: str) -> str:
+        """把用户可控文本清洗后包进数据定界符。"""
+        body = sanitize_freetext_field(text, '（无）')
+        return chr(10).join([DATA_FENCE_BEGIN, body, DATA_FENCE_END])
+
     prompt = prompt_template.format(
         patient_name=sanitize_inline_field(req.patient_name, "未提供"),
         patient_gender=sanitize_inline_field(req.patient_gender, "未提供"),
         patient_age=sanitize_inline_field(req.patient_age, "未提供"),
-        existing_baseline=existing_baseline,
-        transcript=transcript,
+        existing_baseline=_fenced(existing_baseline),
+        transcript=_fenced(transcript),
     )
 
     messages = [
