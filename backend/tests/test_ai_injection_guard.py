@@ -124,3 +124,60 @@ def test_叙述性与四诊字段不受这条守卫管():
     """
     for name in ("现病史", "舌象", "脉象", "既往史", "注意事项", "复诊建议"):
         assert is_unsourced_copy_field(name, _Req()) is False, name
+
+
+# ─── 双源判据：正文是本产品的主编辑入口 ──────────────────────────────
+#
+# 医生直接在病历正文里写诊断后不会回左侧问诊面板同步（生命体征数值守卫早就
+# 因为同一个原因把 current_record 计入出处）。只看面板字段会把"医生已经写了、
+# 质控只是说表述不规范"的正常修复一起拦掉——那比漏拦更糟：功能当场失灵。
+#
+# 逐条修复（qc-fix）的入参 QCFixRequest 里**根本没有** western_diagnosis 这些
+# 字段，只有 current_record；若判据只看面板属性，那条链路会 100% 误伤。
+
+
+class _ReqBodyOnly:
+    """医生只在正文里写了诊断和处置，没回填问诊面板。"""
+    chief_complaint = "咳嗽3天"
+    history_present_illness = "患者3天前受凉后出现咳嗽"
+    western_diagnosis = None
+    tcm_disease_diagnosis = None
+    tcm_syndrome_diagnosis = None
+    treatment_method = None
+    treatment_plan = None
+    precautions = None
+    initial_impression = None
+    current_content = (
+        "【诊断】\n中医诊断：[未填写，需补充]\n西医诊断：急性支气管炎\n"
+        "【治疗意见及措施】\n治则治法：[未填写，需补充]\n"
+        "处理意见：头孢呋辛酯片0.25g bid po\n"
+    )
+
+
+class _QcFixReq:
+    """qc-fix 的真实入参形状：只有 current_record，没有诊断类字段。"""
+    field_name = "西医诊断"
+    current_record = "【诊断】\n西医诊断：急性支气管炎\n"
+
+
+def test_只在正文里写的诊断不算没写():
+    assert is_unsourced_copy_field("西医诊断", _ReqBodyOnly()) is False
+    assert is_unsourced_copy_field("处理意见", _ReqBodyOnly()) is False
+    # 正文里是占位符的那两栏，仍然算没写
+    assert is_unsourced_copy_field("中医诊断", _ReqBodyOnly()) is True
+    assert is_unsourced_copy_field("治则治法", _ReqBodyOnly()) is True
+
+
+def test_逐条修复入参只有正文时不误伤():
+    """QCFixRequest 没有 western_diagnosis 字段，只看面板属性会 100% 误伤。"""
+    assert is_unsourced_copy_field("西医诊断", _QcFixReq()) is False
+
+
+def test_主生成也认正文里的诊断():
+    result = {"western_diagnosis": "急性支气管炎（规范化后）",
+              "treatment_plan": "头孢呋辛酯片 0.25g 每日两次 口服",
+              "treatment_method": "凭空补出来的治则治法"}
+    reverted = strip_unsourced_copy_fields(result, _ReqBodyOnly())
+    assert result["western_diagnosis"] == "急性支气管炎（规范化后）"
+    assert result["treatment_plan"].startswith("头孢呋辛酯片")
+    assert reverted == ["treatment_method"], f"实际回退：{reverted}"
