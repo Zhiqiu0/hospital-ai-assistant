@@ -200,3 +200,66 @@ async def test_successful_writeback_clears_reconcile_counters(async_db, monkeypa
     wb = enc.his_external_ref["writeback"]
     assert wb["status"] == "success"
     assert "reconcile_attempts" not in wb and "reconcile_exhausted" not in wb
+
+
+@pytest.mark.asyncio
+async def test_writeback_his_returns_html_not_json(async_db, monkeypatch):
+    """HIS 回 HTML/非 JSON → write_failed 进对账，绝不能崩（2026-09-10 出站
+    异常面补缝）。
+
+    这是联调期最常见的畸形响应形态：厂商侧 nginx 的 502 页、网关超时页、
+    登录跳转页——HTTP 状态 200 而 body 是一坨 HTML。_envelope_code 解析失败
+    应归一为 code=-1、消息"响应非 JSON"，状态机走 write_failed 交给对账重投，
+    而不是 json.JSONDecodeError 冒出去把签发请求打成 500。
+    """
+    monkeypatch.setattr(settings, "his_writeback_url", "http://his/write")
+    monkeypatch.setattr(settings, "his_writeback_refresh_url", "http://his/refresh")
+    monkeypatch.setattr(settings, "his_writeback_app_id", "appMe")
+    monkeypatch.setattr(settings, "his_writeback_app_secret", "sec")
+
+    refresh_called = {"v": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "refresh" in str(request.url):
+            refresh_called["v"] = True
+            return httpx.Response(200, json={"code": 0})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=b"<html><body><h1>502 Bad Gateway</h1></body></html>",
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    enc_id = await _make_encounter(async_db)
+    result = await send_writeback(async_db, enc_id, client=client)
+    await client.aclose()
+
+    assert result.ok is False and result.status == "write_failed"
+    assert "非 JSON" in result.message or "-1" in result.message
+    assert refresh_called["v"] is False, "写入没成功不该去刷新"
+
+
+@pytest.mark.asyncio
+async def test_refresh_returns_html_not_json(async_db, monkeypatch):
+    """写入成功、刷新回 HTML → refresh_failed 且 his_doc_id 保留。
+
+    这半边与写入不同：病历**其实已经进了 HIS**，只是对方界面没刷新——
+    his_doc_id 必须留在结果里，否则对账重投会再写一份、靠厂商幂等兜底。
+    """
+    monkeypatch.setattr(settings, "his_writeback_url", "http://his/write")
+    monkeypatch.setattr(settings, "his_writeback_refresh_url", "http://his/refresh")
+    monkeypatch.setattr(settings, "his_writeback_app_id", "appMe")
+    monkeypatch.setattr(settings, "his_writeback_app_secret", "sec")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "refresh" in str(request.url):
+            return httpx.Response(200, content=b"<html>gateway timeout</html>")
+        return httpx.Response(200, json={"code": 0, "data": {"record_id": "HIS-DOC-9"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    enc_id = await _make_encounter(async_db)
+    result = await send_writeback(async_db, enc_id, client=client)
+    await client.aclose()
+
+    assert result.ok is False and result.status == "refresh_failed"
+    assert result.his_doc_id == "HIS-DOC-9", "his_doc_id 丢了——重投会造出重复病案"
