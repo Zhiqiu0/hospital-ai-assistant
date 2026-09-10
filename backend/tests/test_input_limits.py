@@ -8,6 +8,7 @@ record_versions。修法：姓名按列宽 422 拒绝（不截断——医生主
 静默截掉会造出错名字的档案），正文 50 万字符上限（宽松到不可能误伤真病历）。
 """
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.schemas.encounter import QuickStartRequest
@@ -39,3 +40,31 @@ def test_真实规模的长病历不受影响():
     """住院大病历几万字是真实存在的，上限必须宽松到碰不到它们。"""
     AutoSaveDraftRequest(encounter_id="e", record_type="outpatient",
                          content="病" * 100_000)
+
+
+# ─── 服务层裸构造不再炸 500（收敛验证轮追根）───────────────────────────
+#
+# 500 字姓名 500 的真正根源在 _quick_start_inner 里的裸 PatientCreate(...)：
+# 内部字段上限（address 500 / occupation 100 / …）齐全，但抛的是裸 pydantic
+# ValidationError → catch-all → "服务器内部错误"。入口 QuickStartRequest 只拦
+# 了姓名——address 等超长字段仍会穿进来。修法是在唯一构造点统一翻译成字段级
+# 422（入口逐字段复制上限是第二真相源，必然漂移）。
+
+
+@pytest.mark.asyncio
+async def test_超长地址穿到服务层是422而不是500(async_db, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api.v1 import encounters_quickstart as q
+
+    data = QuickStartRequest(
+        patient_name="张三", visit_type="outpatient",
+        address="地" * 501,      # 入口无校验、PatientCreate 上限 500
+    )
+    user = SimpleNamespace(id="doc-1", role="doctor", username="doc",
+                           department_id=None, real_name="医生")
+    # 只需要走到 PatientCreate 构造点；find 阶段对空库天然全 miss
+    with pytest.raises(HTTPException) as ei:
+        await q._quick_start_inner(data, async_db, user)
+    assert ei.value.status_code == 422
+    assert "address" in str(ei.value.detail), ei.value.detail
