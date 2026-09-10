@@ -19,6 +19,7 @@ import { App, Layout, Tabs } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { CollapsibleSide } from '@/components/workbench/CollapsibleSide'
 import { useInquiryStore } from '@/store/inquiryStore'
 import {
   useActiveEncounterStore,
@@ -259,9 +260,13 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
       <Content
         style={{ display: 'flex', overflow: 'hidden', gap: 10, padding: 10, position: 'relative' }}
       >
-        {/* 左栏：问诊 + 检验报告 Tab */}
-        <div
-          style={{
+        {/* 左栏：问诊 + 检验报告 Tab。
+            窄屏（平板查房）默认收起为竖条，把宽度让给病历编辑器——
+            实测 1024px 下编辑器只剩 124px、768px 下只剩 32px，见
+            CollapsibleSide 头注（2026-09-10 平板适配） */}
+        <CollapsibleSide
+          title="问诊录入"
+          expandedStyle={{
             width: 320,
             background: 'var(--surface)',
             borderRadius: 12,
@@ -301,16 +306,17 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
               },
             ]}
           />
-        </div>
+        </CollapsibleSide>
 
         {/* 中栏：病历编辑器 */}
         <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
           <RecordEditor />
         </div>
 
-        {/* 右栏：AI 建议 */}
-        <div
-          style={{
+        {/* 右栏：AI 建议（窄屏默认收起，理由同左栏） */}
+        <CollapsibleSide
+          title="AI 建议"
+          expandedStyle={{
             width: 320,
             background: 'var(--surface)',
             borderRadius: 12,
@@ -325,7 +331,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
           <ErrorBoundary label="AI 建议面板" compact>
             <AISuggestionPanel />
           </ErrorBoundary>
-        </div>
+        </CollapsibleSide>
 
         {/* 无接诊遮罩 */}
         {!currentPatient && <NoPatientOverlay setModalOpen={setModalOpen} />}
