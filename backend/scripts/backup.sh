@@ -132,6 +132,10 @@ if [ "${BACKUP_FAILED}" -ne 0 ]; then
     echo "[$(date)] === 备份结束：**有步骤失败**，请检查上方日志 ==="
     exit 1
 fi
+# 备份文件权限收敛（2026-09-10 权限面审计）：dump 里是全库 PHI，其上父目录
+# 750 已挡住穿越，这里把文件位也收到 640——纵深上不留 other 可读的 PHI 落盘
+chmod 640 "${DEST}"/*.gz 2>/dev/null || true
+
 echo "[$(date)] === 备份完成 ==="
 du -sh "${DEST}"
 

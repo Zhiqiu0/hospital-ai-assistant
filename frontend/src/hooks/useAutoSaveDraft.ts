@@ -168,7 +168,11 @@ export function useAutoSaveDraft({
       // 前端这一手就等于把毒化链路又造了一遍。
       // 400 的成因多样，文案直接透传后端 detail（那里已写清是什么类型冲突、
       // 该怎么办），不像 403/404 那样硬编码。
-      if (status === 400 || status === 403 || status === 404) {
+      // 422 是 2026-09-10 补的：后端给正文加了 50 万字符上限（边界实测发现
+      // 5MB 正文一路落库），超限返回 422——不进永久拒绝集合的话，同一份病态
+      // 正文会无限重试还进补发队列，把 2026-09-02 修过的毒化链路再造一遍。
+      // 内容不改，重试永远是同一个结果，这正是"永久性拒绝"的定义。
+      if (status === 400 || status === 403 || status === 404 || status === 422) {
         void removeDraftByKey(payload.encounter_id, payload.record_type)
         setSavingState('idle')
         if (payload.encounter_id === lastEncounterRef.current) {
@@ -178,7 +182,9 @@ export function useAutoSaveDraft({
               ? '该病历已签发，草稿不再自动保存；如需更正请走病历修订'
               : status === 404
                 ? '接诊已不存在，草稿已停止自动保存'
-                : detail || '草稿内容不合法，已停止自动保存'
+                : status === 422
+                  ? '正文超过长度上限（约 50 万字），已停止自动保存——请检查是否误粘贴了大段内容'
+                  : detail || '草稿内容不合法，已停止自动保存'
           )
         }
         return false

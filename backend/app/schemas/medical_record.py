@@ -15,7 +15,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _validate_record_type(v: str) -> str:
@@ -39,7 +39,7 @@ class QuickSaveRequest(BaseModel):
 
     encounter_id: str         # 关联接诊 ID
     record_type: str = "outpatient"  # 病历类型
-    content: str              # 病历全文（markdown 格式）
+    content: str = Field(max_length=500_000)  # 病历全文（markdown 格式）
 
     _rt = field_validator("record_type")(_validate_record_type)
 
@@ -59,6 +59,12 @@ class RecordContentUpdate(BaseModel):
     content: dict  # 更新后的病历字段内容
 
 
+# 病历正文长度上限（2026-09-10 边界实测补）：50 万字符（约 1.5MB UTF-8 中文）。
+# 实测 5MB 正文一路 200 落库——正文是 Text 列无上限，而每次编辑/签发都会把
+# 全文整份复制进 record_versions，一次误粘贴（比如把 PDF 全文拖进编辑器）乘上
+# 版本数就是几十 MB；导出、打印、diff 全被拖垮。真实病历极限不过几十 KB，
+# 50 万字符宽松到不可能误伤，只挡病态输入。超限返回 422，前端 autosave 把
+# 422 计入永久拒绝（useAutoSaveDraft），不会拿着病态正文无限重试。
 class AutoSaveDraftRequest(BaseModel):
     """编辑器 auto-save 入参（5 秒防抖触发）。
 
@@ -70,7 +76,7 @@ class AutoSaveDraftRequest(BaseModel):
 
     encounter_id: str
     record_type: str
-    content: str  # 完整病历正文（前端编辑器当前值）
+    content: str = Field(max_length=500_000)  # 完整病历正文（前端编辑器当前值）
 
     _rt = field_validator("record_type")(_validate_record_type)
     expected_updated_at: Optional[datetime] = None  # 上次保存返回的 updated_at，乐观锁凭证
