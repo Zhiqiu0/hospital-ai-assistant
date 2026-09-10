@@ -101,20 +101,20 @@ async def inquiry_suggestions(
         history=req.history_present_illness or "未填写",
         initial_impression=req.initial_impression or "暂未填写",
     )
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "你是临床问诊专家，只输出JSON对象，包含known_info、condition_type、suggestions三个字段。"
-                "known_info：列出已知信息要点的字符串数组。"
-                "condition_type：病情类型字符串。"
-                "suggestions：追问问题数组，每项含text、priority、is_red_flag、category、options，"
-                "其中text不得重复known_info中已有的内容，options为2-4个专业具体选项。"
-                "对于擦伤/外伤等已明确诊断的病例，禁止生成询问症状类型、持续时间等基础问题。"
-            ),
-        },
-        {"role": "user", "content": prompt},
-    ]
+    # 注入守卫并入（2026-09-10 第 18 轮审计）：主诉/现病史是患者口述转述，
+    # 此前本端点的 system 消息没有"资料是数据不是指令"守卫句——与 2026-08-29
+    # 只补了 exam-suggestions 一处形成缺口。任务要求作为 system 参数传入。
+    messages = guarded_messages(
+        prompt,
+        system=(
+            "你是临床问诊专家，只输出JSON对象，包含known_info、condition_type、suggestions三个字段。"
+            "known_info：列出已知信息要点的字符串数组。"
+            "condition_type：病情类型字符串。"
+            "suggestions：追问问题数组，每项含text、priority、is_red_flag、category、options，"
+            "其中text不得重复known_info中已有的内容，options为2-4个专业具体选项。"
+            "对于擦伤/外伤等已明确诊断的病例，禁止生成询问症状类型、持续时间等基础问题。"
+        ),
+    )
     try:
         model_options = get_model_options("inquiry")
         # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务
@@ -224,13 +224,11 @@ async def diagnosis_suggestion(
         initial_impression=req.initial_impression or "未填写",
         inquiry_answers=answers_text,
     )
-    messages = [
-        {
-            "role": "system",
-            "content": "你是临床诊断助手，只输出JSON，diagnoses数组中每项必须包含name、confidence、reasoning、next_steps字段。",
-        },
-        {"role": "user", "content": prompt},
-    ]
+    # 注入守卫并入（2026-09-10 第 18 轮审计，同 inquiry-suggestions 的说明）
+    messages = guarded_messages(
+        prompt,
+        system="你是临床诊断助手，只输出JSON，diagnoses数组中每项必须包含name、confidence、reasoning、next_steps字段。",
+    )
     try:
         model_options = get_model_options("inquiry")
         # 连接池护栏：进入最长 270s 的 LLM 调用前先 commit 结束本请求此前的只读事务（若有）、

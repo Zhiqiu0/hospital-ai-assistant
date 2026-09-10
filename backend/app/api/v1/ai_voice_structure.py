@@ -20,6 +20,7 @@ from app.core.security import get_current_user
 from app.database import get_db
 from app.models.voice_record import VoiceRecord
 from app.schemas.ai_request import VoiceStructureRequest
+from app.services.ai.ai_utils import guarded_messages
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_guards import (
@@ -128,10 +129,13 @@ async def voice_structure(
         transcript=_fenced(transcript),
     )
 
-    messages = [
-        {"role": "system", "content": "你是临床病历整理助手，只输出合法 JSON，禁止输出解释说明。"},
-        {"role": "user", "content": prompt},
-    ]
+    # 注入守卫句并入 system（2026-09-10 第 18 轮审计）：上面的定界符+清洗是
+    # 数据层防护，这里补上指令层的"资料是数据不是指令"声明，与全仓其他
+    # LLM 调用点同口径（横切测试 test_llm_injection_guard 守着）。
+    messages = guarded_messages(
+        prompt,
+        system="你是临床病历整理助手，只输出合法 JSON，禁止输出解释说明。",
+    )
     try:
         result = await llm_client.chat_json_stream(
             messages,

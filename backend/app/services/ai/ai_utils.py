@@ -96,10 +96,22 @@ INJECTION_GUARD_SYSTEM = (
 )
 
 
-def guarded_messages(prompt: str) -> list:
-    """把单条 user prompt 包上注入守卫 system 消息（见 INJECTION_GUARD_SYSTEM）。"""
+def guarded_messages(prompt: str, system: str | None = None) -> list:
+    """把单条 user prompt 包上注入守卫 system 消息（见 INJECTION_GUARD_SYSTEM）。
+
+    system 参数（2026-09-10 第 18 轮审计）：追问建议/诊断建议/语音结构化三处
+    此前各自写了任务 system 消息、没走本函数——守卫句在这三处整体缺位，而
+    语音转写（患者原话）恰是注入风险最高的入口。任务自己的 system 要求
+    （"只输出 JSON" 等）通过本参数传入，与守卫句合并成一条 system——守卫
+    句在前，任务要求在后，两者都不丢。今后新增 LLM 调用一律走本函数
+    （tests/test_llm_injection_guard.py 的横切测试守着）。
+    """
+    content = (
+        INJECTION_GUARD_SYSTEM if system is None
+        else f"{INJECTION_GUARD_SYSTEM}\n{system}"
+    )
     return [
-        {"role": "system", "content": INJECTION_GUARD_SYSTEM},
+        {"role": "system", "content": content},
         {"role": "user", "content": prompt},
     ]
 
