@@ -160,35 +160,41 @@ async def save_qc_report(
     from app.models.encounter import Encounter
     from app.models.medical_record import QCReport
 
-    async with AsyncSessionLocal() as db:
-        medical_record_id = await _locate_medical_record(db, encounter_id, record_type)
-        department_id: Optional[str] = None
-        doctor_id: Optional[str] = None
-        if encounter_id:
-            enc = (await db.execute(
-                select(Encounter.department_id, Encounter.doctor_id)
-                .where(Encounter.id == encounter_id)
-            )).first()
-            if enc:
-                department_id, doctor_id = enc.department_id, enc.doctor_id
+    # 整个函数兜异常（2026-09-10 降级演练抓到）：原来只兜住 commit，前面的
+    # 定位查询（_locate_medical_record / 查 Encounter 冗余快照）裸奔——DB 抖动
+    # 一次，异常就从这里冒进 qc_stream 的调用点，而那里在外层 try 的 finally
+    # 之前没有 except：质控流在 rule_issues 事件之后**中断，done 事件永不到达，
+    # 前端转圈**。"落库失败不影响前端实时展示"的设计承诺只兑现了 commit 那一半。
+    # 本函数是 fire-and-forget 辅路，任何失败都只该记日志。
+    try:
+        async with AsyncSessionLocal() as db:
+            medical_record_id = await _locate_medical_record(db, encounter_id, record_type)
+            department_id: Optional[str] = None
+            doctor_id: Optional[str] = None
+            if encounter_id:
+                enc = (await db.execute(
+                    select(Encounter.department_id, Encounter.doctor_id)
+                    .where(Encounter.id == encounter_id)
+                )).first()
+                if enc:
+                    department_id, doctor_id = enc.department_id, enc.doctor_id
 
-        db.add(QCReport(
-            encounter_id=encounter_id,
-            medical_record_id=medical_record_id,
-            record_type=record_type or "outpatient",
-            rubric_key=rubric_key,
-            score=float(report_dict.get("score") or 0),
-            grade=str(report_dict.get("grade") or ""),
-            passed=bool(report_dict.get("passed")),
-            deductions=deductions,
-            department_id=department_id,
-            doctor_id=doctor_id,
-        ))
-        try:
+            db.add(QCReport(
+                encounter_id=encounter_id,
+                medical_record_id=medical_record_id,
+                record_type=record_type or "outpatient",
+                rubric_key=rubric_key,
+                score=float(report_dict.get("score") or 0),
+                grade=str(report_dict.get("grade") or ""),
+                passed=bool(report_dict.get("passed")),
+                deductions=deductions,
+                department_id=department_id,
+                doctor_id=doctor_id,
+            ))
             await db.commit()
-        except Exception as exc:
-            # 落库失败不影响前端实时展示（SSE 已把结果推给医生）
-            logger.error("qc_report.save: commit_failed err=%s", exc)
+    except Exception as exc:
+        # 落库失败不影响前端实时展示（SSE 已把结果推给医生）
+        logger.error("qc_report.save: failed err=%s", exc)
 
 
 async def save_qc_issues(
