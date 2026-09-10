@@ -26,11 +26,20 @@ interface InquiryState {
   inquiry: InquiryData
   /** 最后一次"主动保存"的时间戳（毫秒）。0=从未保存。setInquiry 会更新它，updateInquiryFields 不会 */
   inquirySavedAt: number
+  /** 最后一次「已知与服务端一致」的问诊内容序列化基线（2026-09-10 持久化审计）。
+   *  与 recordStore.lastSavedContent 同一角色：水合时用
+   *  「当前内容 ≠ 基线」判定本地有未落库编辑（语音转写、AI 写入、同步带入），
+   *  有则跳过服务端旧版覆盖，防静默丢数据。null=从未有过基线。 */
+  lastSavedInquiryJson: string | null
 
   /** 整体替换 inquiry，并打"已保存"标记（手动点保存按钮时用） */
   setInquiry: (data: InquiryData) => void
   /** 部分字段更新（不打"已保存"标记，仅同步本地状态，如 AI 流式生成期间） */
   updateInquiryFields: (data: InquiryData) => void
+  /** 服务端水合专用（2026-09-10）：写入 inquiry 的同时把它记为"与服务端一致"
+   *  基线。只允许 encounterIntake 快照恢复调用——其他"本地写入"场景一律走
+   *  updateInquiryFields，否则会把未落库内容错标成已保存。 */
+  applyServerInquiry: (data: InquiryData) => void
   /** 在现病史末尾追加一段笔记（AI 语音转写、追问回答等场景） */
   appendInquiryNote: (note: string) => void
   /** 设置初步印象（AI 诊断建议一键写入用） */
@@ -61,10 +70,21 @@ export const useInquiryStore = create<InquiryState>()(
       },
       inquiry: defaultInquiry,
       inquirySavedAt: 0,
+      lastSavedInquiryJson: null,
 
-      setInquiry: data => set({ inquiry: data, inquirySavedAt: Date.now() }),
+      // 主动保存：内容即成为新的"与服务端一致"基线
+      setInquiry: data =>
+        set({
+          inquiry: data,
+          inquirySavedAt: Date.now(),
+          lastSavedInquiryJson: JSON.stringify(data),
+        }),
 
       updateInquiryFields: data => set({ inquiry: data }),
+
+      // 服务端水合：内容与基线一起换，之后"当前 ≠ 基线"就恒等于"有未落库编辑"
+      applyServerInquiry: data =>
+        set({ inquiry: data, lastSavedInquiryJson: JSON.stringify(data) }),
 
       appendInquiryNote: note =>
         set(state => ({
@@ -82,7 +102,7 @@ export const useInquiryStore = create<InquiryState>()(
           inquiry: { ...state.inquiry, initial_impression: text },
         })),
 
-      reset: () => set({ inquiry: defaultInquiry, inquirySavedAt: 0 }),
+      reset: () => set({ inquiry: defaultInquiry, inquirySavedAt: 0, lastSavedInquiryJson: null }),
     }),
     {
       name: 'medassist-inquiry',
@@ -96,26 +116,47 @@ export const useInquiryStore = create<InquiryState>()(
         ownerEncounterId: state.ownerEncounterId,
         inquiry: state.inquiry,
         inquirySavedAt: state.inquirySavedAt,
+        lastSavedInquiryJson: state.lastSavedInquiryJson,
       }),
       // 版本 + migrate（2026-08-11 审计延期项）：inquiry 是扁平多字段对象，早期
       // localStorage 里的旧结构缺少后加的字段（如中医四诊/急诊留观），rehydrate 后
       // 这些字段为 undefined，组件里 .trim() / .length 会崩。用 defaultInquiry 兜底
       // 补齐所有字段，保证任何历史版本恢复后形状完整。
+      //
+      // ⚠️ migrate/merge 的返回值必须包含 partialize 里的**每一个**键
+      // （2026-09-10 持久化审计）：此前两处都漏了 ownerEncounterId——persisted
+      // 里存的 owner 永远还原不出来，每次刷新 owner 恒 null → assertOwner 必
+      // 失配 reset → "刷新页面表单不丢"的承诺整个是死的，#211 的 partialize
+      // 修复形同虚设。新增持久化键时这里要同步补。
       version: 1,
       migrate: (persisted: unknown) => {
-        const p = persisted as { inquiry?: Partial<InquiryData>; inquirySavedAt?: number } | null
+        const p = persisted as {
+          inquiry?: Partial<InquiryData>
+          inquirySavedAt?: number
+          ownerEncounterId?: string | null
+          lastSavedInquiryJson?: string | null
+        } | null
         return {
+          ownerEncounterId: p?.ownerEncounterId ?? null,
           inquiry: { ...defaultInquiry, ...(p?.inquiry ?? {}) },
           inquirySavedAt: p?.inquirySavedAt ?? 0,
+          lastSavedInquiryJson: p?.lastSavedInquiryJson ?? null,
         }
       },
       // 每次 rehydrate 也用默认值补齐（覆盖 version 未变但字段新增的情况）
       merge: (persisted, current) => {
-        const p = persisted as { inquiry?: Partial<InquiryData>; inquirySavedAt?: number } | null
+        const p = persisted as {
+          inquiry?: Partial<InquiryData>
+          inquirySavedAt?: number
+          ownerEncounterId?: string | null
+          lastSavedInquiryJson?: string | null
+        } | null
         return {
           ...current,
+          ownerEncounterId: p?.ownerEncounterId ?? null,
           inquiry: { ...defaultInquiry, ...(p?.inquiry ?? {}) },
           inquirySavedAt: p?.inquirySavedAt ?? 0,
+          lastSavedInquiryJson: p?.lastSavedInquiryJson ?? null,
         }
       },
     }

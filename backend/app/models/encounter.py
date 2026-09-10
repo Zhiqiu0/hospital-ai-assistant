@@ -64,7 +64,22 @@ class Encounter(Base, TimestampMixin):
         # his_external_ref->'his_patient_no'，跟 visit_no 是两回事，
         # 而 admit_service 里的注释一直宣称「用 GIN 索引命中 visit_no」。
         # 实际每次患者叫号都全表扫 encounters，还串行化在锁内，随接诊量线性劣化。
-        Index("idx_encounters_visit_no", "visit_no"),
+        #
+        # 2026-09-10 收敛轮升级为**部分唯一索引**：visit_no 是 HIS 接诊的幂等
+        # 真键，此前去重只靠 advisory lock + 应用层查重（"单写路径记得加锁"式
+        # 保护，无数据库兜底）。2026-08-28 完整性轮补齐了别的键唯独漏了它。
+        # 真正的不变量是「同一 visit_no 至多一条**非取消**接诊」：已取消的接诊
+        # 不复用（test_admit_cancelled_encounter_not_reused 守着这条业务规则），
+        # HIS 重推同 visit_no 必须能建新接诊——谓词必须排除 cancelled，与
+        # admit_service 应用层查重口径一致。手动接诊 visit_no 为 NULL 不受约束。
+        # 上线前已核实生产无存量重复（19/117 条有值，零重复）。
+        Index(
+            "idx_encounters_visit_no",
+            "visit_no",
+            unique=True,
+            postgresql_where=text("visit_no IS NOT NULL AND status <> 'cancelled'"),
+            sqlite_where=text("visit_no IS NOT NULL AND status <> 'cancelled'"),
+        ),
         # 患者维度反查（档案页、既往接诊、病历列表都按 patient_id 过滤）
         Index("idx_encounters_patient", "patient_id"),
     )

@@ -218,10 +218,22 @@ export default function QCIssuePanel() {
     )
   }
 
+  // 零规则类型披露（2026-09-10）：主视图（有 LLM 建议时走到这里）同样不许
+  // 显示评分卡与"结构检查通过"——那个 100 分是"没有规则可扣"
+  const rulesUncovered = gradeScore?.rules_covered === false
   return (
     <>
-      {gradeScore != null && <GradeScoreCard gradeScore={gradeScore} />}
-      {qcSummary && (
+      {gradeScore != null && !rulesUncovered && <GradeScoreCard gradeScore={gradeScore} />}
+      {rulesUncovered && (
+        <Alert
+          message="该文书类型的结构化质控规则暂未覆盖，评分仅供参考"
+          description={qcSummary}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12, borderRadius: 8 }}
+        />
+      )}
+      {qcSummary && !rulesUncovered && (
         <Alert
           message={qcPass ? '结构检查通过，可出具病历' : '存在结构性问题，需修复后才可出具'}
           description={qcSummary}

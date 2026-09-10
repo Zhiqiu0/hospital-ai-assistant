@@ -27,6 +27,8 @@ import type {
   InquirySuggestion,
   DiagnosisItem,
 } from './types'
+// defaultInquiry 是值导入（脏判据要和"默认空表单"比对）
+import { defaultInquiry } from './types'
 import { genderCode } from '@/utils/gender'
 import { useDiagnosisEntriesStore, type DiagnosisEntry } from '@/store/diagnosisEntriesStore'
 
@@ -192,14 +194,27 @@ export function applySnapshotResult(res: SnapshotResult): void {
   // ── 灌回 4 个工作台 store（业务核心数据） ────────────────────────
   // inquiry：医生填的问诊字段
   if (res.inquiry) {
-    // updateInquiryFields 用部分字段补丁覆盖，不打"已保存"标记
-    // （未保存状态由用户编辑触发，不由恢复触发）
+    // ⚠️ 不无条件覆盖本地问诊（2026-09-10 持久化审计）——与下面 record 的
+    // localIsDirty 守卫同一个道理：语音转写追加、AI 初步印象写入、同步上次
+    // 病历带入都只进本地 store、未落库；刷新/重连触发水合时若直接用服务端
+    // 旧版覆盖，这些内容会被静默抹掉。判据同 record 用**内容比对**：
+    // 当前内容 ≠ lastSavedInquiryJson 基线 = 有未落库的本地编辑。
+    // （基线为 null 且内容非默认空表单 = 从未保存过但已有本地内容，同样算脏。）
     //
     // 后端 snapshot 返回的 inquiry 只含已填字段，是 Partial<InquiryData>；
     // store 签名要 InquiryData（43 字段全集）。这里用 unknown 桥接而非 any，
     // 让类型转换是受控的：缺失字段保持 undefined，下游字段访问全部走 `?? ''`
     // 兜底（store 内部所有字段都是 string | undefined）。
-    useInquiryStore.getState().updateInquiryFields(res.inquiry as unknown as InquiryData)
+    const inquiryStore = useInquiryStore.getState()
+    const currentJson = JSON.stringify(inquiryStore.inquiry)
+    const inquiryIsDirty =
+      currentJson !== JSON.stringify(defaultInquiry) &&
+      currentJson !== inquiryStore.lastSavedInquiryJson
+    if (!inquiryIsDirty) {
+      // applyServerInquiry 同时把服务端版本记为新基线（不打"已保存"标记）；
+      // 用 updateInquiryFields 会让"当前 ≠ 基线"恒成立，之后水合永远进不来
+      inquiryStore.applyServerInquiry(res.inquiry as unknown as InquiryData)
+    }
   }
 
   // 诊断条目：结构化权威源整组覆盖（2026-08-21 阶段1b）

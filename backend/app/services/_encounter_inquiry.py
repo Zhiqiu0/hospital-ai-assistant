@@ -101,7 +101,13 @@ class EncounterInquiryMixin:
 
         from app.models.encounter import Encounter
         from app.models.medical_record import MedicalRecord
-        enc = await self.db.get(Encounter, encounter_id)
+        # 必须锁 encounter 行（2026-09-10 并发审计）：不锁的话"查 submitted →
+        # commit 问诊修改"之间有窗口，与签发/办理出院并发时守卫形同虚设——
+        # 签发在 T2 落库，本请求 T3 提交问诊修改，正好造成上面注释描述的
+        # "绕过防篡改体系的写通道"。签发（_medical_record_sign）、出院
+        # （encounters_lifecycle）、诊断（diagnosis_service）都先锁这一行，
+        # 拿到锁再检查即与它们整段互斥；SQLite 测试库无行锁语义但生产 PG 生效。
+        enc = await self.db.get(Encounter, encounter_id, with_for_update=True)
         if enc is not None:
             if enc.visit_type == "inpatient":
                 if enc.status == "completed":

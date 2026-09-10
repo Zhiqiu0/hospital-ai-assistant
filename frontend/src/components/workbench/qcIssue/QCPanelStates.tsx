@@ -36,6 +36,22 @@ export function QCPassedView({
   gradeScore: GradeScore | null
   qcSummary: string
 }) {
+  // 零规则类型（日常病程/上级查房，2026-09-10 收敛轮审计）：评分恒 100 是
+  // "没有规则可扣"而非"检查通过"——不渲染 🏆 评分卡、不写"质控通过"，
+  // 换成醒目的披露态，杜绝虚假背书。
+  if (gradeScore?.rules_covered === false) {
+    return (
+      <Alert
+        message="该文书类型的结构化质控规则暂未覆盖"
+        description={
+          qcSummary || '评分仅供参考，请按科室书写规范自查；AI 质量建议（如有）仍可参考。'
+        }
+        type="warning"
+        showIcon
+        style={{ marginTop: 8, borderRadius: 8 }}
+      />
+    )
+  }
   return (
     <>
       {gradeScore != null && <GradeScoreCard gradeScore={gradeScore} />}

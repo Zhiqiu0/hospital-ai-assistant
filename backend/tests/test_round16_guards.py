@@ -74,6 +74,32 @@ async def test_住院出院后问诊数据冻结(async_db):
     assert ei.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_冻结守卫必须持有encounter行锁(async_db, monkeypatch):
+    """2026-09-10 并发审计：守卫原来是裸 db.get + 裸 select——"查 submitted →
+    commit 问诊修改"之间没有任何互斥，与签发/办理出院并发时守卫形同虚设
+    （正好造成它自己注释里描述的"绕过防篡改体系的写通道"）。签发/出院/诊断
+    三处同类守卫都先 with_for_update 锁 encounter 行，问诊必须同口径。
+
+    SQLite 测试库无行锁语义，无法用真并发复现窗口——这里断言的是调用语义：
+    save_inquiry 里对 Encounter 的 get 必须带 with_for_update=True。"""
+    enc_id = await _mk(async_db, visit_type="outpatient", signed=False)
+
+    calls = []
+    orig_get = async_db.get
+
+    async def spy_get(entity, ident, **kw):
+        calls.append((getattr(entity, "__name__", str(entity)), kw.get("with_for_update")))
+        return await orig_get(entity, ident, **kw)
+
+    monkeypatch.setattr(async_db, "get", spy_get)
+    await EncounterService(async_db).save_inquiry(
+        enc_id, InquiryInputUpdate(chief_complaint="锁语义检查"))
+    assert ("Encounter", True) in calls, (
+        f"save_inquiry 对 Encounter 的 get 没带 with_for_update=True（实际调用：{calls}）——"
+        "冻结守卫与签发/出院事务之间重新出现并发窗口")
+
+
 # ── 二、患者 PHI 读取的角色边界 ───────────────────────────────────────────
 
 @pytest.mark.parametrize("role", ["doctor", "super_admin", "hospital_admin", "dept_admin"])

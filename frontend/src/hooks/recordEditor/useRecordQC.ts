@@ -31,6 +31,8 @@ interface QCStreamEvent {
   grade_level?: GradeScore['grade_level']
   must_fix_count?: number
   summary?: string
+  /** false = 该文书类型结构化规则暂未覆盖，评分仅供参考（2026-09-10） */
+  rules_covered?: boolean
   /** 后端按 PDF 大项结构化产出的评分报告（rule_issues 事件携带） */
   score_report?: ScoreReport
 }
@@ -79,6 +81,7 @@ export function useRecordQC(shared: RecordEditorShared) {
                       grade_score: obj.grade_score,
                       grade_level: obj.grade_level,
                       must_fix_count: obj.must_fix_count,
+                      rules_covered: obj.rules_covered,
                     }
                   : null
               // score_report 在此一并入 store——A 方案分组渲染的数据源
@@ -98,7 +101,10 @@ export function useRecordQC(shared: RecordEditorShared) {
         // TS 在闭包外无法推断回调里赋值的 finalData，借助 const 收敛非 null 视图
         const done: QCStreamEvent = finalData
         const totalIssues = useQCStore.getState().qcIssues.length
-        if (done.grade_level === '合格' || done.grade_level === '甲级') {
+        if (done.rules_covered === false) {
+          // 零规则类型（日常病程/上级查房）：100 分不许冒充"质控通过"
+          message.info('该文书类型的结构化质控规则暂未覆盖，评分仅供参考')
+        } else if (done.grade_level === '合格' || done.grade_level === '甲级') {
           message.success(`质控通过！评分 ${done.grade_score} 分（${done.grade_level}）`)
         } else if (done.grade_score != null) {
           message.warning(
