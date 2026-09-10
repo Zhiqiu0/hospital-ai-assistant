@@ -242,6 +242,12 @@ services:
       - "8443:8443"
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      # 运维值班台（2026-09-10）：宿主机采集脚本的产物目录 + Basic Auth 口令文件，
+      # 都是只读挂载。两者缺失时 docker 会在宿主机建出空目录顶替，此时 /ops/ 分别
+      # 返回 403 和 500——但 nginx 不在启动期读 auth_basic_user_file，所以炸不到
+      # 其余 location，全站不受影响。部署前仍需确认这两个路径已在宿主机就位。
+      - /home/ubuntu/ops/oncall/out:/usr/share/nginx/ops:ro
+      - /home/ubuntu/ops/oncall/.htpasswd:/etc/nginx/.htpasswd:ro
 
 volumes:
   postgres_data:
