@@ -47,6 +47,13 @@ pypinyin==0.53.0
 
 # 错误监控（Sentry，FastAPI/SQLAlchemy/Logging 集成）
 # 仅当环境变量 SENTRY_DSN 非空时初始化，开发环境默认不上报
+# jinja2：本项目不用模板，装它只为救 sentry-sdk 的 starlette 集成——
+# starlette 1.x 的 templating 模块改成"没装 jinja2 则 import 即抛"，而
+# sentry-sdk 启动时会 patch_templates 去 import 它 → 生产启动即崩、API 502
+# （2026-09-10 依赖升级当天实战教训）。本地与 CI 全绿是因为 SENTRY_DSN 只在
+# 生产配置、init_sentry 在测试环境提前 return，集成从未真正初始化——
+# "只有生产才走到的初始化路径"是测试的天然盲区，教训记此。
+jinja2==3.1.6
 sentry-sdk[fastapi]==2.18.0
 
 # 测试依赖
