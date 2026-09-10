@@ -57,8 +57,13 @@ async def audit_admin_action(
         # 头部的命名约定。取不到 route 时（理论上不会）退回实际路径，宁可粒度
         # 粗一点也不能丢审计。query string 一律不入，避免泄露搜索关键字这类
         # 可读 PII。
-        route = request.scope.get("route")
-        action_path = getattr(route, "path", None) or request.url.path
+        # fastapi 0.141 起 scope["route"] 是叶子路由（相对路径），改用
+        # route_introspect 按 endpoint 反查完整模板，理由与访问日志同
+        # （见 request_context 里的说明）；查不到退回实际路径——宁可粒度粗
+        # 一点也不能丢审计。
+        from app.core.route_introspect import full_template_for
+
+        action_path = full_template_for(request.scope) or request.url.path
         # 实际资源 ID 归位到 resource_id 列：路径参数通常只有一个（user_id /
         # code / rubric_key…），多个时拼起来，保证可追溯到具体对象
         params = request.path_params or {}

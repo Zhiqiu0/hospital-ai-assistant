@@ -1,11 +1,21 @@
+# 2026-09-10 依赖漏洞专项（pip-audit 首扫）：pillow/starlette/python-multipart/
+# python-dotenv 共数十条 PYSEC 一次修净。pillow 是重点——dicom_renderer 用它
+# 解析影像科上传的 DICOM 像素，图像解析漏洞的输入形态正是"恶意构造的文件"。
+# starlette 需 1.x 才修全，fastapi 0.141 起放开了上限（>=0.46.0）遂一并升；
+# 0.116→0.141 的行为变化（include_router 运行时组合、scope["route"] 变叶子）
+# 由 core/route_introspect 适配，test_route_authz_guard/test_observability 守着。
+# 遗留豁免：ecdsa 0.19.2（python-jose 传递依赖）的 PYSEC-2026-1325 无修复版本，
+# 且为 ECDSA 侧信道类问题——本项目 JWT 全部走 HS256 对称签名（security.py），
+# ECDSA 代码路径不可达，风险不成立；换 PyJWT 属大改，留待 jose 上游解决。
+#
 # 2026-08-28 安全升级（全量体检）：starlette 0.41.3 有 CVE-2025-54121——
 # multipart 解析 SpooledTemporaryFile 滚盘是同步阻塞事件循环的（0.47.2 修复）。
 # 生产真实可达：语音 webm/DICOM 压缩包都是大文件 multipart，2 核 2 worker 下
 # 一个大上传滚盘期间该 worker 上所有请求（含叫号 SSE、签发）整体卡顿。
 # fastapi 0.115.6 钉死 starlette<0.42，须一起升。
 # 历史：2026-07-07 升 0.41.x 修 CVE-2024-47874（multipart 内存耗尽）。
-fastapi==0.116.1
-starlette==0.47.2
+fastapi==0.141.1
+starlette==1.6.0
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 alembic==1.13.3
@@ -20,16 +30,16 @@ python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 # 2026-07-07 安全升级：0.0.12 有 CVE-2024-53981（畸形 boundary CPU 耗尽 DoS），0.0.18 修复
-python-multipart==0.0.18
+python-multipart==0.0.32
 httpx==0.27.2
 openai==1.51.0
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 # 2026-06-11 钉死版本：未钉版本的依赖会让构建不可复现 + 有供应链风险
 alibabacloud-bssopenapi20171214==5.1.1
 pymupdf==1.27.2.2
 numpy==2.4.3
 pydicom==3.0.2
-Pillow==12.1.1
+Pillow==12.3.0
 
 # 中文姓名拼音索引（患者搜索框支持拼音/首字母/混拼，纯 Python 无 C 扩展）
 # 仅在 PatientService 写入和查询时调用，运行时开销可忽略

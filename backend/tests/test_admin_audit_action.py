@@ -22,15 +22,39 @@ from app.core.audit_dep import audit_admin_action
 
 
 def _request(method: str, real_path: str, route_path: str, params: dict):
-    """构造一个足够 audit_admin_action 使用的假 Request。"""
-    return SimpleNamespace(
+    """构造一个足够 audit_admin_action 使用的假 Request。
+
+    fastapi 0.141 起完整模板由 route_introspect 按 endpoint 反查（scope 里的
+    route 只剩叶子相对路径），假 scope 要提供能被展开的真实小 app + endpoint，
+    复刻生产的"前缀在 include 层"结构——这样测的才是生产机制而不是旧假设。
+    """
+    scope: dict = {"type": "http", "path": real_path, "method": method}
+    if route_path:
+        from fastapi import APIRouter, FastAPI
+
+        mini = FastAPI()
+        sub = APIRouter()
+        rel = route_path[len("/api/v1"):] if route_path.startswith("/api/v1") else route_path
+
+        async def _ep():  # noqa: ANN202 - 仅作 endpoint 身份标识
+            return {}
+
+        getattr(sub, method.lower())(rel)(_ep)
+        mini.include_router(sub, prefix="/api/v1")
+        scope["app"] = mini
+        scope["endpoint"] = _ep
+        scope["route"] = SimpleNamespace(path=rel)
+    req = SimpleNamespace(
         method=method,
         url=SimpleNamespace(path=real_path),
-        scope={"route": SimpleNamespace(path=route_path)},
+        scope=scope,
         path_params=params,
         headers={},
         client=SimpleNamespace(host="10.0.0.9"),
     )
+    # 弱引用缓存的键是 app；把它挂在 req 上防止在断言前被 GC
+    req._mini_app = scope.get("app")
+    return req
 
 
 async def _run(request) -> dict:

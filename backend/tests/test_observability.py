@@ -29,9 +29,27 @@ async def _run_request(path: str, route_path: str | None, *, slow: bool = False)
     lg.addHandler(rec)
     lg.setLevel(logging.INFO)
 
+    # fastapi 0.141 起模板来自 route_introspect 的 endpoint 反查（scope 里的
+    # route 只剩叶子相对路径），假 scope 要提供一个能被 iter_api_routes 展开
+    # 的真实小 app + 对应 endpoint，才是对生产机制的真实检验
     scope = {"type": "http", "path": path, "method": "GET", "headers": []}
     if route_path:
-        scope["route"] = SimpleNamespace(path=route_path)
+        from fastapi import APIRouter, FastAPI
+
+        mini = FastAPI()
+        sub = APIRouter()
+        # 去掉 /api/v1 前缀作为子路由路径，用 include prefix 补回——
+        # 复刻生产的"前缀在 include 层"结构
+        rel = route_path[len("/api/v1"):] if route_path.startswith("/api/v1") else route_path
+
+        async def _ep():  # noqa: ANN202 - 仅作 endpoint 身份标识
+            return {}
+
+        sub.get(rel)(_ep)
+        mini.include_router(sub, prefix="/api/v1")
+        scope["app"] = mini
+        scope["endpoint"] = _ep
+        scope["route"] = SimpleNamespace(path=rel)   # 新版本形态：叶子相对路径
 
     async def app(scope_, receive_, send_):
         if slow:
