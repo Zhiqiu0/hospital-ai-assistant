@@ -34,12 +34,27 @@ VITAL_LABELS: dict[str, str] = {
 }
 
 
+# 全角→半角映射（2026-09-10 第 18 轮编码边界审计）：中文输入法全角态敲出的
+# ３６．５ 能被 Python float() 解析（float 接受 Unicode 数字），于是通过区间
+# 校验后**原样落库**——全角串随后进病历正文与 HIS 回写，厂商侧解析和 QC
+# 数值提取都认不出。数字、小数点、正负号全角一律归一成半角。
+_FULLWIDTH_MAP = str.maketrans(
+    "０１２３４５６７８９．＋－", "0123456789.+-"
+)
+
+
+def normalize_vital_text(value: str) -> str:
+    """体征字符串归一化：全角数字/小数点/正负号 → 半角（其余字符原样保留，
+    带单位备注的自由文本如 '36.5℃ 腋温' 不受影响）。"""
+    return value.translate(_FULLWIDTH_MAP)
+
+
 def parse_vital_number(value) -> Optional[float]:
     """宽容解析体征字符串为数字：解析不了返回 None（自由文本放行不校验）。"""
     if value is None:
         return None
     try:
-        return float(str(value).strip())
+        return float(normalize_vital_text(str(value)).strip())
     except (ValueError, TypeError):
         return None
 

@@ -174,7 +174,11 @@ class InquiryInputUpdate(BaseModel):
     def _vital_in_physio_range(cls, v, info):
         if v is None or not str(v).strip():
             return v
-        from app.services.vital_limits import check_vital_range
+        from app.services.vital_limits import check_vital_range, normalize_vital_text
+        # 先归一全角（2026-09-10 第 18 轮编码边界审计）：全角 ３６．５ 能被
+        # float() 解析、通过区间校验后原样落库，随后进病历正文与 HIS 回写。
+        # 归一化后的值才是落库值——存储与校验看到的必须是同一个字符串。
+        v = normalize_vital_text(str(v))
         err = check_vital_range(info.field_name, v)
         if err:
             raise ValueError(err)
