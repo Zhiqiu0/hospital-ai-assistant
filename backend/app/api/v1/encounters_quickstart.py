@@ -22,6 +22,8 @@ from app.core.security import get_current_user
 from app.core.logging_config import mask_name
 from app.database import get_db
 from app.schemas.encounter import EncounterCreate, QuickStartRequest
+from pydantic import ValidationError
+
 from app.schemas.patient import PatientCreate
 from app.services.encounter_service import EncounterService
 from app.services.patient_service import PatientService
@@ -121,22 +123,38 @@ async def _quick_start_inner(data, db, current_user):
         # 既没身份证也没手机号（老人、无证儿童、代挂号，都很常见），
         # find_existing 的强键全 miss、弱键又在第七轮被有意禁用，
         # 重试就再建一份档案——同一个人散成多份，正是第七轮刚修过的痛点。
-        patient = await patient_service.create(commit=False, data=PatientCreate(
-            name=data.patient_name,
-            gender=data.gender,
-            birth_date=birth_date_val,
-            id_card=data.id_card,
-            phone=data.phone,
-            address=data.address,
-            ethnicity=data.ethnicity,
-            marital_status=data.marital_status,
-            occupation=data.occupation,
-            workplace=data.workplace,
-            contact_name=data.contact_name,
-            contact_phone=data.contact_phone,
-            contact_relation=data.contact_relation,
-            blood_type=data.blood_type,
-        ))
+        # 裸构造包成 422（2026-09-10 收敛验证轮）：PatientCreate 带全套字段
+        # 上限（address 500 / occupation 100 / …），而入口 QuickStartRequest
+        # 只拦了 patient_name——其余超长字段会穿到这里抛裸 pydantic
+        # ValidationError → catch-all → 500"服务器内部错误"，医生不知道错在
+        # 哪个字段。不在入口逐字段复制上限（那是第二真相源，必然漂移），在
+        # 唯一的构造点统一翻译成字段级 422。
+        try:
+            create_data = PatientCreate(
+                name=data.patient_name,
+                gender=data.gender,
+                birth_date=birth_date_val,
+                id_card=data.id_card,
+                phone=data.phone,
+                address=data.address,
+                ethnicity=data.ethnicity,
+                marital_status=data.marital_status,
+                occupation=data.occupation,
+                workplace=data.workplace,
+                contact_name=data.contact_name,
+                contact_phone=data.contact_phone,
+                contact_relation=data.contact_relation,
+                blood_type=data.blood_type,
+            )
+        except ValidationError as exc:
+            fields = "、".join(
+                ".".join(str(x) for x in e.get("loc", ())) for e in exc.errors()[:3]
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"患者信息不合法（字段：{fields}），请检查长度与格式",
+            ) from exc
+        patient = await patient_service.create(commit=False, data=create_data)
 
     encounter_service = EncounterService(db)
 
