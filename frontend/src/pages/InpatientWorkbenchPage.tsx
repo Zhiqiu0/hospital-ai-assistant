@@ -31,6 +31,7 @@ import { useWorkbenchBase } from '@/hooks/useWorkbenchBase'
 import { useEnsureSnapshotHydrated } from '@/hooks/useEnsureSnapshotHydrated'
 import InpatientInquiryPanel from '@/components/workbench/InpatientInquiryPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { CollapsibleSide } from '@/components/workbench/CollapsibleSide'
 import RecordEditor from '@/components/workbench/RecordEditor'
 import ImagingUploadModal from '@/components/workbench/ImagingUploadModal'
 import PatientHistoryDrawer from '@/components/workbench/PatientHistoryDrawer'
@@ -223,9 +224,12 @@ export default function InpatientWorkbenchPage() {
               overflow: 'hidden',
             }}
           >
-            {/* 问诊面板 */}
-            <div
-              style={{
+            {/* 问诊面板。窄屏（平板查房）默认收起为竖条把宽度让给编辑器——
+                实测 1024px 下编辑器只剩 124px、768px 下只剩 32px，
+                见 CollapsibleSide 头注（2026-09-10 平板适配） */}
+            <CollapsibleSide
+              title="入院问诊"
+              expandedStyle={{
                 width: 300,
                 background: 'var(--surface)',
                 borderRadius: 12,
@@ -238,20 +242,23 @@ export default function InpatientWorkbenchPage() {
               <ErrorBoundary label="入院问诊" compact>
                 <InpatientInquiryPanel />
               </ErrorBoundary>
-            </div>
+            </CollapsibleSide>
 
             {/* 中间编辑区（入院记录 or 病程记录） */}
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>{renderCenterEditor()}</div>
 
-            {/* 右侧：AI建议 + 病程记录 + 问题列表 + 体征 */}
-            <ErrorBoundary label="右侧面板" compact>
-              <InpatientRightPanel
-                selectedNote={selectedNote}
-                setSelectedNote={setSelectedNote}
-                timelineRefresh={timelineRefresh}
-                setTimelineRefresh={setTimelineRefresh}
-              />
-            </ErrorBoundary>
+            {/* 右侧：AI建议 + 病程记录 + 问题列表 + 体征（窄屏默认收起，理由同上；
+                查房要切病程时点开竖条即可） */}
+            <CollapsibleSide title="病程与建议" expandedStyle={{ display: 'flex', flexShrink: 0 }}>
+              <ErrorBoundary label="右侧面板" compact>
+                <InpatientRightPanel
+                  selectedNote={selectedNote}
+                  setSelectedNote={setSelectedNote}
+                  timelineRefresh={timelineRefresh}
+                  setTimelineRefresh={setTimelineRefresh}
+                />
+              </ErrorBoundary>
+            </CollapsibleSide>
           </div>
         </div>
 
