@@ -146,6 +146,10 @@ export interface GradeScore {
   grade_level: '合格' | '不合格' | '甲级' | '乙级' | '丙级' | '待整改'
   /** 必须修复项数（source=='rule' 的 issue 数量），文案"N 项必须修复" */
   must_fix_count?: number
+  /** false = 该文书类型结构化规则暂未覆盖（如日常病程/上级查房），评分恒 100
+   *  仅供参考——渲染层必须换披露态，不许显示"质控通过/甲级"背书
+   *  （2026-09-10 收敛轮审计）。undefined（旧后端）按已覆盖处理。 */
+  rules_covered?: boolean
   strengths?: string[]
 }
 

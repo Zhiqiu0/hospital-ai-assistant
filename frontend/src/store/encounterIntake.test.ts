@@ -250,3 +250,61 @@ describe('水合顺序不得抵消防覆盖保护（2026-08-14 第七轮审计�
     expect(useRecordStore.getState().recordContent).toBe('服务端首程内容')
   })
 })
+
+describe('水合不得静默抹掉未落库的问诊内容（2026-09-10 持久化审计）', () => {
+  it('本地有未落库的问诊编辑（语音/AI 写入）时，快照不覆盖', async () => {
+    const { useInquiryStore } = await import('@/store/inquiryStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+    const { defaultInquiry } = await import('@/store/types')
+
+    // 语音转写追加了现病史，未保存到服务端（基线仍是 null）
+    useInquiryStore.getState().reset()
+    useInquiryStore.getState().updateInquiryFields({
+      ...defaultInquiry,
+      history_present_illness: '语音转写：三天前受凉后咳嗽加重',
+    })
+
+    applySnapshotResult({
+      inquiry: { chief_complaint: '服务端旧版主诉' },
+    } as never)
+
+    const after = useInquiryStore.getState().inquiry
+    expect(after.history_present_illness).toBe('语音转写：三天前受凉后咳嗽加重')
+    expect(after.chief_complaint).not.toBe('服务端旧版主诉')
+  })
+
+  it('保存过一次后又有新增量时，快照同样不覆盖增量', async () => {
+    const { useInquiryStore } = await import('@/store/inquiryStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+    const { defaultInquiry } = await import('@/store/types')
+
+    useInquiryStore.getState().reset()
+    const savedVersion = { ...defaultInquiry, chief_complaint: '咳嗽3天' }
+    useInquiryStore.getState().setInquiry(savedVersion) // 基线 = 已保存版
+    useInquiryStore.getState().updateInquiryFields({
+      ...savedVersion,
+      initial_impression: 'AI 写入的初步印象（未保存）',
+    })
+
+    // 服务端只有已保存版——覆盖会把 AI 增量抹掉
+    applySnapshotResult({ inquiry: savedVersion } as never)
+
+    expect(useInquiryStore.getState().inquiry.initial_impression).toBe(
+      'AI 写入的初步印象（未保存）'
+    )
+  })
+
+  it('本地干净时快照正常回填，且回填内容成为新基线（后续水合仍能进来）', async () => {
+    const { useInquiryStore } = await import('@/store/inquiryStore')
+    const { applySnapshotResult } = await import('@/store/encounterIntake')
+
+    useInquiryStore.getState().reset() // 默认空表单 = 干净
+
+    applySnapshotResult({ inquiry: { chief_complaint: '服务端版本一' } } as never)
+    expect(useInquiryStore.getState().inquiry.chief_complaint).toBe('服务端版本一')
+
+    // 回填后未做任何本地编辑，第二次水合（如断线重连）必须仍能同步
+    applySnapshotResult({ inquiry: { chief_complaint: '服务端版本二' } } as never)
+    expect(useInquiryStore.getState().inquiry.chief_complaint).toBe('服务端版本二')
+  })
+})

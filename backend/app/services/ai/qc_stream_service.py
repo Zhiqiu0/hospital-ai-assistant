@@ -44,6 +44,7 @@ from app.services.ai._qc_rubric import (  # noqa: F401
     _deductions_to_issues,
     _select_rubric,
     get_rubric_key,
+    has_rule_coverage,
 )
 from app.services.ai._qc_ops import run_grade_score, run_qc_fix  # noqa: F401
 
@@ -75,6 +76,10 @@ async def run_quick_qc_stream(
 
     # 选 Rubric + 构造上下文（FHIR 三资源分层）
     rubric = _select_rubric(req.record_type)
+    # 结构化规则覆盖度（2026-09-10 收敛轮审计）：日常病程/上级查房等大项规则
+    # 尚未实装，这些类型评分恒 100——必须随事件披露"仅供参考"，不能让满分
+    # 冒充"质控通过"（前端据此换披露态渲染）
+    rules_covered = has_rule_coverage(req.record_type)
     # 病案首页结构化数据预取（2026-08-21 阶段3）：法定"病案首页 10 分"的数据源；
     # 无 encounter 上下文时返回未加载态，首页规则整体跳过
     front_page = await load_front_page(db, req.encounter_id)
@@ -137,6 +142,15 @@ async def run_quick_qc_stream(
 
         must_fix_count = len(rule_issues) + len(insurance_tagged)
 
+        def _score_part() -> str:
+            """done 摘要的评分句——两个 done 分支共用，避免披露口径分叉。"""
+            if not rules_covered:
+                # 零规则类型不允许"质控通过（100 分 甲级）"冒充结论
+                return "该文书类型的结构化质控规则暂未覆盖，评分仅供参考"
+            if report.passed:
+                return f"质控通过（{report.score:.0f} 分 {report.grade}）"
+            return f"{report.score:.0f} 分（{report.grade}），结构问题 {len(rule_issues)} 项需修复"
+
         # 连接池护栏：本 session 的只读（check_insurance_risk）已取完，
         # 下面 await llm_task 会等最长 270s。先 commit 把 asyncpg 连接还回池。
         await db.commit()
@@ -148,6 +162,8 @@ async def run_quick_qc_stream(
             "grade_score": report.score,
             "grade_level": report.grade,
             "must_fix_count": must_fix_count,
+            # False = 该类型零规则，分数仅供参考（前端换披露态渲染）
+            "rules_covered": rules_covered,
             # 完整评分报告供前端 PDF 四列扣分明细使用
             "score_report": report.to_dict(),
         }
@@ -199,13 +215,7 @@ async def run_quick_qc_stream(
                 record_type=req.record_type,
             )
 
-            summary_parts: list[str] = []
-            if report.passed:
-                summary_parts.append(f"质控通过（{report.score:.0f} 分 {report.grade}）")
-            else:
-                summary_parts.append(
-                    f"{report.score:.0f} 分（{report.grade}），结构问题 {len(rule_issues)} 项需修复"
-                )
+            summary_parts: list[str] = [_score_part()]
             if llm_issues:
                 summary_parts.append(f"质量建议 {len(llm_issues)} 条")
 
@@ -217,18 +227,13 @@ async def run_quick_qc_stream(
                 "grade_score": report.score,
                 "grade_level": report.grade,
                 "must_fix_count": must_fix_count,
+                "rules_covered": rules_covered,
             }
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {str(exc)[:200]}"
             logger.error("quick_qc LLM failed: %s", err_msg)
             # LLM 失败不影响主流程：Rubric 评分已经产出，质量建议可缺
-            summary_parts: list[str] = []
-            if report.passed:
-                summary_parts.append(f"质控通过（{report.score:.0f} 分 {report.grade}）")
-            else:
-                summary_parts.append(
-                    f"{report.score:.0f} 分（{report.grade}），结构问题 {len(rule_issues)} 项需修复"
-                )
+            summary_parts: list[str] = [_score_part()]
             # 业务化异常带原因（欠费/限流医生可读），其余保持通用文案
             from app.services.ai.llm_client import LLMServiceError
             reason = exc.user_message if isinstance(exc, LLMServiceError) else "AI 质量分析失败"
@@ -240,6 +245,7 @@ async def run_quick_qc_stream(
                 "grade_score": report.score,
                 "grade_level": report.grade,
                 "must_fix_count": must_fix_count,
+                "rules_covered": rules_covered,
             }
     finally:
         llm_task.cancel()  # 幂等：已完成任务 cancel 无副作用；断开/出错都能清理
