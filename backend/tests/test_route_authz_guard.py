@@ -67,18 +67,29 @@ def _dependency_names(route) -> set[str]:
 
 
 def _api_routes():
-    for r in app.routes:
-        path = getattr(r, "path", "")
-        if path.startswith("/api/v1"):
-            yield r, path
+    """产出 (route, 完整路径, include 层依赖名集合)。
+
+    fastapi 0.141 起 include_router 不展平：app.routes 里只剩一个
+    _IncludedRouter，直接遍历一条 API 都数不到——正是本文件的
+    「白名单不留过期条目」断言在升级冒烟里抓住了枚举失效（否则四条守卫
+    会全部绿灯空转）。include 层的依赖（admin 聚合 router 上的
+    audit_admin_action）也不再复制进叶子，必须沿途收集。
+    统一改走 core/route_introspect，与访问日志、admin 审计同一份实现。
+    """
+    from app.core.route_introspect import iter_api_routes
+
+    for full_path, route, inherited_deps in iter_api_routes(app):
+        if full_path.startswith("/api/v1"):
+            yield route, full_path, inherited_deps
 
 
 def test_没有未登记的裸端点():
     """新加的 /api/v1 端点必须挂鉴权，或显式登记为公开并说明替代防护。"""
     naked = [
         f"{','.join(sorted(getattr(r, 'methods', None) or []))} {p}"
-        for r, p in _api_routes()
-        if not (_dependency_names(r) & _AUTH_DEPS) and p not in _PUBLIC_ALLOWED
+        for r, p, inherited in _api_routes()
+        if not ((_dependency_names(r) | inherited) & _AUTH_DEPS)
+        and p not in _PUBLIC_ALLOWED
     ]
     assert not naked, (
         "以下端点既没有鉴权依赖，也没有登记进公开白名单：\n  "
@@ -88,18 +99,35 @@ def test_没有未登记的裸端点():
 
 
 def test_白名单不留过期条目():
-    """端点被删/改名后，白名单条目要跟着清掉，否则会悄悄放行一个新的同名路径。"""
-    existing = {p for _, p in _api_routes()}
+    """端点被删/改名后，白名单条目要跟着清掉，否则会悄悄放行一个新的同名路径。
+
+    这条断言在 fastapi 0.141 升级冒烟里立了功：include_router 改为运行时组合
+    后，旧的 app.routes 遍历一条 API 都数不到，另外三条守卫全部绿灯空转——
+    是它报出"白名单 7 条路径都不存在了"，才暴露出枚举失效。
+    """
+    existing = {p for _, p, _deps in _api_routes()}
     stale = sorted(set(_PUBLIC_ALLOWED) - existing)
     assert not stale, f"白名单里这些路径已不存在，请删除：{stale}"
 
 
+def test_枚举本身没有空转():
+    """守卫的前提是真的数得到路由。全仓 API 远超 100 条，枚举出来只有个位数
+    说明路由树结构又变了——宁可在这里红，也不能让四条守卫静默失效。"""
+    count = sum(1 for _ in _api_routes())
+    assert count > 100, f"只枚举到 {count} 条 /api/v1 路由，枚举大概率失效了"
+
+
 def test_管理端点一律走管理员守卫():
-    """/api/v1/admin/* 是全院数据的写入口，一条都不能漏。"""
+    """/api/v1/admin/* 是全院数据的写入口，一条都不能漏。
+
+    守卫挂在 admin 聚合 router 的 include 层（新版 fastapi 不再复制进叶子），
+    所以要连同 inherited 一起看。
+    """
     bad = [
-        p for r, p in _api_routes()
+        p for r, p, inherited in _api_routes()
         if p.startswith("/api/v1/admin")
-        and not (_dependency_names(r) & {"require_admin", "audit_admin_action"})
+        and not ((_dependency_names(r) | inherited)
+                 & {"require_admin", "audit_admin_action"})
     ]
     assert not bad, f"这些管理端点没有管理员守卫：{bad}"
 
@@ -108,8 +136,8 @@ def test_管理端点一律留审计():
     """管理员特权操作必须留痕——历史上 9 个 admin 模块 0 调用 log_action，
     正是为此才有了路由级的 audit_admin_action 依赖。"""
     bad = [
-        p for r, p in _api_routes()
+        p for r, p, inherited in _api_routes()
         if p.startswith("/api/v1/admin")
-        and "audit_admin_action" not in _dependency_names(r)
+        and "audit_admin_action" not in (_dependency_names(r) | inherited)
     ]
     assert not bad, f"这些管理端点不会被审计：{bad}"

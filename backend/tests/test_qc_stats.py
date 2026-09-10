@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """质控统计与工作日日历测试（2026-08-21 阶段5）。"""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -77,15 +77,20 @@ async def test_summary_latest_only_and_top_rules(async_db):
 async def test_archive_proxy_caliber(async_db):
     """归档代理口径：全部签发且最晚签发≤出院后7工作日→达标；在途不入分母。"""
     async_db.add(Patient(id="p1", name="张三", birth_date=date(1970, 1, 1)))
+    # 日期一律相对 now（2026-09-10 修）：原夹具硬编码"出院 2026-08-10"，配合
+    # 端点的 days=30 相对窗口是颗时间炸弹——写下时在窗口内，日历一翻到 9/10
+    # 就滑出窗口、total 归零，恰好在 fastapi 升级冒烟当天爆掉，白查了一轮
+    # "是不是升级搞坏了统计"。夹具里凡是要和 now 比的时间，禁止绝对日期。
+    _discharged = datetime.now() - timedelta(days=10)
     # 甲：出院已 10 天前、全部签发在出院次日 → 达标
     async_db.add(Encounter(id="ok", patient_id="p1", doctor_id="doc",
                            visit_type="inpatient", status="completed",
-                           visited_at=datetime(2026, 8, 1),
-                           completed_at=datetime(2026, 8, 10, 9, 0)))
+                           visited_at=_discharged - timedelta(days=9),
+                           completed_at=_discharged))
     # 乙：刚出院 1 小时、还有草稿 → 时限未到不入分母
     async_db.add(Encounter(id="pending", patient_id="p1", doctor_id="doc",
                            visit_type="inpatient", status="completed",
-                           visited_at=datetime(2026, 8, 18),
+                           visited_at=datetime.now() - timedelta(days=2),
                            completed_at=datetime.now()))
     await async_db.flush()
     svc = MedicalRecordService(async_db)
@@ -100,7 +105,7 @@ async def test_archive_proxy_caliber(async_db):
         _r = await svc.quick_save(encounter_id="ok", record_type=_rt,
                                   content=_c, doctor_id="doc")
         # 手动把签发时间放到出院次日（quick_save 用 now）
-        _r.submitted_at = datetime(2026, 8, 11, 9, 0)
+        _r.submitted_at = _discharged + timedelta(days=1)
     rec = _r
     await svc.auto_save_draft("pending", "discharge_record", "草稿", "doc")
     await async_db.commit()

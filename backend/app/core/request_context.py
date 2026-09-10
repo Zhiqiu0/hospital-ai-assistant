@@ -254,11 +254,16 @@ class RequestIDMiddleware:
                 # 与 audit_dep 同一处修正）：实际路径带资源 UUID，
                 # /api/v1/encounters/<每个接诊都不同>/workspace 每条都是新值，
                 # 想回答"系统变慢时哪类请求最慢"就没法按 path 聚合——而那正是
-                # 医生报"系统很卡"时的第一步。路由匹配发生在本中间件包裹的 app
-                # 内部，所以 finally 里 scope["route"] 已经就位；取不到就退回
-                # 实际路径（404 等未匹配到路由的请求）。
-                route = scope.get("route")
-                tmpl = getattr(route, "path", None) or path
+                # 医生报"系统很卡"时的第一步。
+                # fastapi 0.141 起 scope["route"] 是**叶子**路由（.path 只剩
+                # /search 这种相对段，前缀在外层 include 上下文里），升级冒烟
+                # 实测 access 日志打出 path=/check-username——聚合维度当场塌掉，
+                # 不同 router 下同名子路径还会互相混淆。改用 route_introspect
+                # 按 endpoint 反查完整模板；查不到（404 未匹配路由等）退回实际
+                # 路径。
+                from app.core.route_introspect import full_template_for
+
+                tmpl = full_template_for(scope) or path
                 # 慢请求额外带上实际路径：聚合看模板，定位到具体那一次看这个
                 _access_logger.log(
                     level,
