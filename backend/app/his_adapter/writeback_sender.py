@@ -353,6 +353,21 @@ async def _send_payload(
                     ok=False, status="refresh_failed",
                     message=f"刷新 HTTP {rresp.status_code}", his_doc_id=his_doc_id,
                 )
+            # 刷新响应同样要解析信封 code（2026-09-10 出站异常面补缝）：
+            # 原实现只看 HTTP 状态——厂商回 200 + {"code":500} 或网关塞回一页
+            # HTML（联调期最常见的畸形响应），都被当成 success：对账不重投，
+            # 我方全绿而 HIS 界面上病历没刷出来，正是"我推了你没显示"这类
+            # 联调争议的来源。写入路径与 WS 通道两步都判 code，唯独这里漏了。
+            rcode, rmsg, _rdata = _envelope_code(rresp)
+            if rcode != 0:
+                logger.error(
+                    "his_writeback.http: 刷新被拒 req=%s doc=%s code=%s msg=%s",
+                    req_id, his_doc_id, rcode, rmsg,
+                )
+                return WritebackResult(
+                    ok=False, status="refresh_failed",
+                    message=f"刷新返回 code={rcode} {rmsg}", his_doc_id=his_doc_id,
+                )
 
         return WritebackResult(ok=True, status="success", his_doc_id=his_doc_id, http_status=200)
     finally:
