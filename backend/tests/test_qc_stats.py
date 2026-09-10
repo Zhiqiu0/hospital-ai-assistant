@@ -38,23 +38,34 @@ def _user(role: str = "qc_officer"):
 @pytest.mark.asyncio
 async def test_summary_latest_only_and_top_rules(async_db):
     """同文书多次评分只算最新一次；扣分条款 Top 从最新报告统计。"""
+    # 相对日期（2026-09-10 同类巡查）：原硬编码 2026-08-20 会在滑出 30 天
+    # 窗口后让本测试无声空转——与 test_archive_proxy_caliber 踩过的同一类
+    # 时间炸弹，统一改成"距今 10 天"
+    base = datetime.now() - timedelta(days=10)
     async_db.add(Department(id="d1", name="骨伤科", code="GS"))
     async_db.add(Patient(id="p1", name="张三", birth_date=date(1970, 1, 1)))
     async_db.add(Encounter(id="e1", patient_id="p1", doctor_id="doc",
                            visit_type="inpatient", status="in_progress",
-                           visited_at=datetime(2026, 8, 20), department_id="d1"))
+                           visited_at=base, department_id="d1"))
     await async_db.flush()
     # 同一文书两次评分：旧 70（含条款X），新 95 甲级（含条款Y）——统计只认新
     async_db.add(QCReport(encounter_id="e1", record_type="admission_note",
                           rubric_key="zj_inpatient_2021", score=70, grade="丙级",
                           passed=False, department_id="d1", doctor_id="doc",
                           deductions=[{"rule_code": "IP-OLD-X", "description": "旧"}],
-                          created_at=datetime(2026, 8, 20, 10, 0)))
+                          created_at=base.replace(hour=10, minute=0)))
     async_db.add(QCReport(encounter_id="e1", record_type="admission_note",
                           rubric_key="zj_inpatient_2021", score=95, grade="甲级",
                           passed=True, department_id="d1", doctor_id="doc",
                           deductions=[{"rule_code": "IP-NEW-Y", "description": "新"}],
-                          created_at=datetime(2026, 8, 20, 12, 0)))
+                          created_at=base.replace(hour=12, minute=0)))
+    # 零规则文书的恒 100 分甲级（日常病程）不得进评分统计——否则产量最大的
+    # 文书类型批量贡献假甲级，科室甲级率与平均分整体失真（第 19 轮回归猎手）
+    async_db.add(QCReport(encounter_id="e1", record_type="course_record",
+                          rubric_key="zj_inpatient_2021", score=100, grade="甲级",
+                          passed=True, department_id="d1", doctor_id="doc",
+                          deductions=[],
+                          created_at=base.replace(hour=13, minute=0)))
     await async_db.commit()
 
     app.dependency_overrides[get_db] = lambda: async_db
@@ -65,7 +76,9 @@ async def test_summary_latest_only_and_top_rules(async_db):
             d = r.json()
         dept = d["dept_stats"][0]
         assert dept["department"] == "骨伤科"
-        assert dept["count"] == 1, "同文书多次评分必须只算最新一次"
+        # count==1 同时锁两件事：多次评分只算最新一次 + course_record 的
+        # 恒 100 分被排除（若混入则 count=2、avg=97.5，两个断言都会红）
+        assert dept["count"] == 1, "同文书只算最新一次，且零规则文书不得进统计"
         assert dept["avg_score"] == 95.0 and dept["grade_a_rate"] == 100.0
         codes = {t["rule_code"] for t in d["top_rules"]}
         assert codes == {"IP-NEW-Y"}, "旧报告的条款不得进 Top 统计"
@@ -106,7 +119,6 @@ async def test_archive_proxy_caliber(async_db):
                                   content=_c, doctor_id="doc")
         # 手动把签发时间放到出院次日（quick_save 用 now）
         _r.submitted_at = _discharged + timedelta(days=1)
-    rec = _r
     await svc.auto_save_draft("pending", "discharge_record", "草稿", "doc")
     await async_db.commit()
 
@@ -147,20 +159,23 @@ async def test_archive_counts_zero_doc_and_missing_required(async_db):
         报警的病例完全免疫。时限已过必须计入分母且判不达标。
     S2：只签出院记录、入院记录与首程一份没建——原实现照样算达标。
     """
+    # 相对日期（2026-09-10 同类巡查）：出院取"距今 50 天"——第 7 个工作日
+    # 截止早已过去，S1/S2 的"超期未齐"判定恒成立，不随日历滑动失效
+    discharged_at = datetime.now() - timedelta(days=50)
     async_db.add(Patient(id="p2", name="李四", birth_date=date(1965, 1, 1)))
     async_db.add(Encounter(id="empty", patient_id="p2", doctor_id="doc",
                            visit_type="inpatient", status="completed",
-                           visited_at=datetime(2026, 7, 1),
-                           completed_at=datetime(2026, 7, 20, 9, 0)))
+                           visited_at=discharged_at - timedelta(days=19),
+                           completed_at=discharged_at))
     async_db.add(Encounter(id="partial", patient_id="p2", doctor_id="doc",
                            visit_type="inpatient", status="completed",
-                           visited_at=datetime(2026, 7, 2),
-                           completed_at=datetime(2026, 7, 21, 9, 0)))
+                           visited_at=discharged_at - timedelta(days=18),
+                           completed_at=discharged_at + timedelta(days=1)))
     await async_db.flush()
     svc = MedicalRecordService(async_db)
     _p = await svc.quick_save(encounter_id="partial", record_type="discharge_record",
                               content="【出院诊断】愈", doctor_id="doc")
-    _p.submitted_at = datetime(2026, 7, 22, 9, 0)
+    _p.submitted_at = discharged_at + timedelta(days=2)
     await async_db.commit()
 
     app.dependency_overrides[get_db] = lambda: async_db
