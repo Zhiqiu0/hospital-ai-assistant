@@ -47,8 +47,13 @@ class QuickStartRequest(BaseModel):
       3. 创建 Encounter 记录，关联患者和当前医生
     """
 
-    # 患者基本信息
-    patient_name: str                      # 患者姓名（必填）
+    # 患者基本信息。
+    # 长度上限与 patients.name 列宽（String(50)）对齐（2026-09-10 边界实测补）：
+    # 原先裸 str，直连 API 传 500 字姓名会穿过校验直插列、DataError 炸 500。
+    # HIS 入站路径早已按同一列宽截断（admit_service），直连这条漏了——
+    # 同一条红线要覆盖所有入口。API 层选拒绝而非截断：这是医生主动录入的
+    # 身份字段，静默截掉会造出错名字的档案。
+    patient_name: str = Field(min_length=1, max_length=50)  # 患者姓名（必填）
     gender: Optional[str] = "unknown"     # 性别："男"/"女"/"unknown"
     # 出生日期（YYYY-MM-DD）；前端展示年龄时用 dayjs().diff(birth_date, 'year') 计算，
     # 不再接受 age 字段，避免推算导致出生日期被劣化为"当年 1 月 1 日"。
