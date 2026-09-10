@@ -18,6 +18,7 @@ import { useState, useEffect } from 'react'
 import { App, Layout, Button, Empty } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/store/authStore'
+import { useRecordStore } from '@/store/recordStore'
 import {
   useActiveEncounterStore,
   useCurrentPatient,
@@ -100,6 +101,24 @@ export default function InpatientWorkbenchPage() {
   const [imagingOpen, setImagingOpen] = useState(false)
   // 时间轴选中项（null = 默认显示 RecordEditor；progress_note = 切到 ProgressNotePanel）
   const [selectedNote, setSelectedNote] = useState<TimelineItem | null>(null)
+
+  // 时间轴选中/新建 → 中央编辑区跟着切文书（2026-09-10 开业前全流程实测抓漏）。
+  //
+  // 2026-08-14 统一文书模型后，时间轴条目的 type 全部是 'medical_record'，
+  // 而下面 renderCenterEditor 只认旧的 'progress_note' 才切面板——于是
+  // 「+日常病程」建完文书、点时间轴条目，中央编辑区都**纹丝不动**，医生
+  // 以为在写病程，敲的字全部落进编辑区当时停留的文书（实测落进了入院
+  // 记录）。写错文书是"串型"级事故面。
+  // 修法：medical_record 条目走与工具条类型下拉**同一条** setRecordType
+  // 路径（本地暂存/恢复 + useDraftByTypeLoader 拉服务端草稿 + 按新文书
+  // 真实状态重置签发锁），不另造第二套切换逻辑。
+  const handleTimelineSelect = (item: TimelineItem | null) => {
+    setSelectedNote(item)
+    if (item && item.type === 'medical_record' && item.noteType) {
+      const store = useRecordStore.getState()
+      if (store.recordType !== item.noteType) store.setRecordType(item.noteType)
+    }
+  }
   // 外部触发时间轴刷新（签发/保存后 +1）
   const [timelineRefresh, setTimelineRefresh] = useState(0)
   // 外部触发病区列表刷新（出院 / 新建接诊后 +1）
@@ -253,7 +272,7 @@ export default function InpatientWorkbenchPage() {
               <ErrorBoundary label="右侧面板" compact>
                 <InpatientRightPanel
                   selectedNote={selectedNote}
-                  setSelectedNote={setSelectedNote}
+                  setSelectedNote={handleTimelineSelect}
                   timelineRefresh={timelineRefresh}
                   setTimelineRefresh={setTimelineRefresh}
                 />
