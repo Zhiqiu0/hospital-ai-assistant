@@ -142,12 +142,25 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
           style={{ marginBottom: 4 }}
         />
       ) : qcPass === true || (qcIssues.length === 0 && qcPass !== null) ? (
-        <Alert
-          type="success"
-          showIcon
-          message="病历质控通过，可以签发"
-          style={{ marginBottom: 4 }}
-        />
+        gradeScore?.rules_covered === false ? (
+          // 零规则类型（日常病程/上级查房，2026-09-10 第 19 轮回归猎手）：
+          // "质控通过"的措辞会让医生把恒 100 分当成检查结论——签发弹窗
+          // 与质控面板/toast 同口径披露，可签发但不背书
+          <Alert
+            type="warning"
+            showIcon
+            message="该文书类型的结构化质控规则暂未覆盖，评分仅供参考"
+            description="可以签发，但请按科室书写规范自查内容。"
+            style={{ marginBottom: 4 }}
+          />
+        ) : (
+          <Alert
+            type="success"
+            showIcon
+            message="病历质控通过，可以签发"
+            style={{ marginBottom: 4 }}
+          />
+        )
       ) : (
         <Alert
           type="info"

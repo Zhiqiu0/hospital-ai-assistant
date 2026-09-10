@@ -40,13 +40,24 @@ async def _collect_summary(db: AsyncSession, days: int) -> dict:
     # ── 评分：每 (encounter, record_type) 最新一次 ──────────────────
     # 用 group-by max(created_at) 再 join 的通用写法（PG 的 DISTINCT ON 在
     # 测试用 SQLite 下会退化为全行去重，口径悄悄失真——踩过当场改掉）
+    # 零规则文书类型不计入评分统计（2026-09-10 第 19 轮回归猎手）：
+    # 日常病程/上级查房的规则引擎 deduction_rules 为空，评分恒 100 分甲级
+    # （"没有规则可扣"而非"检查通过"，医生端已披露"仅供参考"）。日常病程是
+    # 住院期间产量最大的文书——这些无信息满分若进统计，会把科室平均分和
+    # 甲级率整体抬成假高，月度通报失真。落库照旧（留审计痕迹），统计排除。
+    # 类型清单与披露共用 _ZERO_RULE_RECORD_TYPES 单一来源，实装规则后自动回归。
+    from app.services.ai._qc_rubric import _ZERO_RULE_RECORD_TYPES
+
     latest_at = (
         select(
             QCReport.encounter_id.label("enc"),
             QCReport.record_type.label("rt"),
             func.max(QCReport.created_at).label("mx"),
         )
-        .where(QCReport.created_at >= since)
+        .where(
+            QCReport.created_at >= since,
+            QCReport.record_type.not_in(_ZERO_RULE_RECORD_TYPES),
+        )
         .group_by(QCReport.encounter_id, QCReport.record_type)
         .subquery()
     )
