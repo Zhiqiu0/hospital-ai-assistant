@@ -13,6 +13,32 @@
  */
 import { Form, Input, Tooltip } from 'antd'
 
+/**
+ * 全角数字/小数点/正负号 → 半角（2026-09-10 第 18 轮编码边界审计前端侧）。
+ *
+ * 后端保存问诊时已做同口径归一（vital_limits.normalize_vital_text），但
+ * AI 生成/质控请求带的是**表单原值**——医生中文输入法全角态敲的 ３６．５
+ * 会原样进 prompt 与病历正文（实测生成出 "T:[未测]" 或全角串）。在
+ * Form.Item 的 normalize 钩子归一，表单值源头就是半角，所有下游一次修好。
+ */
+const FULLWIDTH_MAP: Record<string, string> = {
+  '０': '0',
+  '１': '1',
+  '２': '2',
+  '３': '3',
+  '４': '4',
+  '５': '5',
+  '６': '6',
+  '７': '7',
+  '８': '8',
+  '９': '9',
+  '．': '.',
+  '＋': '+',
+  '－': '-',
+}
+const normalizeVital = (v?: string) =>
+  (v || '').replace(/[０-９．＋－]/g, ch => FULLWIDTH_MAP[ch] ?? ch)
+
 const inputStyle: React.CSSProperties = {
   borderRadius: 5,
   fontSize: 12,
@@ -44,7 +70,7 @@ export default function VitalSignsInput() {
         <Tooltip title="体温 ℃">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>T</span>
-            <Form.Item style={fieldStyle} name="temperature">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="temperature">
               <Input placeholder="36.5" style={{ ...inputStyle, width: 52 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>℃</span>
@@ -54,7 +80,7 @@ export default function VitalSignsInput() {
         <Tooltip title="脉搏 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>P</span>
-            <Form.Item style={fieldStyle} name="pulse">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="pulse">
               <Input placeholder="72" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>次/分</span>
@@ -64,7 +90,7 @@ export default function VitalSignsInput() {
         <Tooltip title="呼吸 次/分">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>R</span>
-            <Form.Item style={fieldStyle} name="respiration">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="respiration">
               <Input placeholder="18" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>次/分</span>
@@ -74,11 +100,11 @@ export default function VitalSignsInput() {
         <Tooltip title="血压 mmHg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>BP</span>
-            <Form.Item style={fieldStyle} name="bp_systolic">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="bp_systolic">
               <Input placeholder="120" style={{ ...inputStyle, width: 44 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>/</span>
-            <Form.Item style={fieldStyle} name="bp_diastolic">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="bp_diastolic">
               <Input placeholder="80" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>mmHg</span>
@@ -88,7 +114,7 @@ export default function VitalSignsInput() {
         <Tooltip title="血氧饱和度 %">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>SpO₂</span>
-            <Form.Item style={fieldStyle} name="spo2">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="spo2">
               <Input placeholder="98" style={{ ...inputStyle, width: 40 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>%</span>
@@ -101,7 +127,7 @@ export default function VitalSignsInput() {
         <Tooltip title="身高 cm">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>身高</span>
-            <Form.Item style={fieldStyle} name="height">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="height">
               <Input placeholder="170" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>cm</span>
@@ -111,7 +137,7 @@ export default function VitalSignsInput() {
         <Tooltip title="体重 kg">
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>体重</span>
-            <Form.Item style={fieldStyle} name="weight">
+            <Form.Item style={fieldStyle} normalize={normalizeVital} name="weight">
               <Input placeholder="65" style={{ ...inputStyle, width: 46 }} />
             </Form.Item>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>kg</span>
