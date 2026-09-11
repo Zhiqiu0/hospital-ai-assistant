@@ -23,7 +23,10 @@ from app.services.redis_cache import redis_cache
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 6 * 3600   # 每 6 小时查一次（余额变化慢，够用且不扰民）
-WARN_THRESHOLD_CNY = 100.0          # 低于此值告警：按现价约 1300 次接诊的余量
+# 低于此值告警。2026-09-11 由 100 下调至 20：运营策略定为小额充值（单次 50
+# 元、按效果续充），阈值 100 会让告警在充值后立刻复响、天天刷屏——告警刷
+# 屏比不响更危险（真没钱时没人看）。20 元 ≈ 260 次接诊余量，足够反应时间。
+WARN_THRESHOLD_CNY = 20.0
 BALANCE_URL = "https://api.deepseek.com/user/balance"
 # 多 worker 单实例锁的键（见 balance_monitor_loop 里的说明）
 _MONITOR_LOCK_KEY = "ai:balance:monitor:lock"
