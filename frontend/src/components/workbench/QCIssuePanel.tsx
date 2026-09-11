@@ -245,8 +245,14 @@ export default function QCIssuePanel() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {blockingIssues.length > 0 && (
           <>
-            <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
-              ▍必须修复（共 {blockingIssues.length} 项，修复后重新质控即可出具病历）
+            {/* 口径与实现对齐（2026-09-11 补测抓漏）：签发闸门是"达到合格线
+                （≥90 分）"而非"规则项清零"——93 分带 2 条规则扣分项时签发按钮
+                本来就是可点的，此前标题恒写"必须修复…才可出具"名不副实。
+                pass=true 时改称"规则扣分项"，说清可出具但修复能提分。 */}
+            <Text style={{ fontSize: 11, color: qcPass ? '#b45309' : '#dc2626', fontWeight: 600 }}>
+              {qcPass
+                ? `▍规则扣分项（共 ${blockingIssues.length} 项，已达合格线可出具；修复后重新质控可提分）`
+                : `▍必须修复（共 ${blockingIssues.length} 项，修复后重新质控即可出具病历）`}
             </Text>
             {/* A 方案：score_report 在 → 按 PDF 大项分组；缺 → 退到平铺旧 UI */}
             {groupedBlocking
