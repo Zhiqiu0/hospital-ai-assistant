@@ -129,38 +129,3 @@ export const typography = {
 } as const
 
 // ── 动效 ──────────────────────────────────────────────────────────────────────
-export const motion = {
-  fast: '120ms',
-  base: '180ms',
-  slow: '280ms',
-  ease: 'cubic-bezier(0.4, 0, 0.2, 1)',
-} as const
-
-// ── 层级 ──────────────────────────────────────────────────────────────────────
-export const zIndex = {
-  base: 1,
-  dropdown: 10,
-  sticky: 20,
-  fixed: 30,
-  modal: 50,
-  popover: 60,
-  toast: 70,
-} as const
-
-// ── 组件尺寸 ──────────────────────────────────────────────────────────────────
-export const sizing = {
-  headerHeight: 58,
-  statusBarHeight: 28,
-  sidebarWidth: 64,
-  sidebarExpandedWidth: 200,
-  panelWidth: 320,
-  touchTarget: 44, // 无障碍最小触控区域
-} as const
-
-// ── 便捷帮助函数 ──────────────────────────────────────────────────────────────
-/** 根据场景获取完整主题色集 */
-export const getScene = (key: SceneKey) => scenes[key]
-
-/** 生成 rgba 阴影，用于按钮 hover */
-export const sceneShadow = (key: SceneKey, opacity = 0.35) =>
-  `0 4px 12px rgba(${scenes[key].shadowRgba}, ${opacity})`

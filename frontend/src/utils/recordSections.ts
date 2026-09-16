@@ -12,26 +12,6 @@
  */
 
 /**
- * 提取病历所有章节，返回 Map<标题, 完整段落文本>。
- * 标题形如 `【主诉】`，段落到下一个 `【` 或文末为止。
- */
-export function extractSections(text: string): Map<string, string> {
-  const map = new Map<string, string>()
-  const pattern = /【[^】]+】/g
-  const matches: Array<{ header: string; index: number }> = []
-  let m: RegExpExecArray | null
-  while ((m = pattern.exec(text)) !== null) {
-    matches.push({ header: m[0], index: m.index })
-  }
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index
-    const end = i + 1 < matches.length ? matches[i + 1].index : text.length
-    map.set(matches[i].header, text.slice(start, end).trimEnd())
-  }
-  return map
-}
-
-/**
  * 把生成的病历内容按章节反解为 inquiry 字段字典。
  *
  * 注意：
@@ -87,28 +67,4 @@ export function parseGeneratedSectionsToInquiry(content: string): Record<string,
     }
   }
   return result
-}
-
-/**
- * 章节守卫：对比 original 和 polished，找出被误删的章节并补回到末尾。
- *
- * Returns:
- *   { restored: 还原后的文本; missing: 被误删的章节标题列表 }
- *   missing 为空表示润色完整，无需提示用户
- */
-export function restoreMissingSections(
-  original: string,
-  polished: string
-): { restored: string; missing: string[] } {
-  const originalSections = extractSections(original)
-  const polishedSections = extractSections(polished)
-  const missing: string[] = []
-  let restored = polished
-  for (const [header, sectionText] of originalSections) {
-    if (!polishedSections.has(header)) {
-      missing.push(header)
-      restored = restored.trimEnd() + '\n\n' + sectionText
-    }
-  }
-  return { restored, missing }
 }

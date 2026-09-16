@@ -13,7 +13,7 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | React 19 + Ant Design 5 + TypeScript |
+| 前端 | React 18 + Ant Design 5 + TypeScript |
 | 后端 | Python 3.11 + FastAPI |
 | 数据库 | PostgreSQL 16 |
 | 缓存 | Redis 7（PACS 缩略图缓存 + HIS 联动跨进程事件总线，多 worker 部署下核心依赖） |

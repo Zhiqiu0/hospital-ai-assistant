@@ -18,16 +18,14 @@ import { SearchOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
 import { genderCode, genderText } from '@/utils/gender'
+// 文书类型标签统一用 recordExport 的完整表（2026-09-16 终检收口）：
+// 本地手抄表只有 3 类，日常病程/急诊等 7 类在管理端列表里直接裸显英文键
+// （course_record）。那份表有契约测试锁着"与后端枚举一一对应"，跟着它走。
+import { RECORD_TYPE_LABEL } from '@/utils/recordExport'
 
 const { TextArea } = Input
 
 const { Title, Text } = Typography
-
-const RECORD_TYPE_LABEL: Record<string, string> = {
-  outpatient: '门诊病历',
-  admission_note: '入院记录',
-  first_course_record: '首次病程',
-}
 
 /** 病历列表行——后端 /admin/records 把 patient/doctor/department JOIN 后扁平返回。
  *  2026-05-16 加：病案首页所需字段（patient_snapshot 优先 + 当前 patient 字段做 fallback）。
