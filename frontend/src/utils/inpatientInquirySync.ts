@@ -8,30 +8,6 @@
  * Audit Round 4 M6 拆分。
  */
 
-/**
- * 住院"本次接诊"字段集合（不含 PatientProfile 纵向 8 字段：
- * past/allergy/personal/marital/family/menstrual/current_medications/religion_belief
- * — 这些已迁到 PatientProfileCard 单独 PUT /patients/:id/profile）。
- */
-export const INPATIENT_INQUIRY_KEYS = [
-  'chief_complaint',
-  'history_present_illness',
-  'physical_exam',
-  'history_informant',
-  'rehabilitation_assessment',
-  'pain_assessment',
-  'vte_risk',
-  'nutrition_assessment',
-  'psychology_assessment',
-  'auxiliary_exam',
-  'admission_diagnosis',
-  'initial_impression',
-  // 中医病/证文本（2026-08-21 阶段1b：入院诊断结构化后表单直填这两项，
-  // admission_diagnosis 改由诊断条目投影合成）
-  'tcm_disease_diagnosis',
-  'tcm_syndrome_diagnosis',
-] as const
-
 /** 写入病历同步时关心的字段集合（用于"本次哪些字段改了"对比）。 */
 export const INPATIENT_CHANGE_TRACK_KEYS: ReadonlyArray<keyof InpatientInquiryData> = [
   'chief_complaint',
