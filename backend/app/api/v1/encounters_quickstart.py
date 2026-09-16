@@ -45,10 +45,15 @@ async def quick_start_encounter(
     """快速开始接诊：创建患者（如已存在则复用）并创建接诊记录。"""
     # 幂等锁：防止用户双击「开始接诊」时建出两条 encounter / 两条 patient。
     # 锁 key 选择：优先 patient_id，其次身份证号，再次姓名（最弱，但有总比没有强）。
-    # ttl 5s 够走完整个 quick-start 流程；崩溃也会自动释放。
+    # ttl 30s（2026-09-16 由 5s 调大）：流程含查重/弱键候选/档案/审计多次
+    # 落库，高负载长尾下 5s 会在流程走完前过期，双击的第二发趁隙进来——
+    # 30s 覆盖最坏长尾，崩溃场景也仍会自动释放。
+    # fail_open=True 是有意识的可用性取舍（第 17 轮并发审计评估过）：Redis
+    # 故障时宁可失去双击防线也不能让全院建不了档；偶发重复接诊可取消，
+    # 建档不可用是事故。
     lock_id = data.patient_id or data.id_card or data.patient_name or "anon"
     lock_key = f"lock:quickstart:{current_user.id}:{lock_id}"
-    lock_token = await redis_cache.acquire_lock(lock_key, ttl=5)
+    lock_token = await redis_cache.acquire_lock(lock_key, ttl=30)
     if lock_token is None:
         raise HTTPException(status_code=409, detail="操作过于频繁，请稍候再试")
 
