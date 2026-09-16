@@ -71,8 +71,21 @@ async def create_encounter(
     if patient is None or patient.is_deleted:
         raise HTTPException(status_code=404, detail="患者不存在")
 
-    service = EncounterService(db)
-    return await service.create(data, current_user.id)
+    # 双击幂等锁（2026-09-16，第 17 轮并发审计发现 #3 收尾）：本端点与
+    # quick-start 做同一件事，quick-start 有 Redis 锁 + 续接双保险，这里
+    # 原先两样都没有——双击/网络重试会建出两条 in_progress 接诊。同款锁
+    # 补齐（同一医生对同一患者 30s 内只放行一次创建）；fail_open 取舍
+    # 同 quick-start 注释。
+    from app.services.redis_cache import redis_cache
+    lock_key = f"lock:enc-create:{current_user.id}:{data.patient_id}"
+    lock_token = await redis_cache.acquire_lock(lock_key, ttl=30)
+    if lock_token is None:
+        raise HTTPException(status_code=409, detail="操作过于频繁，请稍候再试")
+    try:
+        service = EncounterService(db)
+        return await service.create(data, current_user.id)
+    finally:
+        await redis_cache.release_lock(lock_key, lock_token)
 
 
 router.include_router(encounters_quickstart.router)
