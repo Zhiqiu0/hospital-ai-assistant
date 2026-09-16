@@ -37,14 +37,14 @@ _INPATIENT_RECORD_TYPES = frozenset({
 })
 
 
-# 结构化规则零覆盖的 record_type（2026-09-10 收敛轮审计）：
-# 住院 rubric 的"日常病程 18 分""上级医师查房 5 分"两个大项 deduction_rules
-# 至今为空（浙江省 PDF 有要求，checker 尚未实装）——这两类文书跑质控必然
-# "零扣分 = 100 分"，前端会显示"质控通过（100 分 甲级）"，给医生虚假背书。
-# 在实装规则之前，必须把"评分仅供参考"披露给医生，而不是让满分冒充质控通过。
+# 结构化规则零覆盖的 record_type（2026-09-10 收敛轮审计引入披露机制）。
+# 2026-09-16 清空：日常病程/上级查房的客观条款已实装（内容空洞/间隔超时/
+# 查房太简单，见 _inpatient_checkers_course），两类文书移出零覆盖集合——
+# 披露横幅消失、评分进看板统计。机制保留：将来新增文书类型未实装规则时
+# 放进来即可，前端/统计/摘要三处披露自动生效。
 # 一致性由 tests/test_qc_rule_coverage.py 的空病历探针守着：某类型实装了规则
 # 而没从这里移除（或反之），测试当场红。
-_ZERO_RULE_RECORD_TYPES = frozenset({"course_record", "senior_round"})
+_ZERO_RULE_RECORD_TYPES: frozenset[str] = frozenset()
 
 
 def has_rule_coverage(record_type: str | None) -> bool:

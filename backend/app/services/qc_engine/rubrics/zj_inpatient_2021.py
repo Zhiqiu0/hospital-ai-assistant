@@ -25,6 +25,11 @@ from __future__ import annotations
 
 from app.services.qc_engine import _inpatient_checkers as ic
 from app.services.qc_engine import _inpatient_checkers_frontpage as fp
+from app.services.qc_engine._inpatient_checkers_course import (
+    _course_gap_exceeded,
+    _course_too_brief,
+    _senior_round_too_brief,
+)
 from app.services.qc_engine.rubric import (
     DeductionRule,
     GradeThreshold,
@@ -355,21 +360,45 @@ _FIRST_COURSE_RECORD = RubricItem(
 _SENIOR_ROUND = RubricItem(
     name="上级医师查房记录",
     max_points=5,
-    description="主治以上首次查房 48 小时内完成；副高每周 2 次；危重必查（本系统暂不评分）",
-    deduction_rules=(),  # TODO: 接入审计日志后实装时限/签名 veto
+    description="主治以上首次查房 48 小时内完成；副高每周 2 次；危重必查；记录内容具体规范",
+    deduction_rules=(
+        # 2026-09-16 实装（判据与从宽边界见 _inpatient_checkers_course 头注）。
+        # 时限/职称/签名类仍需审计层数据，见上方说明——不硬造误报规则。
+        DeductionRule(
+            code="IP-SENIOR-01",
+            description="查房记录内容太简单",
+            deduct_points=1,
+            checker=_senior_round_too_brief,
+        ),
+    ),
 )
 
 
-# ─── 12. 日常病程记录（18 分）— 暂留占位 ────────────────────
-# PDF 18 分含 12 条扣分点 + 多条单项否决，绝大多数需要审计层数据
-# （时限/签名/医嘱/抢救/输血等）或合理性判断（LLM 才能判）。
-# 文本能判定的"日常病程记录章节存在性"语义太弱（即使存在也不一定按规要求），
-# 暂全留空，待审计层接入后再补。
+# ─── 12. 日常病程记录（18 分） ────────────────────────────────
+# 2026-09-16 实装两条客观零误报条款（此前全空靠"仅供参考"披露兜底）：
+#   · 内容空洞（罚则 2「未按规定常规记录病程扣 2 分/处」口径）
+#   · 记录间隔超 3 天（条款 2 最宽档"病情稳定至少每 3 天 1 次"——任何
+#     病情等级下超过它都违规，天然零误报；时间线由 service 层预取）
+# 仍需人工/后续数据源的：诊疗合理性与抗菌药物（主观/LLM 越权不评）、
+# 抢救/输血/危急值（需医嘱与检验系统）、病危病重频次细档（待病情等级口径）。
 _COURSE_RECORD = RubricItem(
     name="日常病程记录",
     max_points=18,
-    description="病程书写规范/抗菌药物/抢救记录/危急值/输血等（本系统暂不评分）",
-    deduction_rules=(),  # TODO: 接入审计 + LLM 合理性判断后实装
+    description="按规定频次书写；记录病情观察与处理；抗菌药物/抢救/危急值等条款需人工检查",
+    deduction_rules=(
+        DeductionRule(
+            code="IP-COURSE-01",
+            description="病程记录内容过于简单（未记录病情观察与处理）",
+            deduct_points=2,
+            checker=_course_too_brief,
+        ),
+        DeductionRule(
+            code="IP-COURSE-02",
+            description="病程记录间隔超过 3 天（病情稳定亦应至少每 3 天 1 次）",
+            deduct_points=2,
+            checker=_course_gap_exceeded,
+        ),
+    ),
 )
 
 

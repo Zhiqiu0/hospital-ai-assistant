@@ -18,7 +18,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.encounter import Diagnosis, Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.patient import Patient
-from app.services.qc_engine.checker import FrontPageData
+from app.services.qc_engine.checker import CourseTimeline, FrontPageData
+
+# 计入病程连续性的文书类型（PDF：查房记录亦属病程记录，可承接连续性）
+_COURSE_TIMELINE_TYPES = ("first_course_record", "course_record", "senior_round")
+
+
+async def load_course_timeline(db: AsyncSession, encounter_id: str | None) -> CourseTimeline:
+    """预取病程时间线（2026-09-16 日常病程间隔规则的数据源）。
+
+    与 load_front_page 同一模式：无 encounter 上下文返回未加载态（间隔规则
+    全跳过，宁漏不误）。时点取 recorded_at（临床时点，补记场景与录入时间
+    不同），缺失回落 created_at。
+    """
+    if not encounter_id:
+        return CourseTimeline()
+    rows = (await db.execute(
+        select(MedicalRecord.recorded_at, MedicalRecord.created_at)
+        .where(
+            MedicalRecord.encounter_id == encounter_id,
+            MedicalRecord.record_type.in_(_COURSE_TIMELINE_TYPES),
+        )
+    )).all()
+    ats = sorted(rec or created for rec, created in rows if (rec or created))
+    return CourseTimeline(recorded_ats=tuple(ats), loaded=True)
 
 logger = logging.getLogger(__name__)
 

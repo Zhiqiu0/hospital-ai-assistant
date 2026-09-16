@@ -33,7 +33,11 @@ from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.prompts import QC_PROMPT, RECORD_TYPE_LABELS
 from app.services.ai.task_logger import log_ai_task, save_qc_issues, save_qc_report
-from app.services.ai._qc_frontpage import check_diagnosis_hints, load_front_page
+from app.services.ai._qc_frontpage import (
+    check_diagnosis_hints,
+    load_course_timeline,
+    load_front_page,
+)
 from app.services.qc_engine.checker import build_context
 from app.services.qc_engine.scorer import score
 from app.services.rule_engine.insurance_rules import check_insurance_risk
@@ -83,6 +87,13 @@ async def run_quick_qc_stream(
     # 病案首页结构化数据预取（2026-08-21 阶段3）：法定"病案首页 10 分"的数据源；
     # 无 encounter 上下文时返回未加载态，首页规则整体跳过
     front_page = await load_front_page(db, req.encounter_id)
+    # 病程时间线（2026-09-16）：日常病程间隔规则的数据源。仅病程类文书预取，
+    # 其余类型保持未加载态（间隔规则自会跳过），不给门急诊质控加无谓查询
+    course_timeline = (
+        await load_course_timeline(db, req.encounter_id)
+        if req.record_type in ("course_record", "senior_round", "first_course_record")
+        else None
+    )
     ctx = build_context(
         req.content,
         record_type=req.record_type or "outpatient",
@@ -93,6 +104,7 @@ async def run_quick_qc_stream(
         patient_age=req.patient_age or "",
         inquiry=extract_inquiry_dict(req),
         front_page=front_page,
+        course_timeline=course_timeline,
     )
 
     # 并行启动 LLM 质量建议（输出 issues[] 列表；不参与总分）。
