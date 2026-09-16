@@ -59,12 +59,12 @@ async def test_summary_latest_only_and_top_rules(async_db):
                           passed=True, department_id="d1", doctor_id="doc",
                           deductions=[{"rule_code": "IP-NEW-Y", "description": "新"}],
                           created_at=base.replace(hour=12, minute=0)))
-    # 零规则文书的恒 100 分甲级（日常病程）不得进评分统计——否则产量最大的
-    # 文书类型批量贡献假甲级，科室甲级率与平均分整体失真（第 19 轮回归猎手）
+    # 日常病程评分（2026-09-16 规则实装后）正常计入统计——第 19 轮加的
+    # "零规则排除"对已实装类型自动失效；排除机制本身另有 monkeypatch 测试守着
     async_db.add(QCReport(encounter_id="e1", record_type="course_record",
-                          rubric_key="zj_inpatient_2021", score=100, grade="甲级",
+                          rubric_key="zj_inpatient_2021", score=98, grade="甲级",
                           passed=True, department_id="d1", doctor_id="doc",
-                          deductions=[],
+                          deductions=[{"rule_code": "IP-COURSE-01", "description": "过简"}],
                           created_at=base.replace(hour=13, minute=0)))
     await async_db.commit()
 
@@ -76,12 +76,11 @@ async def test_summary_latest_only_and_top_rules(async_db):
             d = r.json()
         dept = d["dept_stats"][0]
         assert dept["department"] == "骨伤科"
-        # count==1 同时锁两件事：多次评分只算最新一次 + course_record 的
-        # 恒 100 分被排除（若混入则 count=2、avg=97.5，两个断言都会红）
-        assert dept["count"] == 1, "同文书只算最新一次，且零规则文书不得进统计"
-        assert dept["avg_score"] == 95.0 and dept["grade_a_rate"] == 100.0
+        # 同文书多次评分只算最新一次；病程评分（已实装规则）正常计入
+        assert dept["count"] == 2, "admission_note 最新一次 + course_record 各一"
+        assert dept["avg_score"] == 96.5  # (95 + 98) / 2
         codes = {t["rule_code"] for t in d["top_rules"]}
-        assert codes == {"IP-NEW-Y"}, "旧报告的条款不得进 Top 统计"
+        assert codes == {"IP-NEW-Y", "IP-COURSE-01"}, "旧报告的条款不得进 Top 统计"
     finally:
         app.dependency_overrides.clear()
 
@@ -186,5 +185,36 @@ async def test_archive_counts_zero_doc_and_missing_required(async_db):
             ap = r.json()["archive_proxy"]
         assert ap["total"] >= 2, f"零文书/缺件的出院病历必须进分母：{ap}"
         assert ap["ok"] == 0, f"零文书与缺必需件都不该算达标：{ap}"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_零覆盖类型排除机制仍然生效(async_db, monkeypatch):
+    """机制回归锁（第 19 轮引入）：将来新增未实装规则的文书类型时，其恒满分
+    不得进评分统计。集合现已清空，monkeypatch 造一个"未实装类型"验证。"""
+    from app.services.ai import _qc_rubric
+    monkeypatch.setattr(_qc_rubric, "_ZERO_RULE_RECORD_TYPES",
+                        frozenset({"future_note"}))
+    base = datetime.now() - timedelta(days=5)
+    async_db.add(Patient(id="p9", name="排除机制", birth_date=date(1980, 1, 1)))
+    async_db.add(Encounter(id="e9", patient_id="p9", doctor_id="doc",
+                           visit_type="inpatient", status="in_progress",
+                           visited_at=base))
+    await async_db.flush()
+    async_db.add(QCReport(encounter_id="e9", record_type="future_note",
+                          rubric_key="zj_inpatient_2021", score=100, grade="甲级",
+                          passed=True, doctor_id="doc", deductions=[],
+                          created_at=base))
+    await async_db.commit()
+
+    app.dependency_overrides[get_db] = lambda: async_db
+    app.dependency_overrides[get_current_user] = lambda: _user()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+            r = await ac.get("/api/v1/qc/stats/summary?days=30")
+            d = r.json()
+        counted = sum(x["count"] for x in d["dept_stats"])
+        assert counted == 0, f"未实装类型的恒满分混进了统计：{d['dept_stats']}"
     finally:
         app.dependency_overrides.clear()

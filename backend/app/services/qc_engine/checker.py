@@ -146,6 +146,25 @@ class FrontPageData:
     loaded: bool = False
 
 
+@dataclass(frozen=True)
+class CourseTimeline:
+    """病程时间线（2026-09-16 日常病程/上级查房规则实装的数据源）。
+
+    与 FrontPageData 同一预取模式：service 层按 encounter_id 预取该接诊全部
+    病程类文书（首程/日常病程/上级查房）的临床记录时点，checker 保持同步
+    纯函数。未预取（loaded=False，如纯文本调用方/无 encounter 上下文）时
+    间隔类规则一律跳过——宁漏不误。
+
+    Attributes:
+        recorded_ats: 病程类文书的记录时点（datetime，升序）。取 recorded_at
+                      （临床时点，补记场景与录入时间不同），缺失回落 created_at。
+        loaded:       是否已预取。
+    """
+
+    recorded_ats: tuple = ()
+    loaded: bool = False
+
+
 # 明确专属中医的**治疗手段**关键词（has_tcm_treatment 用）。
 #
 # 两条选词纪律，都是被实际误判教出来的：
@@ -185,6 +204,8 @@ class RecordContext:
     inquiry: dict[str, str] = field(default_factory=dict)
     # 病案首页结构化数据（2026-08-21 阶段3；未预取时 loaded=False 首页规则跳过）
     front_page: FrontPageData = field(default_factory=FrontPageData)
+    # 病程时间线（2026-09-16；未预取时 loaded=False 间隔规则跳过）
+    course_timeline: CourseTimeline = field(default_factory=CourseTimeline)
 
     def section(self, name: str) -> Section:
         """取章节——缺失时返回空 Section，避免规则代码写 None 判断。
@@ -268,6 +289,7 @@ def build_context(
     patient_age: str = "",
     inquiry: Optional[dict[str, str]] = None,
     front_page: Optional[FrontPageData] = None,
+    course_timeline: Optional[CourseTimeline] = None,
 ) -> RecordContext:
     """从病历正文 + 元数据构造 RecordContext。
 
@@ -288,4 +310,5 @@ def build_context(
         ),
         inquiry=inquiry or {},
         front_page=front_page or FrontPageData(),
+        course_timeline=course_timeline or CourseTimeline(),
     )
