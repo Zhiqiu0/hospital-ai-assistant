@@ -248,6 +248,10 @@ services:
       # 其余 location，全站不受影响。部署前仍需确认这两个路径已在宿主机就位。
       - /home/ubuntu/ops/oncall/out:/usr/share/nginx/ops:ro
       - /home/ubuntu/ops/oncall/.htpasswd:/etc/nginx/.htpasswd:ro
+      # 公开分享页（2026-09-20）：对外演示静态页目录，只读挂载，对应 nginx
+      # /pages/ 块。目录缺失时 docker 同样建空目录顶替，/pages/ 返回 403，
+      # 不影响其余 location；部署前确认宿主机已 mkdir /home/ubuntu/pages。
+      - /home/ubuntu/pages:/usr/share/nginx/pages:ro
 
 volumes:
   postgres_data:
