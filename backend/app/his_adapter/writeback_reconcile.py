@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+from app.his_adapter.ws_manager import his_ws_manager
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord
 
@@ -204,6 +206,27 @@ async def reconcile_once(deadline: float | None = None) -> int:
             )
             async with AsyncSessionLocal() as db:
                 await _mark_reconcile(db, enc.id, key, exhausted=True)
+            continue
+        # 跨 worker 盲区修复（2026-09-23 复检彩排实锤）：reconcile 此前一律
+        # 本地直调 send_writeback，而 ws_manager 是**进程内**注册表——生产
+        # --workers 2 时厂商连接与对账锁各有 50% 概率落在不同进程，异
+        # 进程时重投永远 skipped，步骤单承诺的"5 分钟内自动补投"不成立
+        # （此前三轮彩排全过纯属连接与锁同进程的运气；本轮 p=20 对账
+        # p=21 连接，340s 两轮全 skipped 才现形）。签发钩子 8-11 就有的
+        # 广播+抢占通道，对账这条路漏接了。
+        # 本进程无连接且无 HTTP 回落地址时改走 dispatch 广播：先 +1 计数
+        # 保 exhausted 语义（执行成功时 sender 落库会清零计数）。
+        if not his_ws_manager.has_connection() and not settings.his_writeback_url:
+            from app.his_adapter.writeback_dispatch import dispatch_writeback
+            async with AsyncSessionLocal() as db:
+                await _mark_reconcile(db, enc.id, key, exhausted=False)
+            await dispatch_writeback(
+                enc.id, str(enc.doctor_id or ""), enc.visit_no or "",
+                record_id=rec.id,
+            )
+            processed += 1
+            logger.info("his_wb.reconcile: 本进程无连接，重投已广播跨 worker 执行 "
+                        "encounter=%s record=%s", enc.id, key)
             continue
         # 重投：send_writeback 会重新落库 writeback.status
         try:

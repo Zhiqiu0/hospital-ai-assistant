@@ -111,3 +111,43 @@ async def test_真失败达上限_照旧标exhausted停止重投(async_db, monke
     e = _entry(enc)
     assert e.get("reconcile_exhausted") is True or e.get("status") == "exhausted" or e.get("exhausted"), (
         f"真失败达上限必须标耗尽停手，实际 {e}")
+
+
+@pytest.mark.asyncio
+async def test_本进程无连接_重投改走跨worker广播且预计数(async_db, monkeypatch):
+    """跨 worker 盲区回归锁（2026-09-23 复检彩排实锤）。
+
+    生产 --workers 2：厂商 WS 连接与对账锁各自随机落进程，异进程时旧实现
+    本地直调 send_writeback 恒得 skipped——"5 分钟内自动补投"承诺失效。
+    修复语义：本进程无连接且未配 HTTP 回落地址 → ①先 +1 计数（保 exhausted
+    可达，执行成功由 sender 落库清零）；②改走 dispatch_writeback 广播给持
+    连接的 worker；③绝不本地直调 send_writeback。
+    """
+    import app.database as app_db
+    monkeypatch.setattr(app_db, "AsyncSessionLocal", _SameSession(async_db))
+
+    # 场景固定为"本进程无连接、无 HTTP 回落"
+    monkeypatch.setattr(wr.his_ws_manager, "has_connection", lambda: False)
+    monkeypatch.setattr(wr.settings, "his_writeback_url", "", raising=False)
+
+    dispatched = []
+
+    async def _fake_dispatch(encounter_id, doctor_id, visit_no, record_id=None):
+        dispatched.append((encounter_id, doctor_id, visit_no, record_id))
+
+    monkeypatch.setattr("app.his_adapter.writeback_dispatch.dispatch_writeback",
+                        _fake_dispatch)
+    monkeypatch.setattr(
+        "app.his_adapter.writeback_sender.send_writeback",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("异进程时不得本地直调")))
+
+    enc_id = await _mk_candidate(async_db, wb_status="write_failed", attempts=1)
+    await wr.reconcile_once()
+
+    assert len(dispatched) == 1, "必须恰好广播一次跨 worker 重投"
+    assert dispatched[0][0] == enc_id and dispatched[0][2] == "RC-001"
+    async_db.expire_all()
+    enc = await async_db.get(Encounter, enc_id)
+    e = _entry(enc)
+    assert e.get("reconcile_attempts") == 2, (
+        f"广播前必须预计数保 exhausted 可达，实际 {e}")
