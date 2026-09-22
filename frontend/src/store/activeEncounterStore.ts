@@ -18,6 +18,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import * as Sentry from '@sentry/react'
 import type { Patient, VisitType } from '@/domain/medical'
 import { useInquiryStore } from './inquiryStore'
 import { useRecordStore } from './recordStore'
@@ -104,6 +105,13 @@ export const useActiveEncounterStore = create<ActiveEncounterState>()(
         // 这是 backlog M1 的核心机制：让"切换接诊"成为单一切清空入口，不再
         // 依赖各 consumer 自己手动 reset 一堆字段，加新字段也不会再漏。
         const prev = get().encounterId
+        // Sentry 关联当前接诊（2026-09-23 可观测性审计补）：event 可定位到
+        // 接诊 UUID（非患者姓名），排障时直接对上后端数据
+        try {
+          Sentry.setTag('encounter_id', input.encounterId || '-')
+        } catch {
+          /* noop */
+        }
         if (prev !== input.encounterId) {
           useInquiryStore.getState().reset()
           useRecordStore.getState().reset()

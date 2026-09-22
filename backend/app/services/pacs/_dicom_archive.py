@@ -144,9 +144,13 @@ def extract_archive(archive_path: Path, dest_dir: Path, archive_kind: str) -> No
             capture_output=True, text=True, timeout=600,
         )
         if result.returncode != 0:
-            raise HTTPException(
-                400, f"{archive_kind.upper()} 解压失败: {result.stderr or result.stdout}"
-            )
+            # 7z 输出只进服务端日志不透前端（2026-09-23 日志审计修）：stderr
+            # 可能含压缩包内部文件名（病人刻盘常以患者姓名命名文件），进
+            # HTTPException detail 会被 http_error 日志和前端 toast 带出
+            logger.warning("pacs.archive: %s 解压失败 rc=%d out=%s",
+                           archive_kind, result.returncode,
+                           (result.stderr or result.stdout or "")[:300])
+            raise HTTPException(400, f"{archive_kind.upper()} 解压失败，请确认文件完整")
         # 下一轮的输入：解出来的第一个 tar 文件（双后缀场景）
         if round_idx < rounds - 1:
             tars = list(round_out.rglob("*.tar"))

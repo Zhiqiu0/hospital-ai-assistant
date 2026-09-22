@@ -52,7 +52,10 @@ function isSensitiveKey(key: string): boolean {
  * 深度限制 3 层，避免循环引用 / 超大对象（如 axios config）卡死序列化
  */
 function scrubObject(obj: unknown, depth = 0): unknown {
-  if (depth > 3 || obj == null) return obj
+  // 超深对象不再原样放行（2026-09-23 可观测性审计修）：depth>3 时打标替换，
+  // 防御性堵住"深层嵌套里夹 PHI 未清洗"的口子（当前 setExtra 均为浅层）
+  if (depth > 3) return '[depth-limit]'
+  if (obj == null) return obj
   if (Array.isArray(obj)) return obj.map(item => scrubObject(item, depth + 1))
   if (typeof obj !== 'object') return obj
   const out: Record<string, unknown> = {}
@@ -85,6 +88,13 @@ function scrubEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
   // request.data 也清掉（如果 SDK 抓了的话）
   if (event.request?.data) {
     event.request.data = '[scrubbed]'
+  }
+  // 错误消息本身兜底截断（2026-09-23 可观测性审计补）：Error.message 可能
+  // 携带后端 detail 文本，超长部分一律截掉，防长文本夹带内容出境
+  if (event.exception?.values) {
+    for (const v of event.exception.values) {
+      if (v.value && v.value.length > 300) v.value = v.value.slice(0, 300) + '…'
+    }
   }
   // 请求 query 里可能带 username 等，保留 url 路径用于聚合，清掉 query
   if (event.request?.query_string) {
@@ -216,4 +226,23 @@ export function captureAxiosError(error: {
         : new Error(`HTTP ${status || 'NETWORK'} ${method} ${sanitizeUrlForLog(url)}`)
     Sentry.captureException(exc)
   })
+}
+
+/**
+ * 通用兜底上报（2026-09-23 可观测性审计补）：给「catch 后只 message.error」
+ * 的关键流程（AI 生成/质控/补全、语音整理等）补 Sentry + console 留痕。
+ * 此前全仓主动上报只接在 axios 拦截器一处，所有不走 axios 的失败
+ * （SSE fetch、本地 JS bug 被宽 catch 吞掉）Sentry 全盲。
+ * AbortError（用户主动取消）由调用方自行过滤，不进本函数。
+ */
+export function reportCaught(e: unknown, where: string): void {
+  console.error(`[${where}]`, e)
+  try {
+    Sentry.withScope(scope => {
+      scope.setTag('caught.where', where)
+      Sentry.captureException(e instanceof Error ? e : new Error(`${where}: ${String(e)}`))
+    })
+  } catch {
+    /* Sentry 未初始化时仅 console */
+  }
 }

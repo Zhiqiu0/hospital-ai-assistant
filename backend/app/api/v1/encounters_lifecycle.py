@@ -120,9 +120,11 @@ async def cancel_encounter(
         operator_doctor_id=current_user.id,
         cancel_reason=data.cancel_reason,
     )
+    # 取消原因是医生自由文本，实践中常含患者姓名/病情（2026-09-23 日志审计修）：
+    # 日志只记长度，全文已由 service.cancel 写入审计表，需要时查库
     logger.info(
-        "encounter.cancel: encounter_id=%s by=%s reason=%r",
-        encounter_id, current_user.id, data.cancel_reason,
+        "encounter.cancel: encounter_id=%s by=%s reason_len=%d",
+        encounter_id, current_user.id, len(data.cancel_reason or ""),
     )
     return result
 

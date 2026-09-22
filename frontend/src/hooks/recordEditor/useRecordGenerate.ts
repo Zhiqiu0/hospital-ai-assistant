@@ -24,6 +24,7 @@ import {
 } from '@/store/inquiryFieldGroups'
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import type { RecordEditorShared } from './useRecordEditorShared'
+import { reportCaught } from '@/sentry'
 
 export function useRecordGenerate(shared: RecordEditorShared) {
   const { runSSE, fetchLatestRecord, syncGeneratedRecordToInquiry } = shared
@@ -122,6 +123,7 @@ export function useRecordGenerate(shared: RecordEditorShared) {
     } catch (e) {
       // AbortError 是用户主动取消，正常路径不弹错
       if ((e as { name?: string })?.name !== 'AbortError') {
+        reportCaught(e, 'record.generate')
         // 后端 SSE error 事件带医生可读文案（欠费→"请联系管理员充值"），
         // 有就显示，没有才退回通用提示（2026-08-28 体检：此前一律丢弃）
         const msg = (e as { message?: string })?.message

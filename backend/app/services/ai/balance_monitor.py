@@ -78,6 +78,10 @@ async def balance_monitor_loop() -> None:
             # acquire_lock）早就处理了这件事，只有本任务漏了。
             # 锁 TTL 取检查间隔的一半：够长到能挡住同一轮的另一个 worker，
             # 又短到进程崩溃后下一轮仍能接上。
+            # fail_open 取舍（2026-09-23 日志审计明示）：acquire_lock 默认
+            # fail-open——Redis 故障期间两个 worker 都会拿到锁、余额告警翻倍。
+            # 有意保留：反向 fail-closed 会在 Redis 长故障时静默停掉余额监控，
+            # "告警重复"比"欠费无预警"便宜得多
             if not await redis_cache.acquire_lock(
                 _MONITOR_LOCK_KEY, ttl=CHECK_INTERVAL_SECONDS // 2
             ):

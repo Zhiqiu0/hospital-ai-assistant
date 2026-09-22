@@ -49,8 +49,17 @@ async def quick_qc(
     )
 
     async def sse_wrap():
-        async for event in qc_stream_service.run_quick_qc_stream(db, req):
-            yield f"data: {json.dumps(event)}\n\n"
+        # 生成器兜底（2026-09-23 日志审计补）：SSE 响应头已发出后异常不走全局
+        # 500 处理器，会穿到 uvicorn 自己的 stderr（不进 error.log），且 access
+        # 行还记成 status=200——规则引擎段/落库段抛错就是日志黑洞。
+        # 这里兜住：留痕 + 给前端一条 error 事件而不是无声断流。
+        try:
+            async for event in qc_stream_service.run_quick_qc_stream(db, req):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception:
+            logger.exception("ai_qc.stream_crashed: encounter=%s record_type=%s",
+                             req.encounter_id, req.record_type)
+            yield f"data: {json.dumps({'type': 'error', 'message': '质控服务异常，请重试'})}\n\n"
 
     return StreamingResponse(
         sse_wrap(),

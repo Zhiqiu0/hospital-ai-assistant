@@ -73,17 +73,42 @@ async def lifespan(_app: FastAPI):
 
     bg_tasks = []
     import asyncio
+
+    def _watch_bg_task(task: "asyncio.Task") -> None:
+        """常驻任务死亡侦测（2026-09-23 日志审计补）。
+
+        三个常驻循环（回写消费/对账/余额监控）此前用裸 create_task 启动：
+        协程若带异常退出（循环体 try 之外的裸露路径、MemoryError 等），任务
+        静默死亡——回写/对账/预警全停，而 bg_tasks 持强引用使 Python 的
+        "Task exception was never retrieved" 兜底也永不触发，日志零痕迹。
+        这里统一挂回调：非取消的异常退出记 ERROR（进 error.log + Sentry）。
+        不自动重启——死因未知时盲目重启可能把故障放大成风暴，告警后人工处理。
+        """
+        def _on_done(t: "asyncio.Task") -> None:
+            if t.cancelled():
+                return  # 关停时的 cancel 属正常路径
+            exc = t.exception()
+            if exc is not None:
+                logger.error("bg_task.died: 常驻任务 %s 异常退出，该链路已停摆待人工处理",
+                             t.get_name(), exc_info=exc)
+            else:
+                # 常驻循环不该正常返回；返回同样意味着链路停了
+                logger.error("bg_task.died: 常驻任务 %s 意外正常退出（循环不该返回）",
+                             t.get_name())
+        task.add_done_callback(_on_done)
+        bg_tasks.append(task)
+
     if settings.his_adapter_enabled:
         from app.his_adapter.writeback_dispatch import consumer_loop
         from app.his_adapter.writeback_reconcile import reconcile_loop
-        bg_tasks.append(asyncio.create_task(consumer_loop()))
-        bg_tasks.append(asyncio.create_task(reconcile_loop()))
+        _watch_bg_task(asyncio.create_task(consumer_loop(), name="his_consumer_loop"))
+        _watch_bg_task(asyncio.create_task(reconcile_loop(), name="his_reconcile_loop"))
     # AI 余额预警（2026-08-16 上线前体检）：余额耗尽是全院级单点——所有医生的
     # 所有 AI 功能同时停摆且毫无前兆（体检当天实测余额仅够约 130 次接诊）。
     # 只在配了 key 时起；查询失败静默降级，不影响主流程。
     if settings.deepseek_api_key:
         from app.services.ai.balance_monitor import balance_monitor_loop
-        bg_tasks.append(asyncio.create_task(balance_monitor_loop()))
+        _watch_bg_task(asyncio.create_task(balance_monitor_loop(), name="balance_monitor_loop"))
     yield
     for t in bg_tasks:
         t.cancel()

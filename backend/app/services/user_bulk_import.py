@@ -15,6 +15,8 @@
   4. dry_run=True 只校验不落库，导入前可先预览。
 """
 
+import logging
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError
@@ -28,6 +30,8 @@ from app.schemas.user import (
     BulkImportResultItem,
 )
 from app.services.audit_service import log_action
+
+logger = logging.getLogger(__name__)
 
 
 def _dept_warning(item, dept_map: dict) -> str:
@@ -186,6 +190,10 @@ async def bulk_import_doctors(
             await db.commit()
     except (IntegrityError, DataError) as exc:
         await db.rollback()
+        # 留痕具体冲突（2026-09-23 日志审计补）：409 只进 app.log INFO 且无细节，
+        # 预检绕不过的并发冲突场景只能靠猜。exc.orig 是工号/用户名约束报错，
+        # 非患者 PHI，截 200 字符
+        logger.warning("user_bulk_import: 整批回滚 err=%s", str(exc.orig)[:200])
         raise HTTPException(
             status_code=409,
             detail="导入未生效：名单中存在冲突或超长的用户名/工号，请核对后重试",

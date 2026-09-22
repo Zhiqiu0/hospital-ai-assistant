@@ -29,7 +29,9 @@ interface ExportAuditPayload {
  * 后端 log_action 内部也已吞掉写入异常。
  */
 export function reportRecordExport(payload: ExportAuditPayload): void {
-  void api.post('/medical-records/export-audit', payload).catch(() => {
-    // 静默：上报失败不影响导出本身
+  void api.post('/medical-records/export-audit', payload).catch((e: unknown) => {
+    // 上报失败不影响导出本身，但要留痕（2026-09-23 审计补）：审计是导出
+    // 唯一追责手段，端点若因重构长期失效必须能被发现
+    console.warn('[export] 导出审计上报失败', e)
   })
 }

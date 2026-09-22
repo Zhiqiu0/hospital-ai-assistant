@@ -241,6 +241,10 @@ async def get_frames_meta(study_uid: str) -> list[dict]:
         try:
             return json.loads(cached.decode("utf-8"))
         except Exception:
+            # 留痕（2026-09-23 日志审计补）：缓存值损坏时该 study 的 /frames
+            # 在 TTL 内每次都静默走 2-10s 的慢路径，无日志则永远发现不了
+            logger.warning("pacs.render_cache: frames 缓存值损坏，走 QIDO 慢路径 "
+                           "study=%s", study_uid[-16:])
             return await frame_service.list_study_instances(study_uid)
     # 老 study（R1 预热前上传的）走 Orthanc QIDO 兜底，并把结果回写 Redis
     instances = await frame_service.list_study_instances(study_uid)

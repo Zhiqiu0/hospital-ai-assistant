@@ -195,7 +195,7 @@ async def queue_stream(
 
     from app.his_adapter.event_bus import PUMP_DEAD_SENTINEL
 
-    async def gen():
+    async def _gen_inner():
         # 先发一条连接确认，前端据此点亮"实时连接"状态
         yield 'data: {"type": "connected"}\n\n'
         async with his_event_bus.subscription(channel) as q:
@@ -223,6 +223,17 @@ async def queue_stream(
                     logger.warning("his_queue.stream: 事件泵终止，结束 SSE 流触发前端重连 channel=%s", channel)
                     return
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    async def gen():
+        # 生成器兜底（2026-09-23 日志审计补）：SSE 响应头发出后异常不走全局
+        # 500 处理器，会穿到 uvicorn stderr（不进 error.log）且 access 行记成
+        # status=200——subscription 建立失败或循环内意外异常就是日志黑洞。
+        # 兜住留痕后正常结束流，前端既有断线重连逻辑接管。
+        try:
+            async for chunk in _gen_inner():
+                yield chunk
+        except Exception:
+            logger.exception("his_queue.stream_crashed: channel=%s", channel)
 
     # ── 连接池救命线（2026-08-29 第六轮资源泄漏审计·上线阻断级）────────────
     # FastAPI 的 yield 依赖要到**流结束**才走 finally：get_current_user 在这个

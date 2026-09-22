@@ -98,6 +98,11 @@ async def _parse_text_with_llm(raw_text: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
+        # 非 200 必须留痕（2026-09-23 日志审计补）：DeepSeek 402 欠费/429 限流
+        # 时全院检验单解析集体失败，此前静默 return None，error.log 零线索。
+        # 上游错误体是服务端报错文案不含 PHI，截 200 字符防长文
+        logger.warning("lab_reports.parse_llm: 上游非 200 status=%d body=%s",
+                       resp.status_code, resp.text[:200])
     except Exception as exc:
         # logger.exception 自带堆栈采集，比 error+exc_info=True 更简洁
         logger.exception("lab_reports.parse_llm: failed err=%s", exc)
@@ -128,6 +133,9 @@ async def _ocr_image(content: bytes, mime_type: str) -> Optional[str]:
             )
         if resp.status_code == 200:
             return resp.json()["choices"][0]["message"]["content"]
+        # 同 _parse_text_with_llm：上游非 200 留痕（欠费/限流/5xx 可定位）
+        logger.warning("lab_reports.ocr_image: 上游非 200 status=%d body=%s",
+                       resp.status_code, resp.text[:200])
     except Exception as exc:
         logger.exception("lab_reports.ocr_image: failed err=%s", exc)
     return None

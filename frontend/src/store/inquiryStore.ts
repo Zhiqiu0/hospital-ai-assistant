@@ -64,6 +64,9 @@ export const useInquiryStore = create<InquiryState>()(
         const owner = get().ownerEncounterId
         if (owner === encounterId) return true
         // 对不上：丢弃本槽数据并绑到当前接诊（随后由水合重新灌入真实数据）
+        console.warn(
+          `[guard] inquiryStore 归属失配清空: owner=${(owner || '-').slice(0, 8)} incoming=${(encounterId || '-').slice(0, 8)}`
+        )
         get().reset()
         set({ ownerEncounterId: encounterId })
         return false

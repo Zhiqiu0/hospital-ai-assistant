@@ -167,6 +167,14 @@ export function useInquirySave({
           setSaving(false)
           return
         }
+        // 非 422 的 4xx（403/409 等）也透 detail（2026-09-23 审计补）：
+        // 此前一律说成"网络问题"，按"检查网络重试"永远无解且把排障带偏
+        if (status != null && status >= 400 && status < 500 && detail) {
+          const rid = (e as { rid?: string })?.rid
+          message.error(`问诊保存失败：${detail}${rid ? `（rid:${rid.slice(0, 8)}）` : ''}`)
+          setSaving(false)
+          return
+        }
       }
     }
 

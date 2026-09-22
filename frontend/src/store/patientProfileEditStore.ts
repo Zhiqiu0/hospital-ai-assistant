@@ -143,7 +143,12 @@ export const usePatientProfileEditStore = create<State>()(
       save: async patientId => {
         const cur = get()
         if (cur.loadedPatientId !== patientId) {
-          // 防御：调用方传的 patientId 与当前 loaded 不一致，可能是切换瞬间的竞态
+          // 防御：调用方传的 patientId 与当前 loaded 不一致，可能是切换瞬间的竞态。
+          // 留痕（2026-09-23 审计补）：此分支静默 false 且上层不弹提示——
+          // 医生"点了保存档案没存上"时至少 F12 有迹可查
+          console.warn(
+            `[profile] 保存跳过（患者切换竞态）: loaded=${(cur.loadedPatientId || '-').slice(0, 8)} incoming=${(patientId || '-').slice(0, 8)}`
+          )
           return false
         }
 

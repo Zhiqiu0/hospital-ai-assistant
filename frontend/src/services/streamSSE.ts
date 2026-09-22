@@ -62,7 +62,12 @@ export async function streamSSE(
     } catch {
       /* 非 JSON 响应体，退回状态码 */
     }
-    throw new Error(detail || `HTTP ${res.status}`)
+    // 留痕（2026-09-23 可观测性审计补）：SSE 走 fetch 不过 axios 拦截器，
+    // 此前失败零 console 零 rid——AI 生成/质控失败在 F12 里查无此事。
+    // rid 是后端排障钥匙，一并放进 Error 消息供上层 toast/上报携带
+    const rid = res.headers.get('x-request-id') || '-'
+    console.error(`[sse] ${res.status} url=${url} rid=${rid} detail=${detail.slice(0, 120)}`)
+    throw new Error(`${detail || `HTTP ${res.status}`}（rid:${rid.slice(0, 8)}）`)
   }
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()

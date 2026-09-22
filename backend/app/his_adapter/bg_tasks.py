@@ -23,7 +23,10 @@ def spawn(coro, *, name: str = "") -> asyncio.Task:
         if not t.cancelled():
             exc = t.exception()
             if exc is not None:
-                logger.warning("bg_task.failed: name=%s err=%s", name, exc)
+                # 带堆栈（2026-09-23 日志审计修）：render_cache/patient_cache 等
+                # spawn 以此为唯一出口，只有 str(exc)（如 KeyError 只打键名）
+                # 时常定位不了
+                logger.warning("bg_task.failed: name=%s err=%s", name, exc, exc_info=exc)
 
     task.add_done_callback(_done)
     return task

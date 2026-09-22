@@ -84,7 +84,9 @@ async def log_action(
         except Exception:
             await db.rollback()
             # 审计写入失败只记录本地日志，不向业务层抛异常（防止影响主流程）
+            # action/resource 直接写进消息（2026-09-23 日志审计修）：本项目
+            # formatter 不渲染 extra，原写法在 error.log 里只剩裸消息+堆栈，
+            # 丢的是哪条审计无从得知
             logger.exception(
-                "Failed to write audit log",
-                extra={"action": action, "resource_type": resource_type},
+                "audit.write_failed: action=%s resource=%s", action, resource_type,
             )

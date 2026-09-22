@@ -22,6 +22,7 @@ import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncounterStore'
 import { useVoiceTranscriptStore, type DialogueItem } from '@/store/voiceTranscriptStore'
+import { reportCaught } from '@/sentry'
 import {
   deleteVoiceRecord,
   fetchAudioToken,
@@ -187,7 +188,9 @@ export function useVoiceInputCard({
         onApplyInquiry(filteredPatch)
         message.success('已根据语音内容整理问诊字段，保存后将同步到病历')
       }
-    } catch {
+    } catch (e) {
+      // 宽 catch 里含本地逻辑（去重/过滤），本地 bug 也会落到这——上报区分
+      reportCaught(e, 'voice.structuring')
       message.error('语音整理失败，请重试')
     } finally {
       setStructuring(false)

@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react'
 import { message } from '@/services/messageBridge'
 import { useAuthStore } from '@/store/authStore'
 import { startVoiceStream, type VoiceStreamHandle } from '@/services/voiceStream'
+import { reportCaught } from '@/sentry'
 import { archiveAudioBlob } from '@/services/voiceAudioArchive'
 
 interface SessionProps {
@@ -265,9 +266,13 @@ export function useVoiceDialogueSession({
             setInterimText('')
           },
           onError: msg => {
-            // 连接中途失败：标记走兜底；UI 提示一次即可
+            // 连接中途失败：标记走兜底；UI 提示一次即可。
+            // 留痕上报（2026-09-23 审计补）：8443 被院内防火墙拦这类系统性
+            // 故障此前只有 5 秒 toast，监控面全绿无从发现
+            console.warn(`[voice] 实时转写中断: ${msg}`)
             if (!streamFallbackRef.current) {
               streamFallbackRef.current = true
+              reportCaught(new Error(`voice ws error: ${msg}`), 'voice.stream')
               message.warning(`实时转写中断：${msg}，录音继续进行，停止后自动云端转写`, 5)
             }
           },
@@ -276,6 +281,7 @@ export function useVoiceDialogueSession({
       } catch (err) {
         streamFallbackRef.current = true
         const errMsg = (err as { message?: string })?.message || '连接失败'
+        reportCaught(err, 'voice.stream_connect')
         message.warning(`实时转写未启用（${errMsg}），录音继续，停止后自动云端转写`, 5)
       }
 

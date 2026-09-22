@@ -61,16 +61,21 @@ def _parse_his_birth_date(raw: Optional[str], visit_id: str):
         # 未来出生日期丢弃留痕（2026-08-29 第七轮审计）：负年龄会进病案
         # 首页与回写，无合法场景；与解析失败同口径不拒收接诊
         if parsed > date.today():
+            # 只记年份不记完整日期（2026-09-23 日志审计修）：这是有效日期=真实
+            # 出生信息，全值+就诊号可关联患者，不进日志
             logger.warning(
-                "his_admit.patient: birth_date 在未来已丢弃 raw=%r visit_id=%s",
-                raw, visit_id)
+                "his_admit.patient: birth_date 在未来已丢弃 year=%d visit_id=%s",
+                parsed.year, visit_id)
             return None
         return parsed
     except ValueError:
-        # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢
+        # 解析不了留空不阻塞建档，但必须留痕——年龄影响用药判断，不能默默丢。
+        # 只记形态不记原值（2026-09-23 日志审计修）：raw 常是真实生日的变体
+        # 格式；长度+字符构成足以定位「厂商推的什么格式我们不认」
+        shape = f"len={len(raw)},digits={sum(c.isdigit() for c in raw)},seps={''.join(sorted(set(c for c in raw if not c.isalnum())))!r}"
         logger.warning(
-            "his_admit.patient: birth_date 解析失败已丢弃 raw=%r visit_id=%s",
-            raw, visit_id,
+            "his_admit.patient: birth_date 解析失败已丢弃 %s visit_id=%s",
+            shape, visit_id,
         )
         return None
 
@@ -163,9 +168,15 @@ async def _refresh_patient_from_repush(db, patient, payload, enc) -> None:
         ref["patient_conflicts"] = conflicts
         enc.his_external_ref = ref
         flag_modified(enc, "his_external_ref")
+        # 日志只记冲突的字段名不记值（2026-09-23 日志审计修）：conflicts 里是
+        # 「name:张三->李四」「id_card:旧号->新号」这类全值 PHI，进 error.log
+        # 违反「日志不放 PHI」铁律；完整冲突值已留痕在 his_external_ref.
+        # patient_conflicts，需要时查库可得。
+        conflict_fields = ",".join(c.split(":", 1)[0] for c in conflicts)
         logger.warning(
             "his_admit.patient_conflict: visit_id=%s 重推的患者信息与本地不一致，"
-            "未覆盖：%s", payload.visit_id, "; ".join(conflicts),
+            "未覆盖字段=%s（值见 his_external_ref.patient_conflicts）",
+            payload.visit_id, conflict_fields,
         )
     if filled or conflicts:
         await db.commit()

@@ -115,8 +115,9 @@ async def _call_llm_json_with_retry(
         except Exception as exc:
             last_exc = exc
             logger.warning(
-                "llm_json_retry: attempt=%d/%d err=%s",
-                attempt + 1, max_retries + 1, exc,
+                "llm_json_retry: attempt=%d/%d status=%s err=%s",
+                attempt + 1, max_retries + 1,
+                getattr(exc, "status_code", "-"), exc,
             )
             # 确定性失败（欠费/凭证无效/输出截断）重试注定同样失败，
             # 立即上抛省掉一次白烧的计费（2026-08-28 全量体检）

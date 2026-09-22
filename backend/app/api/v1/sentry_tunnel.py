@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
@@ -36,6 +37,9 @@ from app.services.redis_cache import redis_cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# 上游拒收告警限频状态（list 装可变时间戳，闭包/多次调用共享）
+_upstream_err_last_warn = [0.0]
 
 
 # ── 配置常量 ──────────────────────────────────────────────────────────────────
@@ -150,7 +154,16 @@ async def sentry_tunnel(request: Request) -> dict:
                 content=body,
                 headers={"Content-Type": "application/x-sentry-envelope"},
             )
-            # 上游 200/202 都算成功；4xx 5xx 也不抛（不让 Sentry 故障影响业务）
+            # 上游 200/202 都算成功；4xx 5xx 也不抛（不让 Sentry 故障影响业务）。
+            # 但 4xx/5xx 要限频留痕（2026-09-23 日志审计补）：DSN 被拒/配额耗尽
+            # 意味着前端上报静默全丢——可观测性通道死了本身必须可观测。
+            # 60s 限频防 429 高频期刷穿 error.log
+            if resp.status_code >= 400:
+                now = time.monotonic()
+                if now - _upstream_err_last_warn[0] > 60:
+                    _upstream_err_last_warn[0] = now
+                    logger.warning("sentry_tunnel: 上游拒收 status=%d（60s 内不重复告警，"
+                                   "前端错误上报期间丢失）", resp.status_code)
             return {"status": "ok", "upstream_status": resp.status_code}
     except Exception as exc:
         # 上游挂了/超时 → 静默丢弃（fire-and-forget），不污染业务
