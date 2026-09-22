@@ -17,6 +17,7 @@
 """
 
 import json
+import logging
 from typing import Optional
 
 from sqlalchemy import ForeignKey, Index, String, Text
@@ -24,6 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import TimestampMixin, generate_uuid
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceRecord(Base, TimestampMixin):
@@ -88,6 +91,9 @@ class VoiceRecord(Base, TimestampMixin):
         try:
             return json.loads(self.speaker_dialogue)
         except Exception:
+            # 列内容是我方自己写入的 JSON，解析失败＝数据损坏，运维需要知道
+            # （几乎不该发生，低频不成噪音）；返回空保证前端仍可用
+            logger.warning("voice_record.corrupt_json: speaker_dialogue 解析失败 id=%s", self.id)
             return []
 
     def get_structured_inquiry(self) -> dict:
@@ -102,6 +108,8 @@ class VoiceRecord(Base, TimestampMixin):
         try:
             return json.loads(self.structured_inquiry)
         except Exception:
+            # 同 get_speaker_dialogue：自写 JSON 解析失败＝数据损坏，留痕不抛错
+            logger.warning("voice_record.corrupt_json: structured_inquiry 解析失败 id=%s", self.id)
             return {}
 
 

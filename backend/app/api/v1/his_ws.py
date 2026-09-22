@@ -186,7 +186,13 @@ async def _ping_loop(websocket: WebSocket) -> None:
             await websocket.send_text(
                 wp.build_signed_message(wp.MSG_PING, {}, aid, secret)
             )
-    except (asyncio.CancelledError, Exception):
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        # 泵死了心跳就停了，厂商侧 90s 空闲判死会"莫名掉线"。多数情况是
+        # 连接已断（主循环随后会记 disconnected，构成一对），所以只记 info
+        # 不进 error.log；排查"连着却收不到 ping"这种形态时靠这条对时间线。
+        logger.info("his_ws.ping_loop_exit: 心跳任务退出 %s: %s", type(exc).__name__, exc)
         return
 
 
