@@ -232,6 +232,16 @@ async def _handle_message(websocket: WebSocket, raw: str) -> None:
         return
 
     if code is not None:  # 业务消息验签失败 → 按 2.4 错误码回 ack
+        # 我方必须留痕（2026-09-22 日志审计补）：此前只回 ack 不记日志，联调时
+        # 厂商拿着 40001 来问，我方翻日志是空的，只能靠对方转述。记辅助定位量：
+        # payload 长度 + 摘要前 8 位（厂商可对同一报文自算比对，定位"签的≠发的"
+        # 字节级差异），不记 payload 原文——里面是患者信息。
+        logger.warning(
+            "his_ws.message_verify_failed: type=%s msg_id=%s code=%s(%s) "
+            "payload_len=%d payload_sha8=%s",
+            env.type, env.msg_id, code, wp.ERROR_TEXT.get(code, "?"),
+            len(payload_raw), hashlib.sha256(payload_raw.encode("utf-8")).hexdigest()[:8],
+        )
         await websocket.send_text(
             wp.build_ack(env.msg_id, code, wp.ERROR_TEXT[code], aid, secret)
         )

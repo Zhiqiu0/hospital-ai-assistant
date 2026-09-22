@@ -44,9 +44,12 @@ def setup_logging(log_level: str = "INFO") -> None:
     # 确保日志目录存在（首次部署时自动创建）
     LOGS_DIR.mkdir(exist_ok=True)
 
-    # 统一日志格式：时间 + 级别 + request_id + user_id + 模块路径 + 消息
+    # 统一日志格式：时间 + 级别 + 进程号 + request_id + user_id + 模块路径 + 消息
     # [rid=xxx] 单请求全链路 grep；[uid=xxx] 用户维度筛选；均为 "-" 表示无上下文
-    fmt = "%(asctime)s [%(levelname)s] [rid=%(request_id)s uid=%(user_id)s] %(name)s: %(message)s"
+    # [p=xxx] 进程号（2026-09-22 日志审计补）：生产 --workers 2 双进程写同一文件，
+    # WS 长连接、事件总线、常驻任务的问题必须能分清发生在哪个 worker——
+    # 例如"厂商连接在 A 进程、签发请求落 B 进程"的跨 worker 派发路径。
+    fmt = "%(asctime)s [%(levelname)s] [p=%(process)d] [rid=%(request_id)s uid=%(user_id)s] %(name)s: %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt, datefmt=datefmt)
 
