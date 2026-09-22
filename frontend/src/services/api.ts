@@ -62,12 +62,6 @@ api.interceptors.response.use(
     // 就能看到整条链路（含 4xx 的拒绝原因）。此前前端从没读过它，报障只能
     // 靠"大概几点、大概哪个页面"去猜。
     const rid: string = error.response?.headers?.['x-request-id'] || '-'
-    // 同步给 Sentry：前端异常在后台能直接跳到对应的后端日志
-    try {
-      Sentry.setTag('backend_request_id', rid)
-    } catch {
-      /* Sentry 未初始化不影响主流程 */
-    }
 
     if (status === 401 && !isLoginRequest) {
       // Token 失效或未登录 → 清除登录态并跳转，不弹 toast（页面即将刷新）
@@ -139,11 +133,32 @@ api.interceptors.response.use(
       }
     }
 
+    // 其余 4xx（400/409/422/429…）兜底留痕（2026-09-23 可观测性审计补）：
+    // 此前这些状态不弹不打不报——签发撞 409、保存撞 400 时若调用方文案
+    // 又空泛，F12 控制台干干净净，rid 明明在手却没打出来
+    if (status != null && status >= 400 && status < 500 && ![401, 403, 404].includes(status)) {
+      const detail = (error.response?.data as { detail?: unknown })?.detail
+      console.warn(
+        `[api] ${status}: ${sanitizeUrlForLog(requestUrl)} rid=${rid}`,
+        typeof detail === 'string' ? detail.slice(0, 120) : ''
+      )
+    }
+
     // 上报到 Sentry：网络错误 / 5xx / 401（非登录请求） 都值得追溯
     // 403/404 不报，业务噪音；DSN 未配时 captureAxiosError 内部 no-op
+    // rid 用 withScope 局部 tag（2026-09-23 审计修）：原先 setTag 设在全局
+    // scope 且不清除，10 分钟后的无关渲染崩溃也挂着陈旧 rid，把排障引去
+    // grep 错误的后端日志
     const shouldReport = !status || status >= 500 || (status === 401 && !isLoginRequest)
     if (shouldReport) {
-      captureAxiosError(error)
+      try {
+        Sentry.withScope(scope => {
+          scope.setTag('backend_request_id', rid)
+          captureAxiosError(error)
+        })
+      } catch {
+        captureAxiosError(error)
+      }
     }
 
     // 附加式保留 HTTP 状态码（2026-08-11 审计修复）：原先 reject error.response?.data
@@ -152,7 +167,9 @@ api.interceptors.response.use(
     // 同名字段），对只读 detail 的旧调用方零破坏。
     const data = error.response?.data
     if (data && typeof data === 'object' && !Array.isArray(data)) {
-      return Promise.reject({ status, ...data })
+      // rid 一并附加（2026-09-23）：调用方可在失败 toast 末尾带 rid 短码，
+      // 医生截图 toast 即可排障，不必开 F12
+      return Promise.reject({ status, rid, ...data })
     }
     return Promise.reject(data ?? error)
   }

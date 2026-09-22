@@ -98,19 +98,25 @@ fi
 # 通过 stdout 把流送出来是最干净的方案（不需要 sudo / 临时 helper 容器）。
 echo "[3/4] tar Orthanc storage（容器内）..."
 if docker compose exec -T orthanc tar czf - -C /var/lib/orthanc/db . \
-        > "${DEST}/orthanc_storage.tar.gz" 2>/dev/null; then
+        > "${DEST}/orthanc_storage.tar.gz"; then
     echo "    OK ($(du -h "${DEST}/orthanc_storage.tar.gz" | cut -f1))"
 else
+    # 失败必须置败（2026-09-23 日志审计修）：此前只 echo 就继续、照发成功
+    # 心跳——影像备份可以连续失败数月而 uptime-kuma 永不告警，恰是当初
+    # 加心跳要防的那类故障。同时不再丢弃 stderr（失败原因要进日志）
     echo "    FAIL（orthanc 容器未运行？保留 0 字节占位文件供排查）"
+    BACKUP_FAILED=1
 fi
 
 # ── 4. uploads 目录（检验报告/语音）──────────────────────────────────────────
 echo "[4/4] tar uploads（容器内）..."
 if docker compose exec -T backend tar czf - -C /app/uploads . \
-        > "${DEST}/uploads.tar.gz" 2>/dev/null; then
+        > "${DEST}/uploads.tar.gz"; then
     echo "    OK ($(du -h "${DEST}/uploads.tar.gz" | cut -f1))"
 else
+    # 同第 3 步：失败置败，语音录音/检验报告原图的备份断供必须触发告警
     echo "    FAIL（backend 容器未运行？保留 0 字节占位文件供排查）"
+    BACKUP_FAILED=1
 fi
 
 # ── 5. 异地容灾：本次备份推阿里云 OSS（北京，与服务器上海异地）────────────────

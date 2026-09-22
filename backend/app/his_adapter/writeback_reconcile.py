@@ -221,6 +221,15 @@ async def reconcile_once(deadline: float | None = None) -> int:
         except Exception:
             logger.exception("his_wb.reconcile: 重投异常 encounter=%s record=%s",
                              enc.id, key)
+            # 异常也计数（2026-09-23 日志审计修）：此前抛异常不走 _mark_reconcile，
+            # attempts 永不累计 → exhausted 的"需人工处理"告警永远不来，同一条
+            # 坏数据每 5 分钟刷一条 traceback 且没有收敛信号。异常与"推送失败"
+            # 同语义：5 轮后停手转人工
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _mark_reconcile(db, enc.id, key, exhausted=False)
+            except Exception:
+                logger.exception("his_wb.reconcile: 异常计数落库失败 encounter=%s", enc.id)
     return processed
 
 

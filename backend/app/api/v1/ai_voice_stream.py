@@ -64,7 +64,11 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
         payload_iat = _claims.get("iat")
         payload_jti = _claims.get("jti")
     except Exception as exc:
-        # FastAPI 要求 accept 之后才能 close；这里用 1008 表示策略违规
+        # FastAPI 要求 accept 之后才能 close；这里用 1008 表示策略违规。
+        # 服务端留痕（2026-09-23 日志审计补）：WS 不走 HTTP 全局兜底日志，
+        # 五个拒绝分支此前只 close 给客户端、服务端零痕迹——医生报"语音
+        # 连不上"时分不清是 token 过期/吊销/角色问题
+        logger.info("voice_stream.reject: auth_failed err=%s", exc)
         await websocket.close(code=1008, reason=f"auth failed: {exc}")
         return
 
@@ -86,15 +90,19 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
         # 复用这次已经打开的会话，零额外开销。
         revoked = await is_token_revoked(db, payload_jti)
     if revoked:
+        logger.info("voice_stream.reject: token_revoked user=%s", user_id)
         await websocket.close(code=1008, reason="token revoked")
         return
     if user is None or not user.is_active or user.must_change_password:
+        logger.info("voice_stream.reject: account_not_ready user=%s", user_id)
         await websocket.close(code=1008, reason="account not ready")
         return
     # AI 角色门槛（2026-08-29 第七轮渗透审计，与 /ai/* 路由组同口径）：
     # 实时 ASR 是付费额度通道，只读角色不该能连
     from app.core.authz import RECORD_WRITE_ROLES
     if user.role not in RECORD_WRITE_ROLES:
+        logger.info("voice_stream.reject: role_not_allowed user=%s role=%s",
+                    user_id, user.role)
         await websocket.close(code=1008, reason="role not allowed")
         return
 
@@ -106,17 +114,24 @@ async def voice_stream(websocket: WebSocket, token: str = Query(...)):
     if changed_at is not None:
         from datetime import datetime as _dt
         if payload_iat is None or _dt.fromtimestamp(payload_iat) < changed_at:
+            logger.info("voice_stream.reject: token_superseded user=%s", user_id)
             await websocket.close(code=1008, reason="token superseded")
             return
 
     # 2. 未配置 API Key 时直接拒绝（前端应走上传兜底）
     if not settings.aliyun_api_key:
+        # 配置故障非用户行为，warning 级进 error.log
+        logger.warning("voice_stream.reject: 未配置阿里云 API Key，语音功能不可用")
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": "服务未配置阿里云 API Key"})
         await websocket.close()
         return
 
     await websocket.accept()
+    # 绑定 uid 上下文（2026-09-23 日志审计补）：本端点不走 get_current_user，
+    # 不绑的话整条连接所有日志 uid 恒为 "-"，按医生维度 grep 语音故障断档
+    from app.core.request_context import bind_user_context
+    bind_user_context(user_id)
     logger.info("voice_stream.start: user=%s", user_id)
 
     task_id = uuid.uuid4().hex

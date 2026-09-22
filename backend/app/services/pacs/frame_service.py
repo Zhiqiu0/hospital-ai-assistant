@@ -15,6 +15,8 @@ PACS Orthanc 帧查询服务（services/pacs/frame_service.py）
 import logging
 from typing import Optional
 
+import httpx as _httpx
+
 from fastapi import HTTPException
 
 from app.config import settings
@@ -73,8 +75,16 @@ async def dcm_to_jpeg_via_orthanc(raw_bytes: bytes) -> bytes:
         )
     except HTTPException:
         raise
+    except _httpx.HTTPError as e:
+        # Orthanc 连不上/超时是服务故障不是客户端文件问题（2026-09-23 日志
+        # 审计修）：此前也走 400「文件解析失败」——只进 app.log INFO，
+        # error.log 零线索且把 PACS 宕机误导成"你的文件坏了"
+        logger.error("pacs.frame: Orthanc 请求失败（服务故障非文件问题）err=%s", e)
+        raise HTTPException(502, "影像服务暂不可用，请稍后重试")
     except Exception as e:
-        raise HTTPException(400, f"DCM 文件解析失败: {e}")
+        # 细节只进日志不透前端（同 2026-08-29 analysis_service 修复口径）
+        logger.warning("pacs.frame: DCM 解析失败 err=%s", e)
+        raise HTTPException(400, "DCM 文件解析失败")
     finally:
         # 无论成功失败都清理 Orthanc 临时数据，避免索引污染
         if temp_study_uid:
@@ -158,7 +168,6 @@ async def resolve_instance(study_uid: str, instance_uid: str) -> Optional[str]:
     更优做法：前端从 /frames 响应里就已经有 series_uid，调 thumbnail/dicom
     端点时一并传过来，免去本函数调用。本函数只在前端没传时兜底。
     """
-    import httpx as _httpx
     try:
         async with _httpx.AsyncClient(
             auth=(settings.orthanc_username, settings.orthanc_password),
@@ -189,5 +198,10 @@ async def resolve_instance(study_uid: str, instance_uid: str) -> Optional[str]:
             r = await c.get(f"{settings.orthanc_base_url.rstrip('/')}/series/{parent_series}")
             r.raise_for_status()
             return r.json().get("MainDicomTags", {}).get("SeriesInstanceUID")
-    except _httpx.HTTPError:
+    except _httpx.HTTPError as e:
+        # 留痕（2026-09-23 日志审计补）：此前静默 return None，调用方据此回
+        # 404「影像帧不存在」——Orthanc 宕机期间医生看到的是"没有这张影像"，
+        # 而 error.log 里什么都没有，无法区分"真没有"和"PACS 挂了"
+        logger.warning("pacs.frame.resolve_instance: Orthanc 请求失败 "
+                       "instance=%s err=%s", instance_uid[-16:], e)
         return None

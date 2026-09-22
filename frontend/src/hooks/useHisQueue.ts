@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { streamSSE } from '@/services/streamSSE'
+import { reportCaught } from '@/sentry'
 
 /** 今日队列条目（GET /his/queue/today 的 items 元素 / admit 事件字段子集） */
 export interface HisQueueItem {
@@ -62,6 +63,8 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
   // 永远错过。补拉后与上次快照 diff，把漏掉的叫号/回写失败补成同款通知。
   // null = 首次加载（开页时队列里的存量患者不该触发一轮提示音轰炸）。
   const prevItemsRef = useRef<Map<string, HisQueueItem> | null>(null)
+  // SSE 连续失败计数（2026-09-23 审计补）：连续第 5 次失败上报一次 Sentry
+  const sseFailCountRef = useRef(0)
 
   /** 拉今日队列（开页 + 每次重连成功后调用）。返回是否可用（503 → false）。 */
   const refresh = useCallback(async (): Promise<boolean> => {
@@ -71,6 +74,9 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.status === 503) {
+        // 保险丝跳闸留痕（2026-09-23 审计补）：中途 503 会让整个叫号入口
+        // 从界面消失，无日志则医生报"按钮没了"时前端零线索
+        console.warn('[his_queue] HIS 通道 503（保险丝关闭），叫号入口已隐藏')
         setEnabled(false)
         return false
       }
@@ -139,6 +145,7 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
                 delay = RECONNECT_BASE_MS // 收到任何事件说明链路健康，重置退避
                 if (ev.type === 'connected') {
                   setConnected(true)
+                  sseFailCountRef.current = 0
                   return
                 }
                 if (ev.type === 'admit') {
@@ -190,10 +197,18 @@ export function useHisQueue({ onAdmit, onWritebackResult }: UseHisQueueOptions =
         } catch (e) {
           if ((e as Error)?.name === 'AbortError') break
           // 403 与 401 同理：不是瞬时故障，重连多少次都还是 403，直接退出循环。
-          // streamSSE 对非 2xx 抛的是 Error("HTTP <status>")，按消息匹配。
+          // streamSSE 对非 2xx 抛的是 Error("HTTP <status>…")——2026-09-23 起
+          // 消息尾部还带 rid 短码，故用 startsWith 而非全等（全等会让 401
+          // 匹配失败、退化成登出后无限重连）
           const msg = (e as Error)?.message || ''
-          if (msg === 'HTTP 401' || msg === 'HTTP 403') break
-          // 其余断线/HTTP 错误：走退避重连
+          if (msg.startsWith('HTTP 401') || msg.startsWith('HTTP 403')) break
+          // 其余断线/HTTP 错误：走退避重连——连续失败留痕（2026-09-23 审计补：
+          // 叫号流坏死此前只有抽屉红点，医生不开抽屉无人知晓）
+          sseFailCountRef.current += 1
+          console.warn(`[his_queue] SSE 断开第 ${sseFailCountRef.current} 次: ${msg.slice(0, 80)}`)
+          if (sseFailCountRef.current === 5) {
+            reportCaught(e, 'his_queue.sse_repeated_failure')
+          }
         }
         setConnected(false)
         if (stopped) break

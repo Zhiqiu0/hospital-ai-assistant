@@ -308,12 +308,19 @@ async def _send_payload(
             logger.error("his_writeback.http: 写入网络异常 req=%s err=%s", req_id, exc)
             return WritebackResult(ok=False, status="write_failed", message=f"网络异常：{exc}")
         if resp.status_code != 200:
+            # 「HIS 明确拒绝」类失败同样必须进 error.log（2026-09-23 日志审计补）：
+            # 此前只有网络异常分支有日志，拒绝原因只落 his_external_ref——
+            # error.log 查不到首次失败的 code/message，只能翻数据库
+            logger.error("his_writeback.http: 写入 HTTP 非 200 req=%s status=%d",
+                         req_id, resp.status_code)
             return WritebackResult(
                 ok=False, status="write_failed",
                 message=f"HTTP {resp.status_code}", http_status=resp.status_code,
             )
         code, message, data = _envelope_code(resp)
         if code != 0:
+            logger.error("his_writeback.http: 写入被拒 req=%s code=%s msg=%s",
+                         req_id, code, message)
             return WritebackResult(
                 ok=False, status="write_failed",
                 message=f"HIS 返回 code={code} {message}", http_status=200,
@@ -349,6 +356,8 @@ async def _send_payload(
                     message=f"刷新网络异常：{exc}", his_doc_id=his_doc_id,
                 )
             if rresp.status_code != 200:
+                logger.error("his_writeback.http: 刷新 HTTP 非 200 req=%s doc=%s status=%d",
+                             req_id, his_doc_id, rresp.status_code)
                 return WritebackResult(
                     ok=False, status="refresh_failed",
                     message=f"刷新 HTTP {rresp.status_code}", his_doc_id=his_doc_id,
@@ -393,6 +402,10 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
         return WritebackResult(ok=False, status="write_failed", message=f"WS 发送失败：{exc}")
     code = _coerce_code(ack.get("code", -1))  # 与 HTTP 通道同口径，见 _coerce_code
     if code != 0:
+        # 拒绝类失败进 error.log（2026-09-23 日志审计补，同 HTTP 通道口径）
+        logger.error("his_writeback.ws: 写入被拒 visit_id=%s type=%s code=%s msg=%s",
+                     payload.get("visit_id"), payload.get("record_type"),
+                     code, ack.get("message", ""))
         return WritebackResult(
             ok=False, status="write_failed",
             message=f"HIS 返回 code={code} {ack.get('message', '')}",
@@ -417,6 +430,8 @@ async def _send_via_ws(payload: dict) -> WritebackResult:
             message=f"刷新 WS 发送失败：{exc}", his_doc_id=his_doc_id,
         )
     if _coerce_code(rack.get("code", -1)) != 0:
+        logger.error("his_writeback.ws: 刷新被拒 visit_id=%s doc=%s code=%s",
+                     payload.get("visit_id"), his_doc_id, rack.get("code"))
         return WritebackResult(
             ok=False, status="refresh_failed",
             message=f"刷新 HIS 返回 code={rack.get('code')}", his_doc_id=his_doc_id,

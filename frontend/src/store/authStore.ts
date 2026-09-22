@@ -18,6 +18,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import * as Sentry from '@sentry/react'
 
 /**
  * 解码 JWT payload 并检查是否过期（不验证签名，仅客户端快速判断）
@@ -76,8 +77,22 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       lastUserId: null,
       systemType: 'outpatient',
-      setAuth: (token, user) => set({ token, user, lastUserId: user.id }),
+      setAuth: (token, user) => {
+        set({ token, user, lastUserId: user.id })
+        // Sentry 关联医生身份（2026-09-23 可观测性审计补）：医生电话报障时
+        // 可按人检索 event。只放系统内 id/用户名（非患者信息）
+        try {
+          Sentry.setUser({ id: user.id, username: user.username })
+        } catch {
+          /* Sentry 未初始化不影响登录 */
+        }
+      },
       clearAuth: () => {
+        try {
+          Sentry.setUser(null)
+        } catch {
+          /* noop */
+        }
         clearPatientScopedData()
         // 离线草稿队列一并清（2026-08-28 多标签页审计）：跨登出残留 = 上一位
         // 医生的病历正文留在本机 + 换人后 flush 撞 403 被静默丢弃

@@ -18,6 +18,7 @@ import { writeSectionToRecord } from '@/components/workbench/qcFieldMaps'
 import { supplementableIssues } from '@/components/workbench/qcFieldConstants'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 import type { RecordEditorShared } from './useRecordEditorShared'
+import { reportCaught } from '@/sentry'
 
 export function useRecordSupplement(
   shared: RecordEditorShared,
@@ -114,6 +115,9 @@ export function useRecordSupplement(
     } catch (e) {
       const err = e as { name?: string; message?: string }
       if (err?.name === 'AbortError') return
+      // try 里含本地写入逻辑（writeSectionToRecord 等），TypeError 也会落到
+      // 这里被说成"补全失败"——必须上报才能发现是代码 bug 而非服务问题
+      reportCaught(e, 'record.supplement')
       // 失败时不要把正文回退成发起时的快照——那同样会抹掉医生这段时间的编辑。
       // 补全没写入任何内容，正文保持现状即可。
       message.error('补全失败，请重试')

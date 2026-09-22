@@ -219,6 +219,12 @@ export const useRecordStore = create<RecordState>()(
         // 归属为空 = 本次改动之前留下的旧数据，无从判断归谁，一律丢弃更安全
         if (!encounterId || owner !== encounterId) {
           if (get().recordContent) {
+            // 留痕（2026-09-23 可观测性审计补）：守卫正确时这里不该被触发；
+            // 若误触发（多轮审计的高危区），医生"我写的病历没了"必须能排查。
+            // 只打 id 前 8 位，不打内容
+            console.warn(
+              `[guard] recordStore 归属失配清空: owner=${(owner || '-').slice(0, 8)} incoming=${(encounterId || '-').slice(0, 8)}`
+            )
             set({
               recordContent: '',
               lastSavedContent: '',

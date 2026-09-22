@@ -142,8 +142,11 @@ export default function InpatientTimeline({
         content: '',
       })
       onCreated()
-    } catch {
-      message.error('新建失败')
+    } catch (e) {
+      const err = e as { detail?: string; rid?: string }
+      message.error(
+        `新建失败${err?.detail ? `：${err.detail}` : ''}${err?.rid ? `（rid:${err.rid.slice(0, 8)}）` : ''}`
+      )
     } finally {
       setCreating(false)
     }

@@ -130,8 +130,13 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
       markSaved(`${recordedAt?.format('YYYY-MM-DDTHH:mm:ss') ?? ''}\u0001${content}`)
       message.success('已保存')
       onSaved()
-    } catch {
-      message.error('保存失败')
+    } catch (e) {
+      // 透后端 detail + rid 短码（2026-09-23 审计补）：住院保存失败此前只有
+      // 两个字，医生和排障都拿不到任何线索
+      const err = e as { detail?: string; rid?: string }
+      message.error(
+        `保存失败${err?.detail ? `：${err.detail}` : ''}${err?.rid ? `（rid:${err.rid.slice(0, 8)}）` : ''}`
+      )
     } finally {
       setSaving(false)
     }
@@ -152,8 +157,12 @@ export default function ProgressNotePanel({ item, onSaved }: Props) {
       setLocalStatus('submitted') // 乐观更新本地状态，立即切到只读
       message.success('已签发')
       onSaved()
-    } catch {
-      message.error('签发失败')
+    } catch (e) {
+      // 住院签发是关键流程，透 detail + rid（与门诊签发 FinalRecordModal 对齐）
+      const err = e as { detail?: string; rid?: string }
+      message.error(
+        `签发失败${err?.detail ? `：${err.detail}` : ''}${err?.rid ? `（rid:${err.rid.slice(0, 8)}）` : ''}`
+      )
     } finally {
       setSubmitting(false)
     }

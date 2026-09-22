@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from app.services.qc_engine.checker import RecordContext
@@ -29,6 +30,8 @@ from app.services.qc_engine.rubric import (
     RubricItem,
     VetoRule,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -163,17 +166,30 @@ def _score_item(item: RubricItem, ctx: RecordContext) -> ItemScore:
     )
 
 
-def _safe_check(rule: DeductionRule | VetoRule, ctx: RecordContext) -> bool:
-    """安全调用规则 checker——任何异常视为"未触发扣分"。
+# 已告警过的坏规则（2026-09-23 日志审计补）：每进程每条规则只告警一次——
+# 质控是高频路径，同一条坏规则每份病历都崩，不去重会把 error.log 刷穿
+_broken_rules_warned: set = set()
 
-    防御性：规则函数自己出 bug 不该让整个评分崩。日志由调用方决定要不要打。
+
+def _safe_check(rule: DeductionRule | VetoRule, ctx: RecordContext) -> bool:
+    """安全调用规则 checker——任何异常视为"未触发扣分"，但必须留痕。
+
+    防御性：规则函数自己出 bug 不该让整个评分崩。
+    但静默吞掉=该规则对全院所有病历永久放行、评分系统性虚高且无任何
+    信号（与「零规则 100 分」同族，藏在运行时）——运维必须知道。
     """
     try:
         return bool(rule.checker(ctx))
     except Exception:
         # 规则 bug 不阻断评分——单条规则崩溃只损失它一条的扣分判定
-        # 这里用 pass 而非 logger.warning 保持 scorer 模块纯净；
-        # 调用方（qc_stream_service）可以包一层 logger
+        code = getattr(rule, "code", None) or getattr(rule, "rule_code", "?")
+        if code not in _broken_rules_warned:
+            _broken_rules_warned.add(code)
+            logger.warning(
+                "qc.rule_crashed: 质控规则 %s 运行时崩溃，已按「未触发扣分」放行"
+                "（该规则对所有病历失效，需修复；本进程内不再重复告警）",
+                code, exc_info=True,
+            )
         return False
 
 
