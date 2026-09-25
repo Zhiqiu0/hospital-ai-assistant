@@ -61,6 +61,6 @@ jobs:
           staged="/home/ubuntu/pages/.guoqing-roadtrip-${GITHUB_SHA}.html"
           scp -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes public-pages/guoqing-roadtrip.html "$target:$staged"
           # 比较旧版校验和防止覆盖并发修改；备份后原子替换单一文件。
-          ssh -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes "$target" "set -eu; test \$(sha256sum /home/ubuntu/pages/guoqing-roadtrip.html | cut -d' ' -f1) = 60bba45d60fff8475945217968ead67d570255117ea688566cb1974462d3f2f9; mkdir -p /home/ubuntu/backups/public-pages; cp -p /home/ubuntu/pages/guoqing-roadtrip.html /home/ubuntu/backups/public-pages/guoqing-roadtrip-before-${GITHUB_SHA}.html; chmod 644 '$staged'; mv '$staged' /home/ubuntu/pages/guoqing-roadtrip.html"
+          ssh -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes "$target" "set -eu; test \$(sha256sum /home/ubuntu/pages/guoqing-roadtrip.html | cut -d' ' -f1) = e7e64f6f0e62e94e0a61b3ba08c0221c4ac7b6e0f29ab482e36a96ea71b78751; mkdir -p /home/ubuntu/backups/public-pages; cp -p /home/ubuntu/pages/guoqing-roadtrip.html /home/ubuntu/backups/public-pages/guoqing-roadtrip-before-${GITHUB_SHA}.html; chmod 644 '$staged'; mv '$staged' /home/ubuntu/pages/guoqing-roadtrip.html"
           curl -fsSL --retry 3 'https://mediscribe.cn/pages/guoqing-roadtrip.html' -o /tmp/roadtrip-live.html
           cmp public-pages/guoqing-roadtrip.html /tmp/roadtrip-live.html
