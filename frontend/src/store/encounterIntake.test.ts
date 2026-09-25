@@ -80,6 +80,56 @@ describe('applyQuickStartResult', () => {
 })
 
 describe('applySnapshotResult', () => {
+  it('同患者同接诊冷启动水合保留持久化的转诊参考正文', async () => {
+    useActiveEncounterStore.getState().setActive({
+      patientId: 'ref-p',
+      encounterId: 'ref-e',
+      visitType: 'inpatient',
+      isFirstVisit: false,
+      isPatientReused: true,
+      previousRecordContent: '已经签发的门诊转诊参考',
+    })
+    // 模拟刷新：清空内存后恢复浏览器持久层，证明参考确实从存储取回。
+    const persisted = localStorage.getItem('medassist-active-encounter')
+    expect(persisted).not.toBeNull()
+    usePatientCacheStore.getState().clear()
+    useActiveEncounterStore.getState().clearActive()
+    expect(useActiveEncounterStore.getState().previousRecordContent).toBeNull()
+    localStorage.setItem('medassist-active-encounter', persisted!)
+    await useActiveEncounterStore.persist.rehydrate()
+    expect(useActiveEncounterStore.getState().previousRecordContent).toBe('已经签发的门诊转诊参考')
+    applySnapshotResult({
+      encounter_id: 'ref-e',
+      patient: { id: 'ref-p', name: '转诊测试患者' },
+      visit_type: 'inpatient',
+    })
+    expect(useActiveEncounterStore.getState().previousRecordContent).toBe('已经签发的门诊转诊参考')
+    // 再次水合也不能把刚保留的参考写回成null。
+    await useActiveEncounterStore.persist.rehydrate()
+    expect(useActiveEncounterStore.getState().previousRecordContent).toBe('已经签发的门诊转诊参考')
+  })
+
+  it.each([
+    ['ref-p', 'other-e'],
+    ['other-p', 'ref-e'],
+    ['other-p', 'other-e'],
+  ])('患者%s或接诊%s变化时不得沿用旧转诊参考', (patientId, encounterId) => {
+    useActiveEncounterStore.getState().setActive({
+      patientId: 'ref-p',
+      encounterId: 'ref-e',
+      visitType: 'inpatient',
+      isFirstVisit: false,
+      isPatientReused: true,
+      previousRecordContent: '旧接诊私有参考',
+    })
+    applySnapshotResult({
+      encounter_id: encounterId,
+      patient: { id: patientId, name: '新的测试快照' },
+      visit_type: 'inpatient',
+    })
+    expect(useActiveEncounterStore.getState().previousRecordContent).toBeNull()
+  })
+
   it('快照缺 is_first_visit 时回退到保守的复诊态', () => {
     // 老快照/字段缺失才走这条；正常情况下后端一直有下发，见下面两条
     applySnapshotResult({
