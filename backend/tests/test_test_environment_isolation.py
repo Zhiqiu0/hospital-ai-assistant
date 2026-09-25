@@ -12,7 +12,7 @@ def _run(code: str, **overrides):
     env = {**os.environ, 'SECRET_KEY': 'test-isolation', 'ORTHANC_PASSWORD': 'test-isolation', **overrides}
     result = subprocess.run([sys.executable, '-c', code], cwd=Path(__file__).parents[1],
                             env=env, capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stderr + result.stdout[-4000:]
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
@@ -122,6 +122,27 @@ scope = runpy.run_path('tests_pg/conftest.py')
 print(json.dumps({'connections':asyncpg.connect.await_count}))
 """, PG_TEST_DATABASE_URL='postgresql+asyncpg://fake:fake@localhost/postgres')
     assert result == {'connections': 0}
+
+
+def test_pg_fixture_and_direct_import_share_one_database():
+    """pytest注册的夹具与测试文件直接导入的工具必须是同一模块、同一随机库。"""
+    result = _run("""
+import json, pytest, asyncpg
+from unittest.mock import AsyncMock
+asyncpg.connect = AsyncMock(side_effect=AssertionError('collection must not connect'))
+class Probe:
+    def pytest_collection_finish(self, session):
+        import tests_pg.conftest as imported
+        registered = [plugin for plugin in session.config.pluginmanager.get_plugins()
+                      if getattr(plugin, '_ensure_test_database', None) is not None]
+        self.same_module = len(registered) == 1 and registered[0] is imported
+        self.same_database = len(registered) == 1 and registered[0].TEST_DB_NAME == imported.TEST_DB_NAME
+probe = Probe()
+status = pytest.main(['tests_pg', '--collect-only', '-q'], plugins=[probe])
+print(json.dumps({'status':int(status), 'same_module':probe.same_module,
+                  'same_database':probe.same_database, 'connections':asyncpg.connect.await_count}))
+""", PG_TEST_DATABASE_URL='postgresql+asyncpg://fake:fake@localhost/postgres', CI='true')
+    assert result == {'status': 0, 'same_module': True, 'same_database': True, 'connections': 0}
 
 
 def test_pg_collection_has_no_database_side_effects():
