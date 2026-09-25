@@ -13,7 +13,49 @@
     qc_engine.scorer.score(rubric, ctx) 规则引擎驱动，LLM 输出不参与总分
     （见 qc_stream_service：llm_issues 不计入 must_fix_count / grade_score）。
 """
+import json
+
+from app.services.ai.record_schemas import (
+    DATA_FENCE_BEGIN, DATA_FENCE_END, RECORD_TYPE_LABELS,
+    sanitize_freetext_field, sanitize_inline_field,
+)
 from app.services.qc_engine.rubric import Rubric, VETO_DEDUCT_POINTS
+
+
+def build_qc_runtime_context(req) -> str:
+    """调用时附加文书范围和独立首页，不依赖默认模板是否保留占位符。
+
+    评分表含多类型条款，但Python checker的适用条件不会自动进入模型上下文。
+    此处只补解释上下文，不筛除模型结果、不改变任何评分条款。
+    """
+    record_type = getattr(req, "record_type", None) or "outpatient"
+    # 类型来自受控映射，未知字符串不作为指令插入提示词。
+    if record_type not in RECORD_TYPE_LABELS:
+        record_type = "未知"
+    label = RECORD_TYPE_LABELS.get(record_type, "未提供有效文书类型")
+    if record_type == "outpatient":
+        scope = "当前为门诊，不适用急诊专属条款；不得要求急诊患者去向、留观或抢救记录。"
+    elif record_type == "emergency":
+        scope = "当前为急诊，急诊专属条款适用，按实际资料检查就诊时间、生命体征和患者去向。"
+    elif record_type != "未知":
+        scope = "当前为住院文书，不得要求当前文书包含其他住院文书的专属章节，也不套用门急诊专属条款。"
+    else:
+        scope = "文书类型未知，不得仅凭共享评分表推断为急诊或住院。"
+    # 姓名等仍是外部数据，清理结构标记并放进JSON资料区，不能拼成任务指令。
+    metadata = {
+        field: sanitize_inline_field(sanitize_freetext_field(
+            getattr(req, field, None), default=""), default="") or None
+        for field in ("patient_name", "patient_gender", "patient_age")
+    }
+    return (
+        f"当前文书类型：{record_type}（{label}）\n{scope}\n"
+        "共享评分表仅供参照，只采用当前文书适用的条款。\n"
+        "首页信息与正文独立存储；下列已提供的值是本次患者首页上下文，"
+        "不得因正文未重复首页信息而报缺失，也不要要求将首页字段补写到正文。\n"
+        "null表示本次请求未提供；未提供不等于患者档案未填写，不得据此猜测缺失或虚构值。\n"
+        "其他未传入的首页字段也属于未知；若资料确有矛盾，可具体指出并建议核对。\n"
+        f"{DATA_FENCE_BEGIN}\n{json.dumps(metadata, ensure_ascii=False)}\n{DATA_FENCE_END}"
+    )
 
 
 def _format_points(points: float) -> str:
