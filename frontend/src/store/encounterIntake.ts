@@ -163,6 +163,13 @@ export function applyQuickStartResult(res: QuickStartResult): void {
  * 直接用它即可——见下面 setActive 处的说明。
  */
 export function applySnapshotResult(res: SnapshotResult): void {
+  // workspace未提供转诊参考字段；在setActive重写指针前保留同患者同接诊的本地参考。
+  // 换患者或换接诊必须清空，不能把上一份转诊内容带入新的诊疗上下文。
+  const active = useActiveEncounterStore.getState()
+  const previousRecordContent =
+    active.patientId === res.patient?.id && active.encounterId === res.encounter_id
+      ? active.previousRecordContent
+      : null
   syncPatientToCache(res)
   if (res.encounter_id && res.patient) {
     useActiveEncounterStore.getState().setActive({
@@ -187,7 +194,7 @@ export function applySnapshotResult(res: SnapshotResult): void {
       // 取不到时才回退到保守的 false（老快照/字段缺失）。
       isFirstVisit: res.is_first_visit ?? false,
       isPatientReused: true,
-      previousRecordContent: null,
+      previousRecordContent,
     })
   }
 
