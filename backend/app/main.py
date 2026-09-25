@@ -286,11 +286,9 @@ async def health_check_deep():
         logger.error("health.deep.redis: failed err=%s", exc)
         deps["redis"] = "error"
 
-    # AI 凭证（2026-08-13 第二轮审计修复）：DEEPSEEK_API_KEY 缺失时应用照常启动、
-    # 容器健康检查照常绿、部署报成功，但病历生成/质控/建议全部报错——"看着健康
-    # 实则核心功能全废"。凭证是启动即可判定的静态配置，纳入深度健康检查。
-    # 不做真实 LLM 调用（会拖慢监控探测并烧 token），只查凭证是否配齐。
-    deps["ai_credential"] = "ok" if settings.deepseek_api_key else "missing"
+    # 非空密钥可能已经失效；免费鉴权探针带短缓存，不调用生成模型。
+    from app.services.ai_credential_health import check_ai_credential
+    deps["ai_credential"] = await check_ai_credential()
 
     # Orthanc / PACS 影像服务器（2026-09-01 可观测性审计）：
     # orthanc_client.health_check() 早就写好了，却**只在手工冒烟脚本里被调用过**，
@@ -356,7 +354,7 @@ async def health_check_deep():
     critical_down = (
         deps.get("db") == "error"
         or deps.get("redis") == "error"
-        or deps.get("ai_credential") == "missing"
+        or deps.get("ai_credential") != "ok"
         or deps.get("orthanc") == "error"
         or _cal == "expired"
     )

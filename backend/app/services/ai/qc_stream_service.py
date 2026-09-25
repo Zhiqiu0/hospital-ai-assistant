@@ -31,6 +31,7 @@ from app.schemas.ai_request import QuickQCRequest, extract_inquiry_dict
 from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_contracts import require_text_items
 from app.services.ai.prompts import QC_PROMPT, RECORD_TYPE_LABELS
 from app.services.ai.task_logger import log_ai_task, save_qc_issues, save_qc_report
 from app.services.ai._qc_frontpage import (
@@ -204,6 +205,9 @@ async def run_quick_qc_stream(
         try:
             # usage 随结果一起从子任务上下文带回（见 _llm_with_usage）
             llm_result, usage = await llm_task
+            # 去重前检查每条建议；错误对象不得被写库或伪装成已分析且零建议。
+            validated_issues = require_text_items(
+                llm_result, "issues", ("field_name", "issue_description", "suggestion"))
             task_id = await log_ai_task(
                 "qc",
                 token_input=usage.prompt_tokens if usage else None,
@@ -215,7 +219,7 @@ async def run_quick_qc_stream(
             rule_fields = {i.get("field_name") for i in rule_issues}
             llm_issues = [
                 {**i, "source": "llm"}
-                for i in (llm_result.get("issues", []) or [])
+                for i in validated_issues
                 if i.get("field_name") not in rule_fields
             ]
 

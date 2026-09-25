@@ -28,6 +28,8 @@ function formatSavedAt(ts: number | null | undefined): string {
 export default function WorkbenchStatusBar() {
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const currentPatient = useCurrentPatient()
+  const visitType = useActiveEncounterStore(s => s.visitType)
+  const isFinal = useRecordStore(s => s.isFinal)
   const inquirySavedAt = useInquiryStore(s => s.inquirySavedAt)
   const recordContent = useRecordStore(s => s.recordContent)
   const recordSavedAt = useRecordStore(s => s.recordSavedAt)
@@ -51,6 +53,8 @@ export default function WorkbenchStatusBar() {
   }, [])
 
   const busy = !!currentEncounterId && !!currentPatient
+  // 门急诊签发即完成接诊；住院一份文书签发不等于出院，仍保留接诊中。
+  const completed = isFinal && visitType !== 'inpatient'
   const hasDraft = !!recordContent
 
   // 状态优先级：离线/暂存/冲突（异常态优先，医生必须先看到）>
@@ -88,7 +92,11 @@ export default function WorkbenchStatusBar() {
     <StatusBar>
       <StatusBarItem
         dot={busy ? 'success' : 'info'}
-        label={busy ? `${currentPatient?.name || '患者'} · 接诊中` : '待选择患者'}
+        label={
+          busy
+            ? `${currentPatient?.name || '患者'} · ${completed ? '接诊已完成' : '接诊中'}`
+            : '待选择患者'
+        }
       />
       <StatusBarItem dot={dot} label={savedLabel} />
     </StatusBar>

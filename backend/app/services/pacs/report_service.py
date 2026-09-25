@@ -106,6 +106,11 @@ async def upsert_analysis_report(
     - 没有 report → 新建，radiologist_id 记当前分析人
     - study 状态流转为 analyzed，最后统一 commit
     """
+    # 长AI调用前读到的study可能已过期。与发布/删除统一study→report锁顺序，
+    # 检查已删除则停止写入，既不复活报告，也不构成反向锁等待。
+    study = await db.get(ImagingStudy, study_id, with_for_update=True, populate_existing=True)
+    if study is None:
+        raise HTTPException(410, "检查已被删除，分析结果无法保存")
     result = await db.execute(
         select(ImagingReport).where(ImagingReport.study_id == study_id).with_for_update()
     )

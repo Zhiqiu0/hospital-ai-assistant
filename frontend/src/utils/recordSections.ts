@@ -21,13 +21,18 @@
  *   体格检查段落需要分离"望诊/闻诊/切诊/舌脉象"等中医字段，与"其余阳性体征"
  *   合并写回 physical_exam，避免中医字段串到体检里。
  */
+/** 模板空值不属于病史事实；整章和复合章节拆出的子字段使用同一判据。 */
+const hasFieldContent = (text: string) =>
+  !!text.trim() && !/^\[未填写[，,]\s*需补充\]$/.test(text.trim())
+
 export function parseGeneratedSectionsToInquiry(content: string): Record<string, string> {
   const result: Record<string, string> = {}
   const pattern = /【([^】]+)】[^\S\n]*\n?([\s\S]*?)(?=\n【|$)/g
   let m: RegExpExecArray | null
   while ((m = pattern.exec(content)) !== null) {
     const text = m[2].trim()
-    if (!text) continue
+    // 模板缺项提示不是患者病史，不能回填、更不能覆盖医生已录入的信息。
+    if (!hasFieldContent(text)) continue
     switch (m[1]) {
       case '主诉':
         result.chief_complaint = text
@@ -52,10 +57,13 @@ export function parseGeneratedSectionsToInquiry(content: string): Record<string,
         const physicalContent = physicalLine
           ? physicalLine.replace(/^其余阳性体征[：:]\s*/u, '').trim()
           : ''
-        result.physical_exam = [physicalContent, filteredLines.join('\n').trim()]
-          .filter(Boolean)
+        // 复合章节整体不空，不代表普通体检有内容；过滤提取后的占位子行，
+        // 没有实质体检时不返回该键，避免覆盖医生已经录入的体检。
+        const physicalExam = [physicalContent, ...filteredLines]
+          .map(line => line.trim())
+          .filter(hasFieldContent)
           .join('\n')
-          .trim()
+        if (physicalExam) result.physical_exam = physicalExam
         break
       }
       case '辅助检查':

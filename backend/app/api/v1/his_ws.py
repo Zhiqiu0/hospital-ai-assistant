@@ -240,7 +240,10 @@ async def _handle_message(websocket: WebSocket, raw: str) -> None:
             "his_ws.message_verify_failed: type=%s msg_id=%s code=%s(%s) "
             "payload_len=%d payload_sha8=%s",
             env.type, env.msg_id, code, wp.ERROR_TEXT.get(code, "?"),
-            len(payload_raw), hashlib.sha256(payload_raw.encode("utf-8")).hexdigest()[:8],
+            # 原文缺失时保留验签失败结果；日志不能二次抛错导致无 ack 断链。
+            len(payload_raw) if payload_raw is not None else -1,
+            hashlib.sha256(payload_raw.encode("utf-8")).hexdigest()[:8]
+            if payload_raw is not None else "unavailable",
         )
         await websocket.send_text(
             wp.build_ack(env.msg_id, code, wp.ERROR_TEXT[code], aid, secret)

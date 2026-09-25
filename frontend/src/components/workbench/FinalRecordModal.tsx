@@ -21,12 +21,8 @@ import { CheckOutlined } from '@ant-design/icons'
 import { useInquiryStore } from '@/store/inquiryStore'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'
-import {
-  useActiveEncounterStore,
-  setCurrentEncounterFromPatient,
-} from '@/store/activeEncounterStore'
-import api from '@/services/api'
-import type { Patient, VisitType } from '@/domain/medical'
+import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { submitFinalRecord } from './finalRecordSubmission'
 
 const { Text } = Typography
 
@@ -58,43 +54,15 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
   const handleSave = async () => {
     setSaving(true)
     try {
-      let encounterId = useActiveEncounterStore.getState().encounterId
-      const inferredVisitType = recordType === 'outpatient' ? 'outpatient' : 'inpatient'
-
-      if (!encounterId) {
-        const pName =
-          patientName.trim() || inquiry.chief_complaint.slice(0, 6) + '患者' || '未知患者'
-        // quick-start 返回结构：本组件仅消费 encounter_id + patient，其余字段透传
-        const res = (await api.post('/encounters/quick-start', {
-          patient_name: pName,
-          gender: patientGender || 'unknown',
-          age: patientAge.trim() ? parseInt(patientAge.trim()) : undefined,
-          visit_type: inferredVisitType,
-        })) as { encounter_id: string; patient: Patient }
-        const newEncounterId: string = res.encounter_id
-        encounterId = newEncounterId
-        // 通过聚合 helper 一次性 upsert 到 patientCacheStore + setActive 到指针 store
-        setCurrentEncounterFromPatient(res.patient, newEncounterId, {
-          visitType: inferredVisitType as VisitType,
-        })
-      }
-
-      const saveRes = (await api.post('/medical-records/quick-save', {
-        encounter_id: encounterId,
-        record_type: recordType,
-        content: recordContent,
-      })) as { submitted_at?: string | null }
-
-      // 标记本地 isFinal=true：编辑器只读、auto-save 停摆，但接诊上下文保留
-      // 不再 resetAllWorkbench——A 方案下转住院要求"先签发"，签发后立刻 reset
-      // 会让医生失去转住院入口，形成"必须先签发→签发就清空→无法转住院"死循环。
-      // 让医生显式选择下一步动作（转住院 / 新建接诊 / 登出），各动作自带 reset。
-      // 签发时刻用服务器真值（2026-08-28 时间审计）：原空参回退 new Date()
-      // ——医生电脑时钟错 1 小时，打印件"签发时间"就与签名哈希链锁定的
-      // 法定时刻差 1 小时
-      useRecordStore.getState().setFinal(true, saveRes.submitted_at ?? null)
-      message.success('病历已签发，可继续转住院或开始下一位接诊')
-      handleClose()
+      const applied = await submitFinalRecord({
+        recordType,
+        recordContent,
+        patientName,
+        patientGender,
+        patientAge,
+        chiefComplaint: inquiry.chief_complaint,
+      })
+      if (applied) handleClose()
     } catch (e) {
       // axios 拦截器抛出的是 response.data，detail 字段由后端 FastAPI 统一返回
       const detail = (e as { detail?: string } | null)?.detail
@@ -115,9 +83,13 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
       title="出具最终病历"
       width={720}
       open={open}
-      onCancel={handleClose}
+      // 请求提交后关闭弹窗不等于撤销服务端签发，等待返回再允许离开。
+      onCancel={saving ? undefined : handleClose}
+      closable={!saving}
+      maskClosable={!saving}
+      keyboard={!saving}
       footer={[
-        <Button key="cancel" onClick={handleClose}>
+        <Button key="cancel" onClick={handleClose} disabled={saving}>
           取消
         </Button>,
         <Button
@@ -132,6 +104,14 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         </Button>,
       ]}
     >
+      {saving && (
+        <Alert
+          type="info"
+          showIcon
+          message="签发已提交，不能撤销，请等待处理结果。"
+          style={{ marginBottom: 8 }}
+        />
+      )}
       {/* QC status */}
       {qcPass === false ? (
         <Alert

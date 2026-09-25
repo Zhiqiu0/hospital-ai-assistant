@@ -84,6 +84,7 @@ export function useAutoSaveDraft({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 切接诊时重置基线
   const lastEncounterRef = useRef<string | null>(null)
+  const lastRecordTypeRef = useRef<string>(recordType)
   // 撞过 409 之后的一次性强制覆盖标记（2026-09-01 多设备并发审计）。
   // 冲突后本地基线被清空、下一次保存会盖掉另一端刚写的内容；带上这个标记让
   // 后端**另起一版**而不是原地覆写，被盖掉的内容留在历史版本里不至于永久消失。
@@ -95,7 +96,11 @@ export function useAutoSaveDraft({
   // 必须声明在 useEffect 之前——effect 闭包里引用 performSave，
   // 后置 const 会触发 ESLint react-hooks/set-state-in-effect TDZ 报错
   const performSave = async (payload: DraftPayload): Promise<boolean> => {
-    setSavingState('saving')
+    // 草稿身份由接诊和文书类型共同组成；每次异步返回后重新检查当前指针。
+    const isCurrentDraft = (draft: DraftPayload) =>
+      draft.encounter_id === lastEncounterRef.current &&
+      draft.record_type === lastRecordTypeRef.current
+    if (isCurrentDraft(payload)) setSavingState('saving')
     try {
       // 后端 auto-save-draft 仅回 updated_at（用于乐观锁回填），形状收敛在内联接口
       const res = (await api.post('/medical-records/auto-save-draft', {
@@ -104,14 +109,13 @@ export function useAutoSaveDraft({
         content: payload.content,
         expected_updated_at: payload.expected_updated_at,
         // 仅当这次发的正是当前接诊、且刚撞过 409 时才置真（见 forceOverwriteRef）
-        force_overwrite:
-          payload.encounter_id === lastEncounterRef.current && forceOverwriteRef.current,
+        force_overwrite: isCurrentDraft(payload) && forceOverwriteRef.current,
       })) as { updated_at?: string } | null
       // 基线守卫（2026-08-11 审计修复）：flush 补发的可能是「上一个接诊」的旧草稿，
       // 若无条件更新乐观锁基线，会把旧草稿的 updated_at 写进当前接诊，导致当前接诊
       // 后续保存永久 409 假冲突。仅当补发的正是当前接诊时才更新 ref/状态；否则也
       // 返回 true（让队列条目被 removeDraft 清掉），只跳过状态写入。
-      if (payload.encounter_id === lastEncounterRef.current) {
+      if (isCurrentDraft(payload)) {
         lastSavedContentRef.current = payload.content
         lastUpdatedAtRef.current = res?.updated_at ?? null
         forceOverwriteRef.current = false // 一次性：覆盖已完成，恢复正常乐观锁
@@ -139,7 +143,7 @@ export function useAutoSaveDraft({
       // 再 409、无限重试并反复弹提示。只对当前接诊弹冲突提示，避免补发旧草稿误导医生。
       if (status === 409) {
         void removeDraftByKey(payload.encounter_id, payload.record_type)
-        if (payload.encounter_id === lastEncounterRef.current) {
+        if (isCurrentDraft(payload)) {
           setSavingState('conflict')
           // 基线重置（2026-08-13 第二轮审计修复；2026-08-21 第四轮简化）：只提示
           // 不刷新基线会每 5 秒拿同一个过期 expected 反复撞 409——医生后续输入
@@ -174,8 +178,8 @@ export function useAutoSaveDraft({
       // 内容不改，重试永远是同一个结果，这正是"永久性拒绝"的定义。
       if (status === 400 || status === 403 || status === 404 || status === 422) {
         void removeDraftByKey(payload.encounter_id, payload.record_type)
-        setSavingState('idle')
-        if (payload.encounter_id === lastEncounterRef.current) {
+        if (isCurrentDraft(payload)) {
+          setSavingState('idle')
           const detail = (err as { detail?: string } | null)?.detail
           message.warning(
             status === 403
@@ -192,7 +196,7 @@ export function useAutoSaveDraft({
       // 其他错误（网络 / 5xx）→ 入失败队列，下次成功时补发
       try {
         await enqueueDraft(payload)
-        setSavingState('queued')
+        if (isCurrentDraft(payload)) setSavingState('queued')
       } catch {
         // IndexedDB 也挂了（隐私模式/存储配额满）。此前这里**只打 console.warn**，
         // 而 savingState 还停在 performSave 开头设的 'saving'——它不匹配状态栏里
@@ -200,7 +204,7 @@ export function useAutoSaveDraft({
         // 也就是说：内容服务端没有、本地队列也没有，界面却告诉医生已经保存好了。
         // 内容此刻只剩 recordStore 的 localStorage 副本（同设备刷新还能捞回来，
         // 换台电脑或清缓存就真没了），医生必须看见这件事。
-        setSavingState('failed')
+        if (isCurrentDraft(payload)) setSavingState('failed')
         // 下次防抖触发还是会重试
 
         // 只打状态与消息（2026-08-28 PHI 审计）：整个 AxiosError 展开即见
@@ -265,13 +269,15 @@ export function useAutoSaveDraft({
   // updated_at 去校验新类型的行，必产生假 409（"病历已被其他设备修改"误报）。
   // 处理与切接诊同构：先把旧类型的 pending 用旧基线落盘，再清基线（新类型首发
   // 不带 expected_updated_at → 后端跳过乐观锁校验，安全 UPSERT）。
-  const lastRecordTypeRef = useRef<string>(recordType)
   useEffect(() => {
     if (recordType !== lastRecordTypeRef.current) {
       flushPending() // pending 快照里存的是旧类型 + 旧基线，落对行
       lastRecordTypeRef.current = recordType
       lastSavedContentRef.current = ''
       lastUpdatedAtRef.current = null
+      // 冲突覆盖权限和保存时间同样只属于旧文书，不能沿用到新类型。
+      forceOverwriteRef.current = false
+      setSavedAt(0)
       setSavingState('idle')
     }
     // flushPending 读的全是 ref，闭包新旧无碍（同上）

@@ -11,7 +11,7 @@
  *   /admin/records 接口 JOIN patient + user + department，
  *   一次返回所有关联信息，无需前端二次请求。
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Table, Tag, Typography, Modal, Button, Space, Input } from 'antd'
 import { message } from '@/services/messageBridge'
 import { SearchOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
@@ -69,6 +69,9 @@ export default function RecordsPage() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  // 只接纳最新请求；筛选切换、修订刷新和卸载都会淘汰旧响应。
+  const requestId = useRef(0)
+  const [refreshVersion, setRefreshVersion] = useState(0)
   const [viewRecord, setViewRecord] = useState<RecordRow | null>(null)
 
   // ── 修订病历（2026-05-03 加）─────────────────────────────────────────────
@@ -110,7 +113,7 @@ export default function RecordsPage() {
       message.success('病历已修订，原版本保留供审计')
       closeRevise()
       // 刷新列表（让 content_preview 更新到新版本）
-      loadRecords()
+      setRefreshVersion(version => version + 1)
     } catch (e: unknown) {
       const detail = (e as { detail?: string })?.detail
       message.error(detail || '修订失败')
@@ -119,29 +122,36 @@ export default function RecordsPage() {
     }
   }
 
-  const loadRecords = async (p = page) => {
+  const loadRecords = useCallback(async () => {
+    const id = ++requestId.current
     setLoading(true)
     try {
-      const data = (await api.get(`/admin/records?page=${p}&page_size=20`)) as {
+      // 由服务端在分页前匹配姓名，支持当前页之外的病历。
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: '20',
+        search: search.trim(),
+      })
+      const data = (await api.get(`/admin/records?${params}`)) as {
         items?: RecordRow[]
         total?: number
       }
+      if (id !== requestId.current) return
       setRecords(data.items || [])
       setTotal(data.total || 0)
+    } catch {
+      if (id === requestId.current) message.error('病历列表加载失败，请重试')
     } finally {
-      setLoading(false)
+      if (id === requestId.current) setLoading(false)
     }
-  }
+  }, [page, search])
 
   useEffect(() => {
-    loadRecords()
-    // 只挂载时加载一次；setState 在 effect 里是预期路径
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const filtered = search
-    ? records.filter(r => r.patient_name?.includes(search) || r.doctor_name?.includes(search))
-    : records
+    void loadRecords()
+    return () => {
+      requestId.current += 1
+    }
+  }, [loadRecords, refreshVersion])
 
   const columns = [
     {
@@ -242,7 +252,12 @@ export default function RecordsPage() {
           prefix={<SearchOutlined style={{ color: 'var(--text-4)' }} />}
           placeholder="搜索患者姓名或医生"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          // 改搜索词时从第一页重新查询，避免沿用原列表的页码。
+          onChange={e => {
+            setSearch(e.target.value)
+            setPage(1)
+          }}
+          maxLength={100}
           style={{ width: 220 }}
           allowClear
         />
@@ -250,7 +265,7 @@ export default function RecordsPage() {
 
       <Table
         columns={columns}
-        dataSource={filtered}
+        dataSource={records}
         rowKey="id"
         loading={loading}
         pagination={{
@@ -259,7 +274,6 @@ export default function RecordsPage() {
           current: page,
           onChange: p => {
             setPage(p)
-            loadRecords(p)
           },
           showTotal: t => `共 ${t} 份病历`,
         }}

@@ -180,6 +180,12 @@ export function useWorkbenchBase({
       // 进行中列表移除）只成立于门急诊：门急诊一次接诊=一份病历，签发即结束；
       // 住院签一份不代表出院，患者仍在病区列表里。
       const isInpatientSnapshot = toVisitType(snapshot.visit_type) === 'inpatient'
+      // 门急诊文书跟随后端真实接诊类型，不能被当前页面的门诊默认值覆盖。
+      // 住院包含多类文书，继续尊重住院工作台传入的默认文书。
+      const fallbackRecordType =
+        snapshot.visit_type === 'emergency' || snapshot.visit_type === 'outpatient'
+          ? snapshot.visit_type
+          : defaultRecordType
       if (!isInpatientSnapshot && snapshot.active_record?.status === 'submitted') {
         // 已签发病历不可继续编辑：不再让用户自己去找历史病历入口（住院端 PatientHistoryDrawer
         // 需要先选中病区患者才能查看，而签发后该患者已从"进行中"列表移除，会陷入死循环）。
@@ -227,7 +233,7 @@ export function useWorkbenchBase({
         //      医生一改一存就在改已签发的病历。
         // 住院进工作台时留空，医生从时间轴选具体文书，选中时再由该文书自己的
         // 状态决定是否只读。
-        setRecordType(defaultRecordType)
+        setRecordType(fallbackRecordType)
         setRecordContent('')
         setFinal(false)
       } else if (snapshot.active_record) {
@@ -237,7 +243,7 @@ export function useWorkbenchBase({
         //（2026-08-14 第七轮审计修复）。显式表达"只换类型"更安全。
         useRecordStore
           .getState()
-          .setRecordTypeOnly(snapshot.active_record.record_type || defaultRecordType)
+          .setRecordTypeOnly(snapshot.active_record.record_type || fallbackRecordType)
         setRecordContent(snapshot.active_record.content || '')
         // 尊重该病历自身的签发状态，不再无条件放开编辑
         setFinal(
@@ -245,7 +251,7 @@ export function useWorkbenchBase({
           snapshot.active_record.submitted_at ?? null
         )
       } else {
-        setRecordType(defaultRecordType)
+        setRecordType(fallbackRecordType)
         setRecordContent('')
         setFinal(false)
       }

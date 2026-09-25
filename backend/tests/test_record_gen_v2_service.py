@@ -14,6 +14,12 @@ import pytest
 
 import app.services.ai.record_gen_v2_service as v2_service
 from app.services.ai.record_gen_v2_service import stream_record_v2
+from app.services.ai.record_schemas import SCHEMA_MAP
+
+
+def _complete_record(values, record_type="outpatient"):
+    """成功响应夹具遵循完整模板；未录入字段显式为空，避免依赖无效稀疏对象。"""
+    return {**dict.fromkeys(SCHEMA_MAP[record_type], ""), **values}
 
 
 def _mock_req(**overrides):
@@ -73,7 +79,7 @@ async def test_outpatient_happy_path(monkeypatch, async_db):
     }
 
     async def fake_chat_json_stream(*args, **kwargs):
-        return fake_result
+        return _complete_record(fake_result)
 
     def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
@@ -146,7 +152,7 @@ async def test_render_failure_emits_error(monkeypatch, async_db):
         raise ValueError("render bug")
 
     async def fake_chat_json_stream(*args, **kwargs):
-        return {"chief_complaint": "x"}
+        return _complete_record({"chief_complaint": "x"})
 
     def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
@@ -185,7 +191,7 @@ async def test_emergency_happy_path(monkeypatch, async_db):
     }
 
     async def fake_chat_json_stream(*args, **kwargs):
-        return fake_result
+        return _complete_record(fake_result, "emergency")
 
     def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}
@@ -218,7 +224,7 @@ async def test_heartbeat_during_slow_llm(async_db, monkeypatch):
 
     async def slow_chat_json_stream(*args, **kwargs):
         await aio.sleep(0.25)
-        return {"chief_complaint": "头痛3天"}
+        return _complete_record({"chief_complaint": "头痛3天"})
 
     def fake_get_model_options(*args, **kwargs):
         return {"temperature": 0.3, "max_tokens": 4000, "model_name": "test-model"}

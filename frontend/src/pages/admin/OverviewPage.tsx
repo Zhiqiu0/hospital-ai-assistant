@@ -23,6 +23,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import api from '@/services/api'
+import { describeHealth, type HealthDeep } from '@/utils/healthStatus'
 
 const { Title, Text } = Typography
 
@@ -80,35 +81,6 @@ interface OverviewStats {
   total_ai_tasks?: number
   high_risk_issues?: number
   [key: string]: number | undefined
-}
-
-/** GET /health/deep 的响应形状（main.py 的 health_check_deep）。
- *  关键依赖任一异常返回 503，body 结构不变。 */
-interface HealthDeep {
-  status: string
-  deps: { db?: string; redis?: string; ai_credential?: string }
-}
-
-/** deps → 中文提示（只说探活结果，不臆断"一切正常"） */
-function describeHealth(
-  health: HealthDeep | null,
-  failed: boolean
-): { text: string; type: 'success' | 'warning' | 'error' } {
-  if (!health) {
-    return failed
-      ? { text: '无法获取系统健康状态（健康检查接口不可达）', type: 'warning' }
-      : { text: '正在检测系统健康状态…', type: 'warning' }
-  }
-  const d = health.deps || {}
-  const bad: string[] = []
-  if (d.db && d.db !== 'ok') bad.push('数据库')
-  if (d.redis === 'error') bad.push('Redis 缓存/事件总线')
-  if (d.ai_credential === 'missing') bad.push('AI 凭证未配置')
-  if (bad.length) {
-    return { text: `系统异常 — ${bad.join('、')}不可用，请立即检查`, type: 'error' }
-  }
-  const note = d.redis === 'unconfigured' ? '（Redis 未配置）' : ''
-  return { text: `系统运行正常 — 数据库、AI 凭证探活通过${note}`, type: 'success' }
 }
 
 export default function OverviewPage() {

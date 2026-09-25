@@ -10,6 +10,23 @@ import { describe, expect, it } from 'vitest'
 import { parseGeneratedSectionsToInquiry } from './recordSections'
 
 describe('parseGeneratedSectionsToInquiry', () => {
+  it.each(['[未填写，需补充]', '[未填写, 需补充]', ''])(
+    '复合体检章缺失子行 %s 不得回填覆盖已有体检',
+    value => {
+      const result = parseGeneratedSectionsToInquiry(
+        `【体格检查】\nT:36.5℃ P:78次/分\n望诊：[未填写，需补充]\n其余阳性体征：${value}`
+      )
+      expect(result).not.toHaveProperty('physical_exam')
+    }
+  )
+
+  it('复合体检中的占位行被过滤，正常描述仍可回填', () => {
+    const result = parseGeneratedSectionsToInquiry(
+      '【体格检查】\nT:36.5℃\n其余阳性体征：[未填写，需补充]\n双肺呼吸音清'
+    )
+    expect(result.physical_exam).toBe('双肺呼吸音清')
+  })
+
   it('体格检查反解：滤掉 T: 体征行与望闻切诊行，只保留普通体检文字', () => {
     const content = [
       '【主诉】',
