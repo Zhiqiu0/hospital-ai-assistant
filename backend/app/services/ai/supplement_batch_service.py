@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ai.ai_utils import guarded_messages, safe_format
+from app.services.ai._qc_prompt_gen import build_qc_runtime_context
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
 from app.services.ai.output_contracts import require_text_items
@@ -175,6 +176,8 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
         issue_count=issue_count,
         issues_block=issues_block,
     )
+    # 补全与质控共享同一文书及首页上下文，不能把正文未重复首页误作缺项。
+    prompt += "\n\n" + build_qc_runtime_context(req)
 
     try:
         opts = get_model_options("qc")
