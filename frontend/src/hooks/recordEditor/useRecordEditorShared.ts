@@ -21,6 +21,7 @@ import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import { streamSSE } from '@/services/streamSSE'
 import { parseGeneratedSectionsToInquiry } from '@/utils/recordSections'
 import { message } from '@/services/messageBridge'
+import { createRecordTaskScope } from './recordTaskScope'
 
 /** 四个动作 hook 共用的依赖集合（由 useRecordEditorShared 产出，门面注入） */
 export interface RecordEditorShared {
@@ -55,19 +56,18 @@ export function useRecordEditorShared(): RecordEditorShared {
   const runSSE = async (url: string, body: object, handlers: Parameters<typeof streamSSE>[3]) => {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    const startEncounterId = useActiveEncounterStore.getState().encounterId
-    const stillSameEncounter = () =>
-      useActiveEncounterStore.getState().encounterId === startEncounterId
+    // 同接诊切文书也立即中止，切回原类型不能重新激活旧请求。
+    const scope = createRecordTaskScope(() => ctrl.abort())
     const guarded: typeof handlers = {
       onChunk: text => {
-        if (!stillSameEncounter()) {
+        if (!scope.isCurrent()) {
           ctrl.abort()
           return
         }
         handlers.onChunk?.(text)
       },
       onEvent: event => {
-        if (!stillSameEncounter()) {
+        if (!scope.isCurrent()) {
           ctrl.abort()
           return
         }
@@ -78,7 +78,11 @@ export function useRecordEditorShared(): RecordEditorShared {
         handlers.onEvent?.(event)
       },
     }
-    return streamSSE(url, body, token || '', guarded, { signal: ctrl.signal })
+    try {
+      await streamSSE(url, body, token || '', guarded, { signal: ctrl.signal })
+    } finally {
+      scope.dispose()
+    }
   }
 
   // 生成完成后，把病历各段落解析回左侧问诊字段，确保左右一致

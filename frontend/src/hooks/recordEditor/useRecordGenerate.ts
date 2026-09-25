@@ -25,6 +25,7 @@ import {
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import type { RecordEditorShared } from './useRecordEditorShared'
 import { reportCaught } from '@/sentry'
+import { createRecordTaskScope } from './recordTaskScope'
 
 export function useRecordGenerate(shared: RecordEditorShared) {
   const { runSSE, fetchLatestRecord, syncGeneratedRecordToInquiry } = shared
@@ -36,6 +37,8 @@ export function useRecordGenerate(shared: RecordEditorShared) {
   const previousRecordContent = useActiveEncounterStore(s => s.previousRecordContent)
 
   const _doGenerate = async () => {
+    // 切换文书即释放旧运行态；旧请求结束时不得关闭新文书的生成态。
+    const scope = createRecordTaskScope(() => setGenerating(false))
     setGenerating(true)
     // 失败回滚基线（2026-08-28 体检）：重新生成会先清空编辑器，此前 LLM 失败后
     // 只弹错不回滚，医生面对空白编辑器以为草稿丢了（DB 里其实还在）。
@@ -59,6 +62,11 @@ export function useRecordGenerate(shared: RecordEditorShared) {
       previousRecord = (await fetchLatestRecord()) || previousRecordContent || undefined
     } else {
       previousRecord = previousRecordContent || undefined
+    }
+    // 拉取参考病历也可能跨越文书切换，禁止以新患者资料继续发起旧生成。
+    if (!scope.isCurrent()) {
+      scope.dispose()
+      return
     }
 
     // 1.6 起 8 个 profile 字段已迁出 inquiry，但后端 prompt 仍然需要它们：
@@ -108,7 +116,7 @@ export function useRecordGenerate(shared: RecordEditorShared) {
           onEvent: ev => {
             if (ev.type === 'done' && ev.saved_updated_at) {
               // 指针守卫同 SSE 结束后那次：流落到别的患者上时不动基线
-              if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
+              if (!scope.isCurrent()) return
               useRecordAutoSaveTrigger
                 .getState()
                 .syncBaseline(ev.saved_updated_at, useRecordStore.getState().recordContent)
@@ -118,23 +126,24 @@ export function useRecordGenerate(shared: RecordEditorShared) {
       )
       // 指针守卫：流刚好在切患者瞬间正常结束时，runSSE 未必来得及 abort，
       // 这里再挡一次，避免把上一位患者的病历回写进新患者的问诊字段（P0）。
-      if (useActiveEncounterStore.getState().encounterId !== currentEncounterId) return
+      if (!scope.isCurrent()) return
       syncGeneratedRecordToInquiry(useRecordStore.getState().recordContent)
     } catch (e) {
       // AbortError 是用户主动取消，正常路径不弹错
-      if ((e as { name?: string })?.name !== 'AbortError') {
+      if ((e as { name?: string })?.name !== 'AbortError' && scope.isCurrent()) {
         reportCaught(e, 'record.generate')
         // 后端 SSE error 事件带医生可读文案（欠费→"请联系管理员充值"），
         // 有就显示，没有才退回通用提示（2026-08-28 体检：此前一律丢弃）
         const msg = (e as { message?: string })?.message
         message.error(msg && msg !== 'STREAM_ERROR' ? msg : '生成失败，请重试')
         // 失败回滚：仍在同一接诊且编辑器还是本次生成的半截/空白时恢复原文
-        if (useActiveEncounterStore.getState().encounterId === currentEncounterId && original) {
+        if (original) {
           setRecordContent(original)
         }
       }
     } finally {
-      setGenerating(false)
+      if (scope.isCurrent()) setGenerating(false)
+      scope.dispose()
     }
   }
 
