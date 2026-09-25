@@ -1,0 +1,246 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1" name="viewport"/><title>2026国庆环渤海自驾攻略 · 定兴—秦皇岛—锦州—大连</title><link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%97%3C/text%3E%3C/svg%3E" rel="icon"/><style>
+/* ========== 设计系统：天空蓝 + 活力橙，内容优先编辑风 ========== */
+:root{
+  --primary:#0EA5E9; --primary-deep:#0369A1; --accent:#F97316;
+  --bg:#F0F9FF; --card:#FFFFFF; --text:#0C4A6E; --text-strong:#082F49;
+  --muted:#52657A; --line:#E0EDF5; --ok:#059669; --warn:#D97706; --danger:#DC2626;
+  --chip-bg:#E0F2FE; --shadow:0 1px 3px rgba(12,74,110,.08),0 4px 14px rgba(12,74,110,.06);
+  /* 高对比强调色：浅色模式用深一档，保证小字/正文可读（对比度≥4.5:1） */
+  --accent-strong:#9A3412; --warn-strong:#92400E; --danger-strong:#B91C1C; --ok-strong:#047857; --badge:#0369A1;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --primary:#38BDF8; --primary-deep:#7DD3FC; --accent:#FB923C;
+    --bg:#0B1520; --card:#12202E; --text:#C7DCEC; --text-strong:#EAF4FB;
+    --muted:#93AAC0; --line:#1E3348; --ok:#34D399; --warn:#FBBF24; --danger:#F87171;
+    --chip-bg:#173049; --shadow:0 1px 3px rgba(0,0,0,.4);
+    /* 深色模式强调色反向提亮 */
+    --accent-strong:#FDBA74; --warn-strong:#FCD34D; --danger-strong:#FCA5A5; --ok-strong:#6EE7B7; --badge:#155E8F;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei",sans-serif;
+  background:var(--bg); color:var(--text); font-size:16px; line-height:1.7;
+}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px 64px}
+a{color:var(--primary);text-decoration:none}
+
+/* 顶部 */
+/* 头图渐变全程保持深蓝，保证白字对比度（尾端不再用亮蓝） */
+.hero{background:linear-gradient(160deg,#0B4A6F,#075985 55%,#0369A1);color:#fff;padding:36px 20px 28px;border-radius:0 0 24px 24px}
+@media (prefers-color-scheme:dark){.hero{background:linear-gradient(160deg,#0B2B44,#0E4A73 70%,#155E8F)}}
+.hero .inner{max-width:720px;margin:0 auto}
+.hero h1{font-size:24px;font-weight:700;letter-spacing:.5px;line-height:1.4}
+.hero .sub{margin-top:8px;font-size:14px;opacity:.92}
+.hero .route{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;font-weight:600}
+.hero .route .stop{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:3px 10px;border-radius:999px}
+.hero .route svg{width:14px;height:14px;opacity:.8}
+.meta-band{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+.meta-band .m{flex:1;min-width:120px;background:rgba(255,255,255,.12);border-radius:12px;padding:8px 12px;font-size:12px;line-height:1.5}
+.meta-band .m b{display:block;font-size:15px}
+
+/* 快速导航 */
+.toc{position:sticky;top:0;z-index:50;background:var(--bg);padding:10px 0 8px;margin:0 -16px;padding-left:16px;padding-right:16px;overflow-x:auto;white-space:nowrap;border-bottom:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.toc::-webkit-scrollbar{display:none}
+.toc a{display:inline-block;padding:9px 14px;margin-right:8px;border-radius:999px;background:var(--card);border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--text);box-shadow:var(--shadow);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .2s,color .2s,border-color .2s;user-select:none}
+.toc a:active{opacity:.8}
+.toc a.hot{background:#C2410C;color:#fff;border-color:#C2410C}
+/* 当前阅读位置高亮（滚动自动更新），放在 .hot 之后保证优先生效 */
+.toc a.cur{background:var(--badge);color:#fff;border-color:var(--badge)}
+
+/* 区块标题 */
+section{margin-top:36px;scroll-margin-top:64px}
+.sec-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.sec-head .icon{width:34px;height:34px;flex:none;border-radius:10px;background:var(--chip-bg);display:flex;align-items:center;justify-content:center}
+.sec-head .icon svg{width:19px;height:19px;stroke:var(--primary)}
+.sec-head h2{font-size:20px;color:var(--text-strong);font-weight:700}
+.sec-sub{font-size:13px;color:var(--muted);margin-bottom:14px}
+
+/* 日程卡 */
+.day{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
+.day-head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.day-head .d{flex:none;width:46px;height:46px;border-radius:12px;background:var(--badge);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15}
+.day-head .d b{font-size:17px}.day-head .d span{font-size:10px;opacity:.9}
+.day-head .t h3{font-size:16px;color:var(--text-strong)}
+.day-head .t p{font-size:12px;color:var(--muted)}
+.day-body{padding:8px 16px 14px}
+
+/* 时间线 */
+.tl{list-style:none;position:relative;padding-left:74px}
+.tl::before{content:"";position:absolute;left:58px;top:8px;bottom:8px;width:2px;background:var(--line)}
+.tl li{position:relative;padding:7px 0;font-size:14px}
+.tl li::before{content:"";position:absolute;left:-20.5px;top:15px;width:9px;height:9px;border-radius:50%;background:var(--primary);border:2px solid var(--card)}
+.tl li.warn::before{background:var(--accent)}
+.tl .tm{position:absolute;left:-74px;top:7px;width:48px;text-align:right;font-size:12px;font-weight:700;color:var(--primary-deep);font-variant-numeric:tabular-nums}
+.tl b{color:var(--text-strong)}
+.tl .note{display:block;font-size:12.5px;color:var(--muted)}
+
+/* 徽章与提示条 */
+.chip{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:1px;margin-left:4px}
+.chip.blue{background:var(--chip-bg);color:var(--primary-deep)}
+.chip.orange{background:rgba(249,115,22,.14);color:var(--accent-strong)}
+.chip.green{background:rgba(5,150,105,.12);color:var(--ok-strong)}
+.chip.red{background:rgba(220,38,38,.1);color:var(--danger-strong)}
+.tip{display:flex;gap:10px;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.65;margin:10px 0}
+.tip svg{width:17px;height:17px;flex:none;margin-top:3px}
+/* 警示条：正文一律用正文色保证可读，只有图标和加粗词用警示色 */
+.tip.warn{background:rgba(249,115,22,.09);color:var(--text)}
+.tip.warn b{color:var(--warn-strong)}
+.tip.warn svg{color:var(--warn)}
+.tip.info{background:var(--chip-bg);color:var(--text)}
+.tip.danger{background:rgba(220,38,38,.08);color:var(--text)}
+.tip.danger b{color:var(--danger-strong)}
+.tip.danger svg{color:var(--danger)}
+
+/* 酒店卡 */
+.hotel{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0;background:var(--card)}
+.hotel .hh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.hotel .hh h4{font-size:15px;color:var(--text-strong);line-height:1.45}
+.hotel .price{flex:none;text-align:right}
+.hotel .price b{color:var(--accent-strong);font-size:16px}
+.hotel .price span{display:block;font-size:11px;color:var(--muted)}
+.hotel .facts{display:flex;flex-wrap:wrap;gap:6px;margin:7px 0 5px}
+.hotel .facts em{font-style:normal;font-size:12px;background:var(--chip-bg);color:var(--primary-deep);padding:2px 9px;border-radius:999px}
+.hotel p{font-size:13px;color:var(--muted)}
+.hotel p b{color:var(--text)}
+.hotel.top{border-color:var(--accent);border-width:1.5px;position:relative}
+.hotel.top::after{content:"优先比较";position:absolute;top:-9px;right:12px;background:#C2410C;color:#fff;font-size:11px;font-weight:700;padding:1px 10px;border-radius:999px}
+
+/* 美食卡 */
+.food{display:flex;gap:12px;padding:11px 2px;border-bottom:1px dashed var(--line)}
+.food:last-child{border-bottom:none}
+.food .rank{flex:none;width:26px;height:26px;border-radius:8px;background:var(--chip-bg);color:var(--primary-deep);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.food h4{font-size:14.5px;color:var(--text-strong)}
+.food p{font-size:13px;color:var(--muted)}
+.food p b{color:var(--text)}
+
+/* 表格 */
+.tbl{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+.tbl th{text-align:left;font-size:12px;color:var(--muted);font-weight:600;padding:6px 8px;border-bottom:1.5px solid var(--line)}
+.tbl td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td:first-child{font-weight:700;color:var(--text-strong);white-space:nowrap}
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* 清单 */
+.check{list-style:none}
+.check li{display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:14px}
+.check li:last-child{border-bottom:none}
+.check svg{width:18px;height:18px;flex:none;margin-top:4px;stroke:var(--ok)}
+.check b{color:var(--text-strong)}
+.check .note{display:block;font-size:12.5px;color:var(--muted)}
+
+.foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);text-align:center;line-height:2}
+/* 入场动画已移除：锚点跳转撞上未完成的透明度动画会造成闪屏 */
+@media (prefers-reduced-motion:no-preference){
+  html{scroll-behavior:smooth}
+}
+</style></head>
+<body><!-- 住宿内容按2026-09-26公开资料复核，原排版与导航保留。 -->
+<header class="hero"><div class="inner"><h1>2026 国庆环渤海自驾攻略</h1><p class="sub">10月2日—7日 · 4人 · 小鹏P7（京牌）· 五晚六天 1900+ 公里</p><div class="route"><span class="stop">定兴</span><svg fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg><span class="stop">山海关</span><svg fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg><span class="stop">锦州</span><svg fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg><span class="stop">大连×2晚</span><svg fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg><span class="stop">山海关</span><svg fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg><span class="stop">北京 ✈ 上海</span></div><div class="meta-band"><div class="m"><b>1900+ km</b>总里程 · 高速全程免费</div><div class="m"><b>5040–7300 元</b>五晚住宿预估（2间房）</div><div class="m"><b>3 条铁律</b>电量30%必充 · 每晚充满 · 天天早出发</div></div></div></header><div class="wrap"><nav class="toc"><a href="#d1002">10.2 秦皇岛</a><a href="#d1003">10.3 锦州</a><a href="#d1004">10.4-5 大连</a><a class="hot" href="#d1006">10.6-7 返程</a><a href="#ev">充电</a><a href="#food">吃什么</a><a href="#todo">订房清单</a></nav><section id="brief"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4M9 7l6-3"></path></svg></div><h2>先看三个关键结论</h2></div><div class="tip danger"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path></svg><div><b>返程必须拆两天。</b>大连→北京 880km，国庆返程高峰堵车＋充电排队（2024年凌海服务区有排 3 小时先例），一天跑最坏 17–20 小时。方案：6号只跑 550km 到山海关睡，7号 按实际终点导航前往北京或定兴，反正 7 号本来就要中转。</div></div><div class="tip warn"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg><div><b>笔架山砍掉了。</b>10月3日干潮 17:00 撞上日落 17:30，往返 3.2km 礁石路要摸黑走人挤人；门票65+潮没退净还得被迫15元快艇；口碑本就「被玩坏的景点」，还多绕70公里。换成 10.3 下午逛辽沈战役纪念馆（免费但<b>要提前公众号预约</b>），晚上安心吃烧烤。全程真正花钱的门票只剩：老龙头 50 + 棒棰岛 20 +（可选）光影秀 128。</div></div><div class="tip info"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><div><b>先核实五晚住宿总价。</b>各城国庆价格均需按指定日期查询，原估价不代表可订价格；<b>现在就要锁单</b>（可免费取消房型）。进京及机场出行规则以当期官方公告为准。</div></div><div class="tip info"><div><b>住宿复核更新 · 2026-09-26</b><br/>已补充小红书正文、评论及设施来源。社交笔记是个人经历，不能证明所有房间或国庆服务情况。价格未查询指定日期实单；先核对完整店名和地址，再看近期重复问题。携程与Trip.com同集团，不算已经证实的独立样本双确认。<a href="https://group.trip.com/brands" rel="noopener noreferrer" target="_blank">集团品牌说明</a></div></div></section>
+<section id="d1002"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"></path></svg></div><h2>10.2（五）定兴 → 山海关</h2></div><p class="sec-sub">约 400km · 纯开 4.5h · 出程高峰日，全靠早出发</p><div class="day"><div class="day-head"><div class="d"><b>D1</b><span>10.2</span></div><div class="t"><h3>荣乌 → 长深 → 京哈，直插山海关</h3><p>不住北戴河：方向反了、10月海水已凉，第二天北上还得回头</p></div></div><div class="day-body"><ul class="tl"><li class="warn"><span class="tm">6:30</span><b>满电出发</b><span class="note">出程高峰 7 点开始，京哈唐山段（榛子镇/唐津互通/丰南）是点名堵点</span></li>
+<li><span class="tm">9:30</span><b>滦县或迁安服务区补电一次</b><span class="chip red">避开北戴河服务区</span><span class="note">北戴河服务区是官方点名易堵服务区，旅游大巴全停那</span></li>
+<li><span class="tm">13:00</span><b>到山海关，古城内先吃午饭</b><span class="note">四条包子街里解决，下午酒店办入住停车</span></li>
+<li><span class="tm">15:00</span><b>老龙头（约2小时）</b><span class="chip blue">门票50</span><span class="note">长城唯一入海处，山海关关城一体全国独一份，游客公认「再给一天还想再看」的点；建筑是80年代复建的，看的是地理奇观</span></li>
+<li><span class="tm">17:30</span><b>古城免费闲逛：钟鼓楼、拍第一关城楼外观</b><span class="chip green">登楼票40元砍掉</span><span class="note">真实游记原话「进去也没啥好玩的」，城楼外面看和买票进去看差别不大；晚饭 18 点前占座</span></li>
+<li class="warn"><span class="tm">20:00</span><b>《观·山海》长城光影秀（可选）</b><span class="chip orange">128元/人</span><span class="note">平台4.7分、口碑正面居多；反正当晚住古城机会成本低，不想花512就看城楼免费夜景灯光，也不亏。看完睡前把车充满</span></li>
+</ul></div></div><div id="h1002"><div class="hotel top"><div class="hh"><h4>全季（秦皇岛山海关火车站古城景区店）· 新增比较</h4><div class="price"><b>查指定日期</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>关城南路33-1号</em><em>2026年开业</em><em>平台列免费停车</em></div><p>靠近古城，适合第一晚逛古城后休息。9月四人自驾游记明确记录入住、附近吃饭及步行看夜景。<b>先与汉庭比两间房总价；重点核查装修味、外窗和车位容量。</b>游记没有验证隔音及国庆停车保障。</p><p><a href="https://wap.ctrip.com/html5/hotel/hoteldetail/133388625.html" rel="noopener noreferrer" target="_blank">分店资料</a> · <a href="https://www.xiaohongshu.com/explore/6aa4ba200000000011034b78" rel="noopener noreferrer" target="_blank">小红书：苏州—山海关自驾游</a></p></div><div class="hotel"><div class="hh"><h4>汉庭（秦皇岛山海关火车站店）· 基础候选</h4><div class="price"><b>原估400–500</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>2024年开业</em><em>兴华商城／兴隆街47号</em><em>需核对当前分店</em></div><p>保留为连锁基础候选，本轮未找到足够明确的近期独立住店测评。<b>别把东水关大街1号的旧同名记录当成这家。</b>查近期隔音、卫生评价，并确认停车入口、是否需挪车。携程与Trip.com同集团，不能直接当作独立口碑双确认。</p><p></p></div><div class="hotel"><div class="hh"><h4>方元居四合院智能民宿 · 古城体验备选</h4><div class="price"><b>原估450–800</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>南大街3-5号</em><em>平台列停车与充电</em><em>有2025国庆自驾游记</em></div><p>去年国庆住客提到二层露台可喝茶赏月、夜看南城门。<b>适合愿意为院落体验加预算的人。</b>下单问清所订房间是否带露台、露台是否共用、隔音、古城进车路线与充电桩实际可用情况；高分不能代替核查。</p><p><a href="https://www.xiaohongshu.com/explore/68e34cca000000000301952a" rel="noopener noreferrer" target="_blank">小红书：国庆自驾游之山海关篇</a></p></div><div class="hotel"><div class="hh"><h4>全季（秦皇岛火车站万达广场店）· 市区兜底</h4><div class="price"><b>原估420–550</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>西港路307号</em><em>平台列私人停车场与充电车位</em></div><p>山海关候选满房或明显超价时再比较；住市区会增加古城往返。具体房型和电梯提醒见10月6日住宿卡。</p><p></p></div><div class="tip warn"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01"></path><circle cx="12" cy="12" r="9"></circle></svg><div><b>已弃用「花筑·京山民宿」</b>（携程4.8但实际App搜到3.7+大量差评，无法证伪即弃用）。另注意<b>两个同名坑</b>：①美团搜「京山」很容易命中火车站旁的老「山海关京山宾馆」（3.5分），别误订；②美团上还有一处挂「花筑」名的整套公寓在山海关区但<b>不在古城</b>（距火车站6公里），是途家贴牌拼盘房源，也别误订。</div></div></div></section>
+<section id="d1003"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"></path></svg></div><h2>10.3（六）山海关 → 锦州</h2></div><p class="sec-sub">约 250km · 纯开 2.5h · 满电直达不用中途充 · 全程最松的一天（笔架山已砍，理由见顶部结论）</p><div class="day"><div class="day-head"><div class="d"><b>D2</b><span>10.3</span></div><div class="t"><h3>下午辽沈战役纪念馆，晚上锦州烧烤</h3><p>纪念馆从10.4上午挪过来，10.4整个上午被释放，去大连不用赶</p></div></div><div class="day-body"><ul class="tl"><li><span class="tm">10:30</span><b>不用赶，睡饱出发</b><span class="note">早上想再逛逛古城也来得及，11 点前上高速就行</span></li>
+<li><span class="tm">13:00</span><b>到锦州市区，午饭 + 办入住停车</b><span class="note">之后市内全程打车，晚上喝酒不耽误</span></li>
+<li class="warn"><span class="tm">14:00</span><b>辽沈战役纪念馆（约2.5小时）</b><span class="chip green">免费</span><span class="chip red">要预约</span><span class="note">「辽沈战役纪念馆」官方微信公众号提前预约，国庆名额紧张<b>查看官方放票日期</b>；进馆先去《攻克锦州》全景画馆排场次（中国第一座全景画馆，一场15分钟，是全馆精华），再逛主馆</span></li>
+<li><span class="tm">17:00</span><b>回酒店歇脚 / 东湖公园沿小凌河遛弯</b><span class="note">锦州市区本来就是「以吃住为主」的城市，别硬凑景点</span></li>
+<li class="warn"><span class="tm">18:30</span><b>锦州烧烤主场之夜</b><span class="note">名店国庆排队，18:30 前到店；认准锦州烧烤协会颁「文化石」的12家名店，店集中在人民街一带</span></li>
+</ul></div></div><div id="h1003"><div class="hotel top"><div class="hh"><h4>锦州古塔北京路亚朵 · 优先比较</h4><div class="price"><b>原估350–600</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>重庆路二段2号</em><em>店后停车场有住客反馈</em><em>适合早市后出发</em></div><p>8月北京—大连自驾游记记录入住这里，翌日去约1公里外石桥子早市，再出发到大连，与你们动线接近。<b>与科技路店并列比价，重点复查近三个月卫生和隔音。</b>停车正面评价不能保证国庆一定有空位。</p><p><a href="https://www.xiaohongshu.com/explore/6a910f0e00000000280044b7" rel="noopener noreferrer" target="_blank">小红书：北京自驾大连5日游</a> · <a href="https://m.ctrip.com/webapp/hotel/commentlist?id=112954487" rel="noopener noreferrer" target="_blank">停车评价</a></p></div><div class="hotel"><div class="hh"><h4>锦州市府广场科技路亚朵 · 保留比较</h4><div class="price"><b>原估450–650</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>福州街25号</em><em>2024年开业</em><em>卫生与走廊异味待复核</em></div><p>2024年游记肯定床品和早餐，但时效较弱。2026年4月有消费者投诉睡衣血渍，次日确认解决；<b>单个已解决案例不足以否定整家，也不能称“零硬伤”。</b>原有走廊水会味反馈仍需问清，不能保证高楼层可解决。</p><p><a href="https://www.xiaohongshu.com/explore/661d02f6000000001a00d54f" rel="noopener noreferrer" target="_blank">小红书：锦州周末游</a> · <a href="https://tousu.sina.com.cn/complaint/view/17395799718" rel="noopener noreferrer" target="_blank">投诉及解决记录</a></p></div><div class="hotel"><div class="hh"><h4>全季古塔公园店 / 锦州新世界酒店 · 其他备选</h4><div class="price"><b>查指定日期</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>全季：复核空调噪音</em><em>新世界：预算升级</em></div><p>本轮未取得足以升为首选的独立住店证据。只住一晚，优先比较前两家；全季原有空调噪音线索需结合具体房型复核，新世界只在实际价差可接受时考虑，不按原估价直接下单。</p><p></p></div></div></section>
+<section id="d1004"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M2 20h20M4 20V9l8-6 8 6v11M12 20v-5"></path></svg></div><h2>10.4–10.5（日/一）大连两天</h2></div><p class="sec-sub">锦州→大连约 370km · 两晚住东港/中山区不换房</p><div class="day"><div class="day-head"><div class="d"><b>D3</b><span>10.4</span></div><div class="t"><h3>上午赶路，下午到大连市区腿儿着玩</h3><p>纪念馆已挪到10.3，上午不用赶；到店后车停酒店不动，市内打车+步行，只有滨海路那天用车</p></div></div><div class="day-body"><ul class="tl"><li><span class="tm">8:30</span><b>早饭后出发去大连</b><span class="note">住亚朵北京路店的话先逛石桥子早市当早饭；京哈→丹锡→沈海，盘锦服务区补电一次</span></li>
+<li><span class="tm">12:30</span><b>到大连，午饭 + 酒店入住停车</b><span class="note">之后两天车基本不动，有充电桩就顺手充满</span></li>
+<li><span class="tm">15:00</span><b>中山广场老建筑群（45分钟转一圈拍照）</b><span class="note">十栋近百年老银行建筑，免费</span></li>
+<li><span class="tm">16:00</span><b>201路老电车体验1-2站（30分钟）</b><span class="chip blue">1元</span><span class="note">大连站附近上车，跑的是1935-38年日本造3000型老车、世界上仍在服役的最老有轨电车之一；只坐一段体验，别当交通工具（慢）</span></li>
+<li><span class="tm">16:45</span><b>俄罗斯风情街：只在街口拍老建筑，15分钟即走</b><span class="chip orange">一分钱别花</span><span class="note">真实游客共识「义乌小商品一条街」，值钱的只有街口38栋老建筑外观</span></li>
+<li><span class="tm">17:30</span><b>晚餐：日月明海鲜坊（中山广场店）或天天渔港（人民路店）</b><span class="note">都在住处附近，本地属性强，见美食清单</span></li>
+<li class="warn"><span class="tm">19:00</span><b>东港：威尼斯水城灯光散步 + 19:40-20:00 音乐喷泉</b><span class="note">水城免费、亮灯后顺路走走可以，期望值放低（"很假"是常见观感），别坐贡多拉；喷泉国庆每晚 19:40/20:40 两场，特殊天气停演，以「大连东港公司」公众号为准</span></li>
+</ul></div></div><div class="day"><div class="day-head"><div class="d"><b>D4</b><span>10.5</span></div><div class="t"><h3>滨海路自驾精华日：从东往西开</h3><p>东段最美最原生态，观景台都在顺手侧；旅顺/金石滩这次都不去（往返4h+，时间不够）</p></div></div><div class="day-body"><ul class="tl"><li class="warn"><span class="tm">8:00</span><b>出发上滨海路东段（真精华段）</b><span class="note">10 点后棒棰岛/渔人码头停车位就紧张了</span></li>
+<li><span class="tm">8:15</span><b>海之韵 / 十八盘观景（30分钟）</b><span class="note">悬崖海景+旭日广场远眺，东段是滨海路最原生态的部分</span></li>
+<li><span class="tm">9:00</span><b>棒棰岛（约1小时）</b><span class="chip blue">门票20</span><span class="note">私家车通常可开进景区（有停车场），限流不让进就坐电瓶车；20元看大连最干净的海，值</span></li>
+<li><span class="tm">10:30</span><b>渔人码头：先到对面菱角湾角度拍全景，再进去30分钟封顶</b><span class="note">真实点评「里面远没有从对面远观漂亮」；老虎滩海洋公园只路过不进园——旺季220/人，吐槽集中（缆车80元就一点点路、海豚表演普通），4人880元+半天，不值</span></li>
+<li><span class="tm">12:00</span><b>午餐：品海楼（渔人码头正中央）</b><span class="note">海鲜正餐安排在中午，晚上喷泉前时间紧</span></li>
+<li><span class="tm">14:00</span><b>滨海中路西行：燕窝岭 → 北大桥停靠拍照（40分钟）</b><span class="note">路窄弯多慢点开；付家庄是市民浴场，直接开过不停</span></li>
+<li><span class="tm">16:00</span><b>回酒店休整充电，晚饭吃饱再出门</b><span class="note">星海别饿着肚子干等；车可以放酒店打车去星海</span></li>
+<li class="warn"><span class="tm">18:30</span><b>星海广场：提前30分钟到喷泉南侧弧形台阶占位</b><span class="note">喷泉+星海湾大桥灯光秀联动，国庆有加场但各年场次有调整，<b>当天查「大连发布」公众号确认时刻</b>；大风降雨停演，停演就不用去等</span></li>
+<li class="warn"><span class="tm">20:00</span><b>看完第一轮立刻撤</b><span class="note">别等晚场，会被堵死在环路里；回程酒店把电充满，明早出发</span></li>
+</ul><div class="tip danger"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path></svg><div><b>滨海路自驾规则（重要）：</b>轿车/SUV 可全程通行（禁的是无旅游证件的面包车）；但节假日 9-18 时<b>滨海西路全路段严禁一切停车（含临时停车），违停直接拖移</b>——西段只能开不能停，观景只进正规停车场。辽B单双号调流不影响你们外地牌。</div></div></div></div><div id="h1004"><div class="hotel top"><div class="hh"><h4>大连中山希尔顿欢朋 · 新增比较</h4><div class="price"><b>查10.4—6日</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>官网确认免费自助停车</em><em>两晚连住</em><em>临路房隔音待确认</em></div><p>如果两晚总价接近全季，值得优先比较。独立笔记提到附近公园及房间办公体验，并回复不吵；<b>这只是个别房间体验，仍需确认背街房和国庆车位。</b>先核对早餐、停车与取消规则是否包含在报价内。</p><p><a href="https://www.hilton.com/zh-hans/hotels/dlcdahx-hampton-dalian-zhongshan/hotel-info/" rel="noopener noreferrer" target="_blank">官方停车信息</a> · <a href="https://www.xiaohongshu.com/explore/68ea0a6a00000000070321f6" rel="noopener noreferrer" target="_blank">小红书：中山区希尔顿欢朋</a></p></div><div class="hotel"><div class="hh"><h4>全季（大连人民广场东关街店）· 原候选保留</h4><div class="price"><b>原估600–900</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>长江路706号</em><em>2024年开业</em><em>公共停车场免费</em></div><p><b>不是鞍山路8号的“柏威年东关街店”。</b>原首选暂留，但尚无足够独立口碑支持“放心订”。平台写的是公共停车场免费，未确认专属车位或容量；问清晚归满位的备用地点与费用。不能保证18点前回店就有位，也不要用国庆固定10分钟车程安排出行。</p><p><a href="https://hotels.ctrip.com/hotels/116492182.html" rel="noopener noreferrer" target="_blank">分店地址与停车类型</a></p></div><div class="hotel"><div class="hh"><h4>东港商务区港湾广场亚朵 · 位置优先备选</h4><div class="price"><b>原估900–1400</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>港湾街2号</em><em>自驾停车方案待落实</em></div><p>小红书正面笔记主要谈服务和地铁便利，<b>没有解决自驾停车疑问。</b>继续保留为有条件候选：先确认停车地点、收费、行李搬运和晚归安排，再决定是否为东港位置加价。</p><p><a href="https://www.xiaohongshu.com/explore/68f2f511000000000700e1da" rel="noopener noreferrer" target="_blank">小红书：港湾广场入住体验</a></p></div><div class="hotel"><div class="hh"><h4>大连星海广场中山路亚朵 · 降低兜底顺位</h4><div class="price"><b>原估550–800</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>中山路666号</em><em>近期卫生反馈需重点看</em></div><p>8月住客比较帖称几木亲子房卫生不满意，次日换住高尔基路店；这是个人反馈，不能推断所有房间。<b>先翻近期卫生差评再考虑。</b>同帖也提到高尔基路店走廊装修味，不直接换一家就当风险已解决。</p><p><a href="https://www.xiaohongshu.com/explore/6a8906fb000000003301a569" rel="noopener noreferrer" target="_blank">小红书：两家亚朵入住对比</a></p></div><div class="hotel"><div class="hh"><h4>同名提醒：柏威年东关街全季 · 本轮不加入推荐</h4><div class="price"><b>鞍山路8号</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>与人民广场店分开核对</em></div><p>近期两篇笔记分别谈到房间小、空调与马桶噪声，以及续住清洁、下水道反味；评论区也有体验正常的住客。<b>这些线索用于核查柏威年店，不能套到长江路706号的人民广场店。</b></p><p><a href="https://www.xiaohongshu.com/explore/6ab2366b0000000033033358" rel="noopener noreferrer" target="_blank">入住体验</a> · <a href="https://www.xiaohongshu.com/explore/6aae3a5a0000000027016a7e" rel="noopener noreferrer" target="_blank">负面笔记及不同意见</a></p></div></div></section>
+<section id="d1006"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M3 12h18M3 12l6-6M3 12l6 6"></path></svg></div><h2>10.6–10.7（二/三）返程 · 两天打法</h2></div><p class="sec-sub">全程返程最高峰（官方历年预判 7:00–22:00 都是高峰），核心思路：6号把山海关省界这个最大堵点过掉再睡</p><div class="day"><div class="day-head"><div class="d"><b>D5</b><span>10.6</span></div><div class="t"><h3>大连 → 山海关 · 约550km</h3><p>含2次充电约8-9h，堵车冗余留到11h，不保证傍晚到达</p></div></div><div class="day-body"><ul class="tl"><li class="warn"><span class="tm">7:00</span><b>满电出发</b><span class="note">G15 后盐—普兰店段是返程易堵段，7 点前出城仍需预留堵车和充电时间；早餐买海鲜包子路上吃</span></li>
+<li><span class="tm">10:00</span><b>第一充：凌海服务区</b><span class="chip blue">20枪超充</span><span class="note">2025 年新增 5C 超充站；<b>排队超30分钟立刻下高速</b>去锦州/葫芦岛市区充，先查城区桩空闲与价格</span></li>
+<li><span class="tm">13:30</span><b>第二充：绥中一带，或直接撑到山海关下高速充</b><span class="note">按表显续航灵活定，铁律：30% 必充</span></li>
+<li class="warn"><span class="tm">16:30</span><b>过山海关省界，下高速</b><span class="note">山海关站口是官方点名易堵站口（东北车流进关全挤这），越晚越堵</span></li>
+<li><span class="tm">17:30</span><b>入住 + 城区快充把电充满</b><span class="note">6号晚返程日，海边酒店价格已从峰值回落，好订</span></li>
+</ul></div></div><div class="day"><div class="day-head"><div class="d"><b>D6</b><span>10.7</span></div><div class="t"><h3>山海关 → 北京/定兴 → 飞上海</h3><p>到北京与回定兴是不同路线；按具体终点重新导航，充电按实时电量安排</p></div></div><div class="day-body"><ul class="tl"><li class="warn"><span class="tm">6:30</span><b>出发</b><span class="note">赶在午后返程峰前走完唐山段（全程第二大瓶颈）</span></li>
+<li><span class="tm">方案</span><b>方案A（推荐）：车直接开回定兴放好</b><span class="note">按酒店→定兴放车点→大兴机场分段导航；额外计入卸行李、等车、堵车与机场办理时间，不沿用“到北京290km”的估算</span></li>
+<li><span class="tm">方案</span><b>方案B：车停大兴机场</b><span class="note">P3 长期停车楼每天封顶 100 元（P1/P2 不封顶别停）；周边民营停车场 15-25 元/天含免费接驳</span></li>
+<li class="warn"><span class="tm">16:00</span><b>订 16 点以后的航班/高铁</b><span class="note">机票约 500-1200 元（比高铁好抢，现在就订）；京沪高铁二等座 500-660 元，7号返程最高峰票紧，挂 12306 候补当备选</span></li>
+</ul></div></div><div id="h1006"><div class="hotel top"><div class="hh"><h4>全季（秦皇岛火车站万达广场店）· 返程候选保留</h4><div class="price"><b>原估470–700</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>西港路307号</em><em>停车与充电车位</em><em>小窗房／共用电梯需确认</em></div><p>独立笔记认可设施、卫生和服务，但最初517房窗户较小，后换高层大窗；另提到共用电梯、前往大堂需指定按键。平台也有高峰等电梯和卫生间偏小的反馈。<b>预订确认外窗、楼层、停车入口、充电桩数量及功率。</b>笔记会员兑换价不是国庆价。</p><p><a href="https://www.xiaohongshu.com/explore/695d023a0000000022023016" rel="noopener noreferrer" target="_blank">小红书：全季5.0房型体验</a> · <a href="https://hotels.ctrip.com/hotels/131135227.html" rel="noopener noreferrer" target="_blank">设施与住客评价</a></p></div><div class="hotel"><div class="hh"><h4>山海关全季古城店 / 汉庭 / 方元居 · 返程备选</h4><div class="price"><b>查10.6—7日</b><span>每间每晚·未核实国庆实价</span></div></div><div class="facts"><em>首晚满意可再次入住</em></div><p>按当日路况、次日真实终点和房价选择，不预设10月6日一定便宜或好订；先锁定取消规则合适的房源。</p><p></p></div></div></section>
+<section id="ev"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M13 2L4.09 12.69a1 1 0 00.77 1.64H11l-1 7.67L18.91 11.3a1 1 0 00-.77-1.64H13l1-7.66z"></path></svg></div><h2>小鹏 P7 充电作战手册</h2></div><p class="sec-sub">P7 对特来电/国网/星星/小桔全兼容，支付及启动方式按充电运营商提示操作；400V 平台第三方快充实际 60-100kW，30%→80% 约 35 分钟</p><div class="day"><div class="day-body" style="padding-top:14px"><ul class="check"><li><svg fill="none" stroke-width="2.5" viewbox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><div><b>电量 40% 开始找桩，30% 必充，20% 是红线</b><span class="note">留出「这个服务区排队就开去下一个/下高速」的余量</span></div></li>
+<li><svg fill="none" stroke-width="2.5" viewbox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><div><b>每次只充到 80% 就走</b><span class="note">80% 以后是涓流，占桩半小时才多百来公里，不划算</span></div></li>
+<li><svg fill="none" stroke-width="2.5" viewbox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><div><b>每晚在酒店或城区补电，途中按实时续航安排</b><span class="note">预留备用充电站和排队时间，推荐酒店都优先挑了带停车/充电的</span></div></li>
+<li><svg fill="none" stroke-width="2.5" viewbox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><div><b>车机/高德/e充电 提前看实时空闲枪数</b><span class="note">一次标 2-3 个候选服务区；服务区排队超 30 分钟，立刻下高速进城充（城区桩也可能排队，费用与空闲情况以APP为准）</span></div></li>
+<li><svg fill="none" stroke-width="2.5" viewbox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><div><b>尽量中午前后充，避开 16:00-23:00 高峰</b><span class="note">既避排队又避峰段电价</span></div></li>
+</ul></div></div><div class="tbl-scroll"><table class="tbl"><tr><th>日期</th><th>区段/里程</th><th>白天补电点</th><th>备注</th></tr><tr><td>10.2</td><td>定兴→山海关 400km</td><td>滦县 或 迁安服务区</td><td>避开北戴河服务区（官方点名易堵）</td></tr><tr><td>10.3</td><td>山海关→锦州 250km</td><td>是否补电按车型、天气和实时续航决定</td><td>到锦州市区充满</td></tr><tr><td>10.4</td><td>锦州→大连 370km</td><td>盘锦服务区</td><td>到大连酒店充满</td></tr><tr><td>10.6</td><td>大连→山海关 550km</td><td>凌海（20枪超充）＋绥中</td><td>凌海排队即下高速去锦州/葫芦岛市区</td></tr><tr><td>10.7</td><td>山海关→具体机场／定兴：导航重算</td><td>是否补电按车型、天气和实时续航决定</td><td>不放心就滦县补 10 分钟</td></tr></table></div><div class="tip info"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><div>沿线桩况：河北京哈段玉田/丰润/滦县/迁安/卢龙/山海关服务区都有国网快充，部分已扩容到 20 根以上；辽宁高速服务区 2022 年底已全覆盖，凌海 2025 年新增 20 枪超充站。全国高速平均每 46km 一座充电站，国庆还会加投移动充电桩。</div></div></section>
+<section id="food"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 002-2V2M7 2v20M21 15V2a5 5 0 00-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"></path></svg></div><h2>吃什么 · 原攻略候选</h2></div><p class="sec-sub">餐厅沿用原攻略候选，本次重点复核住宿，未逐一重查餐厅近期评价。调研中发现一批 2026 年 AI 批量软文（文案雷同、"本地人闭眼冲"话术），恰好集中吹某几家店，已剔除或降权。</p><div class="day"><div class="day-head"><div class="d"><b>关</b><span>10.2</span></div><div class="t"><h3>山海关古城</h3><p>天凉了，正是吃浑锅的季节</p></div></div><div class="day-body"><div class="food"><div class="rank">1</div><div><h4>大亮家常菜海鲜浑锅（总店）<span class="chip green">本地人属性强</span></h4><p>古城外新影小区8-5号 · 人均50-80 · 鸡骨老汤+酸菜五花肉大虾螃蟹焖子一锅炖，出古城吃避开游客价；本地帖还认「志刚浑锅」</p></div></div><div class="food"><div class="rank">2</div><div><h4>山海关浑锅（古城店）<span class="chip blue">位置最顺</span></h4><p>南大街钟鼓楼旁 · 老字号炭火铜锅，菜量大，懒得出城就吃这家</p></div></div><div class="food"><div class="rank">3</div><div><h4>四条包子（古城四条街老店）<span class="chip blue">1958年老号</span></h4><p>认准古城四条街的老店，别进外面挂名店 · 定位是老字号早餐配小米粥，别期待惊艳（真实差评：馅偏小）</p></div></div><div class="food"><div class="rank">4</div><div><h4>回记糕点 <span class="chip green">伴手礼</span></h4><p>天心胡同22号 · 1945年清真老号，回记绿豆糕远近闻名；古城里的桲椤叶饼（戚家军军粮演变）也值得尝</p></div></div><div class="tip danger"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path></svg><div><b>古城避雷：</b>①王家大院里的「武财神殿点香求签」有 280 元香火费+解签连环套的实名被骗记录，任何点香跪拜环节直接走人；②拉客导游/车夫一律不跟；③古城免费进，别被忽悠买「进城票」；④吃饭认准有字号的老店。</div></div></div></div><div class="day"><div class="day-head"><div class="d"><b>锦</b><span>10.3</span></div><div class="t"><h3>锦州 · 烧烤主场</h3><p>本地人的鄙视链：自己烤 &gt; 无名小摊 &gt; 大排档 &gt; 金碧辉煌的名店</p></div></div><div class="day-body"><div class="food"><div class="rank">1</div><div><h4>老万烧烤（古塔区人民街）<span class="chip green">主力推荐</span></h4><p>20多年老店 · 招牌现烤羊腿外焦里嫩可脱骨，四五人一只羊腿+串正好，人均不高 · 短板：装修旧、饭点服务跟不上（差评区无食材硬伤）· 到店先看本地人比例</p></div></div><div class="food"><div class="rank">2</div><div><h4>居民楼底下的无名小店 <span class="chip green">本地人吃法</span></h4><p>知乎本地长文的正解：报亭后面、老板亲自烤的小店才是锦州烧烤精髓 · 点单直奔牛羊肉串+鸡小件（鸡头鸡爪鸡皮）</p></div></div><div class="food"><div class="rank">3</div><div><h4>御烧烤（人民街三段）<span class="chip orange">打卡可以，别期待惊艳</span></h4><p>非遗代表门店没错，但已连锁标准化，人均73-110偏贵 · 本地中评「缺小店炭火烟火气」· 要去先在微信公众号取号</p></div></div><div class="food"><div class="rank">4</div><div><h4>白家锅烙 <span class="chip blue">1945年老字号</span></h4><p>凌河区南京路五段1号 · 全市仅两家店，认准别进仿冒 · 适合第二天早饭</p></div></div><div class="food"><div class="rank">5</div><div><h4>沟帮子熏鸡 <span class="chip green">伴手礼认准牌子</span></h4><p>只买「沟帮子集团直营」或「尹家」（1889年老字号）· 服务区和满街"正宗"杂牌多 · 沟帮子镇就在京哈线上，顺路可连水馅包子一站解决</p></div></div><div class="tip warn"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01"></path><circle cx="12" cy="12" r="9"></circle></svg><div><b>已剔除：</b>「艳君烧烤」——查不到独立地址电话，"窦姐30年路边摊"叙事只出现在批量AI软文里，软广嫌疑最大，跳过。</div></div></div></div><div class="day"><div class="day-head"><div class="d"><b>连</b><span>10.4-5</span></div><div class="t"><h3>大连 · 海鲜怎么吃不被宰</h3><p>正餐三选二，小吃随缘，购物管住手</p></div></div><div class="day-body"><div class="food"><div class="rank">1</div><div><h4>品海楼（老虎滩·渔人码头店）<span class="chip green">嵌入10.5动线</span></h4><p>渔人码头正中央二楼露台海景 · 必吃榜常客，人均150-270 · 真实差评是"价高不实惠"而非品质硬伤 · 国庆提前到，正好当10.5午餐</p></div></div><div class="food"><div class="rank">2</div><div><h4>日月明海鲜坊（中山广场店）<span class="chip green">本地属性最强</span></h4><p>25年老字号 · 价格比品海楼/万宝亲民，本地人下班聚餐 · 鸟贝、海肠捞饭量大 · 适合10.4晚餐（离住处近）</p></div></div><div class="food"><div class="rank">3</div><div><h4>天天渔港（人民路店）<span class="chip green">稳妥备选</span></h4><p>35年老店 · 携程619条点评仅2条差评，人均约130 · 海胆水饺+家焖黄鱼，"海鲜不新鲜无条件退换"</p></div></div><div class="food"><div class="rank">4</div><div><h4>万宝海鲜舫（劳动公园店）<span class="chip orange">预算充足再去</span></h4><p>人均250+另有加工/服务费 · 品质公认难挑毛病，黄花鱼饺子是隐藏招牌 · 本地人原话"不太怕花钱的去万宝"</p></div></div><div class="food"><div class="rank">5</div><div><h4>日丰园（和平广场/银泰城店）<span class="chip green">海鲜饺子首选</span></h4><p>30年老店 · 海肠脆嫩+韭菜提鲜，本地人首选的饺子馆，比网红店实在</p></div></div><div class="food"><div class="rank">6</div><div><h4>喜鼎海胆水饺 <span class="chip orange">被高估，错峰再去</span></h4><p>88元一份米其林式分量，评价两极（"不如喜家德"的实测帖不少）· 国庆排队1.5-2h+，要去就下午2-4点错峰或外带</p></div></div><div class="food"><div class="rank">7</div><div><h4>孟哥焖子 <span class="chip orange">不排队才买</span></h4><p>5-7元一份 · 本地人明确吐槽"味道大不如前" · 路过不排队买一份尝鲜即可，排长队不值</p></div></div><div class="tip danger"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path></svg><div><b>大连明确避开：</b>①星海广场中心小吃街（贵且质差，铁板鱿鱼别在这买）；②星海广场拉客出海的直接无视；③俄罗斯风情街纪念品=义乌货，只拍照不购物；④被拉进的"海鲜加工店"——要吃市场海鲜就自己买好找明码标价小店加工。点海鲜通用规则：先问时价、确认按只还是按斤、结账核秤。</div></div></div></div></section>
+<section id="todo"><div class="sec-head"><div class="icon"><svg fill="none" stroke-width="2" viewbox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path></svg></div><h2>现在就要做的事（订房清单）</h2></div><p class="sec-sub">全订「可免费取消」房型先锁价，国庆前一周复查一次；华住系（全季）用华住会APP、亚朵用亚朵APP，将会员价与平台同房型、同早餐、同取消条件比价</p><div class="day"><div class="day-body" style="padding-top:14px"><ul class="check"><li><div><b>10.2 山海关 ×2间</b><span class="note">先比全季古城景区店与汉庭火车站店；想体验院落再选方元居。查装修味、隔音、停车与露台房型。</span></div></li>
+<li><div><b>10.3 锦州 ×2间</b><span class="note">古塔北京路亚朵与科技路亚朵并列比较；重点查近三个月卫生、隔音、走廊异味和车位。</span></div></li>
+<li><div><b>10.4—10.6 大连 ×2间×2晚</b><span class="note">先比中山希尔顿欢朋、人民广场东关街全季的两晚总价；别混成柏威年东关街店。问清晚归停车。</span></div></li>
+<li><div><b>10.6 秦皇岛 ×2间</b><span class="note">万达广场全季保留；确认大窗、楼层、共用电梯及充电条件，返程日不保证降价。</span></div></li>
+<li><div><b>美团／大众点评最后复核</b><span class="note">输入完整店名并核对地址，按最新翻近三个月中差评：卫生、噪声、异味、停车是否重复出现。总分超过4分也不是质量保证。</span></div></li>
+<li><div><b>与酒店确认后再付款</b><span class="note">停车是专属还是公共？满位替代在哪里、谁付费？充电桩数量、快慢充、是否对外？房间外窗和朝向？两间房早餐及免费取消截止时间？</span></div></li>
+<li><div><b>10.7 机票／高铁与还车安排</b><span class="note">先确认回定兴放车还是直达机场，并按具体酒店—放车点—机场重新导航，计入充电、堵车和办理乘机时间。16点后航班只是原候选时段，不是保证赶得上。</span></div></li>
+<li><div><b>辽沈战役纪念馆与演出</b><span class="note">以官方公众号当前放票日期预约10.3下午场×4人；喷泉和光影秀查出发前最新公告。</span></div></li>
+<li><div><b>随车准备</b><span class="note">身份证、充电APP及沿途备用站点；酒店有充电标识不等于到店一定有空枪。</span></div></li>
+</ul><div class="tip info"><svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><div><b>预算盘点：</b>五晚住宿（2间房）约 5040–7300 元，人均约 1260–1825；此为原四家主选估价逐项相加，不是实时报价；新候选需按五晚两间房订单总额重新核算。高速全程免费（10.1 0时—10.7 24时，以下高速时间为准）。</div></div></div></div></section>
+<p class="foot">2026 国庆环渤海自驾攻略 · 定兴—山海关—锦州—大连—北京<br/>住宿于2026-09-26补充小红书与公开来源；个人经历不等于整体质量保证。餐厅及其他行程信息沿用原攻略，未全部重新核实。价格为原估算，按指定日期实价下单<br/>初版2026-09-25 · 住宿复核2026-09-26</p></div><script>
+/* 导航交互增强：
+   1) 点击日期平滑滚动（兼容不支持 CSS scroll-behavior 的老内核，statement 式兜底）
+   2) 滚动时自动高亮当前所在区块，并把对应按钮横向滚到导航可视区中间 */
+(function(){
+  var nav=document.querySelector('.toc');
+  if(!nav)return;
+  var links=[].slice.call(nav.querySelectorAll('a'));
+  var map={};
+  links.forEach(function(a){
+    var id=(a.getAttribute('href')||'').slice(1);
+    if(!id)return;
+    map[id]=a;
+    a.addEventListener('click',function(e){
+      var t=document.getElementById(id);
+      if(!t)return;
+      e.preventDefault();
+      t.scrollIntoView({behavior:'smooth',block:'start'});
+      /* 用 replaceState 更新地址而不触发浏览器原生瞬跳 */
+      if(history.replaceState)history.replaceState(null,'','#'+id);
+    });
+  });
+  function centerInNav(a){
+    /* 只滚导航条自身的横向位置，不影响页面 */
+    var left=a.offsetLeft-(nav.clientWidth-a.offsetWidth)/2;
+    if(nav.scrollTo){nav.scrollTo({left:left,behavior:'smooth'});}else{nav.scrollLeft=left;}
+  }
+  if('IntersectionObserver' in window){
+    var cur=null;
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(!en.isIntersecting)return;
+        var a=map[en.target.id];
+        if(!a||a===cur)return;
+        if(cur)cur.classList.remove('cur');
+        cur=a;
+        cur.classList.add('cur');
+        centerInNav(cur);
+      });
+    },{rootMargin:'-25% 0px -65% 0px'});
+    Object.keys(map).forEach(function(id){
+      var s=document.getElementById(id);
+      if(s)obs.observe(s);
+    });
+  }
+})();
+</script></body></html>
