@@ -16,6 +16,7 @@ import { useActiveEncounterStore, useCurrentPatient } from '@/store/activeEncoun
 import type { QCIssue, GradeScore, ScoreReport } from '@/store/types'
 import type { RecordEditorShared } from './useRecordEditorShared'
 import { reportCaught } from '@/sentry'
+import { createRecordTaskScope } from './recordTaskScope'
 
 /**
  * SSE 事件 - 质控流的统一对象形状。
@@ -52,6 +53,8 @@ export function useRecordQC(shared: RecordEditorShared) {
       message.warning('病历内容为空，无法质控')
       return
     }
+    // 切换文书时清除已到达的旧结果，后续事件与 finally 均受身份守卫约束。
+    const scope = createRecordTaskScope(() => useQCStore.getState().reset())
     setQCing(true)
     startQCRun()
     // finalData 收集 done 事件的载荷，跨 onEvent 闭包累积——用 QCStreamEvent 类型化
@@ -98,7 +101,7 @@ export function useRecordQC(shared: RecordEditorShared) {
           },
         }
       )
-      if (finalData) {
+      if (scope.isCurrent() && finalData) {
         // TS 在闭包外无法推断回调里赋值的 finalData，借助 const 收敛非 null 视图
         const done: QCStreamEvent = finalData
         const totalIssues = useQCStore.getState().qcIssues.length
@@ -118,16 +121,18 @@ export function useRecordQC(shared: RecordEditorShared) {
         }
       }
     } catch (e) {
-      if ((e as { name?: string })?.name !== 'AbortError') {
+      if ((e as { name?: string })?.name !== 'AbortError' && scope.isCurrent()) {
         reportCaught(e, 'record.qc')
         // 优先展示后端业务文案（欠费/限流可识别，2026-08-28 与生成路径统一）
         const msg = (e as { message?: string })?.message
         message.error(msg && msg !== 'STREAM_ERROR' ? msg : '质控失败，请重试')
       }
-      setQCLlmLoading(false)
     } finally {
-      setQCing(false)
-      setQCLlmLoading(false)
+      if (scope.isCurrent()) {
+        setQCing(false)
+        setQCLlmLoading(false)
+      }
+      scope.dispose()
     }
   }
 

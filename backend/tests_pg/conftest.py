@@ -10,8 +10,8 @@
   绝不能和 tests/ 混在同一进程。
 
 设计要点：
-  1. 只连本地 postgres，建一个「一次性测试库」medassist_pgtest：
-     先连默认 postgres 维护库，DROP DATABASE IF EXISTS 再 CREATE，测完 DROP。
+  1. 必须显式提供PG_TEST_DATABASE_URL，且只允许本机地址，建唯一一次性测试库：
+     先连默认postgres维护库CREATE，测完仅DROP本次创建的随机库名。
      全程绝不碰开发/生产库 medassist 里的任何数据。
   2. 劫持 app.database.engine → 指向测试库。被测脚本（init_db / alembic_guard）
      都是 `from app.database import engine`，
@@ -26,33 +26,43 @@
 
 import asyncio
 import os as _os
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 
-# Settings 里 secret_key / orthanc_password 是必填（无默认值），import app.config 即校验。
-# 本目录只需真实 DATABASE_URL（连 PG 建测试库），这两个与 PG 测试无关的必填项给测试兜底，
-# 否则 CI 环境(只设了 DATABASE_URL/SECRET_KEY)会在 import settings 时因缺 ORTHANC_PASSWORD 挂。
-# 必须在 `from app.config import settings` 之前 setdefault。
-_os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
-_os.environ.setdefault("ORTHANC_PASSWORD", "test-orthanc-password-not-for-production")
+# 真PG仅允许显式测试库；其余配置与SQLite测试一样，禁止继承业务.env或外部凭据。
+from test_support import isolate_external_services
+isolate_external_services()
 
-# asyncpg 是建库/拆库直连驱动，没装则本目录整体 skip
-asyncpg = pytest.importorskip("asyncpg")
+# CI依赖安装问题必须失败；本地未安装可选PG驱动时保留跳过语义。
+if _os.environ.get('CI', '').lower() == 'true':
+    import asyncpg
+else:
+    asyncpg = pytest.importorskip("asyncpg")
 
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# 只 import settings 读取真实开发库 URL——import app.config 不会创建 engine
-from app.config import settings
+# 明确选择测试服务，不从业务.env兜底；拒绝远端必须发生在任何连接之前。
+_target = _os.environ.get('PG_TEST_DATABASE_URL')
+_TARGET_CONFIGURED = bool(_target)
+if not _target:
+    if _os.environ.get('CI', '').lower() == 'true':
+        raise pytest.UsageError('CI必须配置PG_TEST_DATABASE_URL以执行真实PG测试')
+    # 仅为模型/迁移导入提供合法URL结构；session夹具会skip，绝不连接此占位地址。
+    _target = 'postgresql+asyncpg://test:test@127.0.0.1:1/postgres'
+try:
+    _real_url = make_url(_target)
+except Exception:
+    raise pytest.UsageError('PG_TEST_DATABASE_URL格式不合法') from None
+if (_real_url.get_backend_name() != 'postgresql'
+        or _real_url.host not in {'localhost', '127.0.0.1', '::1'} or _real_url.query):
+    raise pytest.UsageError('PG测试仅允许显式本机PostgreSQL目标，不允许远端或连接覆盖参数')
 
-# ── 解析真实开发库连接串 ──────────────────────────────────────────────────────
-# 形如 postgresql://medassist:<pwd>@localhost:5432/medassist
-_real_url = make_url(settings.database_url)
-
-# 一次性测试库名（与开发库 medassist 隔离，绝不同名）
-TEST_DB_NAME = "medassist_pgtest"
+# 并行测试彼此隔离，绝不先删一个可能属于其他进程的固定库。
+TEST_DB_NAME = f'medassist_pgtest_{uuid4().hex[:12]}'
 
 # asyncpg 原生直连参数（不带 sqlalchemy 的 +asyncpg 驱动后缀）
 _pg_conn_kwargs = dict(
@@ -64,25 +74,29 @@ _pg_conn_kwargs = dict(
 
 # 测试库的 sqlalchemy 异步 URL（换库名 + 强制 asyncpg 驱动）
 _test_url = _real_url.set(database=TEST_DB_NAME, drivername="postgresql+asyncpg")
+# 在任何app模块导入前，连模块级独立连接工厂也只准看到本次测试库。
+_os.environ['DATABASE_URL'] = _test_url.render_as_string(hide_password=False)
 
 # 建库失败（PG 不可用）时记录 skip 原因；非 None 即触发 skip
 _SKIP_REASON: str | None = None
+_DATABASE_CREATED = False  # 仅清理本进程实际成功创建的随机库
 
 
 async def _create_test_db() -> None:
-    """连默认 postgres 维护库，DROP IF EXISTS + CREATE 一次性测试库。"""
-    conn = await asyncpg.connect(database="postgres", **_pg_conn_kwargs)
+    """只创建本次唯一库；连接有界，CI不可用时必须失败而非全部跳过。"""
+    global _DATABASE_CREATED
+    conn = await asyncpg.connect(database="postgres", timeout=10, **_pg_conn_kwargs)
     try:
         # 建库/删库不能在事务里，asyncpg 默认 autocommit，直接 execute 即可
-        await conn.execute(f'DROP DATABASE IF EXISTS "{TEST_DB_NAME}"')
         await conn.execute(f'CREATE DATABASE "{TEST_DB_NAME}"')
+        _DATABASE_CREATED = True  # close失败仍必须清理已经创建的数据库
     finally:
         await conn.close()
 
 
 async def _drop_test_db() -> None:
     """测完拆库：先踢掉测试库上残留连接，再 DROP DATABASE。"""
-    conn = await asyncpg.connect(database="postgres", **_pg_conn_kwargs)
+    conn = await asyncpg.connect(database="postgres", timeout=10, **_pg_conn_kwargs)
     try:
         # DROP DATABASE 要求目标库无活动连接，先强制断开
         await conn.execute(
@@ -95,11 +109,20 @@ async def _drop_test_db() -> None:
         await conn.close()
 
 
-# ── import 期尝试建库；连不上则标记整体 skip ──────────────────────────────────
-try:
-    asyncio.run(_create_test_db())
-except Exception as e:  # noqa: BLE001 - 连不上就整体 skip，不细分异常类型
-    _SKIP_REASON = f"本地 PostgreSQL 不可用，跳过真 PG 测试：{type(e).__name__}: {e}"
+# 到测试执行阶段才建库：导入或收集失败时尚无数据库副作用，清理钩子已注册。
+@pytest.fixture(scope='session', autouse=True)
+def _ensure_test_database():
+    """先建唯一测试库；本地未启动PG时跳过，CI服务故障必须失败。"""
+    global _SKIP_REASON
+    if not _TARGET_CONFIGURED:
+        pytest.skip('未配置PG_TEST_DATABASE_URL，跳过独立PG测试')
+    try:
+        asyncio.run(_create_test_db())
+    except Exception as exc:
+        _SKIP_REASON = f'PostgreSQL测试服务不可用：{type(exc).__name__}'
+        if _os.environ.get('CI', '').lower() == 'true':
+            pytest.fail(_SKIP_REASON, pytrace=False)
+        pytest.skip(_SKIP_REASON)
 
 # ── 劫持 app.database.engine → 测试库 ─────────────────────────────────────────
 # 必须在 init_db / alembic_guard 被 import 之前完成。
@@ -144,14 +167,22 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
             pass
         await _drop_test_db()
 
-    # 建库都失败过就没东西可拆
-    if _SKIP_REASON is not None:
+    # 即使建库后的连接关闭失败，也要拆掉已创建的库；未创建则绝不删库。
+    if not _DATABASE_CREATED:
         return
     try:
         asyncio.run(_teardown())
-    except Exception:
-        # 拆库失败不该让整轮测试判定失败，交由下一轮 CREATE 前的 DROP IF EXISTS 兜底
-        pass
+    except Exception as exc:
+        # 随机库没有下一轮预清理兜底；保留原有失败码，绝不能把残留报成成功。
+        if session.exitstatus == pytest.ExitCode.OK:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        message = f'PG测试库清理失败：{TEST_DB_NAME}（{type(exc).__name__}），需检查并清理本次测试库'
+        reporter = session.config.pluginmanager.getplugin('terminalreporter')
+        if reporter is not None:
+            reporter.write_sep('!', message, red=True)
+        else:
+            import warnings
+            warnings.warn(pytest.PytestWarning(message), stacklevel=2)
 
 
 @pytest_asyncio.fixture
@@ -202,7 +233,7 @@ def run_alembic_subprocess(*args: str) -> subprocess.CompletedProcess:
     """在 backend 目录下以子进程跑 `python -m alembic <args>`，指向测试库。"""
     env = {**_os.environ, "DATABASE_URL": TEST_SYNC_URL}
     return subprocess.run(
-        [sys.executable, "-m", "alembic", *args],
+        [sys.executable, "-m", "test_support", "-m", "alembic", *args],
         cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=180,
     )
 
@@ -211,7 +242,7 @@ def run_guard_subprocess() -> subprocess.CompletedProcess:
     """子进程跑 alembic_guard.py（stamp 守卫），指向测试库。"""
     env = {**_os.environ, "DATABASE_URL": TEST_SYNC_URL}
     return subprocess.run(
-        [sys.executable, "alembic_guard.py"],
+        [sys.executable, "-m", "test_support", "alembic_guard.py"],
         cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=120,
     )
 

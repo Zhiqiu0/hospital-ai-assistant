@@ -149,6 +149,7 @@ jobs:
         # 连维护库建/拆一次性测试库 medassist_pgtest(需 CREATE DATABASE + pgcrypto 权限)
         env:
           DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/medassist"
+          PG_TEST_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
           SECRET_KEY: "ci-test-secret-key-not-for-production"
         timeout-minutes: 6
         run: |

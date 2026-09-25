@@ -23,6 +23,7 @@ from app.schemas.ai_request import VoiceStructureRequest
 from app.services.ai.ai_utils import guarded_messages
 from app.services.ai.llm_client import llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_contracts import validate_voice_output
 from app.services.ai.output_guards import (
     strip_unsubstantiated_vital_values,
 )
@@ -143,6 +144,8 @@ async def voice_structure(
             max_tokens=model_options["max_tokens"],
             model_name=model_options["model_name"],
         )
+        # 校验先于清洗及保存，错误对象不得被默认空值包装成整理成功。
+        validate_voice_output(result)
         usage = llm_client._last_usage
         await log_ai_task(
             "generate",

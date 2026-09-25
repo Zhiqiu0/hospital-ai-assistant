@@ -13,12 +13,10 @@
 """
 # Step 1: 在 app.config / app.database 加载之前注入测试 DATABASE_URL
 import os as _os
-_os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-# 缺省 SECRET_KEY 也兜底，避免 settings 校验失败
-_os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
-# ORTHANC_PASSWORD 在 config.py 是必填（无默认值），生产无 .env 启动会失败；
-# 测试不实际连 Orthanc，但 settings import 期间会校验，所以兜底一个测试占位值。
-_os.environ.setdefault("ORTHANC_PASSWORD", "test-orthanc-password-not-for-production")
+_os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+# 完全禁止读取业务.env，并覆盖shell中的HIS/云凭据，不能只替换数据库地址。
+from test_support import isolate_external_services
+isolate_external_services()
 
 import pytest
 import pytest_asyncio

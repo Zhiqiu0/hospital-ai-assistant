@@ -19,6 +19,7 @@ import { supplementableIssues } from '@/components/workbench/qcFieldConstants'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 import type { RecordEditorShared } from './useRecordEditorShared'
 import { reportCaught } from '@/sentry'
+import { createRecordTaskScope } from './recordTaskScope'
 
 export function useRecordSupplement(
   shared: RecordEditorShared,
@@ -57,6 +58,8 @@ export function useRecordSupplement(
       message.info('没有可自动补全的法定缺失项（其余为提示类建议，请人工判断）')
       return
     }
+    // JSON 请求同样绑定文书身份，不能拿旧建议改写当前另一份正文。
+    const scope = createRecordTaskScope(() => setIsSupplementing(false))
     setIsSupplementing(true)
     const original = recordContent
 
@@ -72,11 +75,13 @@ export function useRecordSupplement(
           qc_issues: fixableIssues,
         }),
       })
+      if (!scope.isCurrent()) return
       if (!res.ok) {
         message.error(`补全失败：HTTP ${res.status}`)
         return
       }
       const data = await res.json()
+      if (!scope.isCurrent()) return
       if (data.error) {
         message.error(`补全失败：${data.error}`)
         return
@@ -114,7 +119,7 @@ export function useRecordSupplement(
       return
     } catch (e) {
       const err = e as { name?: string; message?: string }
-      if (err?.name === 'AbortError') return
+      if (err?.name === 'AbortError' || !scope.isCurrent()) return
       // try 里含本地写入逻辑（writeSectionToRecord 等），TypeError 也会落到
       // 这里被说成"补全失败"——必须上报才能发现是代码 bug 而非服务问题
       reportCaught(e, 'record.supplement')
@@ -122,7 +127,8 @@ export function useRecordSupplement(
       // 补全没写入任何内容，正文保持现状即可。
       message.error('补全失败，请重试')
     } finally {
-      setIsSupplementing(false)
+      if (scope.isCurrent()) setIsSupplementing(false)
+      scope.dispose()
     }
   }
 

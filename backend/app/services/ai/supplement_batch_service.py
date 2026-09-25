@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.ai_utils import guarded_messages, safe_format
 from app.services.ai.llm_client import LLMServiceError, llm_client
 from app.services.ai.model_options import get_model_options
+from app.services.ai.output_contracts import require_text_items
 from app.services.ai.output_guards import (
     is_unsourced_copy_field,
     strip_unsubstantiated_vitals,
@@ -186,6 +187,8 @@ async def run_quick_supplement_batch(db: AsyncSession, req: Any) -> dict:
             max_tokens=opts["max_tokens"],
             model_name=opts["model_name"],
         )
+        # 空列表合法；缺键和错误条目在过滤前显式降级，避免静默丢弃或类型异常。
+        require_text_items(result, "items", ("field_name", "value"))
     except Exception as exc:
         logger.exception("supplement_batch: llm_failed err=%s", exc)
         # 业务化异常带医生可读文案（欠费/凭证/限流可识别），其余保留类型名

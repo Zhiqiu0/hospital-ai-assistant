@@ -66,12 +66,24 @@ async def save_report(
       - published_by   : 仅在 publish=True 时写入，记录实际签发责任人。
     """
     assert_pacs_write(current_user)
+    # 与删除、AI分析统一先锁检查再锁报告，发布期间删除不能先清除Orthanc。
+    # 等锁后重新加载状态，避免会话内旧对象掩盖另一事务已经删除/发布的结果。
+    study = await db.get(ImagingStudy, study_id, with_for_update=True, populate_existing=True)
+    if not study:
+        raise HTTPException(404, "检查不存在")
     result = await db.execute(
-        select(ImagingReport).where(ImagingReport.study_id == study_id)
+        select(ImagingReport).where(ImagingReport.study_id == study_id).with_for_update()
     )
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(404, "报告不存在，请先进行 AI 分析")
+
+    # 与AI重新分析、删除端点同一边界：已发布报告没有修订历史，禁止原地改写。
+    # 锁住报告行，避免并发保存越过发布状态检查；相同发布重试不重写审计时间。
+    if report.is_published:
+        if body.publish and body.final_report == report.final_report:
+            return {"ok": True, "published_at": report.published_at.isoformat() if report.published_at else None}
+        raise HTTPException(409, "影像报告已发布，不能直接覆盖正文")
 
     report.final_report = body.final_report
 
@@ -83,9 +95,7 @@ async def save_report(
         # 关键：只写 published_by，绝不覆盖 radiologist_id（保留分析人审计）
         report.published_by = current_user.id
 
-        study = await db.get(ImagingStudy, study_id)
-        if study:
-            study.status = "published"
+        study.status = "published"
 
         response["published_at"] = report.published_at.isoformat()
 
@@ -141,7 +151,7 @@ async def delete_study(
     assert_pacs_write(current_user)
     # 行锁（2026-08-28 完整性审计）：原"先查后删"与并发的发布不互斥，检查
     # 通过后对方发布提交，随后仍会物理删除已发布报告（合规红线）。锁行串行。
-    study = await db.get(ImagingStudy, study_id, with_for_update=True)
+    study = await db.get(ImagingStudy, study_id, with_for_update=True, populate_existing=True)
     if not study:
         raise HTTPException(404, "检查不存在")
 

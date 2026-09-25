@@ -216,6 +216,8 @@ async def test_reconcile_attempts_accumulate_across_rounds(async_db, monkeypatch
     # 让每轮对账都走真实的 send_writeback（未配回写地址 → skipped，属可重试状态），
     # 且各轮共用同一个测试会话，避免 SQLite 内存库跨 session 不可见。
     # reconcile_once 内部是 `from app.database import AsyncSessionLocal`，故 patch 源模块。
+    # 本例明确验证“未配置HTTP回落”的场景，不能依赖测试进程的默认URL。
+    monkeypatch.setattr(wr.settings, "his_writeback_url", "")
     monkeypatch.setattr(_db, "AsyncSessionLocal", lambda: _SessionCtx(async_db))
 
     for expected in (1, 2, 3):

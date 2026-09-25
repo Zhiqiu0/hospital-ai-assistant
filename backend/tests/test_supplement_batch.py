@@ -99,7 +99,7 @@ async def test_llm_exception_returns_error_not_raises(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_returns_non_list_items_is_safe(monkeypatch):
-    """LLM 返回 items 非 list（违规）→ 安全降级为 []。"""
+    """LLM 返回 items 非 list（违规）→ 明确失败并返回安全空列表。"""
     async def fake_chat(*_a, **_kw):
         return {"items": "not a list"}
     monkeypatch.setattr(svc.llm_client, "chat_json_stream", fake_chat)
@@ -110,7 +110,8 @@ async def test_llm_returns_non_list_items_is_safe(monkeypatch):
     svc.llm_client._last_usage = SimpleNamespace(prompt_tokens=0, completion_tokens=0)
 
     result = await svc.run_quick_supplement_batch(db=AsyncMock(), req=_mock_req())
-    assert result == {"items": []}
+    assert result["items"] == []
+    assert "error" in result
 
 
 @pytest.mark.asyncio

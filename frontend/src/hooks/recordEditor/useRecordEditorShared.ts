@@ -20,6 +20,8 @@ import { pickInquiryByRecordType, type RecordType } from '@/store/inquiryFieldGr
 import { PROFILE_FIELD_KEYS } from '@/domain/medical'
 import { streamSSE } from '@/services/streamSSE'
 import { parseGeneratedSectionsToInquiry } from '@/utils/recordSections'
+import { message } from '@/services/messageBridge'
+import { createRecordTaskScope } from './recordTaskScope'
 
 /** 四个动作 hook 共用的依赖集合（由 useRecordEditorShared 产出，门面注入） */
 export interface RecordEditorShared {
@@ -37,7 +39,7 @@ export interface RecordEditorShared {
 
 export function useRecordEditorShared(): RecordEditorShared {
   // 各域字段从对应子 store 取（仅取共享能力需要的切片）
-  const { inquiry, setInquiry } = useInquiryStore()
+  const { inquiry, updateInquiryFields } = useInquiryStore()
   const { recordType } = useRecordStore()
   const currentPatient = useCurrentPatient()
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
@@ -54,33 +56,41 @@ export function useRecordEditorShared(): RecordEditorShared {
   const runSSE = async (url: string, body: object, handlers: Parameters<typeof streamSSE>[3]) => {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    const startEncounterId = useActiveEncounterStore.getState().encounterId
-    const stillSameEncounter = () =>
-      useActiveEncounterStore.getState().encounterId === startEncounterId
+    // 同接诊切文书也立即中止，切回原类型不能重新激活旧请求。
+    const scope = createRecordTaskScope(() => ctrl.abort())
     const guarded: typeof handlers = {
       onChunk: text => {
-        if (!stillSameEncounter()) {
+        if (!scope.isCurrent()) {
           ctrl.abort()
           return
         }
         handlers.onChunk?.(text)
       },
       onEvent: event => {
-        if (!stillSameEncounter()) {
+        if (!scope.isCurrent()) {
           ctrl.abort()
           return
+        }
+        // 生成成功但落库失败属于可恢复状态：保留正文并提示，由自动保存继续补传。
+        if (event.type === 'done' && typeof event.warning === 'string' && event.warning) {
+          message.warning(event.warning)
         }
         handlers.onEvent?.(event)
       },
     }
-    return streamSSE(url, body, token || '', guarded, { signal: ctrl.signal })
+    try {
+      await streamSSE(url, body, token || '', guarded, { signal: ctrl.signal })
+    } finally {
+      scope.dispose()
+    }
   }
 
   // 生成完成后，把病历各段落解析回左侧问诊字段，确保左右一致
   const syncGeneratedRecordToInquiry = (content: string) => {
     const result = parseGeneratedSectionsToInquiry(content)
     if (Object.keys(result).length > 0) {
-      setInquiry({ ...useInquiryStore.getState().inquiry, ...result })
+      // 生成正文已保存不代表问诊字段已落库；保留问诊的服务端基线。
+      updateInquiryFields({ ...useInquiryStore.getState().inquiry, ...result })
     }
   }
 

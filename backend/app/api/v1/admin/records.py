@@ -40,6 +40,8 @@ async def list_all_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, le=50),
     doctor_id: str = Query(None, description="按医生 UUID 筛选，不传则返回所有医生的病历"),
+    # 搜索在服务端过滤后分页；限制长度，避免无限制输入拖慢姓名查询。
+    search: str | None = Query(None, max_length=100, description="患者或医生姓名，忽略首尾空白"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_admin),
 ):
@@ -48,7 +50,7 @@ async def list_all_records(
     联表查询：MedicalRecord → Encounter → Patient / User，一次获取完整信息。
     """
     service = AdminRecordService(db)
-    return await service.list_all_records(page, page_size, doctor_id)
+    return await service.list_all_records(page, page_size, doctor_id, search)
 
 
 @router.post("/{record_id}/revise")

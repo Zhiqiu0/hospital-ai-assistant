@@ -87,11 +87,7 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   const { user } = useAuthStore()
   const currentPatient = useCurrentPatient()
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
-  const patchActive = useActiveEncounterStore(s => s.patchActive)
   const updateInquiryFields = useInquiryStore(s => s.updateInquiryFields)
-  // 兼容封装，保留原 setVisitMeta 形状（页面里用了 4 处）
-  const setVisitMeta = (firstVisit: boolean, vt: string) =>
-    patchActive({ isFirstVisit: firstVisit, visitType: vt as VisitType })
 
   // 无接诊时清空残留数据（仅在页面初次挂载时执行，避免新建接诊时的竞态问题）
   useEffect(() => {
@@ -123,19 +119,8 @@ export default function WorkbenchPage({ mode = 'outpatient' }: WorkbenchPageProp
   // 否则 PatientProfileCard 会因 cache 为空而显示空白
   useEnsureSnapshotHydrated()
 
-  // 切换门诊/急诊页面时同步 visitType 到 store
-  useEffect(() => {
-    const defaultType = isEmergency ? 'emergency' : 'outpatient'
-    const { visitType, isFirstVisit } = useActiveEncounterStore.getState()
-    // 住院残留不在这里覆写成门诊——那会把住院接诊伪装成门诊接诊，让上方守卫
-    // 失明；交给守卫整体清空（2026-08-21 第四轮走查）
-    if (visitType === 'inpatient') return
-    if (visitType !== defaultType) {
-      setVisitMeta(isFirstVisit, defaultType)
-    }
-    // setVisitMeta 引用稳定（hook 返回的 stable callback），无需加进 deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEmergency])
+  // mode 只决定页面配色和新建接诊默认值；真实 visitType 只能由接诊创建、
+  // 恢复或转住院业务更新，切页面不能篡改既有病历的导出首页与生成上下文。
 
   const {
     historyOpen,
