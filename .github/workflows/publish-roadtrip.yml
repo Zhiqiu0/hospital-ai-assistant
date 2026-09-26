@@ -62,6 +62,6 @@ jobs:
           scp -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes public-pages/guoqing-roadtrip.html "$target:$staged"
           # 校验值取已上线的Git文件字节（LF），不可用Windows工作树CRLF字节计算。
           # 比较旧版校验和防止覆盖并发修改；备份后原子替换单一文件。
-          ssh -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes "$target" "set -eu; test \$(sha256sum /home/ubuntu/pages/guoqing-roadtrip.html | cut -d' ' -f1) = c71d966dcf086e1173df81107b2925c4351e3271b901877619becfba60c6cb9b; mkdir -p /home/ubuntu/backups/public-pages; cp -p /home/ubuntu/pages/guoqing-roadtrip.html /home/ubuntu/backups/public-pages/guoqing-roadtrip-before-${GITHUB_SHA}.html; chmod 644 '$staged'; mv '$staged' /home/ubuntu/pages/guoqing-roadtrip.html"
+          ssh -i ~/.ssh/roadtrip_key -o StrictHostKeyChecking=yes "$target" "set -eu; test \$(sha256sum /home/ubuntu/pages/guoqing-roadtrip.html | cut -d' ' -f1) = 458a6883cd9ab10e3e6d410138930dec557943f32dd4822d5cd093fea8264bc8; mkdir -p /home/ubuntu/backups/public-pages; cp -p /home/ubuntu/pages/guoqing-roadtrip.html /home/ubuntu/backups/public-pages/guoqing-roadtrip-before-${GITHUB_SHA}.html; chmod 644 '$staged'; mv '$staged' /home/ubuntu/pages/guoqing-roadtrip.html"
           curl -fsSL --retry 3 'https://mediscribe.cn/pages/guoqing-roadtrip.html' -o /tmp/roadtrip-live.html
           cmp public-pages/guoqing-roadtrip.html /tmp/roadtrip-live.html
