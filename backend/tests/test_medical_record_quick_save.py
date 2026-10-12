@@ -133,7 +133,8 @@ async def test_quick_save_stores_content_as_text_dict(async_db):
         )
     )).scalar_one()
 
-    assert version.content == {"text": "病历内容XYZ"}
+    assert version.content["text"] == "病历内容XYZ"
+    assert "error" in version.content["his_projection"], "自由正文可签发，但必须保留无法逐字段回写的原因"
     assert version.source == "doctor_signed"
     assert version.triggered_by == "doc-qs-1"
 
@@ -219,7 +220,8 @@ async def test_quick_save_commits_all_three_tables_atomically(async_db):
         select(RecordVersion).where(RecordVersion.medical_record_id == record.id)
     )).scalar_one()
     assert db_version.version_no == 1
-    assert db_version.content == {"text": "原子提交测试"}
+    assert db_version.content["text"] == "原子提交测试"
+    assert "error" in db_version.content["his_projection"], "非规范正文不得假装已具备HIS字段投影"
 
     # 3) Encounter 状态已更新
     db_enc = (await async_db.execute(

@@ -45,6 +45,8 @@ export interface UseAutoSaveDraftOptions {
   encounterId: string | null
   /** 病历类型（outpatient / admission_note 等），切换时 auto-save 基线重置 */
   recordType: string
+  /** 具体文书主键；同类型多份草稿也分别保存。 */
+  recordId?: string | null
   /** 当前编辑器内容（主控信号，本 hook 据此防抖触发） */
   recordContent: string
   /** 病历是否已签发——签发后只读，不再 auto-save */
@@ -60,6 +62,7 @@ export interface UseAutoSaveDraftOptions {
 export function useAutoSaveDraft({
   encounterId,
   recordType,
+  recordId = null,
   recordContent,
   isFinal,
   isGenerating = false,
@@ -68,6 +71,7 @@ export function useAutoSaveDraft({
   savingState: AutoSaveState
 } {
   const [savedAt, setSavedAt] = useState(0)
+  const recordLoading = useRecordStore(s => s.recordLoading)
   const [savingState, setSavingState] = useState<AutoSaveState>('idle')
   // 状态镜像到全局 store（2026-08-29 离线审计）：此前返回值没人消费，
   // 断网入队后状态栏仍显示绿色"已保存"，医生无从知道内容只在本机队列里。
@@ -85,6 +89,9 @@ export function useAutoSaveDraft({
   // 切接诊时重置基线
   const lastEncounterRef = useRef<string | null>(null)
   const lastRecordTypeRef = useRef<string>(recordType)
+  const lastRecordIdRef = useRef(recordId)
+  // 每次切文书递增，切走又切回也不采纳旧保存响应。
+  const contextVersionRef = useRef(0)
   // 撞过 409 之后的一次性强制覆盖标记（2026-09-01 多设备并发审计）。
   // 冲突后本地基线被清空、下一次保存会盖掉另一端刚写的内容；带上这个标记让
   // 后端**另起一版**而不是原地覆写，被盖掉的内容留在历史版本里不至于永久消失。
@@ -96,16 +103,20 @@ export function useAutoSaveDraft({
   // 必须声明在 useEffect 之前——effect 闭包里引用 performSave，
   // 后置 const 会触发 ESLint react-hooks/set-state-in-effect TDZ 报错
   const performSave = async (payload: DraftPayload): Promise<boolean> => {
+    const contextVersion = contextVersionRef.current
     // 草稿身份由接诊和文书类型共同组成；每次异步返回后重新检查当前指针。
     const isCurrentDraft = (draft: DraftPayload) =>
       draft.encounter_id === lastEncounterRef.current &&
-      draft.record_type === lastRecordTypeRef.current
+      draft.record_type === lastRecordTypeRef.current &&
+      (draft.record_id ?? null) === lastRecordIdRef.current &&
+      contextVersion === contextVersionRef.current
     if (isCurrentDraft(payload)) setSavingState('saving')
     try {
       // 后端 auto-save-draft 仅回 updated_at（用于乐观锁回填），形状收敛在内联接口
       const res = (await api.post('/medical-records/auto-save-draft', {
         encounter_id: payload.encounter_id,
         record_type: payload.record_type,
+        record_id: payload.record_id,
         content: payload.content,
         expected_updated_at: payload.expected_updated_at,
         // 仅当这次发的正是当前接诊、且刚撞过 409 时才置真（见 forceOverwriteRef）
@@ -130,7 +141,7 @@ export function useAutoSaveDraft({
       // （尤其 expected=null 基线的）若不清，之后切接诊触发 flush 会以"跳过
       // 乐观锁"姿态重放，把服务端**更新的内容静默回滚成旧稿**。本次成功已
       // 覆盖同 (encounter, record_type) 的一切旧内容，队列副本必须作废。
-      void removeDraftByKey(payload.encounter_id, payload.record_type)
+      void removeDraftByKey(payload.encounter_id, payload.record_type, payload.record_id)
       return true
     } catch (err) {
       // axios 错误形状收敛到本地视图：拦截器虽 reject error.response?.data，
@@ -142,7 +153,7 @@ export function useAutoSaveDraft({
       // 删掉该 (encounter, record_type) 的队列副本：其基线已过时，留着每次 flush 都会
       // 再 409、无限重试并反复弹提示。只对当前接诊弹冲突提示，避免补发旧草稿误导医生。
       if (status === 409) {
-        void removeDraftByKey(payload.encounter_id, payload.record_type)
+        void removeDraftByKey(payload.encounter_id, payload.record_type, payload.record_id)
         if (isCurrentDraft(payload)) {
           setSavingState('conflict')
           // 基线重置（2026-08-13 第二轮审计修复；2026-08-21 第四轮简化）：只提示
@@ -177,7 +188,7 @@ export function useAutoSaveDraft({
       // 正文会无限重试还进补发队列，把 2026-09-02 修过的毒化链路再造一遍。
       // 内容不改，重试永远是同一个结果，这正是"永久性拒绝"的定义。
       if (status === 400 || status === 403 || status === 404 || status === 422) {
-        void removeDraftByKey(payload.encounter_id, payload.record_type)
+        void removeDraftByKey(payload.encounter_id, payload.record_type, payload.record_id)
         if (isCurrentDraft(payload)) {
           setSavingState('idle')
           const detail = (err as { detail?: string } | null)?.detail
@@ -238,6 +249,16 @@ export function useAutoSaveDraft({
       debounceTimerRef.current = null
     }
     if (!pending) return
+    // 冷启动缓存尚未确认服务端状态时，pagehide/卸载不能绕过加载门禁。
+    // 切文书时仍允许保存上一份已经确认的快照（身份不同，不命中此分支）。
+    const current = useRecordStore.getState()
+    if (
+      current.recordLoading &&
+      pending.encounter_id === lastEncounterRef.current &&
+      pending.record_type === current.recordType &&
+      (pending.record_id ?? null) === current.selectedRecordId
+    )
+      return
     if (pending.content === lastSavedContentRef.current) return
     // 失败时 performSave 内部会入 IndexedDB 队列，下次挂载时补发
     void performSave(pending)
@@ -247,6 +268,7 @@ export function useAutoSaveDraft({
   useEffect(() => {
     if (encounterId !== lastEncounterRef.current) {
       flushPending() // ← 必须在下面重置基线之前
+      contextVersionRef.current += 1
       lastEncounterRef.current = encounterId
       lastSavedContentRef.current = ''
       lastUpdatedAtRef.current = null
@@ -270,8 +292,10 @@ export function useAutoSaveDraft({
   // 处理与切接诊同构：先把旧类型的 pending 用旧基线落盘，再清基线（新类型首发
   // 不带 expected_updated_at → 后端跳过乐观锁校验，安全 UPSERT）。
   useEffect(() => {
-    if (recordType !== lastRecordTypeRef.current) {
+    if (recordType !== lastRecordTypeRef.current || recordId !== lastRecordIdRef.current) {
       flushPending() // pending 快照里存的是旧类型 + 旧基线，落对行
+      contextVersionRef.current += 1
+      lastRecordIdRef.current = recordId
       lastRecordTypeRef.current = recordType
       lastSavedContentRef.current = ''
       lastUpdatedAtRef.current = null
@@ -282,7 +306,7 @@ export function useAutoSaveDraft({
     }
     // flushPending 读的全是 ref，闭包新旧无碍（同上）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordType])
+  }, [recordType, recordId])
 
   // 关标签页 / 切后台 / 卸载（含退出登录跳转）：来不及等防抖，立刻落盘。
   // pagehide 比 beforeunload 可靠（移动端与 bfcache 都会触发）；
@@ -322,6 +346,7 @@ export function useAutoSaveDraft({
   // 主防抖循环
   useEffect(() => {
     if (!encounterId) return
+    if (recordLoading) return
     if (isFinal) return
     // 生成期间不排防抖（见 isGenerating 注释）
     if (isGenerating) return
@@ -332,6 +357,7 @@ export function useAutoSaveDraft({
     pendingRef.current = {
       encounter_id: encounterId,
       record_type: recordType,
+      record_id: recordId ?? undefined,
       content: recordContent,
       expected_updated_at: lastUpdatedAtRef.current,
     }
@@ -346,7 +372,7 @@ export function useAutoSaveDraft({
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [recordContent, encounterId, recordType, isFinal, isGenerating])
+  }, [recordContent, encounterId, recordType, recordId, isFinal, isGenerating, recordLoading])
 
   // ── 服务端基线同步信号（2026-08-21 第四轮走查）──────────────────────────
   // AI 生成完成时后端已落库（save_ai_draft），done 事件带回 updated_at。
@@ -386,7 +412,7 @@ export function useAutoSaveDraft({
   useEffect(() => {
     if (forceFlushSignal === lastFlushSignalRef.current) return
     lastFlushSignalRef.current = forceFlushSignal
-    if (!encounterId || isFinal) return
+    if (!encounterId || isFinal || recordLoading) return
     // 直接读 store 拿最新 recordContent，绕开 closure（外部触发 flush 时 hook
     // closure 里的 recordContent 可能还是旧的）
     const latestContent = useRecordStore.getState().recordContent
@@ -397,6 +423,7 @@ export function useAutoSaveDraft({
     void performSave({
       encounter_id: encounterId,
       record_type: recordType,
+      record_id: recordId ?? undefined,
       content: latestContent,
       expected_updated_at: lastUpdatedAtRef.current,
     })

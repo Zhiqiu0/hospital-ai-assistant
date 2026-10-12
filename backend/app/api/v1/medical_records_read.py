@@ -31,6 +31,7 @@ router = APIRouter()
 async def get_draft_by_type(
     encounter_id: str = Query(...),
     record_type: str = Query(...),
+    record_id: str | None = Query(None),  # 时间轴选择具体文书，不回落到最新同类型
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -50,10 +51,13 @@ async def get_draft_by_type(
         .where(
             MedicalRecord.encounter_id == encounter_id,
             MedicalRecord.record_type == record_type,
+            *([MedicalRecord.id == record_id] if record_id else []),
         )
         .order_by(MedicalRecord.updated_at.desc())
     )).scalars().first()
     if row is None:
+        if record_id:
+            raise HTTPException(status_code=404, detail="所选病历不存在或不属于当前接诊及类型")
         return {"exists": False}
     version = (await db.execute(
         select(RecordVersion).where(
@@ -66,6 +70,7 @@ async def get_draft_by_type(
         "exists": True,
         "record_id": row.id,
         "status": row.status,
+        "patient_snapshot": row.patient_snapshot,  # 选中签发文书打印必须使用自身冻结首页
         "content": content,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "submitted_at": row.submitted_at.isoformat() if getattr(row, "submitted_at", None) else None,

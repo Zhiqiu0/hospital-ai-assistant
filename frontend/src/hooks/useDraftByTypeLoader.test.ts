@@ -10,7 +10,7 @@
  * 到哪一版了。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
 vi.mock('@/services/api', () => ({
   default: { get: vi.fn(), post: vi.fn() },
@@ -24,6 +24,7 @@ import { useDraftByTypeLoader } from './useDraftByTypeLoader'
 import { useRecordStore } from '@/store/recordStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useRecordAutoSaveTrigger } from '@/store/recordAutoSaveTrigger'
+import { useAutoSaveDraft } from './useAutoSaveDraft'
 
 const getMock = api.get as unknown as ReturnType<typeof vi.fn>
 
@@ -38,6 +39,7 @@ const SERVER_DRAFT = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useRecordStore.getState().reset()
   getMock.mockResolvedValue(SERVER_DRAFT)
   useActiveEncounterStore.setState({ encounterId: 'enc-1' })
   useRecordStore.setState({ recordContent: '', recordType: 'outpatient', isGenerating: false })
@@ -45,6 +47,83 @@ beforeEach(() => {
 })
 
 describe('useDraftByTypeLoader', () => {
+  it('恢复缓存签发文书时仍恢复只读锁', async () => {
+    useRecordStore.setState({ recordContent: '本机旧缓存', isFinal: false })
+    getMock.mockResolvedValue({ ...SERVER_DRAFT, status: 'submitted' })
+    renderHook(() => useDraftByTypeLoader('enc-1', 'outpatient'))
+    await waitFor(() => expect(useRecordStore.getState().isFinal).toBe(true))
+    expect(useRecordStore.getState().recordContent).toBe(SERVER_DRAFT.content)
+  })
+
+  it('同类型时间轴选择按文书 ID 拉取，不复用另一份缓存', async () => {
+    useRecordStore.setState({ recordType: 'course_record', recordContent: '第一份' })
+    useRecordStore.getState().selectRecord('course_record', 'rec-2')
+    getMock.mockResolvedValue({ ...SERVER_DRAFT, record_id: 'rec-2', content: '第二份' })
+    renderHook(() => useDraftByTypeLoader('enc-1', 'course_record'))
+    await waitFor(() => expect(useRecordStore.getState().recordContent).toBe('第二份'))
+    expect(getMock.mock.calls[0][0]).toContain('record_id=rec-2')
+  })
+
+  it('切A→B→A后旧A响应永久失效，缓存与签发状态各自恢复', async () => {
+    let finishOld!: (value: unknown) => void
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishOld = resolve
+        })
+    )
+    useRecordStore.getState().selectRecord('course_record', 'rec-A')
+    renderHook(() => useDraftByTypeLoader('enc-1', 'course_record'))
+    getMock.mockResolvedValueOnce({ ...SERVER_DRAFT, record_id: 'rec-B', content: '乙稿' })
+    act(() => useRecordStore.getState().selectRecord('course_record', 'rec-B'))
+    await waitFor(() => expect(useRecordStore.getState().recordContent).toBe('乙稿'))
+    act(() => useRecordStore.getState().setRecordContent('乙未保存编辑'))
+    getMock.mockResolvedValueOnce({
+      ...SERVER_DRAFT,
+      record_id: 'rec-A',
+      content: '甲正式稿',
+      status: 'submitted',
+    })
+    act(() => useRecordStore.getState().selectRecord('course_record', 'rec-A'))
+    await waitFor(() => expect(useRecordStore.getState().recordContent).toBe('甲正式稿'))
+    await act(async () => {
+      finishOld({ ...SERVER_DRAFT, record_id: 'rec-A', content: '甲旧响应' })
+    })
+    expect(useRecordStore.getState().recordContent).toBe('甲正式稿')
+    expect(useRecordStore.getState().isFinal).toBe(true)
+    getMock.mockResolvedValueOnce({ ...SERVER_DRAFT, record_id: 'rec-B', content: '乙稿' })
+    act(() => useRecordStore.getState().selectRecord('course_record', 'rec-B'))
+    await waitFor(() => expect(useRecordStore.getState().recordLoading).toBe(false))
+    expect(useRecordStore.getState().recordContent).toBe('乙未保存编辑')
+    expect(useRecordStore.getState().isFinal).toBe(false)
+  })
+
+  it('选中文书加载失败保留门禁，不把缓存当可保存的新稿', async () => {
+    getMock.mockRejectedValue(new Error('离线'))
+    useRecordStore.getState().selectRecord('course_record', 'rec-A')
+    renderHook(() => useDraftByTypeLoader('enc-1', 'course_record'))
+    await act(async () => {})
+    expect(useRecordStore.getState().recordLoading).toBe(true)
+  })
+
+  it('刷新缓存时读取未完成，pagehide和卸载均不得抢救上传未经确认的签发缓存', async () => {
+    getMock.mockReturnValue(new Promise(() => {}))
+    useRecordStore.setState({ recordContent: '待确认旧缓存' })
+    const hook = renderHook(() => {
+      const state = useRecordStore()
+      // 复现真实编辑器挂载顺序：先自动保存，再发起草稿读取。
+      useAutoSaveDraft({
+        encounterId: 'enc-1',
+        recordType: state.recordType,
+        recordContent: state.recordContent,
+        isFinal: state.isFinal,
+      })
+      useDraftByTypeLoader('enc-1', state.recordType)
+    })
+    act(() => window.dispatchEvent(new Event('pagehide')))
+    hook.unmount()
+    expect(api.post).not.toHaveBeenCalled()
+  })
   it('本地有内容时仍同步服务端基线，且不覆盖医生正在写的字', async () => {
     useRecordStore.setState({ recordContent: '平板上只写了两个字' })
     renderHook(() => useDraftByTypeLoader('enc-1', 'outpatient'))

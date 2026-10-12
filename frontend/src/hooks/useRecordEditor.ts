@@ -34,6 +34,7 @@ export function useRecordEditor() {
     setRecordType,
     isFinal,
     finalizedAt,
+    recordLoading,
   } = useRecordStore()
   const { isQCing, isQCStale, qcIssues, qcPass, gradeScore } = useQCStore()
   const currentPatient = useCurrentPatient()
@@ -50,14 +51,16 @@ export function useRecordEditor() {
   // 补全完成后要自动重新质控，故把 handleQC 注入补全 hook
   const { isSupplementing, handleSupplement } = useRecordSupplement(shared, handleQC)
 
-  const isBusy = isGenerating || isPolishing || isQCing || isSupplementing
-  const busyText = isGenerating
-    ? 'AI 生成中...'
-    : isPolishing
-      ? 'AI 润色中...'
-      : isSupplementing
-        ? 'AI 补全中...'
-        : 'AI 质控中...'
+  const isBusy = recordLoading || isGenerating || isPolishing || isQCing || isSupplementing
+  const busyText = recordLoading
+    ? '正在读取所选文书...'
+    : isGenerating
+      ? 'AI 生成中...'
+      : isPolishing
+        ? 'AI 润色中...'
+        : isSupplementing
+          ? 'AI 补全中...'
+          : 'AI 质控中...'
 
   return {
     recordContent,

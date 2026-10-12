@@ -62,6 +62,7 @@ async def auto_save_draft(
         force_overwrite=data.force_overwrite,
         # 记录时间（临床相关时点，住院文书用；见 services/record_time.py）
         recorded_at=data.recorded_at,
+        record_id=data.record_id,  # 自动保存与时间轴选择同一份文书
     )
 
 
@@ -86,6 +87,8 @@ async def quick_save_record(
             record_type=data.record_type,
             content=data.content,
             doctor_id=current_user.id,
+            record_id=data.record_id,  # 签发所选文书，不隐式签发最新同类型
+            confirmed_diagnoses=data.confirmed_diagnoses,  # 后端核验本次正文的完整诊断确认
         )
     except ValueError as exc:
         # 状态守卫拒签（接诊已取消/不存在）→ 409，与前端约定一致

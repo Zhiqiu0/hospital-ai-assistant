@@ -11,7 +11,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1 import medical_records_read, medical_records_write
+from app.api.v1 import medical_record_diagnoses, medical_records_read, medical_records_write
 from app.core.authz import assert_can_write_record, assert_encounter_access
 from app.core.security import get_current_user
 from app.database import get_db
@@ -19,6 +19,7 @@ from app.schemas.medical_record import MedicalRecordCreate, MedicalRecordRespons
 from app.services.medical_record_service import MedicalRecordService
 
 router = APIRouter()
+router.include_router(medical_record_diagnoses.router)  # 具体预览路径先于record_id通配路径
 router.include_router(medical_records_read.router)
 router.include_router(medical_records_write.router)
 

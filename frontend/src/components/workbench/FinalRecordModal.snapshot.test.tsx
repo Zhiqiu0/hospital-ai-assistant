@@ -12,6 +12,10 @@ import {
 import { message } from '@/services/messageBridge'
 
 vi.mock('@/services/api', () => ({ default: { post: vi.fn() } }))
+// 本组专注签发响应/接诊创建；诊断预览与用户确认由 DiagnosisConfirmation.test 独立覆盖。
+vi.mock('@/hooks/useDiagnosisConfirmation', () => ({
+  useDiagnosisConfirmation: () => ({ preview: null, canSubmit: true, diagnoses: undefined }),
+}))
 vi.mock('@/services/messageBridge', () => ({
   message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }))

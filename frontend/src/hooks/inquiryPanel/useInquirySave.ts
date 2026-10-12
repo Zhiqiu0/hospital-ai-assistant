@@ -6,7 +6,7 @@
  *   - saveAll：统一保存入口（必填校验守卫 + profile/inquiry 并发保存）
  *   - saving / savedDisposition 两个本地状态随逻辑一起搬入
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormInstance } from 'antd'
 import { message } from '@/services/messageBridge'
 import type { Patient } from '@/domain/medical'
@@ -20,6 +20,8 @@ import {
   renderDiagnosisProjection,
 } from '@/domain/medical/diagnosisProjection'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
+import { useInquiryStore } from '@/store/inquiryStore'
+import { useRecordStore } from '@/store/recordStore'
 
 interface InquirySaveParams {
   form: FormInstance
@@ -54,16 +56,32 @@ export function useInquirySave({
   const [saving, setSaving] = useState(false)
   // 保存后的患者去向，用于驱动急诊流转提示
   const [savedDisposition, setSavedDisposition] = useState<string>('')
+  // 切换接诊或卸载即作废旧保存；即便随后返回同一接诊，旧响应也无权写回。
+  const saveScope = useRef(0)
+  useEffect(() => {
+    setSaving(false)
+    return () => {
+      saveScope.current += 1
+    }
+  }, [currentEncounterId])
 
   const onSave = async (values: Record<string, unknown>) => {
     setSaving(true)
+    // 问诊是接诊数据；正文联动则绑定本次提交时的文书及选择代次。
+    const recordAtSubmit = useRecordStore.getState()
     // 跨患者写回守卫（2026-08-28 弱网审计）：normalize-fields 最长可等 300s，
     // 期间医生可能已切到下一位患者（叫号场景高频）。慢响应回来后如果无条件
     // setInquiry/setEntries/setRecordContent，就把 A 的内容写进 B 的工作台并被
     // auto-save 固化——生成/润色链路早有同款指针守卫，保存链路此前漏装。
     const startEncounterId = useActiveEncounterStore.getState().encounterId
+    const scope = saveScope.current
     const stillSameEncounter = () =>
+      scope === saveScope.current &&
       useActiveEncounterStore.getState().encounterId === startEncounterId
+    // 规范化和网络保存都可能耗时；记录提交时输入，防止响应覆盖后续编辑。
+    const readFormSnapshot = () => JSON.stringify(form.getFieldsValue())
+    const initialForm = readFormSnapshot()
+    const initialInquiry = useInquiryStore.getState().inquiry
     const data = buildInquiryData(values)
 
     // 找出本次新增或修改的字段，用于 AI 规范化和病历章节同步
@@ -78,6 +96,8 @@ export function useInquirySave({
     const isFirstGeneration = !recordContent.trim()
 
     let normalizedData = { ...data }
+    // 仅回填 AI 返回的字段，保留表单中日期选择器等原生值类型。
+    let normalizedFields: Record<string, string> | undefined
     if (!isFirstGeneration && Object.keys(changedFields).length > 0) {
       try {
         // 后端规范化接口仅返回被修改字段，形状不固定，故用 Record<string, string>
@@ -85,17 +105,24 @@ export function useInquirySave({
           fields?: Record<string, string>
         } | null
         if (res?.fields) {
+          normalizedFields = res.fields
           normalizedData = { ...data, ...res.fields }
-          form.setFieldsValue(res.fields)
         }
       } catch {
         /* 规范化失败时继续用原值 */
       }
       // 慢响应期间已切患者：后续所有本地写回都会污染新患者工作台，整体中止
-      if (!stillSameEncounter()) {
+      if (!stillSameEncounter()) return
+      if (
+        readFormSnapshot() !== initialForm ||
+        useInquiryStore.getState().inquiry !== initialInquiry
+      ) {
+        setIsDirty(true)
         setSaving(false)
         return
       }
+      // 归属和编辑检查通过后才允许把规范化结果回填到当前表单。
+      if (normalizedFields) form.setFieldsValue(normalizedFields)
     }
 
     // ── 诊断条目合成与投影（2026-08-21 阶段1b 结构化）────────────────────
@@ -124,9 +151,10 @@ export function useInquirySave({
       tcm_syndrome_diagnosis: projection.tcm_syndrome_diagnosis,
     })
 
-    // buildInquiryData 返回的 Record<string, string> 与 InquiryData 字段并集兼容
-    // （都是字符串型字段），借助 unknown 桥接，避免污染 inquirySync 的返回类型
-    setInquiry(normalizedData as unknown as InquiryData)
+    // 请求前保留本地草稿，不更新“已保存”时间或服务端基线，失败后可继续重试。
+    const draft = { ...inquiry, ...normalizedData } as InquiryData
+    useInquiryStore.getState().updateInquiryFields(draft)
+    const submittedForm = readFormSnapshot()
     // 服务端保存问诊必须 await 并按结果给提示——不能 fire-and-forget：
     // PUT 失败却照样弹"已保存"、清 dirty，会让医生以为存上了，实际换设备/重登
     // 走 snapshot 恢复时数据回退到旧版（P1 静默丢数据）。
@@ -147,6 +175,8 @@ export function useInquirySave({
           })),
         })
       } catch (err) {
+        // 旧接诊的失败提示和按钮状态也不能影响新接诊。
+        if (!stillSameEncounter()) return
         savedOk = false
         // 校验类 422 必须把后端 detail 透出（2026-08-29 第八轮回归修复）：
         // 体征生理极限/血压填反等校验错误此前被无差别归因成"网络问题"，
@@ -186,20 +216,31 @@ export function useInquirySave({
     }
     // PUT 落库归属 startEncounterId 是正确的；但若期间已切患者，
     // 下面的正文章节同步/自动生成/去向提示都不能再碰新患者的工作台
-    if (!stillSameEncounter()) {
+    if (!stillSameEncounter()) return
+    if (readFormSnapshot() !== submittedForm || useInquiryStore.getState().inquiry !== draft) {
+      setIsDirty(true)
       setSaving(false)
       return
     }
+    // 两个保存接口均成功且草稿未再修改后，才确认本地已与服务端一致。
+    setInquiry(draft)
+
+    // 问诊落库成功仍可提示，但不能拿旧闭包内容覆盖切换后或切回后的文书。
+    const currentRecord = useRecordStore.getState()
+    const sameRecord =
+      currentRecord.selectionVersion === recordAtSubmit.selectionVersion &&
+      currentRecord.selectedRecordId === recordAtSubmit.selectedRecordId &&
+      currentRecord.recordType === recordAtSubmit.recordType
 
     // 将已改动的字段同步到右侧病历对应章节
-    // 既往/过敏/个人/月经史 已迁到 PatientProfileCard，由其保存时单独同步章节
-    if (recordContent) {
+    // 七个纵向档案字段由 PatientProfileCard 保存并同步；月经史仍属于本次问诊。
+    if (sameRecord && recordContent) {
       const updated = syncInquiryToRecord(recordContent, normalizedData, changedFields)
       if (updated !== recordContent) setRecordContent(updated)
     }
 
     // 病历为空且已填主诉时，触发自动生成
-    if (!recordContent.trim() && data.chief_complaint) {
+    if (sameRecord && !recordContent.trim() && data.chief_complaint) {
       setPendingGenerate(true)
     }
 

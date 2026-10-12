@@ -18,6 +18,8 @@ export function useRecordPolish(shared: RecordEditorShared) {
   const { recordContent, setRecordContent, setPolishing } = useRecordStore()
 
   const handlePolish = async () => {
+    // 读取未完成或已签发时不允许通过旧回调改写正文。
+    if (useRecordStore.getState().recordLoading || useRecordStore.getState().isFinal) return
     if (!recordContent.trim()) {
       message.warning('病历内容为空，无法润色')
       return

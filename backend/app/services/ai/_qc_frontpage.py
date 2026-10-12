@@ -54,6 +54,12 @@ async def load_front_page(db: AsyncSession, encounter_id: str | None) -> FrontPa
     if enc is None:
         return FrontPageData()
     patient = await db.get(Patient, enc.patient_id) if enc.patient_id else None
+    # 现役档案写入 JSONB；仅尚未迁移的字段回落旧列，明确清空不得复活旧过敏史。
+    profile = (patient.profile or {}) if patient else {}
+    if "allergy_history" in profile:
+        allergy_history = (profile["allergy_history"] or {}).get("value") or ""
+    else:
+        allergy_history = (patient.profile_allergy_history or "") if patient else ""
     dx_rows = (await db.execute(
         select(Diagnosis)
         .where(Diagnosis.encounter_id == encounter_id)
@@ -65,7 +71,7 @@ async def load_front_page(db: AsyncSession, encounter_id: str | None) -> FrontPa
         gender=(patient.gender or "") if patient else "",
         blood_type=(patient.blood_type or "") if patient else "",
         admission_route=enc.admission_route or "",
-        allergy_history=(getattr(patient, "profile_allergy_history", None) or "") if patient else "",
+        allergy_history=allergy_history,
         diagnoses=tuple(
             {
                 "category": d.category,

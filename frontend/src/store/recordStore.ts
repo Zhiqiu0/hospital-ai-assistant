@@ -30,6 +30,12 @@ interface RecordState {
   // ── 病历正文 ──────────────────────────────────────────────
   recordContent: string
   recordType: string
+  /** 时间轴指定的文书；null 表示尚未指定、按类型恢复最新稿。 */
+  selectedRecordId: string | null
+  /** 每次切文书递增，阻断切走再返回后的旧异步响应。 */
+  selectionVersion: number
+  /** 所选文书的服务端状态未确认时，不允许编辑/生成/自动保存缓存。 */
+  recordLoading: boolean
 
   // ── AI 运行态（不持久化） ─────────────────────────────────
   isGenerating: boolean
@@ -99,6 +105,8 @@ interface RecordState {
   /** 校验归属：与当前接诊不符则丢弃正文并返回 false（刷新还原后调用） */
   assertOwner: (encounterId: string | null) => boolean
   setRecordType: (type: string) => void
+  /** 同类型也可选择另一份；缓存键包含文书 ID。 */
+  selectRecord: (type: string, recordId: string | null) => void
   /**
    * 只改类型、**不动正文**（水合专用，2026-08-14 第七轮审计修复）。
    *
@@ -138,6 +146,9 @@ export const useRecordStore = create<RecordState>()(
     (set, get) => ({
       recordContent: '',
       recordType: 'outpatient',
+      selectedRecordId: null,
+      selectionVersion: 0,
+      recordLoading: false,
       ownerEncounterId: null,
       lastSavedContent: '',
       patientSnapshot: null,
@@ -160,22 +171,35 @@ export const useRecordStore = create<RecordState>()(
 
       setRecordTypeOnly: type => set({ recordType: type }),
 
-      setRecordType: type =>
+      // 接诊水合会重复设置同类型，此时必须保留医生已经选定的具体文书。
+      setRecordType: type => {
+        if (type !== get().recordType) get().selectRecord(type, null)
+      },
+
+      selectRecord: (type, recordId) =>
         set(state => {
+          if (type === state.recordType && recordId === state.selectedRecordId) return state
+          // 明确区分类型默认草稿与具体文书，避免同类型正文互相覆盖。
+          const oldKey = state.selectedRecordId
+            ? `record:${state.selectedRecordId}`
+            : state.recordType
+          const newKey = recordId ? `record:${recordId}` : type
           // 切走前先把当前正文按原类型暂存，切回来能恢复（见 draftsByType 说明）
           const stashed = state.recordContent
-            ? { ...state.draftsByType, [state.recordType]: state.recordContent }
+            ? { ...state.draftsByType, [oldKey]: state.recordContent }
             : state.draftsByType
-          const restored = stashed[type] ?? ''
+          const restored = stashed[newKey] ?? ''
           // 切换病历类型要连带重置"已签发"锁（2026-08-14 第六轮审计修复）：
           // isFinal 是**整个编辑器**的只读开关，而住院一次接诊要写入院记录、
           // 多份病程、出院小结等**多份文书**——签完第一份后 isFinal 恒为 true，
           // 医生切到"日常病程"仍然是只读，后续文书根本没法写。
           // 换类型 = 换一份文书，锁应当跟着新文书的真实状态走；新文书的
           // 已签发状态随后由水合/拉取病历时的 setFinal 灌入。
-          if (type === state.recordType) return { recordType: type }
           return {
             recordType: type,
+            selectedRecordId: recordId,
+            selectionVersion: state.selectionVersion + 1,
+            recordLoading: true,
             isFinal: false,
             finalizedAt: null,
             // 恢复该类型此前暂存的草稿（没有则为空），不再无条件清空
@@ -218,7 +242,11 @@ export const useRecordStore = create<RecordState>()(
         const owner = get().ownerEncounterId
         // 归属为空 = 本次改动之前留下的旧数据，无从判断归谁，一律丢弃更安全
         if (!encounterId || owner !== encounterId) {
-          if (get().recordContent) {
+          if (
+            get().recordContent ||
+            get().selectedRecordId ||
+            Object.keys(get().draftsByType).length
+          ) {
             // 留痕（2026-09-23 可观测性审计补）：守卫正确时这里不该被触发；
             // 若误触发（多轮审计的高危区），医生"我写的病历没了"必须能排查。
             // 只打 id 前 8 位，不打内容
@@ -227,6 +255,9 @@ export const useRecordStore = create<RecordState>()(
             )
             set({
               recordContent: '',
+              selectedRecordId: null,
+              selectionVersion: get().selectionVersion + 1,
+              recordLoading: false,
               lastSavedContent: '',
               isFinal: false,
               finalizedAt: null,
@@ -249,6 +280,9 @@ export const useRecordStore = create<RecordState>()(
         set({
           recordContent: '',
           recordType: 'outpatient',
+          selectedRecordId: null,
+          selectionVersion: get().selectionVersion + 1,
+          recordLoading: false,
           ownerEncounterId: null,
           lastSavedContent: '',
           isGenerating: false,
@@ -279,6 +313,7 @@ export const useRecordStore = create<RecordState>()(
       partialize: state => ({
         recordContent: state.recordContent,
         recordType: state.recordType,
+        selectedRecordId: state.selectedRecordId,
         ownerEncounterId: state.ownerEncounterId,
         lastSavedContent: state.lastSavedContent,
         patientSnapshot: state.patientSnapshot,

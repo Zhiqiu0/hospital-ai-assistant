@@ -3,15 +3,18 @@
 串起真实 service 代码（admit_service / quick_save / send_writeback），只 mock 外部
 HIS 传输（WS/HTTP），验证第一版 HIS 最关键的"病历生成到回写"闭环不断链。
 """
+import json
+
 import pytest
 
 from app.his_adapter.admit_service import process_admit
 from app.his_adapter.models import AdmitPushRequest
-from app.models.encounter import Encounter
+from app.models.encounter import Encounter, InquiryInput
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.user import User
 from app.services._record_signature import verify_version
 from app.services.medical_record_service import MedicalRecordService
+from app.services.ai.record_renderer import render_record
 from sqlalchemy import select
 
 
@@ -43,8 +46,11 @@ async def test_admit_to_sign_to_writeback_chain(async_db, monkeypatch):
 
     # 2. 签发病历
     svc = MedicalRecordService(async_db)
+    final_text = render_record("outpatient", {
+        "chief_complaint": "集成测试终稿", "history_present_illness": "全链路验证。",
+    })
     record = await svc.quick_save(enc_id, "outpatient",
-                                  "主诉：集成测试。\n现病史：全链路验证。", doctor_id)
+                                  final_text, doctor_id)
     assert record.status == "submitted"
 
     # 3. 电子签名哈希已生成且校验通过
@@ -57,6 +63,15 @@ async def test_admit_to_sign_to_writeback_chain(async_db, monkeypatch):
     # 4. 接诊已关闭（门诊签发即结束）
     enc = await async_db.get(Encounter, enc_id)
     assert enc.status == "completed"
+    # 后来的问诊变化不能改变本份签发版本再次回写的内容。
+    inquiry = (await async_db.execute(select(InquiryInput).where(
+        InquiryInput.encounter_id == enc_id,
+    ))).scalars().first()
+    if inquiry is None:
+        inquiry = InquiryInput(encounter_id=enc_id)
+        async_db.add(inquiry)
+    inquiry.chief_complaint = "签发后变动的问诊"
+    await async_db.commit()
 
     # 5. 回写：mock 外部传输，验证状态落库进 his_external_ref.writeback
     from app.config import settings
@@ -69,6 +84,11 @@ async def test_admit_to_sign_to_writeback_chain(async_db, monkeypatch):
     import httpx
 
     def handler(request):
+        # 验证真实发送正文，不只检查一个模拟成功回执。
+        payload = json.loads(request.content)
+        assert payload["full_text"] == final_text
+        assert payload["record"]["chief_complaint"] == "集成测试终稿"
+        assert payload["record"]["history_present_illness"] == "全链路验证。"
         return httpx.Response(200, json={"code": 0, "data": {"record_id": "HIS-DOC-1"}})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))

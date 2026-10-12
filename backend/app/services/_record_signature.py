@@ -32,16 +32,21 @@ def compute_sign_hash(
     doctor_id: str,
     submitted_at_iso: str,
     prev_hash: str,
+    his_projection: Optional[dict] = None,
 ) -> str:
     """按规范化 payload 算 SHA-256。字段顺序固定 + JSON sort_keys，保证可复算一致。"""
-    payload = json.dumps(
-        {
+    data = {
             "content": content_text or "",
             "snapshot": patient_snapshot or {},
             "doctor_id": doctor_id or "",
             "submitted_at": submitted_at_iso or "",
             "prev_hash": prev_hash,
-        },
+        }
+    # 旧版本没有投影时保持原哈希字节；新版本把编码/体征投影一起纳入完整性验证。
+    if his_projection is not None:
+        data["his_projection"] = his_projection
+    payload = json.dumps(
+        data,
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -90,6 +95,7 @@ def verify_version_against(version: RecordVersion, record) -> bool:
         doctor_id=version.triggered_by or "",
         submitted_at_iso=submitted_iso,
         prev_hash=version.prev_hash or GENESIS_HASH,
+        his_projection=version.content.get("his_projection") if isinstance(version.content, dict) else None,
     )
     return recomputed == version.sign_hash
 

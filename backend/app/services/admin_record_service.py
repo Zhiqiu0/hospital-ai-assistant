@@ -58,6 +58,7 @@ class AdminRecordService:
         content: str,
         revise_reason: str,
         current_user,
+        confirmed_diagnoses: list | None = None,
     ) -> dict:
         """管理员修订已签发病历：创建新 RecordVersion，旧版本保留供审计。
 
@@ -88,12 +89,24 @@ class AdminRecordService:
         if record is None:
             raise HTTPException(status_code=404, detail="病历不存在")
 
+        # 修订正文重新投影，编码只从前一版本精确匹配，避免后来改动的接诊诊断串入历史文书。
+        from app.his_adapter.record_projection import freeze_record_projection
+        previous = (await self.db.execute(select(RecordVersion).where(
+            RecordVersion.medical_record_id == record.id,
+            RecordVersion.version_no == record.current_version,
+        ))).scalar_one_or_none()
+        previous_projection = previous.content.get("his_projection", {}) if previous and isinstance(previous.content, dict) else {}
+        projection = await freeze_record_projection(
+            self.db, record.encounter_id, record.record_type, content,
+            previous_projection=previous_projection,
+            confirmed_diagnoses=confirmed_diagnoses,
+        )
         new_version_no = (record.current_version or 0) + 1
         new_version = RecordVersion(
             medical_record_id=record_id,
             version_no=new_version_no,
             # 保持 quick-save 的 {"text": ...} 结构，下游 _parse_record_content 已支持
-            content={"text": content},
+            content={"text": content, "his_projection": projection},
             source="admin_revise",
             triggered_by=current_user.id,
         )
@@ -113,6 +126,7 @@ class AdminRecordService:
                 doctor_id=current_user.id,
                 submitted_at_iso=record.submitted_at.isoformat() if record.submitted_at else "",
                 prev_hash=prev_hash,
+                his_projection=projection,
             )
         self.db.add(new_version)
         record.current_version = new_version_no

@@ -100,6 +100,8 @@ class _RecordTaskBase(BaseModel):
 
     # 接诊上下文
     record_type: Optional[str] = "outpatient"
+    medical_record_id: Optional[str] = None  # 润色/补全保持所选文书身份
+    encounter_id: Optional[str] = None  # 改写与生成统一绑定接诊，供权限和落库校验
     current_content: str = ""              # 当前病历草稿（给 LLM 当基线参考）
     is_first_visit: bool = True
     onset_time: Optional[str] = ""

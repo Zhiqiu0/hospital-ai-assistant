@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import require_admin
 from app.database import get_db
 from app.services.admin_record_service import AdminRecordService
+from app.schemas.diagnosis_confirmation import ConfirmedDiagnosis
 
 router = APIRouter()
 
@@ -33,6 +34,7 @@ class ReviseRecordRequest(BaseModel):
 
     content: str = Field(min_length=1)
     revise_reason: str = Field(min_length=1, max_length=500)
+    confirmed_diagnoses: list[ConfirmedDiagnosis] | None = None  # 修订后的完整诊断确认
 
 
 @router.get("")
@@ -62,7 +64,8 @@ async def revise_record(
 ):
     """管理员修订已签发病历：创建新 RecordVersion，旧版本保留供审计。"""
     service = AdminRecordService(db)
-    return await service.revise_record(record_id, data.content, data.revise_reason, current_user)
+    return await service.revise_record(record_id, data.content, data.revise_reason, current_user,
+                                      confirmed_diagnoses=data.confirmed_diagnoses)
 
 
 @router.get("/signature-integrity")

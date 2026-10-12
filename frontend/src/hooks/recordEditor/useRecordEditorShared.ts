@@ -121,6 +121,7 @@ export function useRecordEditorShared(): RecordEditorShared {
       ...inquirySubset,
       ...profilePayload,
       record_type: recordType,
+      medical_record_id: useRecordStore.getState().selectedRecordId || undefined,
       current_content: currentContent,
       encounter_id: currentEncounterId || undefined,
       patient_name: currentPatient?.name || '',

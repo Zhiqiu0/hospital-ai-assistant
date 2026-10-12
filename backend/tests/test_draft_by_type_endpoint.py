@@ -98,3 +98,74 @@ async def test_draft_by_type_denies_foreign_encounter(client):
         params={"encounter_id": "enc-other", "record_type": "admission_note"},
     )
     assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_selected_record_read_and_writes_preserve_other_same_type(client, async_db):
+    """读、自动保存、AI 保存和签发均必须命中选中旧草稿，不能误写最新行。"""
+    from app.models.medical_record import MedicalRecord, RecordVersion
+    for no in (1, 2):
+        async_db.add(MedicalRecord(id=f"course-{no}", encounter_id="enc-1",
+            record_type="course_record", record_no=no, status="editing", current_version=1,
+            updated_at=datetime(2026, 10, no)))
+        async_db.add(RecordVersion(medical_record_id=f"course-{no}", version_no=1,
+            content={"text": f"第{no}份"}, source="doctor_edited", triggered_by="doc-me"))
+    await async_db.commit()
+    params = {"encounter_id": "enc-1", "record_type": "course_record", "record_id": "course-1"}
+    response = await client.get("/api/v1/medical-records/draft-by-type", params=params)
+    assert response.json()["content"] == "第1份"
+    response = await client.post("/api/v1/medical-records/auto-save-draft", json={**params, "content": "选中稿修改"})
+    assert response.status_code == 200
+    assert response.json()["record_id"] == "course-1"
+    saved = await MedicalRecordService(async_db).save_ai_draft(
+        "enc-1", "course_record", "AI选中稿", "doc-me", record_id="course-1")
+    assert saved["record_id"] == "course-1"
+    signed = await MedicalRecordService(async_db).quick_save(
+        "enc-1", "course_record", "签发选中稿", "doc-me", record_id="course-1")
+    assert signed.id == "course-1"
+    # 指定已签发文书可幂等重试，但不能改写或自动新建下一份。
+    same = await MedicalRecordService(async_db).quick_save(
+        "enc-1", "course_record", "签发选中稿", "doc-me", record_id="course-1")
+    assert same.id == signed.id
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as changed:
+        await MedicalRecordService(async_db).quick_save(
+            "enc-1", "course_record", "改变已签发稿", "doc-me", record_id="course-1")
+    assert changed.value.status_code == 409
+    with pytest.raises(HTTPException) as generated:
+        await MedicalRecordService(async_db).save_ai_draft(
+            "enc-1", "course_record", "AI不得改写", "doc-me", record_id="course-1")
+    assert generated.value.status_code == 403
+    response = await client.post("/api/v1/medical-records/auto-save-draft", json={**params, "content": "不得续建"})
+    assert response.status_code == 403
+    response = await client.get("/api/v1/medical-records/draft-by-type", params={**params, "record_id": "course-2"})
+    assert response.json()["content"] == "第2份"
+    for endpoint in ("quick-generate", "quick-polish", "quick-supplement"):
+        response = await client.post(f"/api/v1/ai/{endpoint}", json={
+            "encounter_id": "enc-1", "record_type": "course_record", "medical_record_id": "course-1",
+            "current_content": "不能改写签发稿", "chief_complaint": "测试",
+        })
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_selected_record_never_falls_back_to_latest(client):
+    """失效/错误类型的 ID 应明确不存在，不得静默回落到另一份文书。"""
+    params = {"encounter_id": "enc-1", "record_type": "admission_note", "record_id": "missing"}
+    assert (await client.get("/api/v1/medical-records/draft-by-type", params=params)).status_code == 404
+    assert (await client.post("/api/v1/medical-records/auto-save-draft", json={**params, "content": "不应保存"})).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrong", [{"encounter_id": "enc-other"}, {"record_type": "first_course_record"}])
+async def test_selected_record_scope_mismatch_rejected(client, wrong):
+    """存在的主键也不能跨接诊或跨文书类型读写。"""
+    base = {"encounter_id": "enc-1", "record_type": "admission_note"}
+    record_id = (await client.get("/api/v1/medical-records/draft-by-type", params=base)).json()["record_id"]
+    params = {**base, "record_id": record_id, **wrong}
+    expected = 403 if "encounter_id" in wrong else 404
+    assert (await client.get("/api/v1/medical-records/draft-by-type", params=params)).status_code == expected
+    for endpoint in ("auto-save-draft", "quick-save"):
+        assert (await client.post(f"/api/v1/medical-records/{endpoint}", json={**params, "content": "不得串写"})).status_code == expected
+    for endpoint in ("quick-generate", "quick-polish", "quick-supplement"):
+        assert (await client.post(f"/api/v1/ai/{endpoint}", json={**params, "medical_record_id": record_id, "current_content": "不得串写"})).status_code == expected

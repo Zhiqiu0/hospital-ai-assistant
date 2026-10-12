@@ -8,10 +8,11 @@ from app.config import settings
 from app.his_adapter.writeback_sender import send_writeback
 from app.models.encounter import Encounter, InquiryInput
 from app.models.patient import Patient
+from his_projection_support import seed_signed_projection
 
 
 async def _make_encounter(db) -> str:
-    """造一条带 HIS 标识 + 问诊的接诊，返回 encounter_id。"""
+    """造一条带 HIS 标识、问诊及已签发文书的接诊，返回 encounter_id。"""
     p = Patient(name="李四", birth_date=date(1990, 5, 1))
     db.add(p)
     await db.commit()
@@ -24,6 +25,9 @@ async def _make_encounter(db) -> str:
     db.add(enc)
     await db.commit()
     db.add(InquiryInput(encounter_id=enc.id, version=1, chief_complaint="咳嗽3天"))
+    await db.commit()
+    # 传输重试/状态测试使用真实可回写的签发版本，不以未签发问诊充当病历。
+    await seed_signed_projection(db, enc.id, data={"chief_complaint": "咳嗽3天"})
     await db.commit()
     return enc.id
 

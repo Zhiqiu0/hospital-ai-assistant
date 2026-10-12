@@ -2,10 +2,10 @@
 
 数据来源：
   - Encounter.his_external_ref / visit_no / visit_type → 关联键、病历类型
-  - 最新 InquiryInput（分字段）→ record.* / vitals.* / diagnoses[]
+  - 指定签发版本的 his_projection → record.* / vitals.* / diagnoses[]
   - 最新 RecordVersion.content → full_text（整段签发全文）
 
-红线：体征为医生录入的真实值（InquiryInput 字段），AI 不编造；空字段不下发。
+红线：临床字段来自最终正文的版本投影；空串明确清空，不能回落旧问诊。
 """
 from datetime import datetime
 from typing import Any, Optional
@@ -13,23 +13,10 @@ from typing import Any, Optional
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.encounter import Encounter, InquiryInput
+from app.models.encounter import Encounter
+from app.his_adapter.record_projection import projection_for_writeback
+from app.his_adapter._projection_parse import ProjectionError
 from app.models.medical_record import MedicalRecord, RecordVersion
-
-# record.* 结构化字段（门诊/急诊用；住院专属字段后续向后兼容追加）
-_RECORD_FIELDS = [
-    "chief_complaint", "onset_time", "history_present_illness", "past_history",
-    "allergy_history", "personal_history", "current_medications", "history_informant",
-    "family_history", "marital_history", "menstrual_history", "physical_exam",
-    "auxiliary_exam", "tcm_inspection", "tcm_auscultation", "tongue_coating",
-    "pulse_condition", "treatment_method", "treatment_plan", "followup_advice",
-    "precautions", "observation_notes", "patient_disposition",
-]
-_VITALS_FIELDS = [
-    "temperature", "pulse", "respiration", "bp_systolic", "bp_diastolic",
-    "spo2", "height", "weight",
-]
-
 
 def _parse_record_text(content: Any) -> str:
     """RecordVersion.content → 全文（{"text":...} 取 text，纯字符串原样，其它空串）。"""
@@ -38,56 +25,6 @@ def _parse_record_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     return ""
-
-
-# 字典 code_type → 接口规范 v1.4 的 code_type 枚举（ICD10 / GB95）。
-# TCD_DIS/TCD_SYN 是我方字典的细分（GB/T 15657-2021 的 A 码/B 码），
-# 规范侧统一叫 GB95（国标已升级 2021 版，具体口径联调时与厂商确认）。
-_CODE_TYPE_TO_SPEC = {"ICD10": "ICD10", "TCD_DIS": "GB95", "TCD_SYN": "GB95"}
-
-
-async def _build_diagnoses(db: AsyncSession, encounter_id: str, inq: Optional[InquiryInput]) -> list[dict]:
-    """构建 diagnoses[] 数组。
-
-    2026-08-21 阶段2 切结构化源：优先从 diagnoses 条目表读（医生显式标注的
-    主诊断 + 多条目 + 编码），兑现规范表11"编码能力后续迭代补充"的承诺——
-    code/code_type/is_primary 槽位 v1.4 本就预留，HIS 侧零改造。
-    条目为空时回落旧文本三字段拼装（兼容存量/异常路径），行为与切换前一致。
-    """
-    from app.models.encounter import Diagnosis
-
-    rows = (await db.execute(
-        select(Diagnosis)
-        .where(Diagnosis.encounter_id == encounter_id)
-        .order_by(Diagnosis.is_primary.desc(), Diagnosis.sort_order, Diagnosis.created_at)
-    )).scalars().all()
-    if rows:
-        out = []
-        for d in rows:
-            item: dict = {"name": d.name, "is_primary": d.is_primary, "category": d.category}
-            # 入院病情标志（2026-08-21 阶段3；新增可选字段，按规范 2.5 向后兼容
-            # 条款 HIS 忽略未识别字段即可，v1.5 增补文档同步说明）
-            if d.admission_condition:
-                item["admission_condition"] = d.admission_condition
-            if d.code:
-                item["code"] = d.code
-                spec_type = _CODE_TYPE_TO_SPEC.get(d.code_type or "")
-                if spec_type:
-                    item["code_type"] = spec_type
-            out.append(item)
-        return out
-
-    # ── 回落：旧文本三字段（第一个非空标主诊断，与历史行为逐字一致）──
-    if inq is None:
-        return []
-    out = []
-    if inq.western_diagnosis:
-        out.append({"name": inq.western_diagnosis, "is_primary": True, "category": "western"})
-    if inq.tcm_disease_diagnosis:
-        out.append({"name": inq.tcm_disease_diagnosis, "is_primary": not out, "category": "tcm_disease"})
-    if inq.tcm_syndrome_diagnosis:
-        out.append({"name": inq.tcm_syndrome_diagnosis, "is_primary": not out, "category": "tcm_syndrome"})
-    return out
 
 
 async def build_writeback_payload(
@@ -107,15 +44,7 @@ async def build_writeback_payload(
     if encounter is None:
         raise ValueError(f"encounter not found: {encounter_id}")
 
-    # 最新问诊（分字段）
-    inq = (await db.execute(
-        select(InquiryInput)
-        .where(InquiryInput.encounter_id == encounter_id)
-        .order_by(desc(InquiryInput.updated_at))
-        .limit(1)
-    )).scalar_one_or_none()
-
-    # 指定文书 vs 最新病历版本全文（record_id 语义见函数 docstring）
+    # 精确选择文书版本，不再读取可变的最新问诊。
     _where = [RecordVersion.version_no == MedicalRecord.current_version]
     if record_id:
         # 精确定位本次签发/修订的那份文书；仍校验 encounter 归属防串接诊
@@ -196,24 +125,25 @@ async def build_writeback_payload(
     _no = getattr(record_row, "record_no", None) if record_row is not None else None
     record_no = str(_no) if _no is not None else None
 
-    record = {f: getattr(inq, f) for f in _RECORD_FIELDS if inq and getattr(inq, f, None)}
-    vitals = {f: getattr(inq, f) for f in _VITALS_FIELDS if inq and getattr(inq, f, None)}
-    diagnoses = await _build_diagnoses(db, encounter_id, inq)
-    is_tcm = bool(
-        inq and (inq.tcm_disease_diagnosis or inq.tcm_syndrome_diagnosis
-                 or inq.tongue_coating or inq.pulse_condition
-                 or inq.tcm_inspection or inq.tcm_auscultation)
-    )
+    # 无签发文书时不得伪造由旧问诊拼装的回写内容。
+    if row is None or record_row.status != "submitted":
+        raise ValueError("HIS回写失败：未找到已签发文书")
+    try:
+        projection = projection_for_writeback(row.content, record_type)
+    except ProjectionError as exc:
+        # 仅在已精确找到文书后附状态键；不存在/串接诊的record_id不能污染其它文书。
+        exc.record_key = f"{record_type}:{record_no}" if record_no is not None else None
+        raise
 
     payload: dict = {
         "visit_id": visit_id,
         "record_type": record_type,
         # 幂等键第三段（见上方 record_no 说明）。
-        "is_tcm": is_tcm,
+        "is_tcm": projection["is_tcm"],
         "status": "draft",
-        "record": record,
-        "vitals": vitals,
-        "diagnoses": diagnoses,
+        "record": projection["record"],
+        "vitals": projection["vitals"],
+        "diagnoses": projection["diagnoses"],
 
         "meta": {
             "source": "mediscribe_ai",
@@ -225,15 +155,8 @@ async def build_writeback_payload(
             "app_version": app_version,
         },
     }
-    # ── 空值一律不下发（2026-08-14 规范一致性核对修复）────────────────────
-    #
-    # 规范 2.5 白纸黑字：「字段缺省（不传）= 不更新该项；传空串("") = 清空该项」。
-    # 而原先 full_text 取不到正文时会发空串、record_no 无值时发 JSON null、
-    # meta.doctor_code 取不到时发空串——按规范语义，厂商合规实现就会把 HIS 里
-    # 已有的病历全文/医生工号**清掉**，而这恰恰是「取不到值」的异常路径，
-    # 本该是「什么都别动」。record.* / vitals.* 走的就是「空则不下发」，
-    # 唯独这几个破了规则，两处语义自相矛盾。
-    # JSON null 更是规范里没定义的第三态（厂商可能当 "null" 字符串、当 0、或 NPE）。
+    # 缺失标识不下发，避免误清医生工号；正文record字段则以空串表达终稿删除。
+    # vitals依规范特别条款仅发非空值，未测值不更新HIS已有测量结果。
     if record_no is not None:
         payload["record_no"] = record_no
     if full_text:

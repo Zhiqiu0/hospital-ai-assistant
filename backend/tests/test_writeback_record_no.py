@@ -18,6 +18,7 @@ from app.his_adapter.writeback_builder import build_writeback_payload
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.models.patient import Patient
+from app.services.ai.record_renderer import render_record
 
 
 async def _seed_encounter(db, visit_type="inpatient") -> str:
@@ -34,10 +35,11 @@ async def _seed_encounter(db, visit_type="inpatient") -> str:
     return "enc-1"
 
 
-async def _sign_record(db, *, record_type: str, record_no: int, text: str) -> None:
+async def _sign_record(db, *, record_type: str, record_no: int, text: str,
+                       encounter_id: str = "enc-1") -> None:
     """造一份已签发的病历（含当前版本正文）。"""
     rec = MedicalRecord(
-        id=f"rec-{record_type}-{record_no}", encounter_id="enc-1",
+        id=f"rec-{record_type}-{record_no}", encounter_id=encounter_id,
         record_type=record_type, record_no=record_no,
         status="submitted", current_version=1,
         submitted_at=datetime(2026, 8, record_no, 10, 0),
@@ -47,7 +49,10 @@ async def _sign_record(db, *, record_type: str, record_no: int, text: str) -> No
     await db.flush()
     db.add(RecordVersion(
         id=f"ver-{record_type}-{record_no}", medical_record_id=rec.id,
-        version_no=1, content={"text": text},
+        # 使用规范正文保持此组测试聚焦幂等键，而非触发自由文本拒绝路径。
+        version_no=1, content={"text": render_record(record_type, {
+            "chief_complaint": text, "patient_complaint": text,
+        })},
         source="doctor_signed", triggered_by="doc-1",
     ))
     await db.flush()
@@ -137,13 +142,8 @@ def test_http重试链路共用同一个幂等键():
 # ── 空值语义（2026-08-14 规范一致性核对修复）────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_取不到正文时不下发full_text(async_db):
-    """规范 2.5：字段缺省=不更新，传空串=**清空该项**。
-
-    原先取不到正文会发 full_text=""，按规范厂商合规实现就会把 HIS 里已有的
-    病历全文清掉——而这恰恰是"取不到值"的异常路径，本该什么都别动。
-    record.* / vitals.* 走的就是"空则不下发"，唯独 full_text 破了规则。
-    """
+async def test_取不到正文时拒绝回写(async_db):
+    """缺签发正文时整包拒绝，不能清空HIS全文，也不能只拿旧问诊冒充签发稿。"""
     await _seed_encounter(async_db)
     # 只建病历行、不建版本 → 取不到正文
     from app.models.medical_record import MedicalRecord
@@ -154,8 +154,8 @@ async def test_取不到正文时不下发full_text(async_db):
     ))
     await async_db.flush()
 
-    payload = await build_writeback_payload(async_db, "enc-1")
-    assert "full_text" not in payload, "空正文被当成「清空指令」发给了 HIS"
+    with pytest.raises(ValueError, match="未找到已签发文书"):
+        await build_writeback_payload(async_db, "enc-1")
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,8 @@ async def test_取不到医生工号时不下发该键(async_db):
         his_external_ref={"source": "admit_push", "his_visit_no": "MZ9"},
     ))
     await async_db.flush()
-    await _sign_record(async_db, record_type="outpatient", record_no=1, text="正文")
+    await _sign_record(async_db, record_type="outpatient", record_no=1, text="正文",
+                       encounter_id="enc-9")
 
     payload = await build_writeback_payload(async_db, "enc-9")
     assert "doctor_code" not in payload["meta"], "空工号被当成「清空指令」发出去了"

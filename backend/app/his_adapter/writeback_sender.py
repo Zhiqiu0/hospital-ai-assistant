@@ -177,8 +177,17 @@ async def send_writeback(
     Returns:
         WritebackResult
     """
-    payload = await build_writeback_payload(
-        db, encounter_id, app_version=app_version, record_id=record_id)
+    try:
+        payload = await build_writeback_payload(
+            db, encounter_id, app_version=app_version, record_id=record_id)
+    except ValueError as exc:
+        # 正文投影失败也必须落该文书的失败状态；否则管理员修订后仍会展示旧success。
+        result = WritebackResult(ok=False, status="error", message=str(exc))
+        logger.error("his_writeback.projection: encounter=%s error=%s", encounter_id, exc)
+        key = getattr(exc, "record_key", None)
+        if key:
+            await _persist_writeback_status(db, encounter_id, result, key)
+        return result
     # 连接池护栏（2026-08-11 审计修复）：payload 已读完，后面等 WS ack 最长可达
     # ~80s（10s×3 重发 ×2 条消息），这期间不该占着 asyncpg 连接。提交只读事务
     # 把连接还池；_persist_writeback_status 会另起短事务落库。
