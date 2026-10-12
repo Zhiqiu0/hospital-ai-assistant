@@ -1,5 +1,6 @@
 /** 签发与管理员修订必须核对最终正文诊断；预览失效后不得沿用旧确认。 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { ConfigProvider } from 'antd'
 import { beforeEach, expect, it, vi } from 'vitest'
 vi.mock('@/services/api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 vi.mock('@/services/messageBridge', () => ({
@@ -73,7 +74,9 @@ it('正文变化立即作废诊断确认，旧预览响应不能恢复确认', a
   await act(async () => finish(preview))
   expect(screen.getByRole('checkbox', { name: /已核对以上诊断/ })).not.toBeChecked()
 })
-it('管理员修订保留理由并核对最终诊断后提交', async () => {
+// 此例保留真实管理页→表格操作→修订弹窗入口。CI 双核下全套并发会增加真实 antd
+// 表格与弹窗的渲染耗时，因此仅此集成例给 10 秒预算；不扩大任何业务请求等待时间。
+it('管理员修订保留理由并核对最终诊断后提交', { timeout: 10000 }, async () => {
   vi.mocked(api.get).mockResolvedValue({
     items: [
       {
@@ -85,16 +88,27 @@ it('管理员修订保留理由并核对最终诊断后提交', async () => {
     ],
     total: 1,
   })
-  render(<RecordsPage />)
-  fireEvent.click(await screen.findByRole('button', { name: /修订/ }))
-  await screen.findByRole('radio', { name: /最终诊断乙/ })
-  fireEvent.change(screen.getByPlaceholderText(/请说明本次修订原因/), {
+  // 动画不是本例断言目标；关闭过渡，避免其定时器与预览请求互相抢占运行时间。
+  render(
+    <ConfigProvider theme={{ token: { motion: false } }}>
+      <RecordsPage />
+    </ConfigProvider>
+  )
+  const patient = await screen.findByText('合成患者')
+  const row = patient.closest('tr')
+  if (!row) throw new Error('管理页未渲染患者病历行')
+  fireEvent.click(within(row).getByRole('button', { name: /修订/ }))
+  // Modal 通过 portal 渲染；只检索弹窗，避免每次交互重复遍历后台整张表格和样式。
+  const dialog = within(screen.getByRole('dialog'))
+  const secondary = await dialog.findByLabelText(/最终诊断乙/)
+  fireEvent.change(dialog.getByPlaceholderText(/请说明本次修订原因/), {
     target: { value: '更正最终诊断' },
   })
-  expect(screen.getByRole('button', { name: /确认修订并留痕/ })).toBeDisabled()
-  fireEvent.click(screen.getByRole('radio', { name: /最终诊断乙/ }))
-  fireEvent.click(screen.getByRole('checkbox', { name: /已核对以上诊断/ }))
-  fireEvent.click(screen.getByRole('button', { name: /确认修订并留痕/ }))
+  const submit = dialog.getByRole('button', { name: /确认修订并留痕/ })
+  expect(submit).toBeDisabled()
+  fireEvent.click(secondary)
+  fireEvent.click(dialog.getByLabelText(/已核对以上诊断/))
+  fireEvent.click(submit)
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith(
       '/admin/records/revise-r/revise',
