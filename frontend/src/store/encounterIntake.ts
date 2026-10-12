@@ -230,7 +230,8 @@ export function applySnapshotResult(res: SnapshotResult): void {
   }
 
   // record：当前活跃病历的内容
-  if (res.active_record) {
+  // 显式选择时间轴文书后由按 ID loader 恢复；全局最新行不得夺回选择或改只读锁。
+  if (res.active_record && !useRecordStore.getState().selectedRecordId) {
     const recordStore = useRecordStore.getState()
 
     // ⚠️ 不无条件覆盖本地正文（2026-08-13 第五轮审计修复）

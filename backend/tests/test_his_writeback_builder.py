@@ -7,6 +7,9 @@ from app.his_adapter.models import ApiEnvelope, ok, err, AdmitPushRequest
 from app.his_adapter.writeback_builder import build_writeback_payload
 from app.models.patient import Patient
 from app.models.encounter import Encounter, InquiryInput
+from app.models.encounter import Diagnosis
+from app.services.ai.record_renderer import render_record
+from app.services.medical_record_service import MedicalRecordService
 
 
 def test_envelope_ok_and_err():
@@ -46,6 +49,17 @@ async def test_build_writeback_payload(async_db):
     )
     async_db.add(inq)
     await async_db.commit()
+    # 回写对象必须为医生签发的文书；问诊本身不能冒充签发版本。
+    async_db.add(Diagnosis(encounter_id=enc.id, name="急性支气管炎",
+                           category="western", is_primary=True, sort_order=0))
+    await async_db.flush()
+    await MedicalRecordService(async_db).quick_save(
+        enc.id, "outpatient", render_record("outpatient", {
+            "chief_complaint": "咳嗽3天", "history_present_illness": "受凉后咳嗽……",
+            "physical_exam_vitals": "T:38.5℃ BP:120/80mmHg",
+            "western_diagnosis": "急性支气管炎", "tongue_coating": "舌红苔黄",
+        }), "doc-1",
+    )
 
     payload = await build_writeback_payload(async_db, enc.id, app_version="1.0.0")
 
@@ -54,7 +68,7 @@ async def test_build_writeback_payload(async_db):
     assert payload["is_tcm"] is True
     assert payload["status"] == "draft"
     assert payload["record"]["chief_complaint"] == "咳嗽3天"
-    assert "history_informant" not in payload["record"]
+    assert payload["record"]["history_informant"] == ""
     assert payload["vitals"] == {"temperature": "38.5", "bp_systolic": "120", "bp_diastolic": "80"}
     assert payload["diagnoses"] == [
         {"name": "急性支气管炎", "is_primary": True, "category": "western"}
@@ -76,6 +90,12 @@ async def test_build_writeback_payload_emergency(async_db):
     )
     async_db.add(enc)
     await async_db.commit()
+    # 只有接诊没有已签发文书时，拒绝发出由问诊拼装的伪病历。
+    with pytest.raises(ValueError, match="未找到已签发文书"):
+        await build_writeback_payload(async_db, enc.id)
+    await MedicalRecordService(async_db).quick_save(
+        enc.id, "emergency", render_record("emergency", {"chief_complaint": "急诊合成主诉"}), "doc-1",
+    )
     payload = await build_writeback_payload(async_db, enc.id)
     assert payload["record_type"] == "emergency"
 
@@ -113,7 +133,9 @@ async def test_inpatient_writeback_uses_real_record_type(async_db):
     async_db.add(signed)
     await async_db.flush()
     async_db.add(RecordVersion(medical_record_id=signed.id, version_no=1,
-                               content={"text": "出院小结正文"}, source="doctor_signed"))
+                               content={"text": render_record("discharge_record", {
+                                   "chief_complaint": "出院小结正文",
+                               })}, source="doctor_signed"))
 
     # 之后又被碰过的病程草稿（updated_at 更晚）
     draft = MedicalRecord(encounter_id=enc.id, record_type="course_record",

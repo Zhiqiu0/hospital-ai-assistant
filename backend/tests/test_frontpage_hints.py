@@ -74,3 +74,30 @@ async def test_load_front_page_assembles_all_sources(async_db):
     assert fp.diagnoses[0]["name"] == "高血压病" and fp.diagnoses[0]["is_primary"]
     # 无 encounter → 未加载态（规则全跳过）
     assert (await load_front_page(async_db, None)).loaded is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile,legacy,expected", [
+    ({"allergy_history": {"value": "青霉素过敏"}}, None, "青霉素过敏"),
+    ({"allergy_history": {"value": "否认"}}, "旧过敏史", "否认"),
+    ({"allergy_history": {"value": ""}}, "旧过敏史", ""),
+    ({"allergy_history": {"value": None}}, "旧过敏史", ""),
+    ({}, "旧过敏史", "旧过敏史"),
+    ({}, None, ""),
+])
+async def test_frontpage_allergy_uses_current_profile(async_db, profile, legacy, expected):
+    """首页使用现役档案；明确清空不复活旧值，未迁移字段兼容旧列。"""
+    from app.services.qc_engine._inpatient_checkers_frontpage import frontpage_allergy_missing
+    from app.services.qc_engine.checker import EncounterMeta, RecordContext
+
+    await _seed(async_db)
+    patient = await async_db.get(Patient, "p1")
+    patient.profile = profile
+    patient.profile_allergy_history = legacy
+    await async_db.flush()
+    fp = await load_front_page(async_db, "enc-1")
+    assert fp.allergy_history == expected
+    # 验证加载结果实际进入首页扣分判定，而不只检查字段映射。
+    ctx = RecordContext(record_text="", sections={}, front_page=fp,
+                        encounter_meta=EncounterMeta(record_type="admission_note"))
+    assert frontpage_allergy_missing(ctx) is (not bool(expected.strip()))

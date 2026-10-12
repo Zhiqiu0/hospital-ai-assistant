@@ -7,6 +7,7 @@ import {
 } from '@/store/activeEncounterStore'
 import api from '@/services/api'
 import type { Patient } from '@/domain/medical'
+import type { ConfirmedDiagnosis } from '@/hooks/useDiagnosisConfirmation'
 
 interface FinalRecordSubmission {
   recordType: string
@@ -15,6 +16,8 @@ interface FinalRecordSubmission {
   patientGender: string
   patientAge: string
   chiefComplaint: string
+  /** 医生已核对的最终正文诊断，不接受客户端提供的编码。 */
+  confirmedDiagnoses?: ConfirmedDiagnosis[]
 }
 
 /** 返回值表示签发结果是否应用于当前编辑器；切患者后仍完成原提交但不改当前文书。 */
@@ -25,9 +28,14 @@ export async function submitFinalRecord({
   patientGender,
   patientAge,
   chiefComplaint,
+  confirmedDiagnoses,
 }: FinalRecordSubmission): Promise<boolean> {
   let encounterId = useActiveEncounterStore.getState().encounterId
   const startEncounterId = encounterId
+  // 请求与回包都绑定同一具体文书，切走再切回也不接受迟到签发结果。
+  const { selectedRecordId, selectionVersion } = useRecordStore.getState()
+  // 新建接诊会合法重置选择代次；仅在原上下文仍有效时接续该代次。
+  let submissionSelectionVersion = selectionVersion
   const inferredVisitType =
     recordType === 'outpatient' || recordType === 'emergency' ? recordType : 'inpatient'
 
@@ -47,26 +55,33 @@ export async function submitFinalRecord({
     // 原签发仍使用新建ID继续完成；只有原编辑上下文未变才绑定该接诊。
     if (
       useActiveEncounterStore.getState().encounterId === startEncounterId &&
-      useRecordStore.getState().recordType === recordType
+      useRecordStore.getState().recordType === recordType &&
+      useRecordStore.getState().selectedRecordId === selectedRecordId &&
+      useRecordStore.getState().selectionVersion === selectionVersion
     ) {
       setCurrentEncounterFromPatient(res.patient, newEncounterId, {
         visitType: inferredVisitType,
       })
       // setActive会清空无接诊正文，此处保留医生已经确认提交的版本。
       useRecordStore.getState().setRecordContent(recordContent)
+      submissionSelectionVersion = useRecordStore.getState().selectionVersion
     }
   }
 
   const saveRes = (await api.post('/medical-records/quick-save', {
     encounter_id: encounterId,
     record_type: recordType,
+    record_id: selectedRecordId || undefined,
     content: recordContent,
+    confirmed_diagnoses: confirmedDiagnoses,
   })) as { submitted_at?: string | null; patient_snapshot?: Record<string, unknown> | null }
 
   // 签发响应只锁定发起时的文书，切患者或切文书后的迟到回包不能污染新编辑器。
   if (
     useActiveEncounterStore.getState().encounterId !== encounterId ||
-    useRecordStore.getState().recordType !== recordType
+    useRecordStore.getState().recordType !== recordType ||
+    useRecordStore.getState().selectedRecordId !== selectedRecordId ||
+    useRecordStore.getState().selectionVersion !== submissionSelectionVersion
   )
     return false
   // 服务端签发的是请求发出时的正文；外部状态恢复或切文书再返回可能改变

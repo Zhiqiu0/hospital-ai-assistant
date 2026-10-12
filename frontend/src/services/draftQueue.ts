@@ -23,6 +23,8 @@ const STORE_NAME = 'queue'
 export interface DraftPayload {
   encounter_id: string
   record_type: string
+  /** 离线补发也必须保留选中文书身份；旧队列无此字段继续兼容。 */
+  record_id?: string
   content: string
   expected_updated_at: string | null
 }
@@ -34,8 +36,8 @@ interface QueuedItem extends DraftPayload {
   enqueued_at: number
 }
 
-function makeKey(encounterId: string, recordType: string): string {
-  return `${encounterId}:${recordType}`
+function makeKey(encounterId: string, recordType: string, recordId?: string): string {
+  return `${encounterId}:${recordType}${recordId ? `:${recordId}` : ''}`
 }
 
 /** 打开 IDB；不可用时抛 → 调用方捕获降级 */
@@ -65,7 +67,7 @@ export async function enqueueDraft(payload: DraftPayload): Promise<void> {
     const store = tx.objectStore(STORE_NAME)
     const item: QueuedItem = {
       ...payload,
-      id: makeKey(payload.encounter_id, payload.record_type),
+      id: makeKey(payload.encounter_id, payload.record_type, payload.record_id),
       enqueued_at: Date.now(),
     }
     const req = store.put(item)
@@ -107,9 +109,13 @@ async function removeDraft(id: string): Promise<void> {
  * auto-save 遇 409 乐观锁冲突时调用：该草稿基线已过时，留在队列里每次 flush 都会
  * 再次 409、无限重试并反复弹冲突提示，必须删掉。失败静默（IDB 不可用不阻断主流程）。
  */
-export async function removeDraftByKey(encounterId: string, recordType: string): Promise<void> {
+export async function removeDraftByKey(
+  encounterId: string,
+  recordType: string,
+  recordId?: string
+): Promise<void> {
   try {
-    await removeDraft(makeKey(encounterId, recordType))
+    await removeDraft(makeKey(encounterId, recordType, recordId))
   } catch {
     // IDB 不可用降级——忽略
   }
@@ -164,6 +170,7 @@ async function _flushAll(
       const ok = await sender({
         encounter_id: item.encounter_id,
         record_type: item.record_type,
+        record_id: item.record_id,
         content: item.content,
         expected_updated_at: item.expected_updated_at,
       })

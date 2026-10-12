@@ -208,7 +208,8 @@ async def test_revise_increments_version_and_audits(async_db, seed, capture_revi
     )).scalars().all()
     assert [v.version_no for v in versions] == [1, 2]
     assert versions[1].source == "admin_revise"
-    assert versions[1].content == {"text": "修订后的完整正文"}
+    assert versions[1].content["text"] == "修订后的完整正文"
+    assert "error" in versions[1].content["his_projection"], "自由正文仍可修订，回写错误须明确冻结"
     assert versions[1].triggered_by == "admin-1"
 
     # 审计日志：动作 + 理由留痕 + 管理员署名

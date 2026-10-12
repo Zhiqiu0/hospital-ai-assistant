@@ -17,6 +17,51 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.resetAllMocks()
+  useRecordStore.getState().reset()
+})
+
+it('同类型A→B→A后旧保存结果不污染基线，离线队列保持具体ID', async () => {
+  vi.useFakeTimers()
+  let finishOld!: (value: unknown) => void
+  post.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finishOld = resolve
+      })
+  )
+  post.mockRejectedValueOnce({ status: 500 })
+  post.mockResolvedValue({ updated_at: 'new-A-time' })
+  const base = {
+    encounterId: 'same-enc',
+    recordType: 'course_record',
+    recordId: 'A',
+    recordContent: '甲稿',
+    isFinal: false,
+  }
+  const { rerender, result } = renderHook(props => useAutoSaveDraft(props), { initialProps: base })
+  await act(async () => {
+    vi.advanceTimersByTime(5000)
+  })
+  rerender({ ...base, recordId: 'B', recordContent: '乙稿' })
+  await act(async () => {
+    vi.advanceTimersByTime(5000)
+  })
+  expect(enqueueDraft).toHaveBeenCalledWith(
+    expect.objectContaining({ record_id: 'B', content: '乙稿' })
+  )
+  rerender({ ...base, recordContent: '甲新稿' })
+  await act(async () => {
+    finishOld({ updated_at: 'old-A-time' })
+  })
+  expect(result.current.savingState).toBe('idle')
+  await act(async () => {
+    vi.advanceTimersByTime(5000)
+  })
+  expect(post.mock.calls[2][1]).toMatchObject({
+    record_id: 'A',
+    content: '甲新稿',
+    expected_updated_at: null,
+  })
 })
 it('旧入院记录响应晚到时，首程下一次保存不携带入院记录基线', async () => {
   vi.useFakeTimers()

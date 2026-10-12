@@ -5,7 +5,11 @@
  * "病历质控通过，可以签发"——医生在签发这一刻（最要紧的时刻）
  * 又拿到虚假背书。三个出口必须同口径。
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+// 质控披露测试不发起诊断网络请求，诊断确认另有真实交互回归。
+vi.mock('@/hooks/useDiagnosisConfirmation', () => ({
+  useDiagnosisConfirmation: () => ({ preview: null, canSubmit: true }),
+}))
 import { render, screen } from '@testing-library/react'
 import FinalRecordModal from './FinalRecordModal'
 import { useQCStore } from '@/store/qcStore'

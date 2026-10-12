@@ -23,6 +23,7 @@ from app.models.user import User
 from app.his_adapter.writeback_builder import build_writeback_payload
 from app.schemas.diagnosis import DiagnosisItemIn
 from app.services.diagnosis_service import DiagnosisService
+from his_projection_support import seed_signed_projection
 
 
 def _user(uid: str, role: str = "doctor"):
@@ -109,6 +110,10 @@ async def test_writeback_uses_structured_entries_with_codes(client, async_db):
         {"category": "western", "name": "原发性高血压", "is_primary": True, "sort_order": 0},
         {"category": "tcm_syndrome", "name": "肝阳上亢证"},
     ]})
+    # 回写以正文为准，编码/主诊断在签发版本中冻结，不能直接读取可变问诊。
+    await seed_signed_projection(async_db, "enc-1", data={
+        "western_diagnosis": "原发性高血压；2型糖尿病", "tcm_syndrome_diagnosis": "肝阳上亢证",
+    })
     payload = await build_writeback_payload(async_db, "enc-1")
     dx = payload["diagnoses"]
     assert dx[0]["name"] == "原发性高血压" and dx[0]["is_primary"] is True
@@ -118,18 +123,17 @@ async def test_writeback_uses_structured_entries_with_codes(client, async_db):
 
 
 @pytest.mark.asyncio
-async def test_writeback_falls_back_to_text_fields(async_db, seeded):
-    """无条目时回落旧文本三字段拼装（行为与切换前一致）。"""
+async def test_writeback_never_falls_back_to_old_text_fields(async_db, seeded):
+    """签发正文无诊断时，不能从旧问诊复活已经删除的诊断。"""
     from sqlalchemy import update
     await async_db.execute(
         update(InquiryInput).where(InquiryInput.encounter_id == "enc-1")
         .values(western_diagnosis="急性上呼吸道感染", tcm_disease_diagnosis="感冒")
     )
     await async_db.commit()
+    await seed_signed_projection(async_db, "enc-1", data={"chief_complaint": "复查"})
     payload = await build_writeback_payload(async_db, "enc-1")
-    dx = payload["diagnoses"]
-    assert dx[0] == {"name": "急性上呼吸道感染", "is_primary": True, "category": "western"}
-    assert dx[1]["category"] == "tcm_disease" and dx[1]["is_primary"] is False
+    assert payload["diagnoses"] == []
 
 
 @pytest.mark.asyncio

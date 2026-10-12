@@ -17,8 +17,7 @@ import RecordEditorToolbar from './recordEditor/RecordEditorToolbar'
 import RecordEditorStatusBar from './recordEditor/RecordEditorStatusBar'
 import { locateFieldInRecord, extractFieldPreview } from './qcFieldMaps'
 import { useRecordEditor } from '@/hooks/useRecordEditor'
-import { useAutoSaveDraft } from '@/hooks/useAutoSaveDraft'
-import { useDraftByTypeLoader } from '@/hooks/useDraftByTypeLoader'
+import { useRecordPersistence } from '@/hooks/useRecordPersistence'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 
@@ -29,7 +28,6 @@ export default function RecordEditor() {
   // 不要用 Modal.confirm/warning/info 静态方法（会绕开 ConfigProvider 主题）。
   const { modal } = App.useApp()
   const previousRecordContent = useActiveEncounterStore(s => s.previousRecordContent)
-  const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const {
     recordContent,
     setRecordContent,
@@ -56,21 +54,8 @@ export default function RecordEditor() {
     handleSupplement,
   } = useRecordEditor()
 
-  // 5 秒防抖 auto-save——医生输入到一半浏览器崩溃 / 网络中断 / logout 都不丢
-  // 失败自动入 IndexedDB 队列，下次成功时补发；多设备冲突走乐观锁返 409 提示
-  useAutoSaveDraft({
-    encounterId: currentEncounterId,
-    recordType,
-    recordContent,
-    isFinal,
-    // 生成中不让防抖把半截 AI 正文当医生手写落库（见 hook 内注释）
-    isGenerating,
-  })
-
-  // 切文书类型且编辑器为空时，从服务端拉该 (接诊, 类型) 的草稿——
-  // 住院多文书场景服务端有草稿而本地缓存为空时，医生不再看到"空编辑器"
-  //（2026-08-21 第四轮走查）
-  useDraftByTypeLoader(currentEncounterId, recordType)
+  // 自动保存与所选文书加载共用身份和加载门禁。
+  const recordLoading = useRecordPersistence()
 
   // ── AI 写入字段池：跳转 + 点击/编辑触发 removeField ──────────────
   // 治本路线（2026-05-24）：逐条修复 / 批量补全写入病历后，把字段名加进
@@ -290,7 +275,7 @@ export default function RecordEditor() {
             removeFieldsAtCursor((e.target as HTMLTextAreaElement).selectionStart || 0)
           }
         }}
-        readOnly={isFinal}
+        readOnly={isFinal || recordLoading}
         placeholder="填写左侧问诊信息后，点击「一键生成」自动生成病历草稿，或直接在此输入..."
         style={{
           flex: 1,

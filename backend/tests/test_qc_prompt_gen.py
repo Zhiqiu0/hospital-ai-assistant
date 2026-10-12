@@ -41,22 +41,37 @@ def test_inpatient_block_contains_veto_rules():
     assert "不再累积扣分" in block
 
 
-def test_veto_points_capped_by_item_max():
-    """veto 渲染扣分按大项分值封顶（2026-08-12 复检修复）。
-
-    引擎实际扣 min(10, 大项分值)——"首次病程录"仅 6 分，提示词若写扣 10 分，
-    AI 建议口径就与真实扣分打架（PR#99 要消灭的正是这类不一致）。
-    """
+def test_veto_prompt_matches_fixed_scorer_deduction():
+    """小分值大项的否决提示必须与评分器固定扣 10 分一致。"""
     block = build_qc_standard_block(ZJ_INPATIENT_V2021)
     capped_items = [
         i for i in ZJ_INPATIENT_V2021.items if i.veto_rules and i.max_points < 10
     ]
     assert capped_items, "住院表应存在分值<10且带veto的大项（首次病程录6分）"
     for item in capped_items:
-        # 该大项的 veto 行应按其分值渲染（如"扣 6 分"），不得出现"扣 10 分"
+        # 固定否决扣分不受大项分值限制，提示词必须如实说明。
         section = block.split(f"、{item.name}（")[1].split("\n\n")[0]
-        assert f"扣 {item.max_points:g} 分，该大项不再累积扣分" in section
-        assert "扣 10 分，该大项不再累积扣分" not in section
+        assert "扣 10 分，该大项不再累积扣分" in section
+        assert f"扣 {item.max_points:g} 分，该大项不再累积扣分" not in section
+
+
+def test_veto_issue_matches_first_course_actual_deduction():
+    """空首程实际触发否决时，医生看到的扣分必须与评分报告一致。"""
+    from app.services.ai._qc_rubric import _deductions_to_issues
+    from app.services.qc_engine.checker import EncounterMeta, RecordContext
+    from app.services.qc_engine.scorer import score
+
+    ctx = RecordContext(record_text="", sections={},
+                        encounter_meta=EncounterMeta(record_type="first_course_record"))
+    report = score(ZJ_INPATIENT_V2021, ctx)
+    issues = _deductions_to_issues(report)
+    veto_items = [item for item in report.item_scores
+                  if item.veto_triggered and item.max_points < 10]
+    assert veto_items, "空首程必须触发小分值大项的否决规则"
+    for item in veto_items:
+        issue = next(i for i in issues if i["item_name"] == item.name and i["is_veto"])
+        assert item.deducted == 10
+        assert issue["score_impact"] == f"-{item.deducted:g}分"
 
 
 def test_block_contains_deduction_descriptions():

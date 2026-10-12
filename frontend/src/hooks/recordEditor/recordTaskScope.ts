@@ -5,12 +5,14 @@ import { useRecordStore } from '@/store/recordStore'
 export function createRecordTaskScope(onLeave: () => void = () => {}) {
   const encounterId = useActiveEncounterStore.getState().encounterId
   const recordType = useRecordStore.getState().recordType
+  const selectionVersion = useRecordStore.getState().selectionVersion
   let current = true
   const check = () => {
     if (
       current &&
       (useActiveEncounterStore.getState().encounterId !== encounterId ||
-        useRecordStore.getState().recordType !== recordType)
+        useRecordStore.getState().recordType !== recordType ||
+        useRecordStore.getState().selectionVersion !== selectionVersion)
     ) {
       // 先失效再清理运行态，避免 store 回调重入。
       current = false

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
+from app.schemas.diagnosis_confirmation import ConfirmedDiagnosis
 
 
 def _validate_record_type(v: str) -> str:
@@ -38,8 +39,10 @@ class QuickSaveRequest(BaseModel):
     """
 
     encounter_id: str         # 关联接诊 ID
+    record_id: Optional[str] = None  # 选择现有文书时精确写入；未建稿兼容按类型创建
     record_type: str = "outpatient"  # 病历类型
     content: str = Field(max_length=500_000)  # 病历全文（markdown 格式）
+    confirmed_diagnoses: list[ConfirmedDiagnosis] | None = None  # 本次最终正文的显式诊断核对
 
     _rt = field_validator("record_type")(_validate_record_type)
 
@@ -75,6 +78,7 @@ class AutoSaveDraftRequest(BaseModel):
     """
 
     encounter_id: str
+    record_id: Optional[str] = None  # 时间轴文书身份，防止同类型多稿串写
     record_type: str
     content: str = Field(max_length=500_000)  # 完整病历正文（前端编辑器当前值）
 

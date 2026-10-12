@@ -116,7 +116,8 @@ export default function InpatientWorkbenchPage() {
     setSelectedNote(item)
     if (item && item.type === 'medical_record' && item.noteType) {
       const store = useRecordStore.getState()
-      if (store.recordType !== item.noteType) store.setRecordType(item.noteType)
+      // 同类型多份病程必须携带所选主键，不能仅切换类型。
+      store.selectRecord(item.noteType, item.id)
     }
   }
   // 外部触发时间轴刷新（签发/保存后 +1）

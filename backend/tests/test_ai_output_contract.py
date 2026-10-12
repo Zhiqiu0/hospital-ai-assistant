@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.ai import record_gen_v2_service as gen
+from app.services.ai import _record_generation_persistence as persistence
 from app.services.ai.record_schemas import SCHEMA_MAP, PLACEHOLDER
 from test_record_gen_v2_service import _mock_req, _parse_sse
 from test_record_gen_v2_service import _complete_record
@@ -16,7 +17,8 @@ def ai_stub(monkeypatch):
     monkeypatch.setattr(gen.llm_client, "chat_json_stream", chat)
     monkeypatch.setattr(gen, "get_model_options", lambda *a: {
         "temperature": 0, "max_tokens": 100, "model_name": "test"})
-    monkeypatch.setattr(gen, "log_ai_task", AsyncMock())
+    # 审计已拆到落库模块，替换真正被调用的符号，避免只 patch 兼容别名。
+    monkeypatch.setattr(persistence, "log_ai_task", AsyncMock())
     monkeypatch.setattr(gen.asyncio, "sleep", AsyncMock())
     return chat
 
@@ -121,8 +123,8 @@ async def test_invalid_json_preserves_existing_database_draft(entry, payload, ai
         content="医生已核对的原稿", user_id="doc-qs-1")
     before = (await async_db.execute(select(RecordVersion))).scalars().all()
     expected = [(row.id, dict(row.content)) for row in before]
-    monkeypatch.setattr(gen, "get_encounter_id", lambda: "contract-existing")
-    monkeypatch.setattr(gen, "get_user_id", lambda: "doc-qs-1")
+    monkeypatch.setattr(persistence, "get_encounter_id", lambda: "contract-existing")
+    monkeypatch.setattr(persistence, "get_user_id", lambda: "doc-qs-1")
     ai_stub.return_value = dict(payload)
     events = [_parse_sse(line) async for line in entry(
         "outpatient", _mock_req(current_content="医生已核对的原稿", western_diagnosis=""), async_db)]
@@ -137,8 +139,8 @@ async def test_save_failure_preserves_generated_chunks_and_discloses_unsaved(ai_
     """保存失败不丢已生成文本，但完成事件必须披露未保存以便医生重试。"""
     from app.services.medical_record_service import MedicalRecordService
     ai_stub.return_value = _complete_record({"chief_complaint": "头痛3天"})
-    monkeypatch.setattr(gen, "get_encounter_id", lambda: "existing")
-    monkeypatch.setattr(gen, "get_user_id", lambda: "doctor")
+    monkeypatch.setattr(persistence, "get_encounter_id", lambda: "existing")
+    monkeypatch.setattr(persistence, "get_user_id", lambda: "doctor")
     monkeypatch.setattr(MedicalRecordService, "save_ai_draft", AsyncMock(
         side_effect=RuntimeError("database unavailable")))
     events = [_parse_sse(line) async for line in gen.stream_record_v2(

@@ -20,6 +20,8 @@ import pytest
 from app.his_adapter.writeback_builder import build_writeback_payload
 from app.models.encounter import Diagnosis, Encounter, InquiryInput
 from app.models.patient import Patient
+from app.services.ai.record_renderer import render_record
+from app.services.medical_record_service import MedicalRecordService
 
 
 @pytest.mark.asyncio
@@ -54,6 +56,12 @@ async def test_v15示例报文与实现逐字段一致(async_db):
     ])
     await async_db.commit()
 
+    # 冻结医生确认的诊断与本份出院文书，不再以未签发问诊充当回写来源。
+    await MedicalRecordService(async_db).quick_save(
+        enc.id, "discharge_record", render_record("discharge_record", {
+            "discharge_diagnosis": "西医诊断：原发性高血压；2型糖尿病\n中医诊断：眩晕 — 肝阳上亢证",
+        }), "doc-1",
+    )
     payload = await build_writeback_payload(async_db, enc.id, app_version="1.0.0")
 
     # ——逐字段对齐增补第三节示例——

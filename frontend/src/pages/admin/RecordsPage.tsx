@@ -12,18 +12,17 @@
  *   一次返回所有关联信息，无需前端二次请求。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Table, Tag, Typography, Modal, Button, Space, Input } from 'antd'
+import { Table, Tag, Typography, Button, Space, Input } from 'antd'
 import { message } from '@/services/messageBridge'
 import { SearchOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
 import api from '@/services/api'
 import RecordViewModal from '@/components/workbench/RecordViewModal'
+import RecordRevisionModal from './RecordRevisionModal'
 import { genderCode, genderText } from '@/utils/gender'
 // 文书类型标签统一用 recordExport 的完整表（2026-09-16 终检收口）：
 // 本地手抄表只有 3 类，日常病程/急诊等 7 类在管理端列表里直接裸显英文键
 // （course_record）。那份表有契约测试锁着"与后端枚举一一对应"，跟着它走。
 import { RECORD_TYPE_LABEL } from '@/utils/recordExport'
-
-const { TextArea } = Input
 
 const { Title, Text } = Typography
 
@@ -78,49 +77,8 @@ export default function RecordsPage() {
   // 已签发病历是法律文件，必须留痕修改：后端创建新 RecordVersion，旧版本保留。
   // 修订理由必填，写入 audit_logs 永久可查。
   const [reviseRecord, setReviseRecord] = useState<RecordRow | null>(null)
-  const [reviseContent, setReviseContent] = useState('')
-  const [reviseReason, setReviseReason] = useState('')
-  const [reviseSubmitting, setReviseSubmitting] = useState(false)
-
-  const openRevise = (record: RecordRow) => {
-    setReviseRecord(record)
-    setReviseContent(record.content || '')
-    setReviseReason('')
-  }
-
-  const closeRevise = () => {
-    setReviseRecord(null)
-    setReviseContent('')
-    setReviseReason('')
-  }
-
-  const submitRevise = async () => {
-    if (!reviseRecord) return
-    if (!reviseReason.trim()) {
-      message.warning('请填写修订理由')
-      return
-    }
-    if (!reviseContent.trim()) {
-      message.warning('病历内容不能为空')
-      return
-    }
-    setReviseSubmitting(true)
-    try {
-      await api.post(`/admin/records/${reviseRecord.id}/revise`, {
-        content: reviseContent,
-        revise_reason: reviseReason.trim(),
-      })
-      message.success('病历已修订，原版本保留供审计')
-      closeRevise()
-      // 刷新列表（让 content_preview 更新到新版本）
-      setRefreshVersion(version => version + 1)
-    } catch (e: unknown) {
-      const detail = (e as { detail?: string })?.detail
-      message.error(detail || '修订失败')
-    } finally {
-      setReviseSubmitting(false)
-    }
-  }
+  // 独立弹窗按文书主键重新挂载，隔离正文编辑、诊断核对与旧提交响应。
+  const openRevise = (record: RecordRow) => setReviseRecord(record)
 
   const loadRecords = useCallback(async () => {
     const id = ++requestId.current
@@ -292,76 +250,14 @@ export default function RecordsPage() {
         showPrint
       />
 
-      {/* 修订病历弹窗：留痕式修改（创建新 RecordVersion，旧版本保留供审计） */}
-      <Modal
-        title={
-          reviseRecord && (
-            <Space>
-              <EditOutlined style={{ color: '#dc2626' }} />
-              <span>修订病历</span>
-              <Tag color="default">{reviseRecord.patient_name}</Tag>
-              <Tag color="blue">
-                {RECORD_TYPE_LABEL[reviseRecord.record_type] || reviseRecord.record_type}
-              </Tag>
-            </Space>
-          )
-        }
-        open={!!reviseRecord}
-        onCancel={closeRevise}
-        okText="确认修订并留痕"
-        cancelText="取消"
-        okButtonProps={{ loading: reviseSubmitting, danger: true }}
-        onOk={submitRevise}
-        width={760}
-        destroyOnHidden
-      >
-        <div
-          style={{
-            padding: '8px 10px',
-            background: '#fef9c3',
-            border: '1px solid #fde047',
-            borderRadius: 6,
-            marginBottom: 12,
-            fontSize: 12,
-            color: '#854d0e',
-          }}
-        >
-          ⚠️
-          已签发病历是法律文件。修订将创建新版本，原版本永久保留供审计；操作人、时间、修订理由会写入审计日志。
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            修订理由 <Text type="danger">*</Text>
-          </Text>
-          <TextArea
-            value={reviseReason}
-            onChange={e => setReviseReason(e.target.value)}
-            rows={2}
-            placeholder="请说明本次修订原因（如：医生提交后发现 XX 字段有误，需更正）"
-            maxLength={500}
-            showCount
-            style={{ marginTop: 6 }}
-          />
-        </div>
-
-        <div>
-          <Text strong style={{ fontSize: 13 }}>
-            病历正文（修订后）
-          </Text>
-          <TextArea
-            value={reviseContent}
-            onChange={e => setReviseContent(e.target.value)}
-            rows={20}
-            style={{
-              marginTop: 6,
-              fontFamily: "'PingFang SC', 'Microsoft YaHei', monospace",
-              fontSize: 13,
-              lineHeight: 1.8,
-            }}
-          />
-        </div>
-      </Modal>
+      {reviseRecord && (
+        <RecordRevisionModal
+          key={reviseRecord.id}
+          record={reviseRecord}
+          onClose={() => setReviseRecord(null)}
+          onSaved={() => setRefreshVersion(version => version + 1)}
+        />
+      )}
     </div>
   )
 }

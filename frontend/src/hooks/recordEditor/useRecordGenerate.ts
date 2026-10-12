@@ -30,13 +30,21 @@ import { createRecordTaskScope } from './recordTaskScope'
 export function useRecordGenerate(shared: RecordEditorShared) {
   const { runSSE, fetchLatestRecord, syncGeneratedRecordToInquiry } = shared
   const { inquiry } = useInquiryStore()
-  const { recordType, setRecordContent, setGenerating, pendingGenerate, setPendingGenerate } =
-    useRecordStore()
+  const {
+    recordType,
+    setRecordContent,
+    setGenerating,
+    pendingGenerate,
+    setPendingGenerate,
+    recordLoading,
+  } = useRecordStore()
   const currentPatient = useCurrentPatient()
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
   const previousRecordContent = useActiveEncounterStore(s => s.previousRecordContent)
 
   const _doGenerate = async () => {
+    // 自动触发同样遵守读取门禁和签发锁，不能只依赖按钮禁用。
+    if (useRecordStore.getState().recordLoading || useRecordStore.getState().isFinal) return
     // 切换文书即释放旧运行态；旧请求结束时不得关闭新文书的生成态。
     const scope = createRecordTaskScope(() => setGenerating(false))
     setGenerating(true)
@@ -96,6 +104,7 @@ export function useRecordGenerate(shared: RecordEditorShared) {
           ...inquirySubset,
           ...profilePayload,
           record_type: recordType,
+          medical_record_id: useRecordStore.getState().selectedRecordId || undefined,
           // 接诊维度——后端 RequestContext 据此把 ai_task / 自动 quick_save
           // 都绑定到正确的接诊上，logout 重登能拿回 AI 产物
           encounter_id: currentEncounterId || undefined,
@@ -167,14 +176,15 @@ export function useRecordGenerate(shared: RecordEditorShared) {
 
   // 监听 pendingGenerate 标志，自动触发生成
   useEffect(() => {
-    if (pendingGenerate) {
+    // 等所选草稿和签发状态确认后再消费自动生成请求，加载期间保留标志。
+    if (pendingGenerate && !recordLoading) {
       setPendingGenerate(false)
       handleGenerate()
     }
     // 只关心 pendingGenerate flag 切到 true；handleGenerate / setPendingGenerate 加进
     // deps 会让 effect 在每次 render 都跑（handleGenerate 是 component-local 函数）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingGenerate])
+  }, [pendingGenerate, recordLoading])
 
   return { handleGenerate }
 }

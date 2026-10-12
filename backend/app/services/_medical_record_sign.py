@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 class MedicalRecordSignMixin:
     """病历签发（依赖宿主类提供 self.db）。"""
 
-    async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str) -> MedicalRecord:
+    async def quick_save(self, encounter_id: str, record_type: str, content: str, doctor_id: str,
+                         record_id: str | None = None, confirmed_diagnoses: list | None = None) -> MedicalRecord:
         """签发病历：保存最终内容并将接诊状态标记为已完成。
 
         "签发"是医生确认本次接诊处理完毕的动作，触发后：
@@ -71,10 +72,14 @@ class MedicalRecordSignMixin:
             select(MedicalRecord).where(
                 MedicalRecord.encounter_id == encounter_id,
                 MedicalRecord.record_type == record_type,
+                *([MedicalRecord.id == record_id] if record_id else []),
             ).order_by(MedicalRecord.record_no.desc(),
                        MedicalRecord.updated_at.desc()).with_for_update()
         )
         record = result.scalars().first()
+        # 显式选中不存在的文书时拒绝；已签发的所选文书走下方幂等校验。
+        if record_id and record is None:
+            raise HTTPException(status_code=404, detail="所选病历不存在或不属于当前接诊及类型")
 
         # 住院同类型多份文书：已签发的那份不再被覆盖（2026-08-14 第六轮审计修复）
         #
@@ -84,7 +89,7 @@ class MedicalRecordSignMixin:
         # 现在遇到"已签发"的同类型文书就新起一份（record_no 递增），
         # 旧的原样保留在库里。
         if (record is not None and record.status == "submitted"
-                and enc_locked.visit_type == "inpatient"):
+                and enc_locked.visit_type == "inpatient" and not record_id):
             logger.info(
                 "record.sign: 住院新建同类型文书 encounter_id=%s type=%s 上一份 no=%s",
                 encounter_id, record_type, record.record_no,
@@ -111,7 +116,7 @@ class MedicalRecordSignMixin:
         # 门急诊的整改通道是管理员修订（/admin/records/{id}/revise，产出
         # source='admin_revise' 版本，队列与横幅两处都认它）。这里把话说清楚，
         # 而不是让医生对着一个骗人的成功提示白改一遍。
-        if record is not None and record.status == "submitted"                 and enc_locked.visit_type != "inpatient":
+        if record is not None and record.status == "submitted":
             current = (await self.db.execute(
                 select(RecordVersion.content).where(
                     RecordVersion.medical_record_id == record.id,
@@ -120,6 +125,10 @@ class MedicalRecordSignMixin:
             )).scalar_one_or_none()
             current_text = (current or {}).get("text") if isinstance(current, dict) else None
             if current_text == content:
+                # 幂等不能掩盖不同的主诊断选择；真正修订仍需走管理员留痕通道。
+                if confirmed_diagnoses is not None:
+                    from app.his_adapter._projection_confirmation import assert_signed_confirmation_matches
+                    assert_signed_confirmation_matches(current, confirmed_diagnoses)
                 logger.info("record.sign: 幂等跳过已签发 record_id=%s encounter_id=%s",
                             record.id, encounter_id)
                 return record
@@ -146,10 +155,14 @@ class MedicalRecordSignMixin:
 
         # 创建签发版本（source='doctor_signed' 标记为医生签发，区别于 'doctor_edited'）
         new_version_no = record.current_version + 1
+        # 从实际签发正文冻结 HIS 投影，与版本及签名一起保存，回写不再读取活跃问诊。
+        from app.his_adapter.record_projection import freeze_record_projection
+        projection = await freeze_record_projection(self.db, encounter_id, record_type, content,
+                                                     confirmed_diagnoses=confirmed_diagnoses)
         version = RecordVersion(
             medical_record_id=record.id,
             version_no=new_version_no,
-            content={"text": content},    # quick_save 统一用 {"text": ...} 格式
+            content={"text": content, "his_projection": projection},
             source="doctor_signed",
             triggered_by=doctor_id,
         )
@@ -189,78 +202,9 @@ class MedicalRecordSignMixin:
                 encounter.completed_at = func.now()
             encounter_closed = True
 
-        # ── 病案首页快照（合规要求，2026-05-16 加）─────────────────────────
-        # 签发瞬间把患者完整身份字段 + 接诊信息（医生、科室、就诊时间）冻结到
-        # patient_snapshot，未来 patient 表更新不再影响已签发病历的展示。
-        # 未签发病历的首页由前端实时从 patient store 读取，已签发的从这个 snapshot 读。
-        if encounter:
-            from app.models.patient import Patient as PatientModel
-            from app.models.user import User as UserModel, Department as DeptModel
-            patient_r = await self.db.execute(
-                select(PatientModel).where(PatientModel.id == encounter.patient_id)
-            )
-            patient = patient_r.scalar_one_or_none()
-            doctor_r = await self.db.execute(
-                select(UserModel.real_name).where(UserModel.id == doctor_id)
-            )
-            doctor_row = doctor_r.one_or_none()
-            doctor_name = doctor_row[0] if doctor_row else None
-
-            # 科室取**本次接诊的科室**，不是医生编制科室（2026-08-14 用户决策）。
-            #
-            # 原先这里 join 的是 users.department_id —— 医生的编制科室。
-            # 但医生跨科室坐班时（本院确实存在），病历首页上的科室就是错的：
-            # 人在外科坐班，病历却写着他编制所在的内科。
-            # encounter.department_id 现在由接诊推送的挂号科室解析而来
-            # （见 his_adapter/admit_service._resolve_department），
-            # 手工建的接诊则沿用建档时选的科室——两条路都是"这次就诊的科室"。
-            # 接诊没有科室时（老数据/未填）回退医生编制科室，总比空着强。
-            dept_name = None
-            if encounter.department_id:
-                dept_name = (await self.db.execute(
-                    select(DeptModel.name).where(DeptModel.id == encounter.department_id)
-                )).scalar_one_or_none()
-            if dept_name is None:
-                dept_name = (await self.db.execute(
-                    select(DeptModel.name)
-                    .join(UserModel, UserModel.department_id == DeptModel.id)
-                    .where(UserModel.id == doctor_id)
-                )).scalar_one_or_none()
-            # 患者快照同样只冻结一次：它也是 sign_hash 的输入，重写会让历史
-            # 签发版本的哈希全部失效（理由同上方 submitted_at）。快照的语义本就是
-            # "签发瞬间冻结"，二次签发时重新冻结反而违背它自己的设计。
-            if patient and record.patient_snapshot is None:
-                record.patient_snapshot = {
-                    # 身份信息（来自 patient 表）
-                    "name": patient.name,
-                    "gender": patient.gender,
-                    "birth_date": patient.birth_date.isoformat() if patient.birth_date else None,
-                    "patient_no": patient.patient_no,
-                    "id_card": patient.id_card,
-                    "phone": patient.phone,
-                    "address": patient.address,
-                    "ethnicity": patient.ethnicity,
-                    "marital_status": patient.marital_status,
-                    "occupation": patient.occupation,
-                    "workplace": patient.workplace,
-                    "contact_name": patient.contact_name,
-                    "contact_phone": patient.contact_phone,
-                    "contact_relation": patient.contact_relation,
-                    "blood_type": patient.blood_type,
-                    # 接诊信息（来自 encounter / user / department）
-                    # 注意：Encounter 模型字段叫 visited_at（接诊开始时间）；
-                    # InquiryInput.visit_time 是医生手填的"就诊时间字符串"。这里取
-                    # visited_at 作为快照里的就诊时间——它是签发那一刻的真实接诊起点。
-                    "visit_type": encounter.visit_type,
-                    "visit_time": encounter.visited_at.isoformat() if encounter.visited_at else None,
-                    "bed_no": encounter.bed_no,
-                    "doctor_name": doctor_name,
-                    "doctor_id": doctor_id,
-                    "department_name": dept_name,
-                    # 就诊号（2026-08-31 导出产物审计）：法定病历文书的定位键，
-                    # 病案室按它归档。此前快照与打印首页都没有，只有患者编号。
-                    "visit_no": encounter.visit_no,
-                }
+        # 首页冻结仍在签名计算之前，拆分不改变首签字段与时机。
+        from app.services._record_patient_snapshot import freeze_patient_snapshot
+        await freeze_patient_snapshot(self.db, record, encounter, doctor_id)
 
         # ── 电子签名防篡改哈希（2026-08-11 病历可信）─────────────────────────
         # 在快照冻结之后、commit 之前算：sign_hash 覆盖正文+快照+医生+签发时间+链上
@@ -278,6 +222,7 @@ class MedicalRecordSignMixin:
             doctor_id=doctor_id,
             submitted_at_iso=record.submitted_at.isoformat() if record.submitted_at else "",
             prev_hash=prev_hash,
+            his_projection=version.content.get("his_projection"),
         )
 
         # ── AI 采纳度量（2026-08-12 反馈闭环）────────────────────────────────

@@ -25,6 +25,12 @@ it('保存后自动生成 payload 保留刚提交主诉和现病史', async () =
   useRecordStore.setState({ recordContent: '', recordType: 'outpatient', pendingGenerate: false })
   useActiveEncounterStore.setState({ encounterId: 'audit-enc', patientId: null })
   const runSSE = vi.fn().mockResolvedValue(undefined)
+  // 模拟真实表单读写，使保存期间的编辑检测与投影回填都经过相同状态。
+  const formValues: Record<string, unknown> = { ...original }
+  const form = {
+    setFieldsValue: (values: Record<string, unknown>) => Object.assign(formValues, values),
+    getFieldsValue: () => ({ ...formValues }),
+  } as unknown as FormInstance
   const { result } = renderHook(() => {
     const i = useInquiryStore()
     const r = useRecordStore()
@@ -36,7 +42,7 @@ it('保存后自动生成 payload 保留刚提交主诉和现病史', async () =
       buildRecordTaskPayload: vi.fn(),
     })
     return useInquirySave({
-      form: { setFieldsValue: vi.fn() } as unknown as FormInstance,
+      form,
       inquiry: i.inquiry,
       setInquiry: i.setInquiry,
       currentEncounterId: 'audit-enc',

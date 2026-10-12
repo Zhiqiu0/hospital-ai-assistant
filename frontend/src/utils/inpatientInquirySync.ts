@@ -30,6 +30,8 @@ export interface InpatientInquiryData {
   physical_exam: string
   initial_impression: string
   history_informant: string
+  /** 住院专项评估中的本次月经史，随问诊保存和语音草稿一并传递。 */
+  menstrual_history: string
   rehabilitation_assessment: string
   /** NRS 评分以字符串形式入库，前端展示用数字 */
   pain_assessment: string
@@ -72,6 +74,7 @@ export function buildInpatientInquiryData(values: Record<string, unknown>): Inpa
     physical_exam: readString(values.physical_exam),
     initial_impression: readString(values.admission_diagnosis),
     history_informant: readString(values.history_informant),
+    menstrual_history: readString(values.menstrual_history),
     rehabilitation_assessment: readString(values.rehabilitation_assessment),
     pain_assessment: String(painScore),
     vte_risk: readString(values.vte_risk),
@@ -135,7 +138,8 @@ function replaceSection(content: string, header: string, value: string): string 
  * 规则：
  *   - 只处理已改的字段（changedFields 集合内）
  *   - 章节存在才替换；章节不存在不新增（避免污染 AI 生成结构）
- *   - profile 8 字段（既往/过敏/个人/婚育/月经/家族/用药/宗教）章节由 PatientProfileCard 维护
+ *   - 七个档案字段（既往/过敏/个人/婚育/家族/用药/宗教）章节由 PatientProfileCard 维护
+ *   - 月经史参与首次生成；正文生成后问诊表单锁定，后续直接编辑正文或语音追记
  *   - 专项评估（pain/rehab/psychology/nutrition/vte）合并成单条文本，整段替换
  */
 export function syncInpatientToRecord(

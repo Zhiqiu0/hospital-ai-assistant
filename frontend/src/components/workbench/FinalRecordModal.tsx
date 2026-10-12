@@ -14,7 +14,7 @@
  * 防止误操作：
  *   存在必须修复项且未勾选 override 时，提交按钮 disabled。
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button, Modal, Alert, Input, Space, Typography, Checkbox, Radio } from 'antd'
 import { message } from '@/services/messageBridge'
 import { CheckOutlined } from '@ant-design/icons'
@@ -23,6 +23,8 @@ import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { submitFinalRecord } from './finalRecordSubmission'
+import { useDiagnosisConfirmation } from '@/hooks/useDiagnosisConfirmation'
+import DiagnosisConfirmation from './DiagnosisConfirmation'
 
 const { Text } = Typography
 
@@ -33,7 +35,8 @@ interface FinalRecordModalProps {
 
 export default function FinalRecordModal({ open, onCancel }: FinalRecordModalProps) {
   const { qcPass, qcIssues, gradeScore } = useQCStore()
-  const { recordContent, recordType } = useRecordStore()
+  const { recordContent, recordType, selectedRecordId, selectionVersion, recordLoading, isFinal } =
+    useRecordStore()
   const inquiry = useInquiryStore(s => s.inquiry)
   const currentEncounterId = useActiveEncounterStore(s => s.encounterId)
 
@@ -42,6 +45,16 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
   const [patientName, setPatientName] = useState('')
   const [patientGender, setPatientGender] = useState('')
   const [patientAge, setPatientAge] = useState('')
+  // 双击在 React 重渲染前也只允许提交一次，避免重复签发。
+  const submitting = useRef(false)
+  const diagnosis = useDiagnosisConfirmation({
+    open,
+    content: recordContent,
+    recordType,
+    encounterId: currentEncounterId,
+    recordId: selectedRecordId,
+    selectionVersion,
+  })
 
   const handleClose = () => {
     setConfirmed(false)
@@ -52,6 +65,8 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
   }
 
   const handleSave = async () => {
+    if (!canSubmit || submitting.current) return
+    submitting.current = true
     setSaving(true)
     try {
       const applied = await submitFinalRecord({
@@ -61,6 +76,7 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         patientGender,
         patientAge,
         chiefComplaint: inquiry.chief_complaint,
+        confirmedDiagnoses: diagnosis.diagnoses,
       })
       if (applied) handleClose()
     } catch (e) {
@@ -68,12 +84,16 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
       const detail = (e as { detail?: string } | null)?.detail
       message.error('保存失败：' + (detail || '请重试'))
     } finally {
+      submitting.current = false
       setSaving(false)
     }
   }
 
   const canSubmit =
     confirmed &&
+    diagnosis.canSubmit &&
+    !recordLoading &&
+    !isFinal &&
     !saving &&
     qcPass !== false &&
     (!!currentEncounterId || (!!patientName.trim() && !!patientGender && !!patientAge.trim()))
@@ -248,6 +268,7 @@ export default function FinalRecordModal({ open, onCancel }: FinalRecordModalPro
         {recordContent}
       </div>
 
+      <DiagnosisConfirmation state={diagnosis} disabled={saving} />
       <Checkbox
         onChange={e => setConfirmed(e.target.checked)}
         checked={confirmed}

@@ -30,13 +30,22 @@ interface DraftByTypeRes {
   content?: string
   updated_at?: string | null
   submitted_at?: string | null
+  patient_snapshot?: Record<string, unknown> | null
 }
 
 export function useDraftByTypeLoader(encounterId: string | null, recordType: string) {
+  const recordId = useRecordStore(s => s.selectedRecordId)
+  const selectionVersion = useRecordStore(s => s.selectionVersion)
+  const isGenerating = useRecordStore(s => s.isGenerating)
   useEffect(() => {
-    if (!encounterId || !recordType) return
+    if (!encounterId || !recordType) {
+      useRecordStore.setState({ recordLoading: false })
+      return
+    }
     const store = useRecordStore.getState()
-    if (store.isGenerating) return
+    if (isGenerating) return
+    // 首次挂载（含持久化缓存恢复）也先确认服务端签发状态，避免失败时误存旧缓存。
+    useRecordStore.setState({ recordLoading: true })
     // 本地已有内容时**仍然要拉**（2026-09-02 多设备实测修正）：只是不灌正文，
     // 而是把服务端那份的 updated_at 取回来当乐观锁基线。
     //
@@ -51,29 +60,36 @@ export function useDraftByTypeLoader(encounterId: string | null, recordType: str
     let cancelled = false
     api
       .get(
-        `/medical-records/draft-by-type?encounter_id=${encodeURIComponent(encounterId)}&record_type=${encodeURIComponent(recordType)}`
+        `/medical-records/draft-by-type?encounter_id=${encodeURIComponent(encounterId)}&record_type=${encodeURIComponent(recordType)}` +
+          (recordId ? `&record_id=${encodeURIComponent(recordId)}` : '')
       )
       .then(res => {
         if (cancelled) return
         const d = res as unknown as DraftByTypeRes | null
-        if (!d?.exists || !d.content) return
         // 迟到守卫：请求在途时医生可能已切类型 / 换了接诊——丢弃
         const cur = useRecordStore.getState()
         if (cur.recordType !== recordType) return
+        if (cur.selectedRecordId !== recordId || cur.selectionVersion !== selectionVersion) return
         if (useActiveEncounterStore.getState().encounterId !== encounterId) return
+        // 读取成功后才解除加载门禁；无稿类型可以开始新写，失败则保持禁止误保存。
+        useRecordStore.setState({ recordLoading: false })
+        if (!d?.exists) return
+        // 签发锁始终由服务端恢复，缓存分支也不能跳过；签发正文以正式版本为准。
+        cur.setFinal(d.status === 'submitted', d.submitted_at ?? null)
+        cur.setPatientSnapshot(d.patient_snapshot ?? null)
         // 本地有内容（发起时就有，或请求在途时医生开始手写）：只对齐基线，
         // 绝不覆盖医生正在写的字
-        if (localHasContent || cur.recordContent) {
+        if (d.status !== 'submitted' && (localHasContent || cur.recordContent)) {
           if (d.updated_at) {
-            useRecordAutoSaveTrigger.getState().syncBaseline(d.updated_at, d.content, false)
+            useRecordAutoSaveTrigger.getState().syncBaseline(d.updated_at, d.content ?? '', false)
           }
           return
         }
-        cur.setRecordContent(d.content)
+        cur.setRecordContent(d.content ?? '')
         cur.setFinal(d.status === 'submitted', d.submitted_at ?? null)
-        cur.markSaved(d.content, Date.now())
+        cur.markSaved(d.content ?? '', Date.now())
         if (d.updated_at) {
-          useRecordAutoSaveTrigger.getState().syncBaseline(d.updated_at, d.content)
+          useRecordAutoSaveTrigger.getState().syncBaseline(d.updated_at, d.content ?? '')
         }
       })
       .catch(() => {
@@ -88,5 +104,5 @@ export function useDraftByTypeLoader(encounterId: string | null, recordType: str
     return () => {
       cancelled = true
     }
-  }, [encounterId, recordType])
+  }, [encounterId, recordType, recordId, selectionVersion, isGenerating])
 }

@@ -36,6 +36,7 @@ from app.services.ai.record_gen_v2_service import (
 )
 from app.services.ai.supplement_batch_service import run_quick_supplement_batch
 from app.services.redis_cache import redis_cache
+from app.api.v1._ai_record_selection import validate_ai_record_selection
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ async def quick_generate(
     current_user=Depends(get_current_user),
 ):
     """根据问诊信息流式生成指定类型的病历草稿。"""
+    await validate_ai_record_selection(db, req, current_user)
     # 把接诊维度写入 RequestContext，下游 log_ai_task 自动取用——
     # 让 ai_tasks.encounter_id 能正确绑定（合规追溯 + snapshot 恢复需要）
     from app.core.request_context import bind_encounter_context
@@ -122,6 +124,7 @@ async def quick_supplement(
     返回格式（非 SSE，普通 JSON 响应）：
       {"items": [{"field_name": "舌象", "value": "..."}, ...]}
     """
+    await validate_ai_record_selection(db, req, current_user)
     await log_action(
         action="ai_quick_supplement",
         user_id=current_user.id,
@@ -157,6 +160,7 @@ async def quick_polish(
     与 supplement 同构，但 prompt 禁止改动客观数据；输出经 renderer 拼装，
     永远符合 QC 行格式契约。
     """
+    await validate_ai_record_selection(db, req, current_user)
     await log_action(
         action="ai_quick_polish",
         user_id=current_user.id,

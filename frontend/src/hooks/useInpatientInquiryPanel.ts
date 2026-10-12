@@ -6,7 +6,7 @@
  *   - 字段构建 / changed-fields 计算 / 病历章节同步 / 语音 patch 铺平 → utils/inpatientInquirySync.ts
  *   - 本 hook 仅留 React 状态 + Form 编排 + 副作用 + API 调度
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Form } from 'antd'
 import { message } from '@/services/messageBridge'
 import { useInquiryStore } from '@/store/inquiryStore'
@@ -29,9 +29,8 @@ import {
 } from '@/utils/inpatientInquirySync'
 import type { InquiryData } from '@/store/types'
 
-// 1.6.2：8 个 profile 字段（past/allergy/personal/marital/family/menstrual/
-// current_medications/religion_belief）已迁出到 PatientProfileCard，本 hook 仅
-// 处理"住院本次接诊"字段：主诉/现病史/体格/辅助/入院诊断/专项评估/陈述者
+// 七个档案字段（既往/过敏/个人/婚育/家族/用药/宗教）由 PatientProfileCard 维护；住院专项评估
+// 仍有本次月经史输入，必须随问诊保存和恢复，不能在字段构建时遗漏。
 export function useInpatientInquiryPanel() {
   const [form] = Form.useForm()
   const { inquiry, inquirySavedAt, setInquiry, updateInquiryFields } = useInquiryStore()
@@ -42,6 +41,14 @@ export function useInpatientInquiryPanel() {
   const isInputLocked = !!recordContent.trim() || isPolishing
   const [isDirty, setIsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  // 接诊切换或卸载后使在途保存失效，避免 A→B→A 时旧响应重新获得写回权。
+  const saveScope = useRef(0)
+  useEffect(() => {
+    setSaving(false)
+    return () => {
+      saveScope.current += 1
+    }
+  }, [currentEncounterId])
 
   // 切换接诊或 inquirySavedAt 更新时全量同步表单
   useEffect(() => {
@@ -50,6 +57,8 @@ export function useInpatientInquiryPanel() {
       history_present_illness: inquiry.history_present_illness,
       physical_exam: inquiry.physical_exam,
       history_informant: inquiry.history_informant,
+      // 回显本次月经史；空值也写入，防止下一位患者残留上次输入。
+      menstrual_history: inquiry.menstrual_history || '',
       rehabilitation_assessment: inquiry.rehabilitation_assessment,
       pain_assessment: inquiry.pain_assessment ? Number(inquiry.pain_assessment) : 0,
       vte_risk: inquiry.vte_risk,
@@ -107,8 +116,14 @@ export function useInpatientInquiryPanel() {
 
   const onSave = async (values: Record<string, unknown>) => {
     setSaving(true)
+    // 问诊按接诊保存，但后续正文同步/自动生成必须绑定提交时的具体文书。
+    const recordAtSubmit = useRecordStore.getState()
+    const scope = saveScope.current
+    const stillCurrent = () =>
+      scope === saveScope.current &&
+      useActiveEncounterStore.getState().encounterId === currentEncounterId
 
-    // 本次接诊字段：profile 8 字段已迁出，由 PatientProfileCard 单独 PUT
+    // 本次接诊字段（含月经史）；七个纵向档案字段由 PatientProfileCard 单独 PUT。
     const inquiryData = buildInpatientInquiryData(values)
 
     // ── 诊断条目合成（2026-08-21 阶段1b 结构化）──────────────────────
@@ -158,8 +173,15 @@ export function useInpatientInquiryPanel() {
 
     const changedFields = diffInpatientChangedFields(inquiryData, inquiry)
 
-    // InpatientInquiryData 是 InquiryData 子集（字段名/类型对齐），用 unknown 桥接
-    setInquiry({ ...inquiry, ...inquiryData } as unknown as InquiryData)
+    // 请求前只保留本地草稿；两个接口都成功后才推进“已保存”时间和服务端基线。
+    const draft = { ...inquiry, ...inquiryData } as unknown as InquiryData
+    updateInquiryFields(draft)
+    // 入院诊断展示字段由投影 effect 更新，不属于用户输入；其余字段用于检测在途编辑。
+    const readFormSnapshot = () =>
+      JSON.stringify(form.getFieldsValue(), (key, value) =>
+        key === 'admission_diagnosis' ? undefined : value
+      )
+    const submittedForm = readFormSnapshot()
     // 服务端保存必须 await 并按结果给提示（2026-08-28 弱网审计）：原 fire-and-forget
     // 失败也弹"已保存"+清 dirty，医生以为存上了，换设备/重登走 snapshot 恢复即
     // 静默丢数据——门诊侧（useInquirySave）早已治过这个 P1，住院侧漏改。
@@ -179,6 +201,8 @@ export function useInpatientInquiryPanel() {
           })),
         })
       } catch {
+        // 旧患者请求失败也不能修改新患者的按钮状态或弹出误导提示。
+        if (!stillCurrent()) return
         message.error('入院问诊保存失败，请检查网络后重试')
         setSaving(false)
         // 保留 isDirty：让医生知道还没存上，可再次点击保存
@@ -186,14 +210,31 @@ export function useInpatientInquiryPanel() {
       }
     }
 
+    // 等待服务端期间可能已切换接诊；旧响应不得污染新患者的问诊或生成状态。
+    if (!stillCurrent()) return
+    // 医生在等待期间又输入了内容，旧保存不能触发表单回填、清除 dirty 或自动生成。
+    if (readFormSnapshot() !== submittedForm || useInquiryStore.getState().inquiry !== draft) {
+      setIsDirty(true)
+      setSaving(false)
+      return
+    }
+    setInquiry(draft)
+
+    // 同接诊切文书（包括切走再切回）不会中断问诊落库，但不再联动当前正文。
+    const currentRecord = useRecordStore.getState()
+    const sameRecord =
+      currentRecord.selectionVersion === recordAtSubmit.selectionVersion &&
+      currentRecord.selectedRecordId === recordAtSubmit.selectedRecordId &&
+      currentRecord.recordType === recordAtSubmit.recordType
+
     // 把已改动的字段同步到右侧病历对应章节（profile 字段章节由 PatientProfileCard 维护）
-    if (recordContent) {
+    if (sameRecord && recordContent) {
       const updated = syncInpatientToRecord(recordContent, inquiryData, changedFields)
       if (updated !== recordContent) setRecordContent(updated)
     }
 
     // 病历为空且已填主诉时，触发自动生成（门诊也是这套逻辑）
-    if (!recordContent.trim() && inquiryData.chief_complaint) {
+    if (sameRecord && !recordContent.trim() && inquiryData.chief_complaint) {
       setPendingGenerate(true)
     }
 
@@ -203,7 +244,7 @@ export function useInpatientInquiryPanel() {
   }
 
   // 问诊模式：语音结构化结果分流入左侧表单 + 患者档案
-  // 1.6.3：profile 8 字段路由到 patientProfileEditStore（统一保存按钮再提交），
+  // 七个纵向档案字段路由到 patientProfileEditStore（统一保存按钮再提交），
   // 避免被丢弃；inquiry 字段照旧填表单
   const applyVoiceInquiry = (patch: Record<string, unknown>) => {
     const flattened = flattenVoicePatch(patch)
