@@ -39,8 +39,14 @@ def parse_diagnoses(text: str) -> list[dict]:
                     item["category"] = category
                 output.append(item)
     # 重复诊断会导致主诊断及编码对应关系含糊，不静默去重。
-    identities = [(item.get("category"), item["name"]) for item in output]
-    if len(set(identities)) != len(identities):
+    # 同名且其中一条没写类别也算重复（2026-11-27 联调实测）：无类别的那条在补编码时会按
+    # 名称并入同名条目的类别，两条变得完全相同，签发确认随后以「与正文不一致」拒绝，
+    # 医生看不出原因。同名但类别都明确且不同（如中医病名与西医病名相同）不算重复。
+    categories: dict[str, list] = {}
+    for item in output:
+        categories.setdefault(item["name"], []).append(item.get("category"))
+    if any(len(found) > 1 and (None in found or len(set(found)) != len(found))
+           for found in categories.values()):
         raise ProjectionError("HIS回写失败：诊断条目重复，请核对正文")
     return output
 

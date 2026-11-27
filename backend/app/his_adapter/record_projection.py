@@ -1,4 +1,5 @@
 """将最终正文投影为 v1.4 字段并冻结到版本；失败保存原因，不阻断自由文本签发。"""
+import re
 from copy import deepcopy
 
 from sqlalchemy import select
@@ -31,7 +32,7 @@ def _exam_fields(body: str, record: dict, vitals: dict, record_type: str) -> Non
     lines = body.splitlines()
     # 模板体征固定在首行，所有值从该行读取，禁止遍历任意叙述捞数字。
     first = lines[0].strip()
-    if first.startswith(("T:", "T：", "P:", "P：", "BP:", "BP：", "R:", "R：", "SpO2:", "身高:", "体重:")):
+    if first.startswith(("T:", "T：", "P:", "P：", "BP:", "BP：", "R:", "R：", "SpO2:", "SpO₂:", "身高:", "体重:")):
         vitals.update(parse_vitals(first))
         lines = lines[1:]
     elif not value_of(first):
@@ -40,7 +41,12 @@ def _exam_fields(body: str, record: dict, vitals: dict, record_type: str) -> Non
     if record_type == "admission_note":
         record["physical_exam"] = value_of(rest)
     elif value_of(rest):
-        parts = split_labeled(rest, tuple(_EXAM))
+        # 标签行之前的无标签文字归入体格检查正文（physical_exam）。质控建议「写入病历」、医生
+        # 手写查体都会在【体格检查】里留下这样的自由文本；它本来就是体检内容，归入通用体检
+        # 字段不算猜字段。此前一律判失败，这类病历在 HIS 来源接诊里签不了（2026-11-27 体检）。
+        first_label = re.search(r"(?m)^[ \t]*(?:" + "|".join(map(re.escape, _EXAM)) + r")[：:]", rest)
+        lead = value_of(rest[:first_label.start()] if first_label else rest)
+        parts = split_labeled(rest[first_label.start():], tuple(_EXAM)) if first_label else {}
         used = set()
         for label, value in parts.items():
             field = _EXAM[label]
@@ -48,6 +54,8 @@ def _exam_fields(body: str, record: dict, vitals: dict, record_type: str) -> Non
                 raise ProjectionError("HIS回写失败：普通体检包含多个同义标签")
             used.add(field)
             record[field] = value
+        if lead:
+            record["physical_exam"] = "\n".join(v for v in (lead, record.get("physical_exam", "")) if v)
 
 
 def project_record(record_type: str, text: str) -> dict:

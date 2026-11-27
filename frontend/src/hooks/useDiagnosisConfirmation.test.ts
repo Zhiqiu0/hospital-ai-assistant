@@ -62,19 +62,23 @@ it('有诊断但没有主诊断时不能确认，选择后才可提交', async (
   })
   expect(result.current.canSubmit).toBe(true)
 })
-it.each([true, false])('正文无法解析时，医院来源=%s 的提交限制准确', async his => {
-  vi.mocked(api.post).mockResolvedValue({
-    ...preview,
-    diagnoses: [],
-    projection_error: '请补充诊断标题',
-    his_writeback_required: his,
-  })
-  const { result } = renderHook(() => useDiagnosisConfirmation(input))
-  await load()
-  act(() => result.current.setConfirmed(true))
-  expect(result.current.canSubmit).toBe(!his)
-  expect(result.current.diagnoses).toBeUndefined()
-})
+it.each([true, false])(
+  '正文无法解析时，医院来源=%s 都可确认提交，医院来源标记只回写全文',
+  async his => {
+    vi.mocked(api.post).mockResolvedValue({
+      ...preview,
+      diagnoses: [],
+      projection_error: '请补充诊断标题',
+      his_writeback_required: his,
+    })
+    const { result } = renderHook(() => useDiagnosisConfirmation(input))
+    await load()
+    act(() => result.current.setConfirmed(true))
+    expect(result.current.canSubmit).toBe(true)
+    expect(result.current.fullTextOnly).toBe(his)
+    expect(result.current.diagnoses).toBeUndefined()
+  }
+)
 it('预览失败必须重试成功并重新确认', async () => {
   vi.mocked(api.post).mockRejectedValueOnce(new Error('合成断网'))
   const { result } = renderHook(() => useDiagnosisConfirmation(input))

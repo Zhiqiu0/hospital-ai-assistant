@@ -91,9 +91,11 @@ export function useDiagnosisConfirmation(input: PreviewInput) {
   }, [key, open, content, recordType, encounterId, recordId])
   const current = state.key === key
   const preview = current ? state.preview : null
-  const blocked = !!preview?.projection_error && preview.his_writeback_required
+  // 正文拆不出字段时不再拦截签发（2026-11-27 用户拍板）：医院来源接诊照常签发，
+  // 后端只向 HIS 回写病历全文；这里仅用于在核对区给出说明。
+  const fullTextOnly = !!preview?.projection_error && preview.his_writeback_required
   const hasDiagnoses = !!preview?.diagnoses.length && !preview.projection_error
-  const canConfirm = !!preview && !blocked && (!hasDiagnoses || state.primary >= 0)
+  const canConfirm = !!preview && (!hasDiagnoses || state.primary >= 0)
   // 只回传名称、分类、主诊断，编码始终由服务端按最终正文重新匹配。
   const diagnoses = hasDiagnoses
     ? preview!.diagnoses.map((item, index) => ({
@@ -104,7 +106,7 @@ export function useDiagnosisConfirmation(input: PreviewInput) {
     : undefined
   return {
     preview,
-    blocked,
+    fullTextOnly,
     canConfirm,
     loading: open && !preview && !(current && state.error),
     error: current ? state.error : '',

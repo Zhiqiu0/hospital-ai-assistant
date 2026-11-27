@@ -32,15 +32,15 @@ export default function DiagnosisConfirmation({
       {error ? (
         <Alert
           style={{ marginTop: 8 }}
-          type={state.blocked ? 'error' : 'warning'}
+          type="warning"
           message={
-            state.blocked
-              ? '诊断内容无法用于医院系统回写，请先修改正文'
+            state.fullTextOnly
+              ? '本份病历将只向医院系统回写全文'
               : '未能识别诊断列表，请人工核查正文'
           }
           description={
-            state.blocked
-              ? `${error}。修改完成后重新核对，再提交。`
+            state.fullTextOnly
+              ? `${error.replace(/^HIS回写失败：/, '')}。系统未能从正文中可靠拆出各项内容，签发后医院系统会收到完整的病历全文，但不含拆分字段和诊断编码。可以直接签发；如需一并回写，请按上述原因修改正文后重新核对。`
               : `${error}。本地病历仍可确认提交。`
           }
         />
