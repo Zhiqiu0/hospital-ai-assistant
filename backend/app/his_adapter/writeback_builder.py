@@ -7,6 +7,7 @@
 
 红线：临床字段来自最终正文的版本投影；空串明确清空，不能回落旧问诊。
 """
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
@@ -17,6 +18,8 @@ from app.models.encounter import Encounter
 from app.his_adapter.record_projection import projection_for_writeback
 from app.his_adapter._projection_parse import ProjectionError
 from app.models.medical_record import MedicalRecord, RecordVersion
+
+logger = logging.getLogger(__name__)
 
 def _parse_record_text(content: Any) -> str:
     """RecordVersion.content → 全文（{"text":...} 取 text，纯字符串原样，其它空串）。"""
@@ -128,23 +131,28 @@ async def build_writeback_payload(
     # 无签发文书时不得伪造由旧问诊拼装的回写内容。
     if row is None or record_row.status != "submitted":
         raise ValueError("HIS回写失败：未找到已签发文书")
+    # ── 正文拆不出字段时降级为「只回写全文」（2026-11-27 用户拍板）──────────────
+    # 此前拆分失败直接抛错：前端据此禁止签发，后台则整份回写失败。而拆分器只认
+    # 规范模板，医生手改、质控写入等都可能偏离模板——结果是医生被卡住签不了，
+    # 或病历进不了 HIS 病案。既然约定以 full_text 为正式病历、record.* 为可选，
+    # 拆不出就不发 record / vitals / diagnoses / is_tcm 四项（缺省 = 本次不更新
+    # 这些字段，绝不能发空值去清空 HIS 已有内容），全文照发。
     try:
-        projection = projection_for_writeback(row.content, record_type)
+        projection: Optional[dict] = projection_for_writeback(row.content, record_type)
     except ProjectionError as exc:
-        # 仅在已精确找到文书后附状态键；不存在/串接诊的record_id不能污染其它文书。
-        exc.record_key = f"{record_type}:{record_no}" if record_no is not None else None
-        raise
+        if not full_text:
+            # 连全文都没有就无可回写；仅在已精确找到文书后附状态键。
+            exc.record_key = f"{record_type}:{record_no}" if record_no is not None else None
+            raise
+        logger.warning("his_writeback.full_text_only: encounter=%s type=%s 原因=%s",
+                       encounter_id, record_type, exc)
+        projection = None
 
     payload: dict = {
         "visit_id": visit_id,
         "record_type": record_type,
         # 幂等键第三段（见上方 record_no 说明）。
-        "is_tcm": projection["is_tcm"],
         "status": "draft",
-        "record": projection["record"],
-        "vitals": projection["vitals"],
-        "diagnoses": projection["diagnoses"],
-
         "meta": {
             "source": "mediscribe_ai",
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -155,6 +163,13 @@ async def build_writeback_payload(
             "app_version": app_version,
         },
     }
+    if projection is not None:
+        payload.update({
+            "is_tcm": projection["is_tcm"],
+            "record": projection["record"],
+            "vitals": projection["vitals"],
+            "diagnoses": projection["diagnoses"],
+        })
     # 缺失标识不下发，避免误清医生工号；正文record字段则以空串表达终稿删除。
     # vitals依规范特别条款仅发非空值，未测值不更新HIS已有测量结果。
     if record_no is not None:

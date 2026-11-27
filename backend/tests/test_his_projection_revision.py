@@ -46,8 +46,8 @@ async def test_revision_freezes_new_text_with_only_previous_version_codes(async_
     versions = (await async_db.execute(select(RecordVersion).where(RecordVersion.medical_record_id == record.id))).scalars().all()
     assert len(versions) == 2
     assert all(verify_version_against(item, record) for item in versions)
-    # 无明确主诊断确认时，改名修订可保存，但回写必须失败，不假装采用新名字的旧编码。
+    # 无明确主诊断确认时，改名修订可保存；回写只带全文、不带诊断，不假装采用新名字的旧编码。
     renamed = render_record("outpatient", {"western_diagnosis": "新诊断名称"})
     await AdminRecordService(async_db).revise_record(record.id, renamed, "修改诊断", SimpleNamespace(id="admin"))
-    with pytest.raises(ValueError, match="主诊断"):
-        await build_writeback_payload(async_db, record.encounter_id, record_id=record.id)
+    degraded = await build_writeback_payload(async_db, record.encounter_id, record_id=record.id)
+    assert degraded["full_text"] == renamed and "diagnoses" not in degraded and "record" not in degraded

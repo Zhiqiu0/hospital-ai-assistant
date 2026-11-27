@@ -83,12 +83,17 @@ def parse_vitals(text: str) -> dict[str, str]:
     result = dict.fromkeys(VITAL_FIELDS, "")
     if not value_of(text):
         return result
+    # 系统自己喂给模型的体征前缀写的是下标「SpO₂」（ai_utils.compose_physical_exam），模型照抄进
+    # 正文；此前这里只认「SpO2」，医生一填血氧，HIS 来源接诊就签不了（2026-11-27 体检实锤）。
+    text = text.replace("SpO₂", "SpO2")
     patterns = {
         "T": ("temperature", r"℃|°C|度"), "P": ("pulse", r"次/分|次/min|bpm"),
         "R": ("respiration", r"次/分|次/min"), "SpO2": ("spo2", r"%"),
         "身高": ("height", r"cm"), "体重": ("weight", r"kg"),
     }
-    token = re.compile(r"(T|P|R|BP|SpO2|身高|体重)[：:]\s*(\[未测\]|\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?)([^\s]*)")
+    # 数值位允许「__」：同一前缀函数在血压只填了一侧时写成 BP:120/__mmHg，是系统自己的占位写法。
+    number = r"(?:\d+(?:\.\d+)?|__)"
+    token = re.compile(r"(T|P|R|BP|SpO2|身高|体重)[：:]\s*(\[未测\]|" + number + r"(?:\s*/\s*" + number + r")?)([^\s]*)")
     seen = set()
     cursor = 0
     for match in token.finditer(text):
@@ -104,12 +109,14 @@ def parse_vitals(text: str) -> dict[str, str]:
                 raise ProjectionError("HIS回写失败：生命体征占位格式不正确")
             continue
         if key == "BP":
-            if not re.fullmatch(r"\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?", raw) or unit not in {"", "mmHg"}:
+            if not re.fullmatch(number + r"\s*/\s*" + number, raw) or unit not in {"", "mmHg"}:
                 raise ProjectionError("HIS回写失败：血压格式无法可靠拆分")
-            result["bp_systolic"], result["bp_diastolic"] = [v.strip() for v in raw.split("/")]
+            # 「__」一侧即未测：留空，输出层按「未测不下发」省略，不影响另一侧的实测值。
+            result["bp_systolic"], result["bp_diastolic"] = [
+                "" if v.strip() == "__" else v.strip() for v in raw.split("/")]
         else:
             field, units = patterns[key]
-            if "/" in raw or (unit and not re.fullmatch(units, unit)):
+            if "/" in raw or "__" in raw or (unit and not re.fullmatch(units, unit)):
                 raise ProjectionError("HIS回写失败：生命体征数值或单位无法识别")
             result[field] = raw
     if not seen or text[cursor:].strip():

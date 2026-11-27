@@ -40,31 +40,41 @@ async def test_writeback_uses_final_text_and_clears_removed_fields(async_db):
     assert payload["diagnoses"] == []
 
 
+def _assert_full_text_only(payload, text):
+    """降级报文：全文照发，四项拆分内容整体缺省（缺省=不更新，绝不能发空值清空 HIS）。"""
+    assert payload["full_text"] == text
+    assert not {"record", "vitals", "diagnoses", "is_tcm"} & set(payload)
+    assert payload["visit_id"] and payload["record_type"] and payload["status"] == "draft"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", ["任意自定义正文", "【主诉】\n头痛\n【主诉】\n胸痛", "【自定义栏目】\n正文"])
-async def test_unknown_or_ambiguous_format_rejects_writeback(async_db, text):
-    """未知和重复结构不能假装完成逐字段回填，更不能偷偷用旧问诊。"""
+async def test_unknown_or_ambiguous_format_degrades_to_full_text_only(async_db, text):
+    """未知和重复结构不能假装完成逐字段回填，更不能偷偷用旧问诊——降级为只回写全文。"""
     await _signed(async_db, text)
-    with pytest.raises(ValueError, match="回写"):
-        await build_writeback_payload(async_db, "projection-e")
+    _assert_full_text_only(await build_writeback_payload(async_db, "projection-e"), text)
 
 
 @pytest.mark.asyncio
-async def test_projection_failure_replaces_previous_success_without_sending(async_db, monkeypatch):
-    """格式错误必须落文书级error，刷新后不能仍显示上次成功，也不得调用外部通道。"""
+async def test_projection_failure_sends_full_text_only_and_records_real_outcome(async_db, monkeypatch):
+    """格式拆不出时照常发送全文版报文，文书级状态如实记录本次发送结果，不沿用上次成功。"""
     from app.his_adapter import writeback_sender
     await _signed(async_db, "未知自由正文")
     encounter = await async_db.get(Encounter, "projection-e")
     encounter.his_external_ref = {"writeback_records": {"outpatient:1": {"status": "success"},
                                                        "course_record:2": {"status": "success"}}}
+    sent = []
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("投影失败不得发送")
+    async def refused(payload, client=None):
+        sent.append(payload)
+        return writeback_sender.WritebackResult(ok=False, status="write_failed", message="合成拒收")
 
-    monkeypatch.setattr(writeback_sender, "_send_payload", forbidden)
+    monkeypatch.setattr(writeback_sender, "_send_payload", refused)
     result = await writeback_sender.send_writeback(async_db, encounter.id, record_id="projection-r")
-    assert not result.ok and result.status == "error"
-    assert encounter.his_external_ref["writeback_records"]["outpatient:1"]["status"] == "error"
+    assert len(sent) == 1
+    _assert_full_text_only(sent[0], "未知自由正文")
+    assert not result.ok and result.status == "write_failed"
+    assert encounter.his_external_ref["writeback_records"]["outpatient:1"]["status"] == "write_failed"
     assert encounter.his_external_ref["writeback_records"]["course_record:2"]["status"] == "success"
     previous = dict(encounter.his_external_ref)
     result = await writeback_sender.send_writeback(async_db, encounter.id, record_id="missing")
@@ -133,11 +143,11 @@ async def test_changed_primary_name_is_not_guessed_or_given_old_code(async_db):
 
 
 @pytest.mark.asyncio
-async def test_legacy_diagnosis_without_frozen_primary_is_explicit_failure(async_db):
-    """旧版只有正文没有主诊断快照，不得用今天的主诊断伪装历史选择。"""
-    await _signed(async_db, render_record("outpatient", {"western_diagnosis": "高血压病"}))
-    with pytest.raises(ValueError, match="主诊断"):
-        await build_writeback_payload(async_db, "projection-e")
+async def test_legacy_diagnosis_without_frozen_primary_sends_full_text_only(async_db):
+    """旧版只有正文没有主诊断快照，不得用今天的主诊断伪装历史选择——诊断不发，只回写全文。"""
+    text = render_record("outpatient", {"western_diagnosis": "高血压病"})
+    await _signed(async_db, text)
+    _assert_full_text_only(await build_writeback_payload(async_db, "projection-e"), text)
 
 
 def test_alias_sections_cannot_overwrite_same_field():
@@ -179,3 +189,64 @@ async def test_format_error_preserves_signed_diagnosis_basis_for_repair(async_db
     assert "error" not in fixed
     assert fixed["diagnoses"][0]["code"] == "I10"
     assert fixed["diagnoses"][0]["is_primary"] is True
+
+
+# ── 2026-11-27 体检补测：系统自己产出的写法，分段器必须认 ──────────────────────────
+_VITAL_INPUTS = [
+    dict(temperature="36.5", pulse="72", respiration="18", bp_systolic="120", bp_diastolic="80",
+         spo2="98", height="170", weight="65"),
+    dict(spo2="98"),
+    dict(bp_systolic="120"),
+    dict(bp_diastolic="80"),
+    dict(temperature="36.5", spo2="98.5"),
+]
+
+
+@pytest.mark.parametrize("record_type", ["outpatient", "emergency", "admission_note"])
+@pytest.mark.parametrize("vitals", _VITAL_INPUTS)
+def test_vitals_line_fed_to_model_is_projectable(record_type, vitals):
+    """喂给模型的体征前缀（compose_physical_exam）会被照抄进正文：含下标 SpO₂ 与半侧血压 __ 也要能拆。"""
+    from app.his_adapter.record_projection import project_record
+    from app.services.ai.ai_utils import compose_physical_exam
+    text = render_record(record_type, {"physical_exam_vitals": compose_physical_exam("", **vitals)})
+    # 实测值原样拆出；未填的一侧血压缺省，不得变成空串或占位符下发。
+    assert project_record(record_type, text)["vitals"] == vitals
+
+
+@pytest.mark.parametrize("line", ["T:__℃", "BP:__mmHg", "BP:120/80/90mmHg", "T:36.5℃ 神清", "HR:80次/分"])
+def test_vitals_tolerance_does_not_accept_unknown_shapes(line):
+    """放宽只针对系统自己的两种写法；其余不认识的形状仍然拒绝，不猜数值。"""
+    from app.his_adapter._projection_parse import ProjectionError, parse_vitals
+    with pytest.raises(ProjectionError):
+        parse_vitals(line)
+
+
+def test_exam_leading_free_text_goes_to_physical_exam():
+    """【体格检查】里标签行之前的自由文本（质控写入/手写查体）归入体检正文，与其余阳性体征合并。"""
+    from app.his_adapter.record_projection import project_record
+    text = render_record("outpatient", {"physical_exam_vitals": "T:36.5℃", "tcm_inspection": "神清",
+                                        "physical_exam_text": "咽红"})
+    record = project_record("outpatient", text.replace("望诊：", "双肺呼吸音清\n望诊：", 1))["record"]
+    assert record["physical_exam"] == "双肺呼吸音清\n咽红" and record["tcm_inspection"] == "神清"
+    # 只有自由文本、没有任何标签行时同样归入体检正文。
+    bare = render_record("emergency", {}).replace("重点体征：[未填写，需补充]", "腹软无压痛")
+    assert project_record("emergency", bare)["record"]["physical_exam"] == "腹软无压痛"
+
+
+@pytest.mark.parametrize("body,ok", [
+    ("急性上呼吸道感染\n西医诊断：急性上呼吸道感染", False),  # 一条无类别 + 同名带类别 = 重复
+    ("西医诊断：1.甲；2.甲", False),
+    ("中医诊断：感冒\n西医诊断：感冒", True),               # 类别都明确且不同，不算重复
+])
+def test_same_name_diagnoses_duplicate_rule(body, ok):
+    """同名诊断只要有一条没写类别就算重复——否则补编码后两条完全相同，签发确认会莫名被拒。"""
+    from app.his_adapter._projection_parse import ProjectionError
+    from app.his_adapter.record_projection import project_record
+    blank = "中医诊断：[未填写，需补充]\n西医诊断：[未填写，需补充]"
+    text = render_record("outpatient", {})
+    assert blank in text
+    if ok:
+        assert len(project_record("outpatient", text.replace(blank, body))["diagnoses"]) == 2
+    else:
+        with pytest.raises(ProjectionError, match="重复"):
+            project_record("outpatient", text.replace(blank, body))
