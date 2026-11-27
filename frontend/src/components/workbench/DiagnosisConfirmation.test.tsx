@@ -122,7 +122,9 @@ it('管理员修订保留理由并核对最终诊断后提交', { timeout: 10000
   )
 })
 
-it('文书读取未完成时即使完成全部确认也不能签发，双击只提交一次', async () => {
+// 与上一例同因：CI 双核全套并发时真实 antd 弹窗渲染偶发超过默认 5 秒（2026-11-27 同一用例
+// 在 4 次运行里超时 3 次，本地稳定通过）。只放宽本例时间预算，断言与业务等待时间不变。
+it('文书读取未完成时即使完成全部确认也不能签发，双击只提交一次', { timeout: 10000 }, async () => {
   useRecordStore.setState({ recordLoading: true })
   render(<FinalRecordModal open onCancel={vi.fn()} />)
   await screen.findByRole('radio', { name: /最终诊断甲/ })

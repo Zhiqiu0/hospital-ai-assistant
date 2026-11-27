@@ -6,7 +6,9 @@ from app.config import settings
 from app.core.authz import assert_can_write_record, assert_encounter_access
 from app.his_adapter._projection_diagnoses import enrich_diagnoses
 from app.his_adapter._projection_parse import ProjectionError
-from app.his_adapter.record_projection import load_diagnosis_basis, project_record
+from app.his_adapter.record_projection import (
+    add_dictionary_candidates, load_diagnosis_basis, project_record,
+)
 from app.models.medical_record import MedicalRecord, RecordVersion
 from app.services._record_type_guard import assert_record_type_matches
 
@@ -43,6 +45,9 @@ async def preview_record_diagnoses(db, request, user) -> dict:
         return {"diagnoses": [], "requires_confirmation": False, "projection_error": str(exc),
                 "his_writeback_required": his_required}
     candidates = await load_diagnosis_basis(db, encounter.id if encounter else None, previous)
+    if previous is None and encounter is not None:
+        # 与签发冻结同一条件、同一函数补字典候选，保证医生核对时看到的编码就是签发后回写的编码。
+        candidates = await add_dictionary_candidates(db, projection["diagnoses"], candidates)
     diagnoses = enrich_diagnoses(projection["diagnoses"], candidates)
     return {
         "diagnoses": [{"name": item["name"], "category": item.get("category"),

@@ -11,13 +11,13 @@ import { useRecordStore } from '@/store/recordStore'
 import { useAISuggestionStore } from '@/store/aiSuggestionStore'
 import { useActiveEncounterStore } from '@/store/activeEncounterStore'
 import { InquirySuggestion as Suggestion, DiagnosisItem } from '@/store/types'
-import { writeSectionToRecord } from './qcFieldMaps'
 import InquirySuggestionItem from './InquirySuggestionItem'
 import DiagnosisSuggestionList from './DiagnosisSuggestionList'
 import {
   fetchInquirySuggestions,
   buildSupplementSection,
   updateRecordWithSupplement,
+  applyDiagnosisToRecord,
 } from './inquirySuggestion/inquirySuggestionHelpers'
 import api from '@/services/api'
 
@@ -156,24 +156,14 @@ export default function InquirySuggestionTab() {
   }
 
   const handleApplyDiagnosis = (name: string) => {
-    // 同步更新病历两处：【初步诊断】章节 + 【诊断】里的西医诊断行（润色生成）
-    const syncRecord = (content: string, value: string) => {
-      let updated = writeSectionToRecord(content, 'initial_impression', value)
-      // 替换润色生成的「西医诊断：XXX」行，保证两处一致
-      if (updated.includes('西医诊断：')) {
-        const replacement = value ? `西医诊断：${value}` : '西医诊断：[未填写，需补充]'
-        updated = updated.replace(/西医诊断：[^\n]*/g, replacement)
-      }
-      return updated
-    }
-
+    // 写入规则见 applyDiagnosisToRecord：有「西医诊断：」子行只改该行，否则写诊断章节
     if (appliedDiagnosis === name) {
       setInitialImpression('')
-      setRecordContent(syncRecord(recordContent, ''))
+      setRecordContent(applyDiagnosisToRecord(recordContent, ''))
       setAppliedDiagnosis(null)
     } else {
       setInitialImpression(name)
-      setRecordContent(syncRecord(recordContent, name))
+      setRecordContent(applyDiagnosisToRecord(recordContent, name))
       setAppliedDiagnosis(name)
       message.success({ content: `已写入诊断：${name}`, duration: 2 })
     }

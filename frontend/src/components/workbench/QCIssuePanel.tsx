@@ -93,6 +93,11 @@ export default function QCIssuePanel() {
       if (result.degraded) {
         message.warning(`${result.error || 'AI 修复失败'}，已展示原建议文本供参考`)
       }
+      // 空结果必须说话（2026-11-27 联调实测）：诊断/用药类字段医生没录入时后端按设计
+      // 不代填，返回空修复文本；此前界面毫无反应，医生以为按钮坏了。
+      else if (!result.fix_text?.trim()) {
+        message.info('这一项 AI 不能代填（诊断、用药、处理意见等需您本人填写），请在病历中手动补充')
+      }
       setQCFixTexts({ ...qcFixTexts, [idx]: result.fix_text ?? '' })
     } catch {
       message.error('AI 生成修复失败，请重试')

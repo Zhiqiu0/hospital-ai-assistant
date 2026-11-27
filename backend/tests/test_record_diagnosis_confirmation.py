@@ -126,3 +126,52 @@ def test_confirmation_is_in_openapi_contract():
     assert "/api/v1/medical-records/diagnosis-preview" in schema["paths"]
     for name in ("QuickSaveRequest", "ReviseRecordRequest"):
         assert "confirmed_diagnoses" in schema["components"]["schemas"][name]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_text_only_diagnoses_get_dictionary_codes_and_supplement_section_passes(confirmation_client, async_db):
+    """联调实测两处缺口（2026-11-27）：生成后才写进正文的诊断按字典补码；追问补充章节不再拦签发。"""
+    from app.models.encounter import Diagnosis, DiagnosisCode
+    async_db.add_all([
+        DiagnosisCode(id="dc-1", code="J06.900", name="急性上呼吸道感染", code_type="ICD10", version="测试"),
+        DiagnosisCode(id="dc-2", code="A01.01.01", name="感冒", code_type="TCD_DIS", version="测试"),
+        # 同名多码：不能猜，保持无编码。
+        DiagnosisCode(id="dc-3", code="X1", name="重名诊断", code_type="ICD10", version="测试"),
+        DiagnosisCode(id="dc-4", code="X2", name="重名诊断", code_type="ICD10", version="测试"),
+        # 类别对不上的字典（西医名只出现在中医字典里）：不补。
+        DiagnosisCode(id="dc-5", code="Z9", name="仅中医字典有", code_type="TCD_DIS", version="测试"),
+        # 医生在问诊表单里明确选过的条目优先，字典里另有编码也不覆盖。
+        DiagnosisCode(id="dc-6", code="DICT", name="医生已选", code_type="ICD10", version="测试"),
+        Diagnosis(encounter_id="confirm-e", category="western", name="医生已选", code="CHOSEN",
+                  code_type="ICD10", is_primary=True, sort_order=0),
+    ])
+    await async_db.flush()
+    text = render_record("outpatient", {
+        "western_diagnosis": "1.急性上呼吸道感染；2.重名诊断；3.仅中医字典有；4.医生已选；5.字典没有",
+        "tcm_disease_diagnosis": "感冒",
+    }) + "\n\n【追问补充】\n是否发热：否"
+    response = await confirmation_client.post("/api/v1/medical-records/diagnosis-preview", json={
+        "encounter_id": "confirm-e", "record_type": "outpatient", "content": text,
+    })
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["projection_error"] is None
+    codes = {item["name"]: (item["code"], item["code_type"]) for item in preview["diagnoses"]}
+    assert codes == {
+        "急性上呼吸道感染": ("J06.900", "ICD10"), "感冒": ("A01.01.01", "GB95"),
+        "重名诊断": (None, None), "仅中医字典有": (None, None),
+        "医生已选": ("CHOSEN", "ICD10"), "字典没有": (None, None),
+    }
+    confirmed = [{"name": item["name"], "category": item["category"],
+                  "is_primary": item["name"] == "急性上呼吸道感染"} for item in preview["diagnoses"]]
+    response = await confirmation_client.post("/api/v1/medical-records/quick-save", json={
+        "encounter_id": "confirm-e", "record_type": "outpatient", "content": text,
+        "confirmed_diagnoses": confirmed,
+    })
+    assert response.status_code == 200, response.text
+    payload = await build_writeback_payload(async_db, "confirm-e")
+    sent = {item["name"]: item.get("code") for item in payload["diagnoses"]}
+    # 签发后回写的编码与核对时看到的完全一致；追问补充只留在全文里。
+    assert sent == {name: code for name, (code, _) in codes.items()}
+    assert payload["diagnoses"][0]["name"] == "急性上呼吸道感染" and payload["diagnoses"][0]["is_primary"] is True
+    assert "【追问补充】" in payload["full_text"] and "追问补充" not in payload["record"]
