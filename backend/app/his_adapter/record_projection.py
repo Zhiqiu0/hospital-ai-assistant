@@ -124,6 +124,42 @@ async def load_diagnosis_basis(db, encounter_id: str | None, previous_projection
     return candidates
 
 
+async def add_dictionary_candidates(db, parsed: list[dict], candidates: list[dict]) -> list[dict]:
+    """首签时给「正文里有、条目里没有」的诊断按字典补编码候选，返回新列表不改入参。
+
+    背景（2026-11-27 联调实测）：编码原先只来自问诊表单保存的诊断条目；病历生成后
+    医生从诊断建议写入、或直接在正文里写的诊断没有对应条目，回写时全部无编码。
+    规则与保存诊断条目时的自动补码一致，仍是确定性匹配、不猜：
+      · 只处理正文里带明确类别标签的诊断（西医/中医疾病/中医证候），无标签的不补；
+      · 名称与该类别对应字典的条目完全相同，且恰好命中一个编码才补；
+      · 已有同名同类别条目的不动（医生选过的编码优先，哪怕它没有编码）。
+    """
+    from app.models.encounter import DiagnosisCode
+    from app.services.diagnosis_service import CATEGORY_TO_CODE_TYPE
+
+    known = {(item["name"].strip(), item.get("category")) for item in candidates}
+    pending = [item for item in parsed if item.get("category") in CATEGORY_TO_CODE_TYPE
+               and (item["name"], item["category"]) not in known]
+    if not pending:
+        return candidates
+    rows = (await db.execute(
+        select(DiagnosisCode.code, DiagnosisCode.name, DiagnosisCode.code_type)
+        .where(DiagnosisCode.name.in_({item["name"] for item in pending}))
+    )).all()
+    codes: dict[tuple[str, str], list[str]] = {}
+    for code, name, code_type in rows:
+        codes.setdefault((code_type, name), []).append(code)
+    extra = []
+    for item in pending:
+        dict_type = CATEGORY_TO_CODE_TYPE[item["category"]]
+        matched = codes.get((dict_type, item["name"]), [])
+        if len(matched) == 1:
+            # 回写协议的编码体系口径：中医病/证统一为 GB95（与 load_diagnosis_basis 一致）。
+            extra.append({"name": item["name"], "category": item["category"], "code": matched[0],
+                          "code_type": "ICD10" if dict_type == "ICD10" else "GB95"})
+    return candidates + extra
+
+
 async def freeze_record_projection(db, encounter_id: str, record_type: str, content: str,
                                    previous_projection: dict | None = None,
                                    confirmed_diagnoses: list | None = None) -> dict:
@@ -134,6 +170,10 @@ async def freeze_record_projection(db, encounter_id: str, record_type: str, cont
     basis = {"schema_version": 1, "record_type": record_type, "diagnosis_basis": deepcopy(candidates)}
     try:
         projection = project_record(record_type, content)
+        if previous_projection is None and encounter_id:
+            # 仅首签补字典候选；修订沿用历史快照，不拿今天的字典追补历史编码。
+            candidates = await add_dictionary_candidates(db, projection["diagnoses"], candidates)
+            basis["diagnosis_basis"] = deepcopy(candidates)
         if confirmed_diagnoses is not None:
             # 服务端重新解析本次正文，不能仅相信之前预览或空列表的真假值。
             from app.his_adapter._projection_confirmation import confirm_diagnoses

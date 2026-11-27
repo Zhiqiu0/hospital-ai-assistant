@@ -14,7 +14,7 @@ import { useState } from 'react'
 import { message } from '@/services/messageBridge'
 import { useRecordStore } from '@/store/recordStore'
 import { useQCStore } from '@/store/qcStore'
-import { writeSectionToRecord } from '@/components/workbench/qcFieldMaps'
+import { FIELD_NAME_LABEL, writeSectionToRecord } from '@/components/workbench/qcFieldMaps'
 import { supplementableIssues } from '@/components/workbench/qcFieldConstants'
 import { useAiWrittenFieldsStore } from '@/store/aiWrittenFieldsStore'
 import type { RecordEditorShared } from './useRecordEditorShared'
@@ -88,7 +88,15 @@ export function useRecordSupplement(
       }
       const items: { field_name: string; value: string }[] = data.items || []
       if (items.length === 0) {
-        message.warning('AI 未能给出建议，可点击单条「逐条修复」试试')
+        // 全部被后端「不代填」保护拦下时，逐条修复同样不会有结果——直接点名要医生填的项，
+        // 不再把人引向另一个无效按钮（2026-11-27 联调实测）。
+        const names = Array.from(
+          new Set(fixableIssues.map(i => FIELD_NAME_LABEL[i.field_name] || i.field_name))
+        ).filter(Boolean)
+        message.warning(
+          `AI 不能代填以下内容，需您本人在病历中填写：${names.join('、') || '诊断、处理意见等'}`,
+          6
+        )
         return
       }
 

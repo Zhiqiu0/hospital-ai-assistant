@@ -1,7 +1,9 @@
 """严格分段与体征解析：不借用带启发式的质控解析器，不从自由叙述猜字段。"""
 import re
 
-from app.his_adapter._projection_templates import FOOTERS, TEMPLATES, TITLES, VITAL_FIELDS
+from app.his_adapter._projection_templates import (
+    FOOTERS, FULLTEXT_ONLY_SECTIONS, TEMPLATES, TITLES, VITAL_FIELDS,
+)
 
 
 class ProjectionError(ValueError):
@@ -62,7 +64,9 @@ def split_sections(record_type: str, text: str) -> tuple[dict[str, str], str]:
     result = {}
     for i, match in enumerate(matches):
         name = match.group("bracket") or match.group("flat")
-        if name not in template and name not in FOOTERS.get(record_type, ()):
+        # 系统自身追加的全文专属章节（如追问补充）对所有文书放行；投影阶段按「无对应字段」跳过。
+        if (name not in template and name not in FOOTERS.get(record_type, ())
+                and name not in FULLTEXT_ONLY_SECTIONS):
             raise ProjectionError("HIS回写失败：存在未支持的自定义章节")
         if name in result:
             raise ProjectionError("HIS回写失败：存在重复章节")
