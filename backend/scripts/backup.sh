@@ -120,15 +120,35 @@ else
 fi
 
 # ── 5. 异地容灾：本次备份推阿里云 OSS（北京，与服务器上海异地）────────────────
-# 上传失败不阻断（本地备份已完整落盘），只记 WARN 供日志/告警排查。
+# 上传失败不阻断本地备份（本地已完整落盘、权限照常收敛），但会扣下成功心跳、
+# 让 uptime-kuma 告警——异地副本断了必须有人知道（见下方 OSS_FAILED）。
+#
+# 2026-11-28 教训：ossutil v1 的 `cp -r` 在服务端拒绝（如账号欠费 UserDisable 403）时
+# 退出码仍是 0，这里曾据此连续两周打印「OK」，实际一个文件都没传上去。
+# 所以不再信退出码，上传后回查云端：该目录下的对象数必须等于本地文件数才算成功。
 OSSUTIL="${OSSUTIL:-$HOME/bin/ossutil64}"
 OSS_BUCKET="${OSS_BUCKET:-mediscribe-backup}"
+OSS_FAILED=0
 if [ -x "${OSSUTIL}" ] && [ -f "$HOME/.ossutilconfig" ]; then
-    echo "[5/5] 上传 OSS oss://${OSS_BUCKET}/daily/${TIMESTAMP}/ ..."
-    if "${OSSUTIL}" cp -r "${DEST}" "oss://${OSS_BUCKET}/daily/${TIMESTAMP}/" -u >/dev/null 2>&1; then
-        echo "    OK（异地副本已落北京，OSS 生命周期 180 天自动清理）"
+    OSS_DIR="oss://${OSS_BUCKET}/daily/${TIMESTAMP}/"
+    echo "[5/5] 上传 OSS ${OSS_DIR} ..."
+    # 上传本身的输出与退出码都不可信，留给下面的回查判定；|| true 防 set -e 中止
+    "${OSSUTIL}" cp -r "${DEST}" "${OSS_DIR}" -u >/dev/null 2>&1 || true
+    # 本地应上传的文件数（DEST 下一层的普通文件）
+    LOCAL_COUNT=$(find "${DEST}" -maxdepth 1 -type f | wc -l)
+    # 云端实际对象数：取 ossutil ls 末尾「Object Number is: N」里的 N；
+    # 列不出来（403/断网）时为空，按 0 处理。
+    # 末尾 || true 不能省：脚本开着 pipefail，ls 失败会让整条管道失败、set -e 直接中止，
+    # 后面的本地权限收敛就跑不到了（实测踩过）
+    REMOTE_COUNT=$("${OSSUTIL}" ls "${OSS_DIR}" 2>/dev/null \
+        | sed -n 's/.*Object Number is: *\([0-9]*\).*/\1/p' | tail -1 || true)
+    REMOTE_COUNT="${REMOTE_COUNT:-0}"
+    if [ "${LOCAL_COUNT}" -gt 0 ] && [ "${REMOTE_COUNT}" -eq "${LOCAL_COUNT}" ]; then
+        echo "    OK（云端回查 ${REMOTE_COUNT}/${LOCAL_COUNT} 个文件，异地副本已落北京，OSS 生命周期 180 天自动清理）"
     else
-        echo "    WARN: OSS 上传失败——本地备份不受影响，请查网络/凭证（~/.ossutilconfig）"
+        echo "    ERROR: OSS 异地副本未落地（云端 ${REMOTE_COUNT} / 本地 ${LOCAL_COUNT}）——本地备份不受影响；"
+        echo "           常见原因：阿里云账号欠费（UserDisable）、凭证失效（~/.ossutilconfig）、网络"
+        OSS_FAILED=1
     fi
 else
     echo "[5/5] SKIP：未配置 ossutil，异地上传未启用（见脚本头部前置说明）"
@@ -144,6 +164,13 @@ chmod 640 "${DEST}"/*.gz 2>/dev/null || true
 
 echo "[$(date)] === 备份完成 ==="
 du -sh "${DEST}"
+
+# 异地副本没落地：本地备份与权限收敛都已做完，但不发成功心跳、以非 0 退出，
+# 让 uptime-kuma 的 Push 监控超时告警（与其他步骤失败走同一条告警通道）
+if [ "${OSS_FAILED}" -ne 0 ]; then
+    echo "[$(date)] === 本地备份完成，但**异地副本失败**，不上报成功心跳 ==="
+    exit 1
+fi
 
 # ── 成功心跳（2026-08-16 上线前体检补）─────────────────────────────────────
 # 在此之前，备份失败**没有任何人会知道**：脚本 set -euo pipefail 会中止、
